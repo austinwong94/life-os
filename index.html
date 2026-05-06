@@ -21,7 +21,7 @@
               <h1>Personal board</h1>
             </div>
           </div>
-          <button type="button" class="sidebar-toggle" id="sidebarToggle" title="Open controls" aria-label="Open controls" aria-pressed="false">
+          <button type="button" class="sidebar-toggle" id="sidebarToggle" title="Open settings" aria-label="Open settings" aria-pressed="false">
             <span data-icon="sidebar"></span>
           </button>
         </div>
@@ -33,15 +33,15 @@
           </button>
           <button type="button" class="rail-button" id="railTemplatesButton" title="Templates" aria-label="Templates" aria-pressed="false">
             <span data-icon="layout-grid"></span>
-            <small>Boards</small>
+            <small>Templates</small>
           </button>
           <button type="button" class="rail-button" id="railArchiveButton" title="Archive" aria-label="Archive" aria-pressed="false">
             <span data-icon="archive"></span>
             <small>Archive</small>
           </button>
-          <button type="button" class="rail-button" id="railSettingsButton" title="Controls" aria-label="Controls" aria-pressed="false">
+          <button type="button" class="rail-button" id="railSettingsButton" title="Settings" aria-label="Settings" aria-pressed="false">
             <span data-icon="settings"></span>
-            <small>Controls</small>
+            <small>Settings</small>
           </button>
         </nav>
 
@@ -58,7 +58,7 @@
             <button type="button" class="secondary-action board-new" id="newBoardButton">New board</button>
             <button type="button" class="secondary-action board-delete" id="deleteBoardButton">Delete board</button>
           </div>
-          <p class="data-note">Saved in this browser. Use Backup in Board tools to move your board to another browser.</p>
+          <p class="data-note">Each board is saved separately in this browser. Backup exports all boards for another browser.</p>
           <label class="field">
             <span>Name</span>
             <input id="boardName" type="text" maxlength="36" autocomplete="off" />
@@ -86,7 +86,7 @@
             <h2>Cloud sync</h2>
             <span class="tag" id="cloudStatus">Local</span>
           </div>
-          <p class="data-note">Use the Life OS login created here. Your Supabase dashboard email is separate unless you created it as an app user. Signed-in browsers auto-save with conflict protection, so a newer cloud copy is not replaced without confirmation.</p>
+          <p class="data-note">Use the Life OS login created here. Your Supabase dashboard email is separate unless you created it as an app user. Cloud sync saves all boards with conflict protection.</p>
           <button type="button" class="template-open-button cloud-check-button" id="cloudCheckButton">Check Supabase setup</button>
           <label class="field">
             <span>Email</span>
@@ -109,10 +109,10 @@
           <p class="cloud-note" id="cloudNote">Local browser storage is active.</p>
         </section>
 
-        <section class="panel card-composer-panel" id="cardComposerPanel" aria-label="Card composer" hidden>
+        <section class="panel card-composer-panel" id="cardComposerPanel" aria-label="Card setup" hidden>
           <div class="panel-heading composer-heading">
             <div>
-              <p class="eyebrow">Card composer</p>
+              <p class="eyebrow">Card setup</p>
               <h2 id="formTitle">Add card</h2>
             </div>
             <button type="button" class="icon-button" id="composerCloseButton" title="Close composer" aria-label="Close composer">
@@ -143,13 +143,13 @@
               </label>
               <label class="field">
                 <span>Priority</span>
-                <select id="cardPriority">
+                <select id="cardPriority" hidden aria-hidden="true">
                   <option value="normal">Normal</option>
-                  <option value="high">Must do</option>
-                  <option value="low">Later</option>
+                  <option value="high">Important</option>
+                  <option value="low">Secondary</option>
                 </select>
+                <div class="priority-buttons" id="priorityButtons" role="radiogroup" aria-label="Priority"></div>
               </label>
-              <input id="cardReward" type="hidden" value="" />
             </div>
             <label class="field category-custom" id="categoryCustomField">
               <span>Custom area</span>
@@ -160,6 +160,7 @@
                 <span>Type</span>
                 <select id="cardType" hidden aria-hidden="true">
                   <option value="planner">Planner</option>
+                  <option value="planlist">Plan view</option>
                   <option value="daily" selected>To-do list</option>
                   <option value="diary">Daily diary</option>
                   <option value="brief">Strategy brief</option>
@@ -187,9 +188,37 @@
                 </label>
               </div>
               <label class="field">
-                <span>Plan note</span>
-                <textarea id="plannerNote" maxlength="520" rows="4" placeholder="- Write the plan, reminder, meeting note, trip idea or future task"></textarea>
+                <span>Plan items</span>
+                <textarea id="plannerNote" maxlength="520" rows="4" placeholder="- Write a task, reminder, meeting, trip idea or future plan"></textarea>
               </label>
+            </div>
+            <div class="planner-view-input" id="plannerViewField">
+              <div class="form-grid">
+                <label class="field">
+                  <span>View</span>
+                  <select id="plannerViewMode" hidden aria-hidden="true">
+                    <option value="today">Today</option>
+                    <option value="week">This week</option>
+                    <option value="month">This month</option>
+                    <option value="upcoming">Upcoming</option>
+                  </select>
+                  <div class="planner-view-mode-buttons" id="plannerViewModeButtons" role="radiogroup" aria-label="Planner view"></div>
+                </label>
+                <div class="field planner-view-note">
+                  <span>Source</span>
+                  <p>Reads Planner cards in the same area. Use exclusions to stop Today, Week and Month views repeating the same plans.</p>
+                </div>
+              </div>
+              <div class="planner-view-options">
+                <label class="toggle-row" id="plannerExcludeTodayField">
+                  <input id="plannerViewExcludeToday" type="checkbox" />
+                  <span>Exclude Today view data</span>
+                </label>
+                <label class="toggle-row" id="plannerExcludeWeekField">
+                  <input id="plannerViewExcludeWeek" type="checkbox" />
+                  <span>Exclude Week view data</span>
+                </label>
+              </div>
             </div>
             <label class="field daily-plan-date" id="dailyPlanDateField">
               <span>Plan day</span>
@@ -256,6 +285,10 @@
                 <input id="timerMinutes" type="number" min="0" max="59" step="1" value="25" inputmode="numeric" />
               </label>
             </div>
+            <label class="toggle-row timer-detail-toggle" id="timerDetailField">
+              <input id="timerShowSeconds" type="checkbox" />
+              <span>Show minutes and seconds</span>
+            </label>
             <label class="field checklist-input" id="checklistField">
               <span id="checklistLabel">Checklist items</span>
               <textarea id="checklistItems" rows="3" placeholder="One item per line"></textarea>
@@ -286,23 +319,23 @@
                 <label class="field">
                   <span>Feeling</span>
                   <select id="diaryFeeling">
-                    <option value="Clear">Clear</option>
                     <option value="Happy">Happy</option>
+                    <option value="Okay">Okay</option>
                     <option value="Calm">Calm</option>
-                    <option value="Focused">Focused</option>
+                    <option value="Sad">Sad</option>
+                    <option value="Angry">Angry</option>
+                    <option value="Anxious">Anxious</option>
                     <option value="Tired">Tired</option>
-                    <option value="Stressed">Stressed</option>
-                    <option value="Low">Low</option>
                   </select>
                 </label>
               </div>
               <label class="field">
                 <span>One sentence</span>
-                <input id="diarySentence" type="text" maxlength="120" placeholder="Today in one sentence" autocomplete="off" />
+                <input id="diarySentence" type="text" placeholder="Today in one sentence" autocomplete="off" />
               </label>
               <label class="field">
                 <span>Thoughts</span>
-                <textarea id="diaryThoughts" maxlength="520" rows="4" placeholder="What happened, what you learned, what to remember"></textarea>
+                <textarea id="diaryThoughts" rows="4" placeholder="What happened, what you learned, what to remember"></textarea>
               </label>
             </div>
             <label class="field quote-input" id="quoteField">
@@ -323,10 +356,10 @@
               <input id="imageUrl" type="url" placeholder="Optional image URL" autocomplete="off" />
             </div>
             <div class="form-actions">
-            <button class="primary-action" id="submitCardButton" type="submit">
-              <span data-icon="plus"></span>
-              <span id="formSubmitLabel">Add card</span>
-            </button>
+              <button class="primary-action" id="submitCardButton" type="submit">
+                <span data-icon="plus"></span>
+                <span id="formSubmitLabel">Add card</span>
+              </button>
               <button class="secondary-action" id="cancelEditButton" type="button" hidden>Cancel</button>
             </div>
           </form>
@@ -335,7 +368,7 @@
         <section class="panel template-panel" hidden>
           <div class="panel-heading">
             <h2>Templates</h2>
-            <span class="tag">Boards</span>
+            <span class="tag">Library</span>
           </div>
           <button type="button" class="template-open-button" id="openTemplatesButton">
             <span data-icon="layout-grid"></span>
@@ -350,8 +383,8 @@
         <section class="panel recent-panel" id="recentPanel">
           <div class="panel-heading recent-heading">
             <div>
-              <h2>Recent shortcuts</h2>
-              <span id="recentCount">Last cards</span>
+              <h2>Recent cards</h2>
+              <span id="recentCount">Last edited</span>
             </div>
             <button type="button" class="recent-toggle" id="recentToggleButton" aria-expanded="true">
               <span id="recentToggleLabel">Hide</span>
@@ -367,6 +400,7 @@
           <div>
             <p class="eyebrow" id="visibilityLabel">Private board</p>
             <h2 id="boardTitle">My Life OS</h2>
+            <p class="today-line" id="todayLine">Today</p>
           </div>
           <div class="stats" aria-label="Board stats">
             <div>
@@ -375,7 +409,7 @@
             </div>
             <div>
               <span id="runningTimers">0</span>
-              <p>Focus</p>
+              <p>Running</p>
             </div>
             <div>
               <span id="completionRate">0%</span>
@@ -397,13 +431,13 @@
           </button>
           <button type="button" class="focus-tile" data-focus="overdue">
             <span id="focusOverdueCount">0</span>
-            <strong>Review</strong>
-            <small>needs review</small>
+            <strong>Overdue</strong>
+            <small>past due</small>
           </button>
           <button type="button" class="focus-tile" data-focus="done">
             <span id="focusDoneCount">0</span>
-            <strong>Complete</strong>
-            <small>finished cards</small>
+            <strong>To archive</strong>
+            <small>completed</small>
           </button>
         </section>
 
@@ -506,8 +540,8 @@
                 <span>Priority</span>
                 <select id="quickTodoPriority" aria-label="Priority">
                   <option value="normal">Normal</option>
-                  <option value="high">Must do</option>
-                  <option value="low">Later</option>
+                  <option value="high">Important</option>
+                  <option value="low">Secondary</option>
                 </select>
               </label>
             </div>
@@ -546,7 +580,7 @@
       <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
         <header class="modal-header settings-header">
           <div>
-            <p class="eyebrow">Life OS controls</p>
+            <p class="eyebrow">Life OS settings</p>
             <h2 id="settingsModalTitle">Board settings</h2>
           </div>
           <button type="button" class="icon-button" id="settingsModalCloseButton" title="Close settings" aria-label="Close settings">
@@ -645,6 +679,50 @@
         </header>
         <div class="records-modal-body">
           <p id="recordsModalSummary"></p>
+          <div class="archive-filter-panel" aria-label="Archive filters">
+            <label class="archive-search">
+              <span data-icon="search"></span>
+              <input id="recordsSearch" type="search" placeholder="Search archived cards" autocomplete="off" aria-label="Search archived cards" />
+            </label>
+            <div class="archive-filter-grid">
+              <label>
+                <span>Archived date</span>
+                <select id="recordsDateFilter">
+                  <option value="all">All dates</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="30">Last 30 days</option>
+                  <option value="year">This year</option>
+                </select>
+              </label>
+              <label>
+                <span>Sort</span>
+                <select id="recordsSort">
+                  <option value="newest">Newest archived</option>
+                  <option value="oldest">Oldest archived</option>
+                  <option value="title">Title A-Z</option>
+                  <option value="progress">Progress high</option>
+                </select>
+              </label>
+              <label>
+                <span>Type</span>
+                <select id="recordsTypeFilter">
+                  <option value="all">All types</option>
+                </select>
+              </label>
+              <label>
+                <span>Area</span>
+                <select id="recordsAreaFilter">
+                  <option value="all">All areas</option>
+                </select>
+              </label>
+              <label>
+                <span>Reason</span>
+                <select id="recordsReasonFilter">
+                  <option value="all">All reasons</option>
+                </select>
+              </label>
+            </div>
+          </div>
           <div class="records-list" id="recordsModalList"></div>
         </div>
       </section>
@@ -659,8 +737,6 @@
             <span class="card-category"></span>
             <span class="card-percent">0%</span>
             <span class="card-date-chip" hidden></span>
-            <span class="card-priority-chip" hidden></span>
-            <span class="card-reward-chip" hidden></span>
           </div>
         </div>
         <div class="card-main">

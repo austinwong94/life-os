@@ -1,14 +1,15 @@
 const STORAGE_KEY = "progress-board-v1";
-const SAMPLE_VERSION = 14;
+const SAMPLE_VERSION = 15;
 const COURSE_BOARD_VERSION = 1;
 const AI_COURSE_BOARD_VERSION = 1;
-const LIFE_OS_BOARD_VERSION = 3;
+const LIFE_OS_BOARD_VERSION = 4;
 const HISTORY_LIMIT = 370;
 const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
 const AUTO_SAVE_INTERVAL_MS = 30000;
 const CLOUD_SAVE_DEBOUNCE_MS = 1400;
 const CLOUD_CONFLICT_TOLERANCE_MS = 1000;
-const CONTENT_CARD_TYPES = ["planner", "diary", "quote", "video"];
+const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
+const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "quote", "video"];
 const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
   url: "https://shrmhjulhfuodtrsqhpu.supabase.co",
   anonKey: "sb_publishable_DFWPjTEDRTsgM3pA_XPWdw_LAYQk_lP",
@@ -121,6 +122,7 @@ const TYPE_META = {
   brief: { label: "Brief", icon: "list" },
   daily: { label: "To-do", icon: "list" },
   planner: { label: "Planner", icon: "calendar" },
+  planlist: { label: "Plan view", icon: "list" },
   diary: { label: "Diary", icon: "calendar" },
   quote: { label: "Motivation", icon: "quote" },
   video: { label: "Video", icon: "video" },
@@ -138,6 +140,7 @@ const TYPE_META = {
 const TYPE_HELP = {
   daily: "Use for a one-day to-do list. It does not reset automatically, so it is best for today, tomorrow, or a specific short plan.",
   planner: "Use like a physical planner book. Pick a date and write future plans inside one card without splitting the board.",
+  planlist: "Use for Today, This week, This month, or Upcoming lists connected to Planner cards in the same area.",
   diary: "Use for a dated daily diary with feeling, one sentence and thoughts. Each date is saved as its own page.",
   brief: "Use for strategy, rules, decisions, priorities, or a review prompt. It is a guidance card, not a task.",
   quote: "Use for motivational words, reminders, affirmations or principles you want visible on the board.",
@@ -167,6 +170,10 @@ const TYPE_DETAILS = {
   planner: {
     best: "Future plans, reminders and dated notes",
     timing: "No timer. Choose the exact date inside the card, even months or years ahead."
+  },
+  planlist: {
+    best: "A linked Today, Week, Month, or Upcoming list from Planner",
+    timing: "No timer. It reads dated planner notes and can exclude earlier views to avoid duplicate items."
   },
   brief: {
     best: "Decisions, rules, plans and review prompts",
@@ -218,7 +225,7 @@ const TYPE_DETAILS = {
   }
 };
 
-const MANUAL_TYPE_OPTIONS = ["planner", "daily", "diary", "brief", "quote", "video", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
+const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "brief", "quote", "video", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
 const SCORECARD_TYPES = ["weekly", "monthly", "annual"];
 const TEMPLATE_ONLY_TYPES = ["lab", "workout"];
 const TYPE_PICKER_GROUPS = [
@@ -227,6 +234,7 @@ const TYPE_PICKER_GROUPS = [
     description: "Tasks, projects, dates",
     options: [
       { type: "planner", label: "Planner", hint: "Future dates" },
+      { type: "planlist", label: "Plan view", hint: "Linked list" },
       { type: "daily", label: "To-do", hint: "Plan ahead" },
       { type: "single", label: "Task", hint: "One outcome" },
       { type: "checklist", label: "Project", hint: "Multi-step" },
@@ -296,9 +304,28 @@ const CATEGORY_ALIASES = {
 const PRIMARY_CATEGORIES = ["General", "Work", "Health", "Learning", "Finance", "Personal"];
 
 const PRIORITY_META = {
-  high: { label: "Must do", weight: 0 },
-  normal: { label: "Normal", weight: 1 },
-  low: { label: "Later", weight: 2 }
+  high: { label: "Important", weight: 0, color: "#ef5d8f", soft: "rgba(239, 93, 143, 0.14)" },
+  normal: { label: "Normal", weight: 1, color: "#b8beb7", soft: "rgba(184, 190, 183, 0.14)" },
+  low: { label: "Secondary", weight: 2, color: "#f2d46f", soft: "rgba(242, 212, 111, 0.22)" }
+};
+
+const DIARY_MOOD_META = {
+  Happy: { icon: "😄", label: "Happy" },
+  Okay: { icon: "🙂", label: "Okay" },
+  Calm: { icon: "😌", label: "Calm" },
+  Sad: { icon: "😔", label: "Sad" },
+  Angry: { icon: "😡", label: "Angry" },
+  Anxious: { icon: "😟", label: "Anxious" },
+  Tired: { icon: "😴", label: "Tired" }
+};
+
+const DIARY_FEELING_ALIASES = {
+  Good: "Okay",
+  Clear: "Calm",
+  Focused: "Okay",
+  Energized: "Happy",
+  Stressed: "Anxious",
+  Low: "Sad"
 };
 
 const VISIBILITY_META = {
@@ -396,9 +423,9 @@ const lifeOsIdeas = [
     templateId: "life-os"
   },
   {
-    title: "Cloud sync next",
-    text: "Backup and Import protect browser data now. Supabase auth and sync should be the next platform layer.",
-    status: "Next"
+    title: "Signed-in sync",
+    text: "Use one Life OS login to carry all boards across browsers with conflict checks before replacing newer cloud changes.",
+    status: "Built"
   }
 ];
 
@@ -415,7 +442,7 @@ const defaultState = {
   },
   ui: {
     sidebarOpen: true,
-    categoriesOpen: true,
+    categoriesOpen: false,
     recentOpen: getDefaultRecentOpen(),
     recentExpanded: false
   },
@@ -464,7 +491,7 @@ const defaultState = {
       runningSince: null,
       items: [
         { id: createId(), text: "Card model", done: true },
-        { id: createId(), text: "Timer controls", done: true },
+        { id: createId(), text: "Timer actions", done: true },
         { id: createId(), text: "Artist pack surface", done: false },
         { id: createId(), text: "Sharing permissions", done: false }
       ],
@@ -631,7 +658,7 @@ const defaultState = {
       title: "2026 creator goals",
       description: "Ship the board, test premium card packs, publish a public progress page.",
       category: "Personal",
-      reward: "Custom artist card",
+      reward: "",
       metadata: { category: "Personal" },
       type: "annual",
       size: "large",
@@ -741,13 +768,113 @@ const defaultState = {
       runningSince: null,
       activePlannerDate: getTodayKey(addDays(new Date(), 7)),
       plannerEntries: {
+        [getTodayKey()]: {
+          note: "Buy groceries for dinner.\nReview renewal reminder before lunch.",
+          updatedAt: Date.now() - 9800
+        },
+        [getTodayKey(addDays(new Date(), 2))]: {
+          note: "Prepare questions for the client call.",
+          updatedAt: Date.now() - 9700
+        },
         [getTodayKey(addDays(new Date(), 7))]: {
           note: "Meeting follow-up, trip idea, renewal reminder, or plan for a future date.",
           updatedAt: Date.now() - 9500
+        },
+        [getTodayKey(addDays(new Date(), 40))]: {
+          note: "Check passport, flights and hotel options.",
+          updatedAt: Date.now() - 9400
         }
       },
       order: 14,
       createdAt: Date.now() - 9500
+    },
+    {
+      id: createId(),
+      title: "Planner today",
+      description: "Linked view for Personal planner items due today.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "planlist",
+      plannerView: "today",
+      plannerViewOptions: { excludeToday: false, excludeWeek: false },
+      size: "standard",
+      theme: "leaf",
+      background: "clean",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      order: 15,
+      createdAt: Date.now() - 9400
+    },
+    {
+      id: createId(),
+      title: "Planner week",
+      description: "Shows the rest of this week without repeating today's list.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "planlist",
+      plannerView: "week",
+      plannerViewOptions: { excludeToday: true, excludeWeek: false },
+      size: "standard",
+      theme: "tide",
+      background: "sky",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      order: 16,
+      createdAt: Date.now() - 9300
+    },
+    {
+      id: createId(),
+      title: "Planner month",
+      description: "Shows later this month without repeating the weekly view.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "planlist",
+      plannerView: "month",
+      plannerViewOptions: { excludeToday: true, excludeWeek: true },
+      size: "standard",
+      theme: "plum",
+      background: "paper",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      order: 17,
+      createdAt: Date.now() - 9200
+    },
+    {
+      id: createId(),
+      title: "Upcoming planner",
+      description: "Longer-range Personal plans beyond this month.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "planlist",
+      plannerView: "upcoming",
+      plannerViewOptions: { excludeToday: false, excludeWeek: false },
+      size: "standard",
+      theme: "honey",
+      background: "paper",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      order: 18,
+      createdAt: Date.now() - 9100
     },
     {
       id: createId(),
@@ -776,7 +903,7 @@ const defaultState = {
           updatedAt: Date.now() - 9000
         }
       },
-      order: 15,
+      order: 19,
       createdAt: Date.now() - 9000
     },
     {
@@ -797,7 +924,7 @@ const defaultState = {
       duration: 0,
       remaining: 0,
       runningSince: null,
-      order: 16,
+      order: 20,
       createdAt: Date.now() - 8000
     },
     {
@@ -818,7 +945,7 @@ const defaultState = {
       duration: 0,
       remaining: 0,
       runningSince: null,
-      order: 17,
+      order: 21,
       createdAt: Date.now() - 7000
     },
     {
@@ -844,7 +971,7 @@ const defaultState = {
         { label: "After hard work", text: "Pick a recovery action that makes tomorrow easier." }
       ],
       reviewed: false,
-      order: 18,
+      order: 22,
       createdAt: Date.now() - 6000
     },
     {
@@ -865,7 +992,7 @@ const defaultState = {
       duration: 60 * 24 * 60 * 60,
       remaining: 60 * 24 * 60 * 60,
       runningSince: null,
-      order: 19,
+      order: 23,
       createdAt: Date.now() - 5000
     }
   ],
@@ -900,6 +1027,7 @@ const elements = {
   cloudPanel: document.querySelector(".cloud-panel"),
   boardName: document.querySelector("#boardName"),
   boardTitle: document.querySelector("#boardTitle"),
+  todayLine: document.querySelector("#todayLine"),
   visibilityLabel: document.querySelector("#visibilityLabel"),
   visibilityControl: document.querySelector("#visibilityControl"),
   layoutControl: document.querySelector("#layoutControl"),
@@ -919,8 +1047,8 @@ const elements = {
   cardCategory: document.querySelector("#cardCategory"),
   categoryCustomField: document.querySelector("#categoryCustomField"),
   cardCategoryCustom: document.querySelector("#cardCategoryCustom"),
-  cardReward: document.querySelector("#cardReward"),
   cardPriority: document.querySelector("#cardPriority"),
+  priorityButtons: document.querySelector("#priorityButtons"),
   dailyPlanDateField: document.querySelector("#dailyPlanDateField"),
   cardPlanDate: document.querySelector("#cardPlanDate"),
   cardType: document.querySelector("#cardType"),
@@ -942,6 +1070,8 @@ const elements = {
   timerDays: document.querySelector("#timerDays"),
   timerHours: document.querySelector("#timerHours"),
   timerMinutes: document.querySelector("#timerMinutes"),
+  timerDetailField: document.querySelector("#timerDetailField"),
+  timerShowSeconds: document.querySelector("#timerShowSeconds"),
   checklistField: document.querySelector("#checklistField"),
   checklistLabel: document.querySelector("#checklistLabel"),
   checklistItems: document.querySelector("#checklistItems"),
@@ -951,6 +1081,13 @@ const elements = {
   plannerField: document.querySelector("#plannerField"),
   plannerDate: document.querySelector("#plannerDate"),
   plannerNote: document.querySelector("#plannerNote"),
+  plannerViewField: document.querySelector("#plannerViewField"),
+  plannerViewMode: document.querySelector("#plannerViewMode"),
+  plannerViewModeButtons: document.querySelector("#plannerViewModeButtons"),
+  plannerExcludeTodayField: document.querySelector("#plannerExcludeTodayField"),
+  plannerViewExcludeToday: document.querySelector("#plannerViewExcludeToday"),
+  plannerExcludeWeekField: document.querySelector("#plannerExcludeWeekField"),
+  plannerViewExcludeWeek: document.querySelector("#plannerViewExcludeWeek"),
   diaryField: document.querySelector("#diaryField"),
   diaryDate: document.querySelector("#diaryDate"),
   diaryFeeling: document.querySelector("#diaryFeeling"),
@@ -1042,6 +1179,12 @@ const elements = {
   recordsModalCloseButton: document.querySelector("#recordsModalCloseButton"),
   recordsModalTitle: document.querySelector("#recordsModalTitle"),
   recordsModalSummary: document.querySelector("#recordsModalSummary"),
+  recordsSearch: document.querySelector("#recordsSearch"),
+  recordsDateFilter: document.querySelector("#recordsDateFilter"),
+  recordsSort: document.querySelector("#recordsSort"),
+  recordsTypeFilter: document.querySelector("#recordsTypeFilter"),
+  recordsAreaFilter: document.querySelector("#recordsAreaFilter"),
+  recordsReasonFilter: document.querySelector("#recordsReasonFilter"),
   recordsModalList: document.querySelector("#recordsModalList")
 };
 
@@ -1059,13 +1202,14 @@ render();
 handleCloudAuthRedirect();
 
 setInterval(() => {
-  if (state.cards.some((card) => card.runningSince)) {
+  if (state.cards.some((card) => card.runningSince || shouldTickCountdownEverySecond(card))) {
     settleExpiredTimers();
     renderCardsOnly();
   }
 }, 1000);
 
 setInterval(() => {
+  renderBoardMeta();
   if (state.cards.some((card) => isAutomaticCountdown(card))) {
     settleExpiredTimers();
     renderCardsOnly();
@@ -1160,6 +1304,20 @@ function bindEvents() {
 
   elements.cardCategory.addEventListener("change", renderConditionalFields);
   elements.cardType.addEventListener("change", renderConditionalFields);
+  elements.plannerViewMode.addEventListener("change", renderConditionalFields);
+  elements.priorityButtons.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-priority]");
+    if (!button) return;
+    elements.cardPriority.value = getSelectedPriority(button.dataset.priority);
+    renderPriorityButtons();
+    renderFormPreview();
+  });
+  elements.plannerViewModeButtons.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-planner-view]");
+    if (!button) return;
+    elements.plannerViewMode.value = normalizePlannerViewMode(button.dataset.plannerView);
+    renderConditionalFields();
+  });
   elements.cardTypeButtons.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-type]");
     if (!button) return;
@@ -1219,6 +1377,19 @@ function bindEvents() {
     elements.plannerNote.value = cleanPlannerNote(elements.plannerNote.value);
     handleDraftInputChange();
   });
+  elements.diaryThoughts.addEventListener("input", () => {
+    autoGrowTextarea(elements.diaryThoughts);
+    autosaveEditingDiaryFromForm();
+  });
+  elements.diarySentence.addEventListener("input", () => {
+    autosaveEditingDiaryFromForm();
+  });
+  elements.diaryFeeling.addEventListener("change", () => {
+    autosaveEditingDiaryFromForm();
+  });
+  elements.diaryDate.addEventListener("change", () => {
+    autosaveEditingDiaryFromForm();
+  });
 
   elements.imageFile.addEventListener("change", async () => {
     const file = elements.imageFile.files && elements.imageFile.files[0];
@@ -1246,6 +1417,7 @@ function bindEvents() {
     const button = event.target.closest("button[data-filter]");
     if (!button) return;
     state.activeFilter = button.dataset.filter;
+    state.focusFilter = "all";
     document.querySelectorAll(".view-pills .pill").forEach((pill) => {
       pill.classList.toggle("is-active", pill === button);
     });
@@ -1435,9 +1607,35 @@ function bindEvents() {
   });
 
   elements.recordsModalList.addEventListener("click", (event) => {
+    const archiveButton = event.target.closest("button[data-archive-ready-card]");
+    if (archiveButton) {
+      archiveCard(archiveButton.dataset.archiveReadyCard);
+      renderRecordsModal();
+      return;
+    }
     const button = event.target.closest("button[data-restore-card]");
     if (!button) return;
     restoreArchivedCard(button.dataset.restoreCard);
+  });
+
+  elements.recordsSearch.addEventListener("input", (event) => {
+    state.ui.archiveSearch = normalizeLabel(event.target.value);
+    saveState();
+    renderRecordsModal();
+  });
+
+  [
+    [elements.recordsDateFilter, "archiveDate"],
+    [elements.recordsSort, "archiveSort"],
+    [elements.recordsTypeFilter, "archiveType"],
+    [elements.recordsAreaFilter, "archiveArea"],
+    [elements.recordsReasonFilter, "archiveReason"]
+  ].forEach(([select, key]) => {
+    select.addEventListener("change", () => {
+      state.ui[key] = select.value;
+      saveState();
+      renderRecordsModal();
+    });
   });
 
   document.addEventListener("keydown", (event) => {
@@ -1528,6 +1726,7 @@ function buildCardFromForm({ preview }) {
     targetAt: timer.targetAt,
     duration: timer.duration,
     remaining: timer.duration,
+    showTimerSeconds: Boolean(elements.timerShowSeconds.checked),
     runningSince: null,
     lastResetDate: type === "routine" ? getTodayKey() : null,
     history: type === "routine" ? [] : undefined,
@@ -1538,6 +1737,7 @@ function buildCardFromForm({ preview }) {
   if (type === "planner") {
     const dateKey = normalizeDateKey(elements.plannerDate.value) || getTodayKey();
     const note = cleanPlannerNote(elements.plannerNote.value);
+    card.plannerGroup = getPlannerGroup(card);
     card.activePlannerDate = dateKey;
     card.plannerEntries = {
       [dateKey]: normalizePlannerEntry({
@@ -1545,6 +1745,15 @@ function buildCardFromForm({ preview }) {
         updatedAt: note ? Date.now() : 0
       })
     };
+  }
+
+  if (type === "planlist") {
+    card.plannerGroup = getPlannerGroup(card);
+    card.plannerView = normalizePlannerViewMode(elements.plannerViewMode.value);
+    card.plannerViewOptions = normalizePlannerViewOptions({
+      excludeToday: elements.plannerViewExcludeToday.checked,
+      excludeWeek: elements.plannerViewExcludeWeek.checked
+    });
   }
 
   if (type === "diary") {
@@ -1685,7 +1894,6 @@ function startEditingCard(id) {
   elements.cardTitle.value = card.title || "";
   elements.cardDescription.value = card.description || "";
   setCategoryField(card.category || "General");
-  elements.cardReward.value = card.reward || "";
   elements.cardPriority.value = getSelectedPriority(card.priority);
   elements.cardPlanDate.value = getCardPlanDate(card);
   setFormType(card.type || "daily");
@@ -1695,10 +1903,14 @@ function startEditingCard(id) {
   const plannerEntry = card.type === "planner" ? getPlannerEntry(card, plannerDate) : normalizePlannerEntry();
   elements.plannerDate.value = plannerDate;
   elements.plannerNote.value = formatPlannerNoteForEditing(plannerEntry.note);
+  elements.plannerViewMode.value = normalizePlannerViewMode(card.plannerView);
+  const plannerViewOptions = normalizePlannerViewOptions(card.plannerViewOptions);
+  elements.plannerViewExcludeToday.checked = plannerViewOptions.excludeToday;
+  elements.plannerViewExcludeWeek.checked = plannerViewOptions.excludeWeek;
   const diaryDate = getActiveDiaryDate(card);
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, diaryDate) : normalizeDiaryEntry();
   elements.diaryDate.value = diaryDate;
-  elements.diaryFeeling.value = diaryEntry.feeling || "Clear";
+  elements.diaryFeeling.value = diaryEntry.feeling || "Calm";
   elements.diarySentence.value = diaryEntry.sentence || "";
   elements.diaryThoughts.value = diaryEntry.thoughts || "";
   elements.quoteAuthor.value = card.quoteAuthor || "";
@@ -1712,6 +1924,7 @@ function startEditingCard(id) {
   elements.imageUrl.value = card.imageUrl || "";
   elements.imageFile.value = "";
   attachedImageData = card.imageData || "";
+  elements.timerShowSeconds.checked = Boolean(card.showTimerSeconds);
   selectedTimerMode = ["none", "date", "days", "hours"].includes(card.timerMode) ? card.timerMode : "none";
   populateTimerFields(card);
   renderScheduleDays();
@@ -1741,8 +1954,11 @@ function resetFormState() {
   elements.cardPlanDate.value = getTodayKey();
   elements.plannerDate.value = getTodayKey();
   elements.plannerNote.value = "";
+  elements.plannerViewMode.value = "today";
+  elements.plannerViewExcludeToday.checked = false;
+  elements.plannerViewExcludeWeek.checked = false;
   elements.diaryDate.value = getTodayKey();
-  elements.diaryFeeling.value = "Clear";
+  elements.diaryFeeling.value = "Calm";
   elements.diarySentence.value = "";
   elements.diaryThoughts.value = "";
   elements.quoteAuthor.value = "";
@@ -1754,6 +1970,7 @@ function resetFormState() {
   elements.timerHours.value = "0";
   elements.timerMinutes.value = "25";
   elements.timerDays.value = "1";
+  elements.timerShowSeconds.checked = false;
   elements.goalTarget.value = "150";
   elements.goalUnit.value = "min";
   setDefaultTimerDate();
@@ -1837,11 +2054,17 @@ function renderBoardMeta() {
   renderBoardSwitcher();
   elements.boardName.value = state.board.name;
   elements.boardTitle.textContent = state.board.name;
+  elements.todayLine.textContent = formatTodayLine();
   elements.restoreLayoutButton.disabled = !Array.isArray(state.board.savedLayout) || !state.board.savedLayout.length;
   elements.boardSearch.value = state.searchQuery || "";
   elements.clearSearchButton.hidden = !normalizeLabel(state.searchQuery || "");
   const recordCount = getArchivedCards().length;
-  elements.openRecordsButton.textContent = recordCount ? `Archive ${recordCount}` : "Archive";
+  const readyArchiveCount = getReadyToArchiveCards().length;
+  elements.openRecordsButton.textContent = readyArchiveCount
+    ? `Archive ${readyArchiveCount} ready`
+    : recordCount
+      ? `Archive ${recordCount}`
+      : "Archive";
 
   const visibility = VISIBILITY_META[state.board.visibility];
   elements.visibilityLabel.textContent = `${visibility.label} board`;
@@ -2033,7 +2256,7 @@ function addQuickTodoCard() {
       type === "diary"
         ? {
             [getTodayKey()]: normalizeDiaryEntry({
-              feeling: "Clear",
+              feeling: "Calm",
               sentence: items[0] || "",
               thoughts: items.slice(1).join("\n"),
               updatedAt: Date.now()
@@ -2091,6 +2314,7 @@ function getQuickCaptureTimer(value) {
 
 function getQuickCaptureFallbackTitle(type) {
   if (type === "planner") return "Future planner";
+  if (type === "planlist") return "Plan view";
   if (type === "diary") return "Daily diary";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
@@ -2103,6 +2327,7 @@ function getQuickCaptureFallbackTitle(type) {
 
 function getDefaultCardTitle(type) {
   if (type === "planner") return "Future planner";
+  if (type === "planlist") return "Planner view";
   if (type === "diary") return "Daily diary";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
@@ -2153,7 +2378,7 @@ function renderCardsOnly(options = {}) {
     renderBoardColumns(visibleCards);
   }
 
-  renderStats(visibleCards);
+  renderStats(orderedCards);
   renderRecentCards();
   hydrateIcons(elements.boardGrid);
   restoreScrollPosition(scrollSnapshot);
@@ -2300,6 +2525,12 @@ function getLayoutColumn(card) {
 
 function getEmptyStateMarkup(statusCount) {
   if (state.focusFilter && state.focusFilter !== "all") {
+    if (state.focusFilter === "done") {
+      return "<div><h3>No cards ready to archive</h3><p>Completed cards will appear here until you archive them.</p></div>";
+    }
+    if (state.focusFilter === "overdue") {
+      return "<div><h3>No overdue cards</h3><p>Nothing past due right now.</p></div>";
+    }
     return "<div><h3>No focus cards</h3><p>Clear the focus filter or choose another focus tile.</p></div>";
   }
   if (normalizeLabel(state.searchQuery || "")) {
@@ -2318,7 +2549,10 @@ function renderTodayFocus(cards) {
   elements.focusOverdueCount.textContent = counts.overdue;
   elements.focusDoneCount.textContent = counts.done;
   elements.todayFocusStrip.querySelectorAll("button[data-focus]").forEach((button) => {
-    button.classList.toggle("is-active", state.focusFilter === button.dataset.focus);
+    const isActive = state.focusFilter === button.dataset.focus;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+    button.title = isActive ? "Click again to show all cards" : `Show ${button.querySelector("strong")?.textContent || "focus"} cards`;
   });
 }
 
@@ -2353,7 +2587,7 @@ function getTodayFocusCounts(cards) {
       if (isTodayFocusCard(card)) counts.today += 1;
       if (isMustDoCard(card)) counts.must += 1;
       if (isOverdueCard(card)) counts.overdue += 1;
-      if (getProgress(card).percent >= 100) counts.done += 1;
+      if (isReadyToArchiveCard(card)) counts.done += 1;
       return counts;
     },
     { today: 0, must: 0, overdue: 0, done: 0 }
@@ -2365,13 +2599,14 @@ function matchesFocus(card) {
   if (state.focusFilter === "today") return isTodayFocusCard(card);
   if (state.focusFilter === "must") return isMustDoCard(card);
   if (state.focusFilter === "overdue") return isOverdueCard(card);
-  if (state.focusFilter === "done") return getProgress(card).percent >= 100;
+  if (state.focusFilter === "done") return isReadyToArchiveCard(card);
   return true;
 }
 
 function isTodayFocusCard(card) {
   if (card.type === "daily") return getCardPlanDate(card) === getTodayKey();
   if (card.type === "planner" || card.type === "diary") return true;
+  if (card.type === "planlist") return normalizePlannerViewMode(card.plannerView) === "today";
   if (card.type === "routine") return true;
   if (card.runningSince) return true;
   return card.priority === "high" && getProgress(card).percent < 100;
@@ -2405,6 +2640,10 @@ function renderCard(card, options = {}) {
   node.classList.toggle("is-content-card", isProgresslessCard(card));
   node.classList.toggle("is-running", Boolean(card.runningSince));
   node.classList.toggle("is-expired", hasTimer && remaining <= 0);
+  const priority = getSelectedPriority(card.priority);
+  const priorityMeta = PRIORITY_META[priority];
+  node.classList.toggle("priority-high", priority === "high");
+  node.classList.toggle("priority-low", priority === "low");
   node.style.setProperty("--card-bg", theme.bg);
   node.style.setProperty("--card-ink", theme.ink);
   node.style.setProperty("--card-muted", theme.muted);
@@ -2413,6 +2652,8 @@ function renderCard(card, options = {}) {
   node.style.setProperty("--card-fill", getCardFill(card, theme));
   node.style.setProperty("--card-shadow-color", hexToRgba(theme.accent, 0.24));
   node.style.setProperty("--image-source", getImageSource(card, theme));
+  node.style.setProperty("--priority-color", priorityMeta.color);
+  node.style.setProperty("--priority-soft", priorityMeta.soft);
 
   const typeMeta = TYPE_META[card.type] || TYPE_META.single;
   node.querySelector(".card-type").innerHTML = `${ICONS[typeMeta.icon]}<span>${typeMeta.label}</span>`;
@@ -2425,14 +2666,6 @@ function renderCard(card, options = {}) {
     dateChip.hidden = false;
     dateChip.textContent = plannedDateLabel;
     dateChip.title = getPlannedDateTitle(card);
-  }
-  const priorityChip = node.querySelector(".card-priority-chip");
-  const priority = getSelectedPriority(card.priority);
-  if (priority === "high" || priority === "low") {
-    priorityChip.hidden = false;
-    priorityChip.textContent = PRIORITY_META[priority].label;
-    priorityChip.classList.toggle("is-high", priority === "high");
-    priorityChip.classList.toggle("is-low", priority === "low");
   }
   node.querySelector("h3").textContent = card.title;
   node.querySelector(".card-description").textContent = card.description;
@@ -2486,6 +2719,9 @@ function renderCard(card, options = {}) {
   if (card.type === "planner") {
     body.append(renderPlanner(card));
   }
+  if (card.type === "planlist") {
+    body.append(renderPlannerLinkedList(card));
+  }
   if (card.type === "diary") {
     body.append(renderDiary(card));
   }
@@ -2522,8 +2758,6 @@ function renderCard(card, options = {}) {
   if (card.type === "single") {
     body.append(renderSingleTask(card));
   }
-
-  node.querySelector(".card-reward-chip").hidden = true;
 
   if (!interactive) {
     body.querySelectorAll("button, input, textarea").forEach((control) => {
@@ -2617,54 +2851,70 @@ function renderPlanner(card) {
   });
 
   dayPanel.append(dateRow, addForm);
-  wrapper.append(dayPanel, renderPlannerUpcoming(card, activeDate));
+  wrapper.append(dayPanel);
   return wrapper;
 }
 
-function renderPlannerUpcoming(card, activeDate) {
-  const wrapper = document.createElement("aside");
-  wrapper.className = "planner-upcoming";
+function renderPlannerLinkedList(card) {
+  const view = normalizePlannerViewMode(card.plannerView);
+  const options = normalizePlannerViewOptions(card.plannerViewOptions);
+  const group = getPlannerGroup(card);
+  const viewData = getPlannerViewData(view, group, options);
+  const wrapper = document.createElement("div");
+  wrapper.className = "planner-linked-list";
+
   const head = document.createElement("div");
-  head.className = "planner-upcoming-head";
+  head.className = "planner-linked-head";
+  const copy = document.createElement("div");
   const title = document.createElement("strong");
-  title.textContent = "Upcoming";
-  const count = document.createElement("span");
-  const items = getUpcomingScheduleItems(card, 6);
-  count.textContent = items.length ? `${items.length} shown` : "No planner items";
-  head.append(title, count);
+  title.textContent = getPlannerViewLabel(view);
+  const source = document.createElement("span");
+  source.textContent = `${group} planner source`;
+  copy.append(title, source);
+  const count = document.createElement("em");
+  count.textContent = viewData.items.length ? `${viewData.items.length} planned` : "Ready";
+  head.append(copy, count);
+
+  const optionSummary = document.createElement("p");
+  optionSummary.className = "planner-linked-summary";
+  optionSummary.textContent = getPlannerViewSummary(view, options);
 
   const list = document.createElement("div");
-  list.className = "planner-upcoming-list";
-  if (!items.length) {
+  list.className = "planner-linked-items";
+  if (!viewData.items.length) {
     const empty = document.createElement("p");
-    empty.className = "planner-empty";
-    empty.textContent = "Choose a date, write a task, and press Enter.";
+    empty.className = "planner-linked-empty";
+    empty.textContent = viewData.empty;
     list.append(empty);
   } else {
-    items.forEach((item) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "planner-upcoming-item";
-      button.classList.toggle("is-active", item.dateKey === activeDate);
-      button.title = item.title;
-      button.addEventListener("click", () => setPlannerDate(card, item.dateKey));
-      const date = document.createElement("span");
-      date.className = "planner-upcoming-date";
-      date.textContent = formatPlannerListDate(item.dateKey);
-      const copy = document.createElement("span");
-      copy.className = "planner-upcoming-copy";
-      const label = document.createElement("strong");
-      label.textContent = item.title;
-      const source = document.createElement("small");
-      source.textContent = item.source;
-      copy.append(label, source);
-      button.append(date, copy);
-      list.append(button);
+    viewData.items.slice(0, viewData.limit).forEach((item) => {
+      list.append(renderPlannerLinkedItem(item));
     });
+    if (viewData.items.length > viewData.limit) {
+      const more = document.createElement("p");
+      more.className = "planner-linked-more";
+      more.textContent = `+${viewData.items.length - viewData.limit} more in this view`;
+      list.append(more);
+    }
   }
 
-  wrapper.append(head, list);
+  wrapper.append(head, optionSummary, list);
   return wrapper;
+}
+
+function renderPlannerLinkedItem(item) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "planner-linked-item";
+  button.title = "Open source planner date";
+  button.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
+  const date = document.createElement("span");
+  date.className = "planner-linked-date";
+  date.textContent = formatPlannerListDate(item.dateKey);
+  const copy = document.createElement("strong");
+  copy.textContent = item.title;
+  button.append(date, copy);
+  return button;
 }
 
 function renderDiary(card) {
@@ -2696,17 +2946,20 @@ function renderDiary(card) {
   const dateLabel = document.createElement("strong");
   dateLabel.textContent = formatDiaryDate(activeDate);
   const status = document.createElement("span");
-  status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "New page";
+  status.textContent = entry.updatedAt ? `Saved ${formatRecordDateTime(entry.updatedAt)}` : "New page";
   dateCopy.append(dateLabel, status);
   nav.append(previous, dateCopy, next);
 
   const moodPicker = document.createElement("div");
   moodPicker.className = "mood-picker";
   getDiaryFeelings().forEach((feeling) => {
+    const mood = DIARY_MOOD_META[feeling] || { icon: feeling, label: feeling };
     const button = document.createElement("button");
     button.type = "button";
     button.classList.toggle("is-active", entry.feeling === feeling);
-    button.textContent = feeling;
+    button.textContent = mood.icon;
+    button.title = mood.label;
+    button.setAttribute("aria-label", mood.label);
     button.addEventListener("click", () => {
       updateDiaryEntry(card, activeDate, { feeling });
       renderCardsOnly();
@@ -2716,27 +2969,31 @@ function renderDiary(card) {
 
   const sentence = document.createElement("textarea");
   sentence.className = "diary-sentence";
-  sentence.maxLength = 120;
   sentence.rows = 2;
   sentence.placeholder = "One sentence for this day";
   sentence.value = entry.sentence || "";
   sentence.addEventListener("input", () => {
     updateDiaryEntry(card, activeDate, { sentence: sentence.value }, { rerender: false });
+    autoGrowTextarea(sentence);
   });
   sentence.addEventListener("change", renderCardsOnly);
 
   const thoughts = document.createElement("textarea");
   thoughts.className = "diary-thoughts";
-  thoughts.maxLength = 520;
   thoughts.rows = 4;
   thoughts.placeholder = "Thoughts, lessons, wins, worries or reminders";
   thoughts.value = entry.thoughts || "";
   thoughts.addEventListener("input", () => {
     updateDiaryEntry(card, activeDate, { thoughts: thoughts.value }, { rerender: false });
+    autoGrowTextarea(thoughts);
   });
   thoughts.addEventListener("change", renderCardsOnly);
 
   wrapper.append(nav, moodPicker, sentence, thoughts);
+  requestAnimationFrame(() => {
+    autoGrowTextarea(sentence);
+    autoGrowTextarea(thoughts);
+  });
   return wrapper;
 }
 
@@ -2884,7 +3141,68 @@ function renderDailyList(card) {
     label.append(input, count, text);
     wrapper.append(label);
   });
+  if (card.type === "daily") {
+    const plannerLinks = renderDailyPlannerLinks(card);
+    if (plannerLinks) wrapper.append(plannerLinks);
+    wrapper.append(renderDailyAddForm(card));
+  }
   return wrapper;
+}
+
+function renderDailyPlannerLinks(card) {
+  const dateKey = getCardPlanDate(card);
+  const items = getPlannerItemsForDate(dateKey, getPlannerGroup(card));
+  if (!items.length) return null;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "daily-planner-links";
+  const head = document.createElement("div");
+  head.className = "daily-planner-links-head";
+  const title = document.createElement("strong");
+  title.textContent = "From planner";
+  const count = document.createElement("span");
+  count.textContent = `${items.length}`;
+  head.append(title, count);
+  wrapper.append(head);
+
+  items.slice(0, 3).forEach((item) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "daily-planner-link";
+    row.title = "Open planner date";
+    row.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
+    row.textContent = item.title;
+    wrapper.append(row);
+  });
+
+  if (items.length > 3) {
+    const more = document.createElement("p");
+    more.textContent = `+${items.length - 3} more in planner`;
+    wrapper.append(more);
+  }
+
+  return wrapper;
+}
+
+function renderDailyAddForm(card) {
+  const form = document.createElement("form");
+  form.className = "daily-add-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 120;
+  input.placeholder = getCardPlanDate(card) === getTodayKey() ? "Add something for today" : "Add item for this day";
+  input.setAttribute("aria-label", "Add to-do item");
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.title = "Add item";
+  button.setAttribute("aria-label", "Add item");
+  button.innerHTML = ICONS.plus;
+  form.append(input, button);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    addDailyItemToCard(card, input.value);
+  });
+  return form;
 }
 
 function renderRoutineHistory(card) {
@@ -3090,6 +3408,7 @@ function getTrackerItemTitle(type, index) {
 function normalizePlannerCard(card) {
   if (!card || card.type !== "planner") return card;
   const today = getTodayKey();
+  card.plannerGroup = getPlannerGroup(card);
   card.plannerEntries = card.plannerEntries && typeof card.plannerEntries === "object" ? card.plannerEntries : {};
   card.activePlannerDate = normalizeDateKey(card.activePlannerDate) || today;
   Object.keys(card.plannerEntries).forEach((dateKey) => {
@@ -3235,6 +3554,20 @@ function addPlannerTaskToDate(card, dateKey, value) {
   return true;
 }
 
+function addDailyItemToCard(card, value) {
+  const text = normalizeLabel(String(value || ""));
+  if (!text || !card || card.type !== "daily") return false;
+  card.items = Array.isArray(card.items) ? card.items : [];
+  card.items.push({
+    id: createId(),
+    text,
+    done: false
+  });
+  saveState();
+  renderCardsOnly();
+  return true;
+}
+
 function setPlannerDate(card, dateKey) {
   card.activePlannerDate = normalizeDateKey(dateKey) || getTodayKey();
   getPlannerEntry(card, card.activePlannerDate);
@@ -3249,10 +3582,10 @@ function formatPlannerDate(dateKey) {
   return relative ? `${relative} · ${label}` : label;
 }
 
-function getUpcomingScheduleItems(plannerCard, limit = 6) {
-  const today = dateKeyToLocalDate(getTodayKey()).getTime();
+function getPlannerScheduleItems(plannerCard) {
   const items = [];
   normalizePlannerCard(plannerCard);
+  const group = getPlannerGroup(plannerCard);
 
   Object.entries(plannerCard.plannerEntries || {}).forEach(([dateKey, entry]) => {
     const normalizedDate = normalizeDateKey(dateKey);
@@ -3263,11 +3596,108 @@ function getUpcomingScheduleItems(plannerCard, limit = 6) {
         dateKey: normalizedDate,
         title: line,
         source: "Planner",
+        group,
         priority: 0,
         lineIndex: index
       });
     });
   });
+
+  return items.sort(sortPlannerScheduleItems);
+}
+
+function getPlannerItemsForDate(dateKey, group = "") {
+  const normalizedDate = normalizeDateKey(dateKey);
+  if (!normalizedDate) return [];
+  const normalizedGroup = group ? getPlannerGroup({ category: group }) : "";
+  return state.cards
+    .filter((card) => card.type === "planner")
+    .filter((card) => !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
+    .flatMap((card) =>
+      getPlannerScheduleItems(card)
+        .filter((item) => item.dateKey === normalizedDate)
+        .map((item) => ({ ...item, card }))
+    )
+    .sort(sortPlannerScheduleItems);
+}
+
+function getPlannerSourceItems(group = "") {
+  const normalizedGroup = group ? getPlannerGroup({ category: group }) : "";
+  return state.cards
+    .filter((card) => card.type === "planner")
+    .filter((card) => !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
+    .flatMap((card) => getPlannerScheduleItems(card).map((item) => ({ ...item, card })))
+    .sort(sortPlannerScheduleItems);
+}
+
+function getPlannerViewData(view, group, options = {}) {
+  const mode = normalizePlannerViewMode(view);
+  const viewOptions = normalizePlannerViewOptions(options);
+  const todayKey = getTodayKey();
+  const today = dateKeyToLocalDate(todayKey);
+  const todayTime = today.getTime();
+  const weekEndTime = addDays(today, 6 - getCurrentWeekIndex(today)).getTime();
+  const monthEndTime = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
+  const futureItems = getPlannerSourceItems(group).filter((item) => dateKeyToLocalDate(item.dateKey).getTime() >= todayTime);
+  const range = {
+    today: {
+      limit: 8,
+      empty: "Planner items dated today will appear here.",
+      items: futureItems.filter((item) => item.dateKey === todayKey)
+    },
+    week: {
+      limit: 8,
+      empty: "Planner items for the rest of this week will appear here.",
+      items: futureItems.filter((item) => {
+        const time = dateKeyToLocalDate(item.dateKey).getTime();
+        if (viewOptions.excludeToday && time === todayTime) return false;
+        return time >= todayTime && time <= weekEndTime;
+      })
+    },
+    month: {
+      limit: 10,
+      empty: "Planner items later this month will appear here.",
+      items: futureItems.filter((item) => {
+        const time = dateKeyToLocalDate(item.dateKey).getTime();
+        if (viewOptions.excludeWeek && time <= weekEndTime) return false;
+        if (viewOptions.excludeToday && time === todayTime) return false;
+        return time >= todayTime && time <= monthEndTime;
+      })
+    },
+    upcoming: {
+      limit: 10,
+      empty: "Planner items beyond this month will appear here.",
+      items: futureItems.filter((item) => dateKeyToLocalDate(item.dateKey).getTime() > monthEndTime)
+    }
+  };
+  return range[mode] || range.today;
+}
+
+function getPlannerViewLabel(view) {
+  return {
+    today: "Today",
+    week: "This week",
+    month: "This month",
+    upcoming: "Upcoming"
+  }[normalizePlannerViewMode(view)];
+}
+
+function getPlannerViewSummary(view, options = {}) {
+  const mode = normalizePlannerViewMode(view);
+  const viewOptions = normalizePlannerViewOptions(options);
+  if (mode === "today") return "Shows only planner items dated today.";
+  if (mode === "week") return viewOptions.excludeToday ? "Shows the rest of this week without today's items." : "Shows today through the end of this week.";
+  if (mode === "month") {
+    if (viewOptions.excludeWeek) return "Shows later this month without today or this week's items.";
+    if (viewOptions.excludeToday) return "Shows this month without today's items.";
+    return "Shows today through the end of this month.";
+  }
+  return "Shows planner items after this month.";
+}
+
+function getUpcomingScheduleItems(plannerCard, limit = 6) {
+  const today = dateKeyToLocalDate(getTodayKey()).getTime();
+  const items = getPlannerScheduleItems(plannerCard);
 
   state.cards.forEach((card) => {
     if (!card || card.id === plannerCard.id) return;
@@ -3293,12 +3723,14 @@ function getUpcomingScheduleItems(plannerCard, limit = 6) {
 
   return items
     .filter((item) => dateKeyToLocalDate(item.dateKey).getTime() >= today)
-    .sort((a, b) => {
-      const dateSort = dateKeyToLocalDate(a.dateKey).getTime() - dateKeyToLocalDate(b.dateKey).getTime();
-      const lineSort = (a.lineIndex ?? 0) - (b.lineIndex ?? 0);
-      return dateSort || a.priority - b.priority || lineSort || a.title.localeCompare(b.title);
-    })
+    .sort(sortPlannerScheduleItems)
     .slice(0, limit);
+}
+
+function sortPlannerScheduleItems(a, b) {
+  const dateSort = dateKeyToLocalDate(a.dateKey).getTime() - dateKeyToLocalDate(b.dateKey).getTime();
+  const lineSort = (a.lineIndex ?? 0) - (b.lineIndex ?? 0);
+  return dateSort || a.priority - b.priority || lineSort || a.title.localeCompare(b.title);
 }
 
 function formatPlannerListDate(dateKey) {
@@ -3329,16 +3761,17 @@ function normalizeDiaryCard(card) {
 }
 
 function normalizeDiaryEntry(entry = {}) {
+  const feeling = DIARY_FEELING_ALIASES[entry.feeling] || entry.feeling;
   return {
-    feeling: getDiaryFeelings().includes(entry.feeling) ? entry.feeling : "Clear",
-    sentence: normalizeLabel(entry.sentence || ""),
-    thoughts: String(entry.thoughts || "").trim(),
+    feeling: getDiaryFeelings().includes(feeling) ? feeling : "Calm",
+    sentence: String(entry.sentence || "").trim(),
+    thoughts: String(entry.thoughts || ""),
     updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : 0
   };
 }
 
 function getDiaryFeelings() {
-  return ["Clear", "Happy", "Calm", "Focused", "Tired", "Stressed", "Low"];
+  return Object.keys(DIARY_MOOD_META);
 }
 
 function getActiveDiaryDate(card) {
@@ -3359,13 +3792,68 @@ function getDiaryEntry(card, dateKey = getActiveDiaryDate(card)) {
 function updateDiaryEntry(card, dateKey, updates, options = {}) {
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
   const current = getDiaryEntry(card, normalizedDate);
-  card.diaryEntries[normalizedDate] = normalizeDiaryEntry({
+  const nextEntry = normalizeDiaryEntry({
     ...current,
     ...updates,
     updatedAt: Date.now()
   });
-  saveState();
+  card.diaryEntries[normalizedDate] = nextEntry;
+  persistDiaryEntryImmediately(card, normalizedDate, nextEntry);
   if (options.rerender) renderCardsOnly();
+}
+
+function persistDiaryEntryImmediately(card, dateKey, entry) {
+  try {
+    syncActiveBoard();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    upsertDiaryBackup(card, dateKey, entry);
+    if (elements.savedState) {
+      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      elements.savedState.textContent = `Diary saved ${time}`;
+      elements.savedState.classList.remove("is-saving");
+    }
+    queueCloudSave({ silent: true });
+  } catch {
+    if (elements.savedState) {
+      elements.savedState.textContent = "Diary save failed";
+    }
+  }
+}
+
+function autosaveEditingDiaryFromForm() {
+  if (!editingCardId || getSelectedFormType() !== "diary") return;
+  const card = state.cards.find((item) => item.id === editingCardId);
+  if (!card || card.type !== "diary") return;
+  const dateKey = normalizeDateKey(elements.diaryDate.value) || getTodayKey();
+  card.activeDate = dateKey;
+  updateDiaryEntry(card, dateKey, {
+    feeling: elements.diaryFeeling.value,
+    sentence: elements.diarySentence.value,
+    thoughts: elements.diaryThoughts.value
+  });
+}
+
+function upsertDiaryBackup(card, dateKey, entry) {
+  const backups = readDiaryBackups();
+  const backupKey = `${state.activeBoardId || "board"}:${card.id}:${dateKey}`;
+  backups[backupKey] = {
+    boardId: state.activeBoardId || "",
+    cardId: card.id,
+    cardTitle: card.title || "Diary",
+    dateKey,
+    entry,
+    savedAt: Date.now()
+  };
+  localStorage.setItem(DIARY_BACKUP_KEY, JSON.stringify(backups));
+}
+
+function readDiaryBackups() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DIARY_BACKUP_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function moveDiaryDate(card, direction) {
@@ -3501,6 +3989,7 @@ function removeTemplateOnlyTypeOptions() {
 function renderConditionalFields() {
   elements.categoryCustomField.classList.toggle("is-visible", elements.cardCategory.value === "Custom");
   const type = getSelectedFormType();
+  renderPriorityButtons();
   renderTypeButtons(type);
   const isRoutine = type === "routine";
   const isScheduled = type === "scheduled";
@@ -3523,6 +4012,7 @@ function renderConditionalFields() {
   );
   elements.goalField.classList.toggle("is-visible", type === "minutes");
   elements.plannerField.classList.toggle("is-visible", type === "planner");
+  elements.plannerViewField.classList.toggle("is-visible", type === "planlist");
   elements.diaryField.classList.toggle("is-visible", type === "diary");
   elements.quoteField.classList.toggle("is-visible", type === "quote");
   elements.videoField.classList.toggle("is-visible", type === "video");
@@ -3535,13 +4025,22 @@ function renderConditionalFields() {
   if (type === "planner" && !normalizeDateKey(elements.plannerDate.value)) {
     elements.plannerDate.value = getTodayKey();
   }
+  const plannerViewMode = normalizePlannerViewMode(elements.plannerViewMode.value);
+  elements.plannerViewMode.value = plannerViewMode;
+  renderPlannerViewModeButtons(plannerViewMode);
+  elements.plannerExcludeTodayField.hidden = !["week", "month"].includes(plannerViewMode);
+  elements.plannerExcludeWeekField.hidden = plannerViewMode !== "month";
   if (type === "diary" && !normalizeDateKey(elements.diaryDate.value)) {
     elements.diaryDate.value = getTodayKey();
+  }
+  if (type === "diary") {
+    requestAnimationFrame(() => autoGrowTextarea(elements.diaryThoughts));
   }
   if (isContent) {
     selectedTimerMode = "none";
   }
   elements.countdownField.hidden = isRoutine || isContent;
+  elements.timerDetailField.classList.toggle("is-visible", !isRoutine && !isContent && ["date", "days"].includes(selectedTimerMode));
   elements.cardTypeHelp.textContent = TYPE_HELP[type] || TYPE_HELP.daily;
   renderTypeInsight(type);
   if (type === "workout") {
@@ -3600,6 +4099,39 @@ function renderTypeButtons(activeType = getSelectedFormType()) {
     `;
   }).join("");
   hydrateIcons(elements.cardTypeButtons);
+}
+
+function renderPriorityButtons() {
+  if (!elements.priorityButtons) return;
+  const activePriority = getSelectedPriority(elements.cardPriority.value);
+  elements.priorityButtons.innerHTML = ["normal", "high", "low"].map((priority) => {
+    const meta = PRIORITY_META[priority];
+    const isActive = priority === activePriority;
+    return `
+      <button type="button" class="${isActive ? "is-active" : ""}" data-priority="${priority}" data-label="${escapeAttribute(meta.label)}" title="${escapeAttribute(meta.label)}" aria-label="${escapeAttribute(meta.label)}" role="radio" aria-checked="${isActive ? "true" : "false"}" style="--priority-swatch:${meta.color}">
+        <span class="priority-dot"></span>
+        <span class="sr-only">${escapeHtml(meta.label)}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderPlannerViewModeButtons(activeMode = normalizePlannerViewMode(elements.plannerViewMode.value)) {
+  if (!elements.plannerViewModeButtons) return;
+  const options = [
+    ["today", "Today"],
+    ["week", "Week"],
+    ["month", "Month"],
+    ["upcoming", "Upcoming"]
+  ];
+  elements.plannerViewModeButtons.innerHTML = options.map(([mode, label]) => {
+    const isActive = mode === activeMode;
+    return `
+      <button type="button" class="${isActive ? "is-active" : ""}" data-planner-view="${mode}" role="radio" aria-checked="${isActive ? "true" : "false"}">
+        ${escapeHtml(label)}
+      </button>
+    `;
+  }).join("");
 }
 
 function renderTypeInsight(type) {
@@ -3873,34 +4405,231 @@ function getActiveRailSurface() {
 
 function renderRecordsModal() {
   const records = getArchivedCards().slice().sort((a, b) => Number(b.archivedAt || 0) - Number(a.archivedAt || 0));
+  const readyCards = getReadyToArchiveCards();
+  populateArchiveFilterControls(records);
+  const filteredRecords = getFilteredArchivedCards(records);
   const completed = records.filter((card) => getProgress(card).percent >= 100).length;
   elements.recordsModalTitle.textContent = "Archived cards";
-  elements.recordsModalSummary.textContent = records.length
-    ? `${records.length} archived · ${completed} completed · restore a card when it becomes active again`
-    : "Archive completed, paused or discontinued cards so the active board stays focused.";
-  elements.recordsModalList.innerHTML = records.length
-    ? records.map(renderRecordRow).join("")
-    : '<div class="records-empty">No archived cards yet.</div>';
+  elements.recordsModalSummary.textContent =
+    readyCards.length || records.length
+      ? `${readyCards.length} ready to archive · ${filteredRecords.length}/${records.length} archived shown · ${completed} completed in archive`
+      : "Archive completed, paused or discontinued cards so the active board stays focused.";
+  elements.recordsModalList.innerHTML = "";
+  if (readyCards.length) {
+    elements.recordsModalList.append(renderReadyArchiveSection(readyCards));
+  }
+  if (filteredRecords.length) {
+    elements.recordsModalList.append(renderArchivedSection(filteredRecords, records.length));
+  }
+  if (!readyCards.length && !filteredRecords.length) {
+    const empty = document.createElement("div");
+    empty.className = "records-empty";
+    empty.textContent = records.length ? "No archived cards match these filters." : "No archived cards yet.";
+    elements.recordsModalList.append(empty);
+  }
   hydrateIcons(elements.recordsModalList);
 }
 
-function renderRecordRow(card) {
+function populateArchiveFilterControls(records) {
+  const filters = getArchiveFilters();
+  elements.recordsSearch.value = filters.search;
+  elements.recordsDateFilter.value = filters.date;
+  elements.recordsSort.value = filters.sort;
+  state.ui.archiveType = setArchiveSelectOptions(
+    elements.recordsTypeFilter,
+    "All types",
+    records.map((card) => card.type).filter(Boolean),
+    filters.type,
+    (type) => (TYPE_META[type] || TYPE_META.single).label
+  );
+  state.ui.archiveArea = setArchiveSelectOptions(
+    elements.recordsAreaFilter,
+    "All areas",
+    records.map((card) => card.category || "General"),
+    filters.area
+  );
+  state.ui.archiveReason = setArchiveSelectOptions(
+    elements.recordsReasonFilter,
+    "All reasons",
+    records.map((card) => card.archiveReason || "archived"),
+    filters.reason,
+    formatArchiveReason
+  );
+}
+
+function setArchiveSelectOptions(select, allLabel, values, selectedValue, labelFormatter = (value) => value) {
+  const uniqueValues = [...new Set(values.map((value) => normalizeLabel(String(value || ""))).filter(Boolean))].sort((a, b) =>
+    labelFormatter(a).localeCompare(labelFormatter(b))
+  );
+  const options = [{ value: "all", label: allLabel }, ...uniqueValues.map((value) => ({ value, label: labelFormatter(value) }))];
+  select.innerHTML = "";
+  options.forEach((option) => {
+    const node = document.createElement("option");
+    node.value = option.value;
+    node.textContent = option.label;
+    select.append(node);
+  });
+  select.value = options.some((option) => option.value === selectedValue) ? selectedValue : "all";
+  return select.value;
+}
+
+function getArchiveFilters() {
+  const ui = state.ui || {};
+  return {
+    search: normalizeLabel(ui.archiveSearch || ""),
+    date: ["all", "7", "30", "year"].includes(ui.archiveDate) ? ui.archiveDate : "all",
+    sort: ["newest", "oldest", "title", "progress"].includes(ui.archiveSort) ? ui.archiveSort : "newest",
+    type: normalizeLabel(ui.archiveType || "all") || "all",
+    area: normalizeLabel(ui.archiveArea || "all") || "all",
+    reason: normalizeLabel(ui.archiveReason || "all") || "all"
+  };
+}
+
+function getFilteredArchivedCards(records) {
+  const filters = getArchiveFilters();
+  return records
+    .filter((card) => {
+      if (filters.type !== "all" && card.type !== filters.type) return false;
+      if (filters.area !== "all" && (card.category || "General") !== filters.area) return false;
+      if (filters.reason !== "all" && (card.archiveReason || "archived") !== filters.reason) return false;
+      if (!matchesArchiveDateFilter(card, filters.date)) return false;
+      if (filters.search && !getArchiveSearchText(card).includes(filters.search.toLowerCase())) return false;
+      return true;
+    })
+    .sort((a, b) => sortArchivedCards(a, b, filters.sort));
+}
+
+function matchesArchiveDateFilter(card, filter) {
+  if (filter === "all") return true;
+  const archivedAt = Number(card.archivedAt || 0);
+  if (!Number.isFinite(archivedAt) || archivedAt <= 0) return false;
+  const now = Date.now();
+  if (filter === "7") return archivedAt >= now - 7 * 86400000;
+  if (filter === "30") return archivedAt >= now - 30 * 86400000;
+  if (filter === "year") return new Date(archivedAt).getFullYear() === new Date().getFullYear();
+  return true;
+}
+
+function sortArchivedCards(a, b, sort) {
+  if (sort === "oldest") return Number(a.archivedAt || 0) - Number(b.archivedAt || 0);
+  if (sort === "title") return (a.title || "").localeCompare(b.title || "") || Number(b.archivedAt || 0) - Number(a.archivedAt || 0);
+  if (sort === "progress") return getProgress(b).percent - getProgress(a).percent || Number(b.archivedAt || 0) - Number(a.archivedAt || 0);
+  return Number(b.archivedAt || 0) - Number(a.archivedAt || 0);
+}
+
+function getArchiveSearchText(card) {
+  const typeMeta = TYPE_META[card.type] || TYPE_META.single;
+  return [
+    card.title,
+    card.description,
+    card.category,
+    typeMeta.label,
+    card.archiveReason,
+    formatArchiveReason(card.archiveReason || "archived"),
+    getCardRecordContext(card),
+    formatRecordDate(card.archivedAt)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function formatArchiveReason(value) {
+  return normalizeLabel(String(value || "archived"))
+    .split(" ")
+    .map((word) => (word ? `${word[0].toUpperCase()}${word.slice(1)}` : ""))
+    .join(" ");
+}
+
+function getReadyToArchiveCards() {
+  return state.cards
+    .filter(isReadyToArchiveCard)
+    .slice()
+    .sort((a, b) => getPlanningSortValue(a) - getPlanningSortValue(b) || a.order - b.order);
+}
+
+function isReadyToArchiveCard(card) {
+  return !isProgresslessCard(card) && getProgress(card).percent >= 100;
+}
+
+function renderReadyArchiveSection(cards) {
+  const section = createRecordsSection("Ready to archive", `${cards.length} completed on board`);
+  const gallery = document.createElement("div");
+  gallery.className = "archive-card-gallery";
+  cards.forEach((card) => gallery.append(renderReadyArchiveCard(card)));
+  section.append(gallery);
+  return section;
+}
+
+function renderArchivedSection(records, totalRecords) {
+  const section = createRecordsSection("Archived cards", `${records.length}/${totalRecords} shown`);
+  const gallery = document.createElement("div");
+  gallery.className = "archive-card-gallery";
+  records.forEach((card) => gallery.append(renderArchivedCard(card)));
+  section.append(gallery);
+  return section;
+}
+
+function createRecordsSection(title, meta) {
+  const section = document.createElement("section");
+  section.className = "records-section";
+  const head = document.createElement("div");
+  head.className = "records-section-head";
+  const strong = document.createElement("strong");
+  strong.textContent = title;
+  const span = document.createElement("span");
+  span.textContent = meta;
+  head.append(strong, span);
+  section.append(head);
+  return section;
+}
+
+function renderReadyArchiveCard(card) {
+  return renderArchiveCardFrame(card, {
+    status: "Still on board",
+    actionLabel: "Archive",
+    actionClass: "record-archive",
+    actionAttribute: "data-archive-ready-card"
+  });
+}
+
+function renderArchivedCard(card) {
+  return renderArchiveCardFrame(card, {
+    status: `${formatArchiveReason(card.archiveReason || "archived")} · ${formatRecordDate(card.archivedAt)}`,
+    actionLabel: "Restore",
+    actionClass: "record-restore",
+    actionAttribute: "data-restore-card"
+  });
+}
+
+function renderArchiveCardFrame(card, options) {
   const progress = getProgress(card);
   const typeMeta = TYPE_META[card.type] || TYPE_META.single;
-  const archivedDate = formatRecordDate(card.archivedAt);
   const context = getCardRecordContext(card);
-  return `
-    <article class="record-row">
-      <div class="record-main">
-        <strong>${escapeHtml(card.title || "Untitled card")}</strong>
-        <span>${escapeHtml(typeMeta.label)} · ${escapeHtml(card.category || "General")}${context ? ` · ${escapeHtml(context)}` : ""} · ${progress.percent}% · ${escapeHtml(card.archiveReason || "archived")} · ${escapeHtml(archivedDate)}</span>
-        <p>${escapeHtml(card.description || progress.label)}</p>
-      </div>
-      <div class="record-actions">
-        <button type="button" class="secondary-action record-restore" data-restore-card="${escapeAttribute(card.id)}">Restore</button>
-      </div>
-    </article>
-  `;
+  const frame = document.createElement("article");
+  frame.className = `archive-card-frame ${options.actionAttribute === "data-archive-ready-card" ? "is-ready" : "is-archived"}`;
+  frame.append(renderCard(cloneCardForArchivePreview(card), { interactive: false }));
+  const footer = document.createElement("div");
+  footer.className = "archive-card-footer";
+  const meta = document.createElement("div");
+  meta.className = "archive-card-meta";
+  const title = document.createElement("strong");
+  title.textContent = options.status;
+  const detail = document.createElement("span");
+  detail.textContent = `${typeMeta.label} · ${card.category || "General"}${context ? ` · ${context}` : ""} · ${progress.percent}%`;
+  meta.append(title, detail);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `secondary-action ${options.actionClass}`;
+  button.textContent = options.actionLabel;
+  button.setAttribute(options.actionAttribute, card.id);
+  footer.append(meta, button);
+  frame.append(footer);
+  return frame;
+}
+
+function cloneCardForArchivePreview(card) {
+  return JSON.parse(JSON.stringify(card || {}));
 }
 
 function getCardRecordContext(card) {
@@ -3980,6 +4709,14 @@ function formatRecordDate(value) {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+function formatRecordDateTime(value) {
+  const date = new Date(Number(value) || value || Date.now());
+  if (!Number.isFinite(date.getTime())) return "today";
+  const dateText = date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  const timeText = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${dateText}, ${timeText}`;
+}
+
 function getRecentDateLabel(value) {
   const date = new Date(Number(value) || Date.now());
   if (!Number.isFinite(date.getTime())) return "Today";
@@ -3989,6 +4726,15 @@ function getRecentDateLabel(value) {
   if (dayDelta === 0) return "Today";
   if (dayDelta === -1) return "Yesterday";
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatTodayLine() {
+  return new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric"
+  });
 }
 
 function parseChecklistItems() {
@@ -4127,8 +4873,11 @@ function hasDraftInput() {
       elements.cardBackground.value !== "clean" ||
       elements.cardPriority.value !== "normal" ||
       normalizeDateKey(elements.plannerDate.value) !== getTodayKey() ||
+      normalizePlannerViewMode(elements.plannerViewMode.value) !== "today" ||
+      elements.plannerViewExcludeToday.checked ||
+      elements.plannerViewExcludeWeek.checked ||
       normalizeDateKey(elements.diaryDate.value) !== getTodayKey() ||
-      elements.diaryFeeling.value !== "Clear" ||
+      elements.diaryFeeling.value !== "Calm" ||
       normalizeDateKey(elements.cardPlanDate.value) !== getTodayKey() ||
       elements.cardCategory.value !== "General" ||
       elements.cardCategoryCustom.value.trim()
@@ -4136,7 +4885,7 @@ function hasDraftInput() {
 }
 
 function normalizeLabel(value) {
-  return value.replace(/\s+/g, " ").trim();
+  return String(value || "").replace(/\s+/g, " ").trim();
 }
 
 function normalizeVideoUrl(value) {
@@ -4154,6 +4903,21 @@ function normalizeCategory(value) {
   const label = normalizeLabel(String(value || ""));
   if (!label) return "General";
   return CATEGORY_ALIASES[label.toLowerCase()] || label;
+}
+
+function getPlannerGroup(card) {
+  return normalizeCategory(card?.plannerGroup || card?.category || card?.metadata?.category || "General");
+}
+
+function normalizePlannerViewMode(value) {
+  return ["today", "week", "month", "upcoming"].includes(value) ? value : "today";
+}
+
+function normalizePlannerViewOptions(options = {}) {
+  return {
+    excludeToday: Boolean(options.excludeToday),
+    excludeWeek: Boolean(options.excludeWeek)
+  };
 }
 
 function getSelectedPriority(value) {
@@ -4178,8 +4942,9 @@ function getCardPlanDate(card) {
 }
 
 function getPlannedDateChip(card) {
-  if (!card || !["daily", "planner", "diary"].includes(card.type)) return "";
-  const dateKey = card.type === "planner" ? getActivePlannerDate(card) : card.type === "diary" ? getActiveDiaryDate(card) : getCardPlanDate(card);
+  if (!card || card.type !== "daily") return "";
+  const dateKey = getCardPlanDate(card);
+  if (dateKey === getTodayKey()) return "";
   const date = dateKeyToLocalDate(dateKey);
   const relative = getRelativeDateLabel(dateKey, getProgress(card).percent);
   const dateLabel = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -4351,6 +5116,7 @@ function populateTimerFields(card) {
     return;
   }
 
+  elements.timerShowSeconds.checked = false;
   const hours = Math.floor(card.duration / 3600);
   const minutes = Math.floor((card.duration % 3600) / 60);
   elements.timerHours.value = String(hours);
@@ -4580,7 +5346,7 @@ function getOrderedCards() {
 }
 
 function getTypeWeight(type) {
-  const weights = { planner: 0, diary: 1, brief: 2, routine: 3, scheduled: 4, daily: 5, event: 6, quote: 7, video: 8, lab: 9, workout: 10, minutes: 11, checklist: 12, weekly: 13, monthly: 14, annual: 15, single: 16 };
+  const weights = { planner: 0, planlist: 1, diary: 2, brief: 3, routine: 4, scheduled: 5, daily: 6, event: 7, quote: 8, video: 9, lab: 10, workout: 11, minutes: 12, checklist: 13, weekly: 14, monthly: 15, annual: 16, single: 17 };
   return Number.isFinite(weights[type]) ? weights[type] : 9;
 }
 
@@ -4618,6 +5384,8 @@ function getCardSearchText(card) {
     card.quoteAuthor,
     card.videoUrl,
     plannerEntry?.note,
+    card.type === "planlist" ? getPlannerViewLabel(card.plannerView) : "",
+    card.type === "planlist" ? getPlannerGroup(card) : "",
     diaryEntry?.feeling,
     diaryEntry?.sentence,
     diaryEntry?.thoughts,
@@ -4669,6 +5437,11 @@ function getProgress(card) {
   if (card.type === "planner") {
     const entry = getPlannerEntry(card, getActivePlannerDate(card));
     return { percent: entry.note ? 100 : 0, label: entry.note ? "Planned" : "Planner" };
+  }
+
+  if (card.type === "planlist") {
+    const data = getPlannerViewData(card.plannerView, getPlannerGroup(card), card.plannerViewOptions);
+    return { percent: 0, label: `${data.items.length} linked` };
   }
 
   if (card.type === "diary") {
@@ -4780,6 +5553,10 @@ function hasCountdown(card) {
 
 function isAutomaticCountdown(card) {
   return hasCountdown(card) && ["daily", "date", "days"].includes(card.timerMode);
+}
+
+function shouldTickCountdownEverySecond(card) {
+  return isAutomaticCountdown(card) && Boolean(card.showTimerSeconds) && getRemaining(card) > 0;
 }
 
 function isManualTimer(card) {
@@ -5002,10 +5779,11 @@ function getTimerCaption(card, remaining) {
   if (card.timerMode === "date" && card.targetAt) {
     const date = new Date(card.targetAt);
     if (Number.isFinite(date.getTime())) {
-      return `Auto · ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+      const dateLabel = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      return card.showTimerSeconds ? `Live · ${dateLabel}` : `Auto · ${dateLabel}`;
     }
   }
-  if (card.timerMode === "days") return "Auto days left";
+  if (card.timerMode === "days") return card.showTimerSeconds ? "Live days left" : "Auto days left";
   return "Time left";
 }
 
@@ -5016,6 +5794,9 @@ function formatRemaining(card, totalSeconds) {
   }
   if ((card.timerMode === "date" || card.timerMode === "days") && totalSeconds >= 24 * 60 * 60) {
     const days = Math.floor(totalSeconds / (24 * 60 * 60));
+    if (card.showTimerSeconds) {
+      return `${days}d ${formatTime(totalSeconds % (24 * 60 * 60))}`;
+    }
     const hours = Math.floor((totalSeconds % (24 * 60 * 60)) / 3600);
     return `${days}d ${String(hours).padStart(2, "0")}h`;
   }
@@ -5396,6 +6177,71 @@ function buildTemplateCards(templateId) {
         items: ["Send notes", "Assign owners", "Schedule next step", "Archive reference"]
       }),
       makeCard({
+        title: "Life planner",
+        description: "Enter dated plans once, then let the linked views show the right range.",
+        category: "Personal",
+        type: "planner",
+        theme: "leaf",
+        background: "clean",
+        activePlannerDate: getTodayKey(),
+        plannerEntries: {
+          [getTodayKey()]: normalizePlannerEntry({
+            note: "Confirm today's errand before lunch.\nSend one personal follow-up.",
+            updatedAt: Date.now()
+          }),
+          [getTodayKey(addDays(new Date(), 2))]: normalizePlannerEntry({
+            note: "Prepare notes for the weekend plan.",
+            updatedAt: Date.now()
+          }),
+          [getTodayKey(addDays(new Date(), 12))]: normalizePlannerEntry({
+            note: "Review next month budget and travel ideas.",
+            updatedAt: Date.now()
+          }),
+          [getTodayKey(addDays(new Date(), 55))]: normalizePlannerEntry({
+            note: "Check passport, flights and annual leave.",
+            updatedAt: Date.now()
+          })
+        }
+      }),
+      makeCard({
+        title: "Today planner view",
+        description: "Personal planner items dated today.",
+        category: "Personal",
+        type: "planlist",
+        plannerView: "today",
+        theme: "leaf",
+        background: "clean"
+      }),
+      makeCard({
+        title: "Week planner view",
+        description: "Rest of this week, excluding today's planner items.",
+        category: "Personal",
+        type: "planlist",
+        plannerView: "week",
+        plannerViewOptions: { excludeToday: true },
+        theme: "tide",
+        background: "sky"
+      }),
+      makeCard({
+        title: "Month planner view",
+        description: "Later this month, excluding today and this week.",
+        category: "Personal",
+        type: "planlist",
+        plannerView: "month",
+        plannerViewOptions: { excludeToday: true, excludeWeek: true },
+        theme: "plum",
+        background: "paper"
+      }),
+      makeCard({
+        title: "Upcoming planner view",
+        description: "Personal plans beyond this month.",
+        category: "Personal",
+        type: "planlist",
+        plannerView: "upcoming",
+        theme: "honey",
+        background: "paper"
+      }),
+      makeCard({
         title: "Gym M/W/F",
         description: "Training attendance for strength, energy and stress control.",
         category: "Health",
@@ -5482,7 +6328,7 @@ function buildTemplateCards(templateId) {
         type: "diary",
         theme: "plum",
         background: "paper",
-        feeling: "Clear",
+        feeling: "Calm",
         sentence: "Today I will notice what actually moved.",
         thoughts: "Use the arrows to review older pages when planning the week."
       }),
@@ -5617,7 +6463,7 @@ function buildTemplateCards(templateId) {
         type: "diary",
         theme: "plum",
         background: "paper",
-        feeling: "Clear",
+        feeling: "Calm",
         sentence: "Today I closed the most important loop.",
         thoughts: "Log wins, missed promises, and the first task for tomorrow."
       })
@@ -6210,6 +7056,7 @@ function makeCard(options) {
     targetAt,
     duration,
     remaining: duration,
+    showTimerSeconds: Boolean(options.showTimerSeconds),
     runningSince: null,
     lastResetDate: options.type === "routine" ? getTodayKey() : null,
     history: options.type === "routine" ? [] : undefined,
@@ -6224,7 +7071,7 @@ function makeCard(options) {
     card.diaryEntries = options.diaryEntries && typeof options.diaryEntries === "object" ? options.diaryEntries : {};
     if (!card.diaryEntries[activeDate]) {
       card.diaryEntries[activeDate] = normalizeDiaryEntry({
-        feeling: options.feeling || "Clear",
+        feeling: options.feeling || "Calm",
         sentence: options.sentence || "",
         thoughts: options.thoughts || "",
         updatedAt: options.sentence || options.thoughts ? Date.now() : 0
@@ -6235,6 +7082,7 @@ function makeCard(options) {
 
   if (card.type === "planner") {
     const activeDate = normalizeDateKey(options.activePlannerDate || options.plannedDate) || getTodayKey();
+    card.plannerGroup = getPlannerGroup(card);
     card.activePlannerDate = activeDate;
     card.plannerEntries = options.plannerEntries && typeof options.plannerEntries === "object" ? options.plannerEntries : {};
     if (!card.plannerEntries[activeDate]) {
@@ -6244,6 +7092,12 @@ function makeCard(options) {
       });
     }
     normalizePlannerCard(card);
+  }
+
+  if (card.type === "planlist") {
+    card.plannerGroup = getPlannerGroup(card);
+    card.plannerView = normalizePlannerViewMode(options.plannerView);
+    card.plannerViewOptions = normalizePlannerViewOptions(options.plannerViewOptions);
   }
 
   if (card.type === "quote") {
@@ -6310,11 +7164,11 @@ function makeCard(options) {
 
 function loadState() {
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())));
+  if (!stored) return restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState()))));
   try {
-    return rehydrateState(JSON.parse(stored));
+    return restoreDiaryBackups(rehydrateState(JSON.parse(stored)));
   } catch {
-    return ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())));
+    return restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState()))));
   }
 }
 
@@ -6346,37 +7200,46 @@ function rehydrateState(parsed) {
   );
 }
 
-function ensureSampleCards(nextState) {
-  if ((Number(nextState.sampleVersion) || 0) >= SAMPLE_VERSION) return nextState;
+function restoreDiaryBackups(nextState) {
+  const backups = Object.values(readDiaryBackups());
+  if (!backups.length) return nextState;
+  let changed = false;
 
-  const existingTitles = new Set(nextState.cards.map((card) => (card.title || "").toLowerCase()));
-  const samples = cloneDefaultState().cards.slice(4);
-  let order = nextState.cards.length ? Math.max(...nextState.cards.map((card) => Number(card.order) || 0)) + 1 : 1;
+  const applyBackupToCard = (card, backup, boardId) => {
+    const backupBoardId = normalizeLabel(String(backup.boardId || ""));
+    const targetBoardId = normalizeLabel(String(boardId || ""));
+    if (backupBoardId && targetBoardId && backupBoardId !== targetBoardId) return;
+    if (!card || card.type !== "diary" || card.id !== backup.cardId) return;
+    normalizeDiaryCard(card);
+    const dateKey = normalizeDateKey(backup.dateKey);
+    if (!dateKey) return;
+    const backupEntry = normalizeDiaryEntry(backup.entry || {});
+    const currentEntry = normalizeDiaryEntry(card.diaryEntries[dateKey] || {});
+    if (Number(backupEntry.updatedAt || 0) <= Number(currentEntry.updatedAt || 0)) return;
+    card.diaryEntries[dateKey] = backupEntry;
+    changed = true;
+  };
 
-  samples.forEach((sample) => {
-    if (existingTitles.has((sample.title || "").toLowerCase())) return;
-    const cloned = JSON.parse(JSON.stringify(sample));
-    cloned.id = createId();
-    cloned.order = order;
-    cloned.createdAt = Date.now() - order * 10000;
-    if (Array.isArray(cloned.items)) {
-      cloned.items = cloned.items.map((item) => ({ ...item, id: createId() }));
-    }
-    nextState.cards.push(normalizeCard(cloned));
-    existingTitles.add((cloned.title || "").toLowerCase());
-    order += 1;
+  backups.forEach((backup) => {
+    if (!backup || !backup.cardId) return;
+    (nextState.cards || []).forEach((card) => applyBackupToCard(card, backup, nextState.activeBoardId));
+    (nextState.boards || []).forEach((board) => {
+      (board.cards || []).forEach((card) => applyBackupToCard(card, backup, board.id));
+    });
   });
 
-  nextState.sampleVersion = SAMPLE_VERSION;
-  nextState.activeFilter = "all";
-  nextState.activeCategory = "all";
-  nextState.activeCategories = [];
-  const activeBoard = Array.isArray(nextState.boards)
-    ? nextState.boards.find((board) => board.id === nextState.activeBoardId)
-    : null;
-  if (activeBoard) {
-    activeBoard.cards = nextState.cards.map(normalizeCard);
+  if (changed && Array.isArray(nextState.boards)) {
+    const activeBoard = nextState.boards.find((board) => board.id === nextState.activeBoardId);
+    if (activeBoard) {
+      nextState.cards = activeBoard.cards.map(normalizeCard);
+    }
   }
+  return nextState;
+}
+
+function ensureSampleCards(nextState) {
+  if ((Number(nextState.sampleVersion) || 0) >= SAMPLE_VERSION) return nextState;
+  nextState.sampleVersion = SAMPLE_VERSION;
   return nextState;
 }
 
@@ -6404,11 +7267,14 @@ function ensureCourseBoard(nextState) {
     addMissingTemplateCards(lifeOsBoard, "life-os");
   }
 
-  if (removedActiveBoard || needsLifeOs || !hasLifeOs || !nextState.boards.some((board) => board.id === nextState.activeBoardId)) {
+  const activeBoardExists = nextState.boards.some((board) => board.id === nextState.activeBoardId);
+  if (removedActiveBoard || !activeBoardExists) {
     applyBoardToState(nextState, nextState.boards.some((board) => board.id === lifeOsId) ? lifeOsId : nextState.boards[0]?.id);
     nextState.activeFilter = "all";
     nextState.activeCategory = "all";
     nextState.activeCategories = [];
+  } else if (nextState.activeBoardId === lifeOsId && (needsLifeOs || !hasLifeOs)) {
+    applyBoardToState(nextState, lifeOsId);
   }
 
   nextState.courseBoardVersion = COURSE_BOARD_VERSION;
@@ -6447,6 +7313,7 @@ function normalizeCard(card) {
   next.type = TYPE_META[next.type] ? next.type : "single";
   next.timerMode = ["none", "date", "days", "hours", "daily"].includes(next.timerMode) ? next.timerMode : "none";
   if (isUntimedContentType(next.type)) next.timerMode = "none";
+  next.showTimerSeconds = Boolean(next.showTimerSeconds);
   if (next.type === "event" && ["none", "hours", "daily"].includes(next.timerMode)) {
     next.timerMode = "date";
     next.targetAt = next.targetAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -6468,6 +7335,11 @@ function normalizeCard(card) {
   next.metadata.category = next.category;
   if (next.type === "planner") {
     normalizePlannerCard(next);
+  }
+  if (next.type === "planlist") {
+    next.plannerGroup = getPlannerGroup(next);
+    next.plannerView = normalizePlannerViewMode(next.plannerView);
+    next.plannerViewOptions = normalizePlannerViewOptions(next.plannerViewOptions);
   }
   if (next.type === "diary") {
     normalizeDiaryCard(next);
