@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Progress Board</title>
+    <title>Life OS</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -17,8 +17,8 @@
               <span></span>
             </div>
             <div>
-              <p class="eyebrow">Progress Board</p>
-              <h1>Personal tracker</h1>
+              <p class="eyebrow">Life OS</p>
+              <h1>Personal board</h1>
             </div>
           </div>
           <button type="button" class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar" aria-label="Toggle sidebar">
@@ -29,16 +29,17 @@
         <section class="panel board-panel">
           <div class="panel-heading">
             <h2>Board</h2>
-            <span id="savedState" class="save-state">Saved</span>
+            <span id="savedState" class="save-state">Saved here</span>
           </div>
           <label class="field">
-            <span>Switch board</span>
+            <span>Current board</span>
             <select id="boardSelect"></select>
           </label>
           <div class="board-actions">
             <button type="button" class="secondary-action board-new" id="newBoardButton">New board</button>
             <button type="button" class="secondary-action board-delete" id="deleteBoardButton">Delete board</button>
           </div>
+          <p class="data-note">Saved in this browser. Use Backup in Board tools to move your board to another browser.</p>
           <label class="field">
             <span>Name</span>
             <input id="boardName" type="text" maxlength="36" autocomplete="off" />
@@ -54,16 +55,16 @@
           <div class="field">
             <span>Layout</span>
             <div class="segmented" id="layoutControl" role="group" aria-label="Board layout">
-              <button type="button" data-value="smart">Smart</button>
-              <button type="button" data-value="focus">Focus</button>
-              <button type="button" data-value="custom">Custom</button>
+              <button type="button" data-value="smart">Auto</button>
+              <button type="button" data-value="focus">Priority</button>
+              <button type="button" data-value="custom">Manual</button>
             </div>
           </div>
         </section>
 
         <section class="panel">
           <div class="panel-heading">
-            <h2 id="formTitle">New card</h2>
+            <h2 id="formTitle">Add card</h2>
           </div>
           <form id="cardForm" class="card-form">
             <label class="field">
@@ -76,7 +77,7 @@
             </label>
             <div class="form-grid">
               <label class="field">
-                <span>Category</span>
+                <span>Area</span>
                 <select id="cardCategory">
                   <option value="General">General</option>
                   <option value="Work">Work</option>
@@ -87,10 +88,7 @@
                   <option value="Custom">Custom</option>
                 </select>
               </label>
-              <label class="field">
-                <span>Reward</span>
-                <input id="cardReward" type="text" maxlength="56" placeholder="Coffee, break..." autocomplete="off" />
-              </label>
+              <input id="cardReward" type="hidden" value="" />
             </div>
             <div class="form-grid">
               <label class="field">
@@ -107,19 +105,22 @@
               </label>
             </div>
             <label class="field category-custom" id="categoryCustomField">
-              <span>Custom category</span>
-              <input id="cardCategoryCustom" type="text" maxlength="32" placeholder="Category name" autocomplete="off" />
+              <span>Custom area</span>
+              <input id="cardCategoryCustom" type="text" maxlength="32" placeholder="Area name" autocomplete="off" />
             </label>
             <div>
               <label class="field">
                 <span>Type</span>
                 <select id="cardType">
                   <option value="daily">To-do list</option>
+                  <option value="diary">Daily diary</option>
                   <option value="brief">Strategy brief</option>
-                  <option value="single">One-off task</option>
-                  <option value="routine">Daily repeating checklist</option>
+                  <option value="quote">Motivation</option>
+                  <option value="video">Video embed</option>
+                  <option value="single">Task</option>
+                  <option value="routine">Daily routine</option>
                   <option value="scheduled">Scheduled habit</option>
-                  <option value="minutes">Number goal</option>
+                  <option value="minutes">Goal</option>
                   <option value="checklist">Project checklist</option>
                   <option value="weekly">Scorecard grid</option>
                 </select>
@@ -158,7 +159,7 @@
               <div class="background-swatches" id="backgroundSwatches" role="radiogroup" aria-label="Card background"></div>
             </label>
             <div class="field" id="countdownField">
-              <span>Timing</span>
+              <span>Time</span>
               <div class="segmented timer-mode-control" id="timerModeControl" role="group" aria-label="Timing mode">
                 <button type="button" data-value="none">None</button>
                 <button type="button" data-value="date">Date</button>
@@ -209,6 +210,42 @@
                 </select>
               </label>
             </div>
+            <div class="diary-input" id="diaryField">
+              <div class="form-grid">
+                <label class="field">
+                  <span>Entry date</span>
+                  <input id="diaryDate" type="date" />
+                </label>
+                <label class="field">
+                  <span>Feeling</span>
+                  <select id="diaryFeeling">
+                    <option value="Clear">Clear</option>
+                    <option value="Happy">Happy</option>
+                    <option value="Calm">Calm</option>
+                    <option value="Focused">Focused</option>
+                    <option value="Tired">Tired</option>
+                    <option value="Stressed">Stressed</option>
+                    <option value="Low">Low</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field">
+                <span>One sentence</span>
+                <input id="diarySentence" type="text" maxlength="120" placeholder="Today in one sentence" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Thoughts</span>
+                <textarea id="diaryThoughts" maxlength="520" rows="4" placeholder="What happened, what you learned, what to remember"></textarea>
+              </label>
+            </div>
+            <label class="field quote-input" id="quoteField">
+              <span>Source</span>
+              <input id="quoteAuthor" type="text" maxlength="64" placeholder="Author, coach, personal note" autocomplete="off" />
+            </label>
+            <label class="field video-input" id="videoField">
+              <span>Video URL</span>
+              <input id="videoUrl" type="url" maxlength="500" placeholder="YouTube, Instagram or Facebook link" autocomplete="off" />
+            </label>
             <label class="toggle-row">
               <input id="includeImage" type="checkbox" />
               <span>Include image</span>
@@ -237,12 +274,16 @@
             <span data-icon="layout-grid"></span>
             <span>Browse templates</span>
           </button>
+          <button type="button" class="template-open-button review-open-button" id="openIdeasButton">
+            <span data-icon="list"></span>
+            <span>Review ideas</span>
+          </button>
         </section>
 
         <section class="panel recent-panel" id="recentPanel">
           <div class="panel-heading recent-heading">
             <div>
-              <h2>Recent</h2>
+              <h2>Recently edited</h2>
               <span id="recentCount">Cards</span>
             </div>
             <button type="button" class="recent-toggle" id="recentToggleButton" aria-expanded="true">
@@ -254,7 +295,7 @@
 
         <section class="panel artist-panel">
           <div class="panel-heading">
-            <h2>Artist packs</h2>
+            <h2>Theme packs</h2>
             <span class="tag">Future</span>
           </div>
           <div class="pack-list" id="packList"></div>
@@ -265,7 +306,7 @@
         <header class="workspace-header">
           <div>
             <p class="eyebrow" id="visibilityLabel">Private board</p>
-            <h2 id="boardTitle">My Progress Board</h2>
+            <h2 id="boardTitle">My Life OS</h2>
           </div>
           <div class="stats" aria-label="Board stats">
             <div>
@@ -278,7 +319,7 @@
             </div>
             <div>
               <span id="completionRate">0%</span>
-              <p>Done</p>
+              <p>Complete</p>
             </div>
           </div>
         </header>
@@ -287,22 +328,22 @@
           <button type="button" class="focus-tile" data-focus="today">
             <span id="focusTodayCount">0</span>
             <strong>Today</strong>
-            <small>planned cards</small>
+            <small>due today</small>
           </button>
           <button type="button" class="focus-tile" data-focus="must">
             <span id="focusMustCount">0</span>
-            <strong>Must do</strong>
-            <small>active priority</small>
+            <strong>Priority</strong>
+            <small>needs focus</small>
           </button>
           <button type="button" class="focus-tile" data-focus="overdue">
             <span id="focusOverdueCount">0</span>
-            <strong>Overdue</strong>
+            <strong>Review</strong>
             <small>needs review</small>
           </button>
           <button type="button" class="focus-tile" data-focus="done">
             <span id="focusDoneCount">0</span>
-            <strong>Done</strong>
-            <small>ready to archive</small>
+            <strong>Complete</strong>
+            <small>finished cards</small>
           </button>
         </section>
 
@@ -310,34 +351,37 @@
           <div class="filter-strip">
             <div class="view-pills">
               <button type="button" class="pill is-active" data-filter="all">All</button>
-              <button type="button" class="pill" data-filter="active">Active</button>
-              <button type="button" class="pill" data-filter="done">Done</button>
+              <button type="button" class="pill" data-filter="active">Open</button>
+              <button type="button" class="pill" data-filter="done">Complete</button>
             </div>
             <button type="button" class="pill category-toggle" id="categoryToggle" aria-expanded="true">
-              <span id="categoryToggleLabel">Categories</span>
+              <span id="categoryToggleLabel">Areas</span>
             </button>
             <label class="board-search">
               <span data-icon="search"></span>
-              <input id="boardSearch" type="search" placeholder="Search cards, rewards, dates" autocomplete="off" aria-label="Search board cards" />
+              <input id="boardSearch" type="search" placeholder="Search cards, areas, dates" autocomplete="off" aria-label="Search board cards" />
               <button type="button" id="clearSearchButton" title="Clear search" aria-label="Clear search" hidden>
                 <span data-icon="x"></span>
               </button>
             </label>
-            <div class="category-pills" id="categoryPills" aria-label="Category filters"></div>
+            <div class="category-pills" id="categoryPills" aria-label="Area filters"></div>
           </div>
           <div class="board-global-actions">
             <button type="button" class="toolbar-action toolbar-primary" id="quickTodoToggleButton">
               <span data-icon="plus"></span>
               <span>Quick add</span>
             </button>
-            <button type="button" class="toolbar-action" id="openRecordsButton">Records</button>
+            <button type="button" class="toolbar-action" id="openRecordsButton">Archive</button>
             <details class="board-tools-menu">
               <summary>Board tools</summary>
               <div class="board-tools-popover">
-                <button type="button" class="toolbar-action" id="startAllTimersButton">Start all</button>
-                <button type="button" class="toolbar-action" id="stopAllTimersButton">Stop all</button>
+                <button type="button" class="toolbar-action" id="startAllTimersButton">Start timers</button>
+                <button type="button" class="toolbar-action" id="stopAllTimersButton">Stop timers</button>
                 <button type="button" class="toolbar-action" id="saveLayoutButton">Save layout</button>
                 <button type="button" class="toolbar-action" id="restoreLayoutButton">Restore</button>
+                <button type="button" class="toolbar-action" id="exportDataButton">Backup</button>
+                <button type="button" class="toolbar-action" id="importDataButton">Import</button>
+                <input id="importDataFile" class="sr-only" type="file" accept="application/json,.json" />
                 <button type="button" class="icon-button" id="arrangeButton" title="Arrange board" aria-label="Arrange board">
                   <span data-icon="layout-grid"></span>
                 </button>
@@ -366,19 +410,22 @@
                 <span>Type</span>
                 <select id="quickTodoType" aria-label="Card type">
                   <option value="daily">To-do list</option>
-                  <option value="single">One-off task</option>
+                  <option value="diary">Daily diary</option>
+                  <option value="single">Task</option>
                   <option value="checklist">Project checklist</option>
                   <option value="brief">Strategy brief</option>
+                  <option value="quote">Motivation</option>
+                  <option value="video">Video embed</option>
                 </select>
               </label>
               <label class="quick-field">
-                <span>Category</span>
-                <select id="quickTodoCategory" aria-label="Card category"></select>
+                <span>Area</span>
+                <select id="quickTodoCategory" aria-label="Card area"></select>
               </label>
               <label class="quick-field">
-                <span>Timing</span>
-                <select id="quickTodoTiming" aria-label="Timing">
-                  <option value="none">No deadline</option>
+                <span>Time</span>
+                <select id="quickTodoTiming" aria-label="Time">
+                  <option value="none">No time</option>
                   <option value="today">End of today</option>
                   <option value="tomorrow">End of tomorrow</option>
                   <option value="week">7 days</option>
@@ -427,7 +474,7 @@
           <div class="board-grid preview-grid" id="cardPreview"></div>
         </section>
 
-        <section class="board-grid" id="boardGrid" aria-label="Progress cards"></section>
+        <section class="board-grid" id="boardGrid" aria-label="Life OS cards"></section>
       </main>
     </div>
 
@@ -460,6 +507,34 @@
       </section>
     </div>
 
+    <div class="modal-backdrop" id="ideasModal" hidden>
+      <section class="ideas-modal" role="dialog" aria-modal="true" aria-labelledby="ideasModalTitle">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Life OS review</p>
+            <h2 id="ideasModalTitle">Suggested improvements</h2>
+          </div>
+          <button type="button" class="icon-button" id="ideasModalCloseButton" title="Close review" aria-label="Close review">
+            <span data-icon="x"></span>
+          </button>
+        </header>
+        <div class="ideas-modal-body">
+          <section class="ideas-overview">
+            <div>
+              <p class="eyebrow">Direction</p>
+              <h3>Cards can hold routines, decisions, memories, media, and motivation.</h3>
+              <p>The platform should feel like a practical daily command center, not a strict task app.</p>
+            </div>
+            <div class="ideas-overview-actions">
+              <button type="button" class="primary-action" data-open-template="workday-command">Preview workday board</button>
+              <button type="button" class="secondary-action" data-open-template="business-operator">Preview business board</button>
+            </div>
+          </section>
+          <div class="ideas-grid" id="ideasGrid"></div>
+        </div>
+      </section>
+    </div>
+
     <div class="modal-backdrop" id="historyModal" hidden>
       <section class="history-modal" role="dialog" aria-modal="true" aria-labelledby="historyModalTitle">
         <header class="modal-header">
@@ -482,10 +557,10 @@
       <section class="records-modal" role="dialog" aria-modal="true" aria-labelledby="recordsModalTitle">
         <header class="modal-header">
           <div>
-            <p class="eyebrow">Board records</p>
+            <p class="eyebrow">Board archive</p>
             <h2 id="recordsModalTitle">Archived cards</h2>
           </div>
-          <button type="button" class="icon-button" id="recordsModalCloseButton" title="Close records" aria-label="Close records">
+          <button type="button" class="icon-button" id="recordsModalCloseButton" title="Close archive" aria-label="Close archive">
             <span data-icon="x"></span>
           </button>
         </header>

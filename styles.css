@@ -321,6 +321,9 @@ textarea:focus {
 .image-url,
 .checklist-input,
 .goal-input,
+.diary-input,
+.quote-input,
+.video-input,
 .schedule-input,
 .timer-setting,
 .scorecard-period,
@@ -332,6 +335,9 @@ textarea:focus {
 .image-url.is-visible,
 .checklist-input.is-visible,
 .goal-input.is-visible,
+.diary-input.is-visible,
+.quote-input.is-visible,
+.video-input.is-visible,
 .schedule-input.is-visible,
 .timer-setting.is-visible,
 .scorecard-period.is-visible,
@@ -495,6 +501,18 @@ textarea:focus {
   background: #f4f4f2;
 }
 
+.data-note {
+  margin: -2px 0 14px;
+  padding: 9px 10px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 10px;
+  background: rgba(17, 17, 17, 0.035);
+  color: #626260;
+  font-size: 0.73rem;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
 .primary-action:hover,
 .segmented button:hover,
 .pill:hover,
@@ -521,6 +539,12 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.88);
   font-size: 0.82rem;
   font-weight: 900;
+}
+
+.review-open-button {
+  margin-top: 8px;
+  color: #2f3b38;
+  background: #f4f7f2;
 }
 
 .recent-list {
@@ -1870,14 +1894,17 @@ textarea:focus {
 .template-preview-grid .daily-list,
 .template-preview-grid .workout-list,
 .template-preview-grid .lab-list,
-.template-preview-grid .checklist {
+.template-preview-grid .checklist,
+.template-preview-grid .diary-card,
+.template-preview-grid .video-card {
   gap: 5px;
 }
 
 .template-preview-grid .brief-item,
 .template-preview-grid .daily-list label,
 .template-preview-grid .workout-list label,
-.template-preview-grid .lab-list label {
+.template-preview-grid .lab-list label,
+.template-preview-grid .diary-nav {
   padding: 5px 6px;
   min-height: 26px;
 }
@@ -1908,8 +1935,37 @@ textarea:focus {
   display: none;
 }
 
+.template-preview-grid .mood-picker button:nth-of-type(n + 4),
+.template-preview-grid .diary-thoughts,
+.template-preview-grid .video-link {
+  display: none;
+}
+
+.template-preview-grid .diary-sentence {
+  min-height: 30px;
+  font-size: 0.68rem;
+}
+
+.template-preview-grid .quote-block {
+  padding: 8px;
+}
+
+.template-preview-grid .quote-block p {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 0.72rem;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.template-preview-grid .video-placeholder,
+.template-preview-grid .video-preview {
+  min-height: 80px;
+}
+
 .history-modal,
-.records-modal {
+.records-modal,
+.ideas-modal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(680px, 100%);
@@ -1921,13 +1977,127 @@ textarea:focus {
   box-shadow: 0 36px 120px rgba(17, 17, 17, 0.28);
 }
 
+.ideas-modal {
+  width: min(1080px, calc(100vw - 28px));
+}
+
 .history-modal-body,
-.records-modal-body {
+.records-modal-body,
+.ideas-modal-body {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
   padding: 16px;
+}
+
+.ideas-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #ececea;
+  border-radius: var(--radius);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(244, 247, 242, 0.72)),
+    #ffffff;
+}
+
+.ideas-overview h3 {
+  max-width: 720px;
+  margin: 0 0 6px;
+  font-size: clamp(1.18rem, 2vw, 1.8rem);
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.ideas-overview p {
+  max-width: 760px;
+  margin: 0;
+  color: #646461;
+  font-size: 0.88rem;
+  font-weight: 760;
+  line-height: 1.4;
+}
+
+.ideas-overview-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 210px;
+}
+
+.ideas-overview-actions .primary-action,
+.ideas-overview-actions .secondary-action {
+  width: 100%;
+  min-height: 38px;
+}
+
+.ideas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.idea-card {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 14px;
+  min-height: 190px;
+  padding: 14px;
+  border: 1px solid #ececea;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 18px 38px rgba(17, 17, 17, 0.06);
+}
+
+.idea-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #2f7d44;
+  background: rgba(47, 125, 68, 0.12);
+  font-size: 0.66rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.idea-card h3 {
+  margin: 10px 0 6px;
+  font-size: 1rem;
+}
+
+.idea-card p {
+  margin: 0;
+  color: #656563;
+  font-size: 0.82rem;
+  font-weight: 760;
+  line-height: 1.42;
+}
+
+.idea-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #e4e4e2;
+  border-radius: 999px;
+  color: #111111;
+  background: #ffffff;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.idea-link.is-muted {
+  color: #767673;
+  background: #f5f5f3;
 }
 
 .history-modal-body > p,
@@ -2308,6 +2478,15 @@ textarea:focus {
   font-weight: 800;
 }
 
+.task-card.is-content-card .card-progress,
+.task-card.is-content-card .timer-display {
+  display: none;
+}
+
+.task-card.is-content-card .timer-row {
+  justify-content: flex-end;
+}
+
 .card-body {
   position: relative;
   z-index: 1;
@@ -2562,6 +2741,247 @@ textarea:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.diary-card {
+  display: grid;
+  gap: 8px;
+}
+
+.diary-nav {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.diary-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  color: var(--card-ink);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.diary-nav div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: center;
+}
+
+.diary-nav strong {
+  overflow: hidden;
+  font-size: 0.82rem;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diary-nav span {
+  overflow: hidden;
+  color: var(--card-muted);
+  font-size: 0.66rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mood-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.mood-picker button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.66);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.mood-picker button.is-active {
+  color: #ffffff;
+  background: var(--card-accent);
+  border-color: var(--card-accent);
+}
+
+.diary-sentence,
+.diary-thoughts {
+  width: 100%;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--card-ink);
+  box-shadow: none;
+}
+
+.diary-sentence {
+  min-height: 48px;
+  padding: 9px 10px;
+  resize: none;
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.28;
+}
+
+.diary-thoughts {
+  min-height: 92px;
+  max-height: 160px;
+  padding: 9px 10px;
+  resize: vertical;
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1.35;
+}
+
+.quote-block {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.4)),
+    var(--card-soft);
+}
+
+.quote-block p {
+  margin: 0;
+  color: var(--card-ink);
+  font-size: 1rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.quote-block footer {
+  color: var(--card-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.video-card {
+  display: grid;
+  gap: 8px;
+}
+
+.video-shell {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 12px;
+  background: #111111;
+}
+
+.video-shell iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.video-placeholder {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  min-height: 154px;
+  padding: 18px;
+  border: 1px dashed rgba(17, 17, 17, 0.16);
+  border-radius: 12px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.56);
+  text-align: center;
+}
+
+.video-preview {
+  position: relative;
+  display: grid;
+  align-content: end;
+  gap: 6px;
+  min-height: 176px;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 12px;
+  color: #ffffff;
+  background:
+    linear-gradient(180deg, rgba(17, 17, 17, 0.08), rgba(17, 17, 17, 0.74)),
+    var(--video-thumb, linear-gradient(135deg, var(--card-accent), var(--card-bg)));
+  background-position: center;
+  background-size: cover;
+}
+
+.video-preview svg {
+  width: 32px;
+  height: 32px;
+  padding: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.video-preview strong,
+.video-preview span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-preview strong {
+  font-size: 0.96rem;
+}
+
+.video-preview span {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.video-placeholder svg {
+  width: 28px;
+  height: 28px;
+  color: var(--card-accent);
+}
+
+.video-placeholder strong {
+  color: var(--card-ink);
+  font-size: 0.86rem;
+}
+
+.video-placeholder span {
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.video-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  color: var(--card-accent);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-decoration: none;
 }
 
 .routine-history {
@@ -3004,6 +3424,15 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 
+  .ideas-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .ideas-overview-actions {
+    grid-template-columns: 1fr 1fr;
+    min-width: 0;
+  }
+
   .overview-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3053,7 +3482,8 @@ textarea:focus {
 
   .quick-todo-form,
   .quick-meta-grid,
-  .overview-band {
+  .overview-band,
+  .ideas-overview-actions {
     grid-template-columns: 1fr;
   }
 

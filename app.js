@@ -1,10 +1,11 @@
 const STORAGE_KEY = "progress-board-v1";
-const SAMPLE_VERSION = 9;
+const SAMPLE_VERSION = 12;
 const COURSE_BOARD_VERSION = 1;
 const AI_COURSE_BOARD_VERSION = 1;
-const LIFE_OS_BOARD_VERSION = 1;
+const LIFE_OS_BOARD_VERSION = 3;
 const HISTORY_LIMIT = 370;
 const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
+const CONTENT_CARD_TYPES = ["diary", "quote", "video"];
 
 const THEMES = {
   leaf: {
@@ -90,30 +91,41 @@ const ICONS = {
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  quote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 11H6a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2v1h2v5H5v-6a6 6 0 0 1 6-6"/><path d="M19 11h-4a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2v1h2v5h-5v-6a6 6 0 0 1 6-6"/></svg>',
+  video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="14" x="3" y="5" rx="2"/><path d="m10 9 5 3-5 3Z"/></svg>',
+  "chevron-left": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg>',
+  "chevron-right": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg>',
+  "external-link": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>',
   x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
   sidebar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m15 9 3 3-3 3"/></svg>'
 };
 
 const TYPE_META = {
-  single: { label: "One-off", icon: "check" },
+  single: { label: "Task", icon: "check" },
   brief: { label: "Brief", icon: "list" },
   daily: { label: "To-do", icon: "list" },
-  routine: { label: "Daily Repeat", icon: "timer" },
-  scheduled: { label: "Scheduled", icon: "calendar" },
+  diary: { label: "Diary", icon: "calendar" },
+  quote: { label: "Motivation", icon: "quote" },
+  video: { label: "Video", icon: "video" },
+  routine: { label: "Routine", icon: "timer" },
+  scheduled: { label: "Schedule", icon: "calendar" },
   lab: { label: "AI Lab", icon: "list" },
   workout: { label: "Workout", icon: "list" },
-  minutes: { label: "Number Goal", icon: "timer" },
+  minutes: { label: "Goal", icon: "timer" },
   checklist: { label: "Project", icon: "list" },
-  weekly: { label: "Week Grid", icon: "calendar" },
-  monthly: { label: "Month Grid", icon: "calendar" },
-  annual: { label: "Year Grid", icon: "calendar" }
+  weekly: { label: "Week", icon: "calendar" },
+  monthly: { label: "Month", icon: "calendar" },
+  annual: { label: "Year", icon: "calendar" }
 };
 
 const TYPE_HELP = {
   daily: "Use for a one-day to-do list. It does not reset automatically, so it is best for today, tomorrow, or a specific short plan.",
-  brief: "Use for strategy, rules, decisions, priorities, or a review prompt. It is a guidance card, not a task tracker.",
+  diary: "Use for a dated daily diary with feeling, one sentence and thoughts. Each date is saved as its own page.",
+  brief: "Use for strategy, rules, decisions, priorities, or a review prompt. It is a guidance card, not a task.",
+  quote: "Use for motivational words, reminders, affirmations or principles you want visible on the board.",
+  video: "Use for a YouTube, Instagram or Facebook video you want to keep beside the work it supports.",
   single: "Use for one clear outcome that is either done or not done.",
-  routine: "Use for a checklist that repeats every day, auto-counts down to midnight, and saves daily history.",
+  routine: "Use for a daily routine that repeats every day, auto-counts down to midnight, and saves daily history.",
   scheduled: "Use for habits that happen only on selected weekdays, such as gym on Monday, Wednesday and Friday.",
   minutes: "Use for a measurable target such as minutes, calories, steps, pages, reps, or sessions.",
   checklist: "Use for a project with multiple fixed steps that you tick off once.",
@@ -124,7 +136,7 @@ const TYPE_HELP = {
   workout: "Template-only workout card. Used by fitness boards for exercise prescriptions."
 };
 
-const MANUAL_TYPE_OPTIONS = ["daily", "brief", "single", "routine", "scheduled", "minutes", "checklist", "weekly"];
+const MANUAL_TYPE_OPTIONS = ["daily", "diary", "brief", "quote", "video", "single", "routine", "scheduled", "minutes", "checklist", "weekly"];
 const SCORECARD_TYPES = ["weekly", "monthly", "annual"];
 const TEMPLATE_ONLY_TYPES = ["lab", "workout"];
 
@@ -194,6 +206,36 @@ const boardTemplates = [
     category: "Life OS"
   },
   {
+    id: "workday-command",
+    name: "Workday Command Board",
+    description: "Morning plan, focus blocks, meetings, communication, energy and shutdown review.",
+    category: "Workday"
+  },
+  {
+    id: "business-operator",
+    name: "Business Operator Board",
+    description: "Pipeline, cash, decisions, people, delivery and weekly owner review.",
+    category: "Business"
+  },
+  {
+    id: "student-life",
+    name: "Student Life Board",
+    description: "Classes, assignments, study blocks, exam prep, wellbeing and campus life.",
+    category: "Student"
+  },
+  {
+    id: "personal-reset",
+    name: "Personal Reset Board",
+    description: "Home, energy, relationships, diary, joy list and weekend reset.",
+    category: "Personal"
+  },
+  {
+    id: "creative-life",
+    name: "Creative Life Board",
+    description: "Ideas, inspiration videos, creator habits, publishing cadence and mood board.",
+    category: "Creative"
+  },
+  {
     id: "ai-starter",
     name: "AI Starter Course",
     description: "Beginner AI literacy, prompting, research and automation course.",
@@ -219,6 +261,56 @@ const boardTemplates = [
   }
 ];
 
+const lifeOsIdeas = [
+  {
+    title: "Daily rhythm",
+    text: "Start with a morning brief, run focus blocks, capture meetings, then close with a short shutdown review.",
+    status: "Added",
+    templateId: "workday-command"
+  },
+  {
+    title: "Quick capture first",
+    text: "Use Quick add for tasks, ideas, videos, diary pages and reminders without leaving the board.",
+    status: "Built",
+    templateId: "life-os"
+  },
+  {
+    title: "Work and business boards",
+    text: "Use separate boards for pipeline, cash, decisions, delivery, people follow-up and owner review.",
+    status: "Added",
+    templateId: "business-operator"
+  },
+  {
+    title: "Student operating board",
+    text: "Balance classes, assignments, exam countdowns, study streaks, health and campus admin.",
+    status: "Added",
+    templateId: "student-life"
+  },
+  {
+    title: "Personal reset board",
+    text: "Keep home, energy, relationships, diary and small joys visible beside work.",
+    status: "Added",
+    templateId: "personal-reset"
+  },
+  {
+    title: "Creative and inspiration cards",
+    text: "Save quotes, video references, idea briefs and publishing habits in a board that feels alive.",
+    status: "Added",
+    templateId: "creative-life"
+  },
+  {
+    title: "Archive instead of clutter",
+    text: "Complete or discontinued cards should move to Archive so the board stays current while history is preserved.",
+    status: "Built",
+    templateId: "life-os"
+  },
+  {
+    title: "Cloud sync next",
+    text: "Backup and Import protect browser data now. Supabase auth and sync should be the next platform layer.",
+    status: "Next"
+  }
+];
+
 const defaultState = {
   sampleVersion: SAMPLE_VERSION,
   courseBoardVersion: 0,
@@ -226,7 +318,7 @@ const defaultState = {
   lifeOsBoardVersion: 0,
   activeBoardId: "personal-board",
   board: {
-    name: "My Progress Board",
+    name: "My Life OS",
     visibility: "private",
     layout: "smart"
   },
@@ -538,6 +630,104 @@ const defaultState = {
       checks: [false, false, false, false, false, false, false],
       order: 13,
       createdAt: Date.now() - 10000
+    },
+    {
+      id: createId(),
+      title: "Daily diary",
+      description: "A quick check-in for mood, one sentence and thoughts.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "diary",
+      size: "standard",
+      theme: "plum",
+      background: "paper",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      activeDate: getTodayKey(),
+      lastDiaryDate: getTodayKey(),
+      diaryEntries: {
+        [getTodayKey()]: {
+          feeling: "Focused",
+          sentence: "I am building a board that can hold my whole life system.",
+          thoughts: "Use this space for the day, then move back and forward with the arrows when reviewing older entries.",
+          updatedAt: Date.now() - 9000
+        }
+      },
+      order: 14,
+      createdAt: Date.now() - 9000
+    },
+    {
+      id: createId(),
+      title: "Today's reminder",
+      description: "Small progress is still progress when it is visible and reviewed.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "quote",
+      quoteAuthor: "Life OS principle",
+      size: "standard",
+      theme: "honey",
+      background: "paper",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      order: 15,
+      createdAt: Date.now() - 8000
+    },
+    {
+      id: createId(),
+      title: "Video study card",
+      description: "Save a useful video directly on the board beside the task or habit it supports.",
+      category: "Learning",
+      reward: "",
+      metadata: { category: "Learning" },
+      type: "video",
+      videoUrl: "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+      size: "standard",
+      theme: "tide",
+      background: "sky",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      order: 16,
+      createdAt: Date.now() - 7000
+    },
+    {
+      id: createId(),
+      title: "Joy list",
+      description: "Small things to look forward to so the board supports energy, not only output.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "brief",
+      size: "standard",
+      theme: "honey",
+      background: "paper",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "none",
+      duration: 0,
+      remaining: 0,
+      runningSince: null,
+      sections: [
+        { label: "Today", text: "A proper meal, a walk, or a quiet reset after the main block." },
+        { label: "This week", text: "One social moment, one hobby block, and one slower evening." },
+        { label: "After hard work", text: "Pick a recovery action that makes tomorrow easier." }
+      ],
+      reviewed: false,
+      order: 17,
+      createdAt: Date.now() - 6000
     }
   ],
   archivedCards: [],
@@ -603,6 +793,15 @@ const elements = {
   goalField: document.querySelector("#goalField"),
   goalTarget: document.querySelector("#goalTarget"),
   goalUnit: document.querySelector("#goalUnit"),
+  diaryField: document.querySelector("#diaryField"),
+  diaryDate: document.querySelector("#diaryDate"),
+  diaryFeeling: document.querySelector("#diaryFeeling"),
+  diarySentence: document.querySelector("#diarySentence"),
+  diaryThoughts: document.querySelector("#diaryThoughts"),
+  quoteField: document.querySelector("#quoteField"),
+  quoteAuthor: document.querySelector("#quoteAuthor"),
+  videoField: document.querySelector("#videoField"),
+  videoUrl: document.querySelector("#videoUrl"),
   includeImage: document.querySelector("#includeImage"),
   imageUrlField: document.querySelector("#imageUrlField"),
   imageFile: document.querySelector("#imageFile"),
@@ -645,10 +844,14 @@ const elements = {
   startAllTimersButton: document.querySelector("#startAllTimersButton"),
   stopAllTimersButton: document.querySelector("#stopAllTimersButton"),
   openRecordsButton: document.querySelector("#openRecordsButton"),
+  exportDataButton: document.querySelector("#exportDataButton"),
+  importDataButton: document.querySelector("#importDataButton"),
+  importDataFile: document.querySelector("#importDataFile"),
   saveLayoutButton: document.querySelector("#saveLayoutButton"),
   restoreLayoutButton: document.querySelector("#restoreLayoutButton"),
   arrangeButton: document.querySelector("#arrangeButton"),
   openTemplatesButton: document.querySelector("#openTemplatesButton"),
+  openIdeasButton: document.querySelector("#openIdeasButton"),
   templateModal: document.querySelector("#templateModal"),
   templateModalCloseButton: document.querySelector("#templateModalCloseButton"),
   templateList: document.querySelector("#templateList"),
@@ -658,6 +861,9 @@ const elements = {
   templatePreviewOverview: document.querySelector("#templatePreviewOverview"),
   templatePreviewGrid: document.querySelector("#templatePreviewGrid"),
   addTemplateButton: document.querySelector("#addTemplateButton"),
+  ideasModal: document.querySelector("#ideasModal"),
+  ideasModalCloseButton: document.querySelector("#ideasModalCloseButton"),
+  ideasGrid: document.querySelector("#ideasGrid"),
   historyModal: document.querySelector("#historyModal"),
   historyModalCloseButton: document.querySelector("#historyModalCloseButton"),
   historyModalTitle: document.querySelector("#historyModalTitle"),
@@ -679,6 +885,7 @@ renderArtistPacks();
 renderTemplateList();
 bindEvents();
 elements.cardPlanDate.value = getTodayKey();
+elements.diaryDate.value = getTodayKey();
 render();
 
 setInterval(() => {
@@ -699,7 +906,7 @@ function bindEvents() {
   window.addEventListener("resize", queueBoardRender);
 
   elements.boardName.addEventListener("input", (event) => {
-    state.board.name = event.target.value.trimStart() || "My Progress Board";
+    state.board.name = event.target.value.trimStart() || "My Life OS";
     renderBoardMeta();
     saveState();
   });
@@ -896,6 +1103,17 @@ function bindEvents() {
 
   elements.openRecordsButton.addEventListener("click", openRecordsModal);
 
+  elements.exportDataButton.addEventListener("click", exportBoardBackup);
+
+  elements.importDataButton.addEventListener("click", () => {
+    elements.importDataFile.click();
+  });
+
+  elements.importDataFile.addEventListener("change", async () => {
+    const file = elements.importDataFile.files && elements.importDataFile.files[0];
+    await importBoardBackup(file);
+  });
+
   elements.startAllTimersButton.addEventListener("click", () => {
     startAllTimers();
   });
@@ -923,7 +1141,10 @@ function bindEvents() {
     openTemplateModal();
   });
 
+  elements.openIdeasButton.addEventListener("click", openIdeasModal);
+
   elements.templateModalCloseButton.addEventListener("click", closeTemplateModal);
+  elements.ideasModalCloseButton.addEventListener("click", closeIdeasModal);
   elements.historyModalCloseButton.addEventListener("click", closeHistoryModal);
   elements.recordsModalCloseButton.addEventListener("click", closeRecordsModal);
 
@@ -931,6 +1152,19 @@ function bindEvents() {
     if (event.target === elements.templateModal) {
       closeTemplateModal();
     }
+  });
+
+  elements.ideasModal.addEventListener("click", (event) => {
+    if (event.target === elements.ideasModal) {
+      closeIdeasModal();
+    }
+  });
+
+  elements.ideasModal.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-open-template]");
+    if (!button) return;
+    closeIdeasModal();
+    openTemplateModal(button.dataset.openTemplate);
   });
 
   elements.historyModal.addEventListener("click", (event) => {
@@ -959,6 +1193,9 @@ function bindEvents() {
     }
     if (event.key === "Escape" && !elements.templateModal.hidden) {
       closeTemplateModal();
+    }
+    if (event.key === "Escape" && !elements.ideasModal.hidden) {
+      closeIdeasModal();
     }
     if (event.key === "Escape" && !elements.historyModal.hidden) {
       closeHistoryModal();
@@ -1003,15 +1240,15 @@ async function saveCardFromForm() {
 
 function buildCardFromForm({ preview }) {
   const type = getSelectedFormType();
-  const timer = type === "routine" ? getDailyAutoTimer() : getFormTimer();
+  const timer = type === "routine" ? getDailyAutoTimer() : isUntimedContentType(type) ? getEmptyTimer() : getFormTimer();
   const includeImage = elements.includeImage.checked;
-  const title = elements.cardTitle.value.trim() || "New task";
+  const title = elements.cardTitle.value.trim() || getDefaultCardTitle(type);
   const card = {
     id: preview ? "preview-card" : createId(),
     title,
     description: elements.cardDescription.value.trim(),
     category: getSelectedCategory(),
-    reward: normalizeLabel(elements.cardReward.value.trim()),
+    reward: "",
     priority: getSelectedPriority(elements.cardPriority.value),
     metadata: {
       category: getSelectedCategory()
@@ -1033,6 +1270,29 @@ function buildCardFromForm({ preview }) {
     order: preview ? 0 : nextOrder(),
     createdAt: Date.now()
   };
+
+  if (type === "diary") {
+    const dateKey = normalizeDateKey(elements.diaryDate.value) || getTodayKey();
+    const entry = normalizeDiaryEntry({
+      feeling: elements.diaryFeeling.value,
+      sentence: elements.diarySentence.value,
+      thoughts: elements.diaryThoughts.value,
+      updatedAt: Date.now()
+    });
+    card.activeDate = dateKey;
+    card.lastDiaryDate = getTodayKey();
+    card.diaryEntries = {
+      [dateKey]: entry
+    };
+  }
+
+  if (type === "quote") {
+    card.quoteAuthor = normalizeLabel(elements.quoteAuthor.value.trim());
+  }
+
+  if (type === "video") {
+    card.videoUrl = normalizeVideoUrl(elements.videoUrl.value.trim());
+  }
 
   if (type === "daily") {
     card.plannedDate = normalizeDateKey(elements.cardPlanDate.value) || getTodayKey();
@@ -1116,8 +1376,13 @@ function updateExistingCard(nextCard) {
   }
 
   const current = state.cards[index];
+  const mergedDiaryEntries =
+    current.type === "diary" && nextCard.type === "diary"
+      ? { ...(current.diaryEntries || {}), ...(nextCard.diaryEntries || {}) }
+      : nextCard.diaryEntries;
   state.cards[index] = {
     ...nextCard,
+    diaryEntries: mergedDiaryEntries,
     id: current.id,
     order: current.order,
     layoutColumn: current.layoutColumn,
@@ -1147,6 +1412,14 @@ function startEditingCard(id) {
   setFormType(card.type || "daily");
   selectedScheduleDays = normalizeScheduleDays(card.scheduleDays || selectedScheduleDays);
   elements.checklistItems.value = getEditableListValue(card);
+  const diaryDate = getActiveDiaryDate(card);
+  const diaryEntry = card.type === "diary" ? getDiaryEntry(card, diaryDate) : normalizeDiaryEntry();
+  elements.diaryDate.value = diaryDate;
+  elements.diaryFeeling.value = diaryEntry.feeling || "Clear";
+  elements.diarySentence.value = diaryEntry.sentence || "";
+  elements.diaryThoughts.value = diaryEntry.thoughts || "";
+  elements.quoteAuthor.value = card.quoteAuthor || "";
+  elements.videoUrl.value = card.videoUrl || "";
   elements.goalTarget.value = String(card.targetValue || 150);
   elements.goalUnit.value = card.unit || "min";
   elements.cardSize.value = "standard";
@@ -1170,7 +1443,7 @@ function resetFormState() {
   editingCardId = null;
   draftPreviewDismissed = false;
   elements.form.reset();
-  elements.formTitle.textContent = "New card";
+  elements.formTitle.textContent = "Add card";
   elements.formSubmitLabel.textContent = "Add card";
   elements.submitCardButton.querySelector("[data-icon]").dataset.icon = "plus";
   elements.cancelEditButton.hidden = true;
@@ -1183,6 +1456,12 @@ function resetFormState() {
   elements.cardCategoryCustom.value = "";
   elements.cardPriority.value = "normal";
   elements.cardPlanDate.value = getTodayKey();
+  elements.diaryDate.value = getTodayKey();
+  elements.diaryFeeling.value = "Clear";
+  elements.diarySentence.value = "";
+  elements.diaryThoughts.value = "";
+  elements.quoteAuthor.value = "";
+  elements.videoUrl.value = "";
   selectedScheduleDays = [0, 2, 4];
   selectedTimerMode = "none";
   attachedImageData = "";
@@ -1233,7 +1512,7 @@ function renderBoardMeta() {
   elements.boardSearch.value = state.searchQuery || "";
   elements.clearSearchButton.hidden = !normalizeLabel(state.searchQuery || "");
   const recordCount = getArchivedCards().length;
-  elements.openRecordsButton.textContent = recordCount ? `Records ${recordCount}` : "Records";
+  elements.openRecordsButton.textContent = recordCount ? `Archive ${recordCount}` : "Archive";
 
   const visibility = VISIBILITY_META[state.board.visibility];
   elements.visibilityLabel.textContent = `${visibility.label} board`;
@@ -1274,8 +1553,8 @@ function renderCategoryPills(cards) {
   elements.categoryToggle.hidden = !canFilterCategories;
   elements.categoryToggle.classList.toggle("is-active", state.ui.categoriesOpen || state.activeCategories.length > 0);
   elements.categoryToggle.setAttribute("aria-expanded", String(Boolean(state.ui.categoriesOpen)));
-  elements.categoryToggle.setAttribute("aria-label", selectedCategories.length ? `Category filter: ${selectedCategories.join(", ")}` : "Category filter");
-  elements.categoryToggle.title = selectedCategories.length ? `Showing ${selectedCategories.join(", ")}` : "Filter categories";
+  elements.categoryToggle.setAttribute("aria-label", selectedCategories.length ? `Area filter: ${selectedCategories.join(", ")}` : "Area filter");
+  elements.categoryToggle.title = selectedCategories.length ? `Showing ${selectedCategories.join(", ")}` : "Filter areas";
   elements.categoryToggleLabel.textContent = selectionLabel;
   elements.categoryPills.hidden = !canFilterCategories || !state.ui.categoriesOpen;
 
@@ -1287,7 +1566,7 @@ function renderCategoryPills(cards) {
   elements.categoryPills.innerHTML = `
     <div class="category-panel-head">
       <div>
-        <strong>Filter categories</strong>
+        <strong>Filter areas</strong>
         <span>${selectedCategories.length ? escapeHtml(selectedCategories.join(" + ")) : "Showing all cards"}</span>
       </div>
       <button type="button" class="category-clear ${selectedCategories.length === 0 ? "is-active" : ""}" data-category="all">All cards</button>
@@ -1304,10 +1583,10 @@ function renderCategoryPills(cards) {
 }
 
 function getCategorySelectionLabel(categories) {
-  if (!categories.length) return "Categories";
+  if (!categories.length) return "Areas";
   if (categories.length === 1) return categories[0];
   if (categories.length === 2) return categories.join(" + ");
-  return "Multiple categories";
+  return "Multiple areas";
 }
 
 function renderRecentCards() {
@@ -1367,6 +1646,8 @@ function renderQuickTodoCategories() {
 function renderQuickTodoFields() {
   if (!elements.quickPlanField) return;
   elements.quickPlanField.hidden = elements.quickTodoType.value !== "daily";
+  const isContent = isUntimedContentType(elements.quickTodoType.value);
+  elements.quickTodoTiming.closest(".quick-field").hidden = isContent;
 }
 
 function toggleQuickTodoPanel() {
@@ -1395,14 +1676,15 @@ function addQuickTodoCard() {
     .map((item) => item.trim())
     .filter(Boolean);
   const category = normalizeCategory(elements.quickTodoCategory.value) || "Personal";
-  const timer = getQuickCaptureTimer(elements.quickTodoTiming.value);
+  const timer = isUntimedContentType(type) ? getEmptyTimer() : getQuickCaptureTimer(elements.quickTodoTiming.value);
   const title = normalizeLabel(elements.quickTodoTitle.value.trim()) || getQuickCaptureFallbackTitle(type);
   const priority = getSelectedPriority(elements.quickTodoPriority.value);
+  const notes = items.join("\n");
   const card = makeCard({
     title,
-    description: "Quick capture added from the board.",
+    description: getQuickCaptureDescription(type, notes),
     category,
-    reward: "Close the loop",
+    reward: "",
     priority,
     plannedDate: type === "daily" ? getQuickCapturePlanDate(elements.quickTodoPlan.value) : undefined,
     type,
@@ -1412,7 +1694,21 @@ function addQuickTodoCard() {
     targetAt: timer.targetAt,
     duration: timer.duration,
     items: ["daily", "checklist"].includes(type) ? (items.length ? items : getQuickCaptureFallbackItems(type)) : undefined,
-    sections: type === "brief" ? (items.length ? items.map((item, index) => [`Note ${index + 1}`, item]) : [["Focus", "Clarify the decision, rule or idea."]]) : undefined
+    sections: type === "brief" ? (items.length ? items.map((item, index) => [`Note ${index + 1}`, item]) : [["Focus", "Clarify the decision, rule or idea."]]) : undefined,
+    diaryEntries:
+      type === "diary"
+        ? {
+            [getTodayKey()]: normalizeDiaryEntry({
+              feeling: "Clear",
+              sentence: items[0] || "",
+              thoughts: items.slice(1).join("\n"),
+              updatedAt: Date.now()
+            })
+          }
+        : undefined,
+    activeDate: type === "diary" ? getTodayKey() : undefined,
+    quoteAuthor: type === "quote" ? "Personal reminder" : undefined,
+    videoUrl: type === "video" ? normalizeVideoUrl(items[0] || "") : undefined
   });
   card.remaining = timer.duration;
   card.runningSince = null;
@@ -1448,10 +1744,33 @@ function getQuickCaptureTimer(value) {
 }
 
 function getQuickCaptureFallbackTitle(type) {
+  if (type === "diary") return "Daily diary";
+  if (type === "quote") return "Motivation";
+  if (type === "video") return "Video card";
   if (type === "single") return "New task";
   if (type === "checklist") return "New project";
   if (type === "brief") return "New idea";
   return "New to-do list";
+}
+
+function getDefaultCardTitle(type) {
+  if (type === "diary") return "Daily diary";
+  if (type === "quote") return "Motivation";
+  if (type === "video") return "Video card";
+  if (type === "brief") return "Strategy brief";
+  if (type === "checklist") return "Project checklist";
+  if (type === "minutes") return "Goal";
+  if (type === "scheduled") return "Scheduled habit";
+  if (type === "routine") return "Daily routine";
+  if (SCORECARD_TYPES.includes(type)) return "Scorecard";
+  return "New task";
+}
+
+function getQuickCaptureDescription(type, notes) {
+  if (type === "diary") return "A quick dated diary page.";
+  if (type === "quote") return normalizeLabel(notes) || "A useful reminder for the day.";
+  if (type === "video") return "Saved video to watch or reference from the board.";
+  return "Quick capture added from the board.";
 }
 
 function getQuickCaptureFallbackItems(type) {
@@ -1462,6 +1781,7 @@ function getQuickCaptureFallbackItems(type) {
 function renderCardsOnly() {
   settleExpiredTimers();
   resetDailyRepeatingCards();
+  resetDiaryCardsToToday();
   const orderedCards = getOrderedCards();
   const filteredByStatus = orderedCards.filter((card) => matchesFilter(card));
   const filteredBySearch = filteredByStatus.filter((card) => matchesSearch(card));
@@ -1531,16 +1851,48 @@ function buildBoardColumns(cards, columnCount) {
   const count = Math.max(1, Math.min(3, Number(columnCount) || 1));
   const columns = Array.from({ length: count }, () => []);
   const hasManualColumns = state.board.layout === "custom" && cards.some((card) => Number.isFinite(Number(card.layoutColumn)));
-  cards.forEach((card, index) => {
-    const columnIndex = hasManualColumns && Number.isFinite(Number(card.layoutColumn))
-      ? clampInt(card.layoutColumn, 0, count - 1, 0)
-      : index % count;
+  cards.forEach((card) => {
+    const columnIndex =
+      hasManualColumns && Number.isFinite(Number(card.layoutColumn))
+        ? clampInt(card.layoutColumn, 0, count - 1, 0)
+        : getShortestColumnIndex(columns);
     columns[columnIndex].push(card);
   });
   if (hasManualColumns) {
     columns.forEach((column) => column.sort((a, b) => Number(a.order || 0) - Number(b.order || 0)));
   }
   return columns;
+}
+
+function getShortestColumnIndex(columns) {
+  return columns.reduce((bestIndex, column, index) => {
+    const bestHeight = columns[bestIndex].reduce((sum, card) => sum + estimateCardHeight(card), 0);
+    const height = column.reduce((sum, card) => sum + estimateCardHeight(card), 0);
+    return height < bestHeight ? index : bestIndex;
+  }, 0);
+}
+
+function estimateCardHeight(card) {
+  let height = 156;
+  if (hasCountdown(card)) height += 28;
+  if (card.description) height += 28;
+  if (card.includeImage) height += 92;
+
+  if (card.type === "brief") height += Math.min(card.sections?.length || 3, 4) * 52;
+  if (card.type === "daily" || card.type === "routine") height += Math.min(card.items?.length || 3, 6) * 38;
+  if (card.type === "routine") height += 34;
+  if (card.type === "checklist") height += Math.min(card.items?.length || 3, 6) * 28;
+  if (card.type === "workout") height += Math.min(card.exercises?.length || 4, 6) * 44;
+  if (card.type === "lab") height += Math.min(card.steps?.length || 4, 6) * 46;
+  if (card.type === "minutes") height += 82;
+  if (card.type === "weekly" || card.type === "scheduled") height += 48;
+  if (card.type === "monthly") height += 142;
+  if (card.type === "annual") height += 84;
+  if (card.type === "diary") height += 240;
+  if (card.type === "quote") height += 96;
+  if (card.type === "video") height += 190;
+  if (card.type === "single") height += 48;
+  return height;
 }
 
 function getLayoutColumn(card) {
@@ -1552,10 +1904,10 @@ function getEmptyStateMarkup(statusCount) {
     return "<div><h3>No focus cards</h3><p>Clear the focus filter or choose another focus tile.</p></div>";
   }
   if (normalizeLabel(state.searchQuery || "")) {
-    return "<div><h3>No matching cards</h3><p>Try a title, category, reward, tracker type, or date.</p></div>";
+    return "<div><h3>No matching cards</h3><p>Try a title, area, card type, or date.</p></div>";
   }
   if (statusCount > 0 && getActiveCategories().length) {
-    return "<div><h3>No cards in this category</h3><p>Clear the category filter or choose another category.</p></div>";
+    return "<div><h3>No cards in this area</h3><p>Clear the area filter or choose another area.</p></div>";
   }
   return "<div><h3>No cards here</h3><p>Add a card or switch filters.</p></div>";
 }
@@ -1595,6 +1947,7 @@ function matchesFocus(card) {
 
 function isTodayFocusCard(card) {
   if (card.type === "daily") return getCardPlanDate(card) === getTodayKey();
+  if (card.type === "diary") return getActiveDiaryDate(card) === getTodayKey();
   if (card.type === "routine") return true;
   if (card.runningSince) return true;
   return card.priority === "high" && getProgress(card).percent < 100;
@@ -1624,6 +1977,7 @@ function renderCard(card, options = {}) {
   node.classList.add("size-standard", `theme-${card.theme}`, `type-${card.type}`, `background-${card.background || "clean"}`);
   node.classList.toggle("has-image", card.includeImage);
   node.classList.toggle("no-timer", !hasTimer);
+  node.classList.toggle("is-content-card", isProgresslessCard(card));
   node.classList.toggle("is-running", Boolean(card.runningSince));
   node.classList.toggle("is-expired", hasTimer && remaining <= 0);
   node.style.setProperty("--card-bg", theme.bg);
@@ -1639,7 +1993,7 @@ function renderCard(card, options = {}) {
   node.querySelector(".card-type").innerHTML = `${ICONS[typeMeta.icon]}<span>${typeMeta.label}</span>`;
   const category = node.querySelector(".card-category");
   category.textContent = card.category || "General";
-  node.querySelector(".card-percent").textContent = `${progress.percent}%`;
+  node.querySelector(".card-percent").textContent = isProgresslessCard(card) ? progress.label : `${progress.percent}%`;
   const dateChip = node.querySelector(".card-date-chip");
   const plannedDateLabel = getPlannedDateChip(card);
   if (plannedDateLabel) {
@@ -1697,6 +2051,15 @@ function renderCard(card, options = {}) {
   }
 
   const body = node.querySelector(".card-body");
+  if (card.type === "diary") {
+    body.append(renderDiary(card));
+  }
+  if (card.type === "quote") {
+    body.append(renderQuote(card));
+  }
+  if (card.type === "video") {
+    body.append(renderVideoCard(card));
+  }
   if (card.type === "checklist") {
     body.append(renderChecklist(card));
   }
@@ -1725,14 +2088,7 @@ function renderCard(card, options = {}) {
     body.append(renderSingleTask(card));
   }
 
-  const rewardChip = node.querySelector(".card-reward-chip");
-  if (card.reward) {
-    rewardChip.hidden = false;
-    rewardChip.textContent = "Reward";
-    rewardChip.title = card.reward;
-    rewardChip.tabIndex = 0;
-    rewardChip.setAttribute("aria-label", `Reward: ${card.reward}`);
-  }
+  node.querySelector(".card-reward-chip").hidden = true;
 
   if (!interactive) {
     body.querySelectorAll("button, input").forEach((control) => {
@@ -1776,6 +2132,135 @@ function renderCard(card, options = {}) {
   }
 
   return node;
+}
+
+function renderDiary(card) {
+  normalizeDiaryCard(card);
+  const activeDate = getActiveDiaryDate(card);
+  const entry = getDiaryEntry(card, activeDate);
+  const wrapper = document.createElement("div");
+  wrapper.className = "diary-card";
+
+  const nav = document.createElement("div");
+  nav.className = "diary-nav";
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.title = "Previous day";
+  previous.setAttribute("aria-label", "Previous day");
+  previous.innerHTML = ICONS["chevron-left"];
+  previous.addEventListener("click", () => {
+    moveDiaryDate(card, -1);
+  });
+  const next = document.createElement("button");
+  next.type = "button";
+  next.title = "Next day";
+  next.setAttribute("aria-label", "Next day");
+  next.innerHTML = ICONS["chevron-right"];
+  next.addEventListener("click", () => {
+    moveDiaryDate(card, 1);
+  });
+  const dateCopy = document.createElement("div");
+  const dateLabel = document.createElement("strong");
+  dateLabel.textContent = formatDiaryDate(activeDate);
+  const status = document.createElement("span");
+  status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "New page";
+  dateCopy.append(dateLabel, status);
+  nav.append(previous, dateCopy, next);
+
+  const moodPicker = document.createElement("div");
+  moodPicker.className = "mood-picker";
+  getDiaryFeelings().forEach((feeling) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.classList.toggle("is-active", entry.feeling === feeling);
+    button.textContent = feeling;
+    button.addEventListener("click", () => {
+      updateDiaryEntry(card, activeDate, { feeling });
+      renderCardsOnly();
+    });
+    moodPicker.append(button);
+  });
+
+  const sentence = document.createElement("textarea");
+  sentence.className = "diary-sentence";
+  sentence.maxLength = 120;
+  sentence.rows = 2;
+  sentence.placeholder = "One sentence for this day";
+  sentence.value = entry.sentence || "";
+  sentence.addEventListener("input", () => {
+    updateDiaryEntry(card, activeDate, { sentence: sentence.value }, { rerender: false });
+  });
+  sentence.addEventListener("change", renderCardsOnly);
+
+  const thoughts = document.createElement("textarea");
+  thoughts.className = "diary-thoughts";
+  thoughts.maxLength = 520;
+  thoughts.rows = 4;
+  thoughts.placeholder = "Thoughts, lessons, wins, worries or reminders";
+  thoughts.value = entry.thoughts || "";
+  thoughts.addEventListener("input", () => {
+    updateDiaryEntry(card, activeDate, { thoughts: thoughts.value }, { rerender: false });
+  });
+  thoughts.addEventListener("change", renderCardsOnly);
+
+  wrapper.append(nav, moodPicker, sentence, thoughts);
+  return wrapper;
+}
+
+function renderQuote(card) {
+  const wrapper = document.createElement("blockquote");
+  wrapper.className = "quote-block";
+  const quote = document.createElement("p");
+  quote.textContent = card.description || "Add words you want to keep visible.";
+  const footer = document.createElement("footer");
+  footer.textContent = card.quoteAuthor || card.title || "Motivation";
+  wrapper.append(quote, footer);
+  return wrapper;
+}
+
+function renderVideoCard(card) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "video-card";
+  const embed = getVideoEmbed(card.videoUrl);
+
+  if (embed && canRenderInlineVideo()) {
+    const shell = document.createElement("div");
+    shell.className = "video-shell";
+    const iframe = document.createElement("iframe");
+    iframe.src = embed.src;
+    iframe.title = card.title || "Embedded video";
+    iframe.loading = "lazy";
+    iframe.referrerPolicy = "strict-origin-when-cross-origin";
+    iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+    iframe.allowFullscreen = true;
+    shell.append(iframe);
+    wrapper.append(shell);
+  } else if (embed) {
+    const preview = document.createElement("div");
+    preview.className = "video-preview";
+    if (embed.thumbnail) {
+      preview.style.setProperty("--video-thumb", `url("${cssEscapeUrl(embed.thumbnail)}")`);
+    }
+    preview.innerHTML = `${ICONS.video}<strong>${escapeHtml(embed.providerLabel)} saved</strong><span>${escapeHtml(card.title || "Video card")}</span>`;
+    wrapper.append(preview);
+  } else {
+    const placeholder = document.createElement("div");
+    placeholder.className = "video-placeholder";
+    placeholder.innerHTML = `${ICONS.video}<strong>Paste a supported video link</strong><span>YouTube, Instagram or Facebook</span>`;
+    wrapper.append(placeholder);
+  }
+
+  if (card.videoUrl) {
+    const link = document.createElement("a");
+    link.className = "video-link";
+    link.href = card.videoUrl;
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.innerHTML = `${ICONS["external-link"]}<span>Open video</span>`;
+    wrapper.append(link);
+  }
+
+  return wrapper;
 }
 
 function renderChecklist(card) {
@@ -2069,6 +2554,149 @@ function getTrackerItemTitle(type, index) {
   return `Date ${index + 1}`;
 }
 
+function normalizeDiaryCard(card) {
+  if (!card || card.type !== "diary") return card;
+  const today = getTodayKey();
+  card.diaryEntries = card.diaryEntries && typeof card.diaryEntries === "object" ? card.diaryEntries : {};
+  card.activeDate = normalizeDateKey(card.activeDate) || today;
+  card.lastDiaryDate = normalizeDateKey(card.lastDiaryDate) || today;
+  Object.keys(card.diaryEntries).forEach((dateKey) => {
+    const normalizedDate = normalizeDateKey(dateKey);
+    if (!normalizedDate) {
+      delete card.diaryEntries[dateKey];
+      return;
+    }
+    card.diaryEntries[normalizedDate] = normalizeDiaryEntry(card.diaryEntries[dateKey]);
+    if (normalizedDate !== dateKey) delete card.diaryEntries[dateKey];
+  });
+  if (!card.diaryEntries[card.activeDate]) {
+    card.diaryEntries[card.activeDate] = normalizeDiaryEntry();
+  }
+  return card;
+}
+
+function normalizeDiaryEntry(entry = {}) {
+  return {
+    feeling: getDiaryFeelings().includes(entry.feeling) ? entry.feeling : "Clear",
+    sentence: normalizeLabel(entry.sentence || ""),
+    thoughts: String(entry.thoughts || "").trim(),
+    updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : 0
+  };
+}
+
+function getDiaryFeelings() {
+  return ["Clear", "Happy", "Calm", "Focused", "Tired", "Stressed", "Low"];
+}
+
+function getActiveDiaryDate(card) {
+  if (!card || card.type !== "diary") return getTodayKey();
+  normalizeDiaryCard(card);
+  return normalizeDateKey(card.activeDate) || getTodayKey();
+}
+
+function getDiaryEntry(card, dateKey = getActiveDiaryDate(card)) {
+  normalizeDiaryCard(card);
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  if (!card.diaryEntries[normalizedDate]) {
+    card.diaryEntries[normalizedDate] = normalizeDiaryEntry();
+  }
+  return card.diaryEntries[normalizedDate];
+}
+
+function updateDiaryEntry(card, dateKey, updates, options = {}) {
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  const current = getDiaryEntry(card, normalizedDate);
+  card.diaryEntries[normalizedDate] = normalizeDiaryEntry({
+    ...current,
+    ...updates,
+    updatedAt: Date.now()
+  });
+  saveState();
+  if (options.rerender) renderCardsOnly();
+}
+
+function moveDiaryDate(card, direction) {
+  const activeDate = dateKeyToLocalDate(getActiveDiaryDate(card));
+  card.activeDate = getTodayKey(addDays(activeDate, direction));
+  getDiaryEntry(card, card.activeDate);
+  saveState();
+  renderCardsOnly();
+}
+
+function formatDiaryDate(dateKey) {
+  const date = dateKeyToLocalDate(dateKey);
+  const relative = getRelativeDateLabel(dateKey, 0);
+  const label = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  return relative ? `${relative} · ${label}` : label;
+}
+
+function getVideoEmbed(url) {
+  const parsed = parseSupportedVideoUrl(url);
+  if (!parsed) return null;
+  if (parsed.provider === "youtube") {
+    return {
+      provider: "youtube",
+      providerLabel: "YouTube",
+      src: `https://www.youtube-nocookie.com/embed/${parsed.id}`,
+      thumbnail: `https://img.youtube.com/vi/${parsed.id}/hqdefault.jpg`
+    };
+  }
+  if (parsed.provider === "instagram") {
+    return {
+      provider: "instagram",
+      providerLabel: "Instagram",
+      src: `https://www.instagram.com/${parsed.kind}/${parsed.id}/embed`
+    };
+  }
+  if (parsed.provider === "facebook") {
+    return {
+      provider: "facebook",
+      providerLabel: "Facebook",
+      src: `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(parsed.href)}&show_text=false&width=560`
+    };
+  }
+  return null;
+}
+
+function canRenderInlineVideo() {
+  return globalThis.location?.protocol !== "file:";
+}
+
+function parseSupportedVideoUrl(url) {
+  const normalized = normalizeVideoUrl(url);
+  if (!normalized) return null;
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return null;
+  }
+
+  const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
+  const pathParts = parsed.pathname.split("/").filter(Boolean);
+  if (host === "youtu.be" && pathParts[0]) {
+    const id = cleanVideoId(pathParts[0]);
+    return id ? { provider: "youtube", id } : null;
+  }
+  if (host.endsWith("youtube.com")) {
+    const id = cleanVideoId(parsed.searchParams.get("v") || (["shorts", "embed"].includes(pathParts[0]) ? pathParts[1] : ""));
+    if (id) return { provider: "youtube", id };
+  }
+  if (host.endsWith("instagram.com")) {
+    const kind = ["p", "reel", "tv"].includes(pathParts[0]) ? pathParts[0] : "";
+    const id = cleanVideoId(pathParts[1]);
+    if (kind && id) return { provider: "instagram", kind, id };
+  }
+  if (host.endsWith("facebook.com") || host === "fb.watch") {
+    return { provider: "facebook", href: normalized };
+  }
+  return null;
+}
+
+function cleanVideoId(value) {
+  return String(value || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 80);
+}
+
 function renderStats(cards = state.cards) {
   const total = cards.length;
   const running = cards.filter((card) => card.runningSince).length;
@@ -2122,6 +2750,7 @@ function renderConditionalFields() {
   const type = getSelectedFormType();
   const isRoutine = type === "routine";
   const isScheduled = type === "scheduled";
+  const isContent = isUntimedContentType(type);
   const isScorecard = elements.cardType.value === "weekly";
   const needsListInput =
     type === "checklist" ||
@@ -2135,13 +2764,22 @@ function renderConditionalFields() {
     needsListInput
   );
   elements.goalField.classList.toggle("is-visible", type === "minutes");
+  elements.diaryField.classList.toggle("is-visible", type === "diary");
+  elements.quoteField.classList.toggle("is-visible", type === "quote");
+  elements.videoField.classList.toggle("is-visible", type === "video");
   elements.scheduleField.classList.toggle("is-visible", isScheduled);
   elements.scorecardPeriodField.classList.toggle("is-visible", isScorecard);
   elements.dailyPlanDateField.classList.toggle("is-visible", type === "daily");
   if (type === "daily" && !normalizeDateKey(elements.cardPlanDate.value)) {
     elements.cardPlanDate.value = getTodayKey();
   }
-  elements.countdownField.hidden = isRoutine;
+  if (type === "diary" && !normalizeDateKey(elements.diaryDate.value)) {
+    elements.diaryDate.value = getTodayKey();
+  }
+  if (isContent) {
+    selectedTimerMode = "none";
+  }
+  elements.countdownField.hidden = isRoutine || isContent;
   elements.cardTypeHelp.textContent = TYPE_HELP[type] || TYPE_HELP.daily;
   if (type === "workout") {
     elements.checklistLabel.textContent = "Workout exercises";
@@ -2228,6 +2866,37 @@ function discardDraftCard() {
   render();
 }
 
+function openIdeasModal() {
+  renderIdeasModal();
+  elements.ideasModal.hidden = false;
+  syncModalOpenState();
+}
+
+function closeIdeasModal() {
+  elements.ideasModal.hidden = true;
+  syncModalOpenState();
+}
+
+function renderIdeasModal() {
+  elements.ideasGrid.innerHTML = lifeOsIdeas
+    .map((idea) => {
+      const action = idea.templateId
+        ? `<button type="button" class="idea-link" data-open-template="${escapeAttribute(idea.templateId)}">Preview board</button>`
+        : '<span class="idea-link is-muted">Platform layer</span>';
+      return `
+        <article class="idea-card">
+          <div>
+            <span class="idea-status">${escapeHtml(idea.status)}</span>
+            <h3>${escapeHtml(idea.title)}</h3>
+            <p>${escapeHtml(idea.text)}</p>
+          </div>
+          ${action}
+        </article>
+      `;
+    })
+    .join("");
+}
+
 function openTemplateModal(templateId = selectedTemplateId) {
   selectedTemplateId = boardTemplates.some((template) => template.id === templateId) ? templateId : boardTemplates[0]?.id || "";
   elements.templateModal.hidden = false;
@@ -2276,13 +2945,13 @@ function renderTemplateOverview(template, cards) {
   elements.templatePreviewOverview.innerHTML = `
     <div class="overview-stats" aria-label="Template board summary">
       <div><strong>${cards.length}</strong><span>Cards</span></div>
-      <div><strong>${categories.length}</strong><span>Categories</span></div>
+      <div><strong>${categories.length}</strong><span>Areas</span></div>
       <div><strong>${timedCards}</strong><span>Timers</span></div>
       <div><strong>${runningDaily}</strong><span>Daily resets</span></div>
     </div>
     <div class="overview-band">
       <div>
-        <p class="eyebrow">Category mix</p>
+        <p class="eyebrow">Area mix</p>
         <div class="overview-chips">
           ${categories.map((category) => `<span>${escapeHtml(category)}</span>`).join("")}
         </div>
@@ -2351,7 +3020,7 @@ function closeRecordsModal() {
 }
 
 function syncModalOpenState() {
-  const hasOpenModal = !elements.templateModal.hidden || !elements.historyModal.hidden || !elements.recordsModal.hidden;
+  const hasOpenModal = !elements.templateModal.hidden || !elements.ideasModal.hidden || !elements.historyModal.hidden || !elements.recordsModal.hidden;
   document.body.classList.toggle("modal-open", hasOpenModal);
 }
 
@@ -2391,6 +3060,9 @@ function getCardRecordContext(card) {
   const parts = [];
   if (card.type === "daily") {
     parts.push(getPlannedDateTitle(card).replace("Planned for ", ""));
+  }
+  if (card.type === "diary") {
+    parts.push(formatDiaryDate(getActiveDiaryDate(card)));
   }
   const priority = getSelectedPriority(card.priority);
   if (priority !== "normal") {
@@ -2592,13 +3264,19 @@ function hasDraftInput() {
   return Boolean(
     elements.cardTitle.value.trim() ||
       elements.cardDescription.value.trim() ||
-      elements.cardReward.value.trim() ||
       elements.checklistItems.value.trim() ||
+      elements.diarySentence.value.trim() ||
+      elements.diaryThoughts.value.trim() ||
+      elements.quoteAuthor.value.trim() ||
+      elements.videoUrl.value.trim() ||
       elements.imageUrl.value.trim() ||
       attachedImageData ||
       elements.includeImage.checked ||
+      elements.cardType.value !== "daily" ||
       elements.cardBackground.value !== "clean" ||
       elements.cardPriority.value !== "normal" ||
+      normalizeDateKey(elements.diaryDate.value) !== getTodayKey() ||
+      elements.diaryFeeling.value !== "Clear" ||
       normalizeDateKey(elements.cardPlanDate.value) !== getTodayKey() ||
       elements.cardCategory.value !== "General" ||
       elements.cardCategoryCustom.value.trim()
@@ -2607,6 +3285,17 @@ function hasDraftInput() {
 
 function normalizeLabel(value) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeVideoUrl(value) {
+  const label = String(value || "").trim();
+  if (!label) return "";
+  try {
+    const url = new URL(label);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeCategory(value) {
@@ -2637,8 +3326,8 @@ function getCardPlanDate(card) {
 }
 
 function getPlannedDateChip(card) {
-  if (!card || card.type !== "daily") return "";
-  const dateKey = getCardPlanDate(card);
+  if (!card || !["daily", "diary"].includes(card.type)) return "";
+  const dateKey = card.type === "diary" ? getActiveDiaryDate(card) : getCardPlanDate(card);
   const date = dateKeyToLocalDate(dateKey);
   const relative = getRelativeDateLabel(dateKey, getProgress(card).percent);
   const dateLabel = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -2646,9 +3335,10 @@ function getPlannedDateChip(card) {
 }
 
 function getPlannedDateTitle(card) {
-  if (!card || card.type !== "daily") return "";
-  const date = dateKeyToLocalDate(getCardPlanDate(card));
-  return `Planned for ${date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`;
+  if (!card || !["daily", "diary"].includes(card.type)) return "";
+  const date = dateKeyToLocalDate(card.type === "diary" ? getActiveDiaryDate(card) : getCardPlanDate(card));
+  const prefix = card.type === "diary" ? "Diary page for" : "Planned for";
+  return `${prefix} ${date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`;
 }
 
 function getRelativeDateLabel(dateKey, percent = 0) {
@@ -2727,13 +3417,17 @@ function renderScheduleDays() {
   });
 }
 
+function getEmptyTimer() {
+  return {
+    mode: "none",
+    targetAt: null,
+    duration: 0
+  };
+}
+
 function getFormTimer() {
   if (selectedTimerMode === "none") {
-    return {
-      mode: "none",
-      targetAt: null,
-      duration: 0
-    };
+    return getEmptyTimer();
   }
 
   if (selectedTimerMode === "date") {
@@ -3029,11 +3723,20 @@ function getOrderedCards() {
 }
 
 function getTypeWeight(type) {
-  const weights = { brief: 0, routine: 1, scheduled: 2, daily: 3, lab: 4, workout: 5, minutes: 6, checklist: 7, weekly: 8, monthly: 9, annual: 10, single: 11 };
+  const weights = { diary: 0, brief: 1, routine: 2, scheduled: 3, daily: 4, quote: 5, video: 6, lab: 7, workout: 8, minutes: 9, checklist: 10, weekly: 11, monthly: 12, annual: 13, single: 14 };
   return Number.isFinite(weights[type]) ? weights[type] : 9;
 }
 
+function isProgresslessCard(card) {
+  return card && CONTENT_CARD_TYPES.includes(card.type);
+}
+
+function isUntimedContentType(type) {
+  return CONTENT_CARD_TYPES.includes(type);
+}
+
 function matchesFilter(card) {
+  if (isProgresslessCard(card)) return state.activeFilter !== "done";
   const progress = getProgress(card).percent;
   if (state.activeFilter === "active") return progress < 100;
   if (state.activeFilter === "done") return progress === 100;
@@ -3049,11 +3752,16 @@ function matchesSearch(card) {
 function getCardSearchText(card) {
   const typeMeta = TYPE_META[card.type] || TYPE_META.single;
   const progress = getProgress(card);
+  const diaryEntry = card.type === "diary" ? getDiaryEntry(card, getActiveDiaryDate(card)) : null;
   const parts = [
     card.title,
     card.description,
     card.category,
-    card.reward,
+    card.quoteAuthor,
+    card.videoUrl,
+    diaryEntry?.feeling,
+    diaryEntry?.sentence,
+    diaryEntry?.thoughts,
     typeMeta.label,
     progress.label,
     getSelectedPriority(card.priority),
@@ -3092,12 +3800,27 @@ function getActiveCategories(sourceState = state) {
 }
 
 function getAverageProgress(cards) {
-  return cards.length
-    ? Math.round(cards.reduce((sum, card) => sum + getProgress(card).percent, 0) / cards.length)
+  const trackableCards = cards.filter((card) => !isProgresslessCard(card));
+  return trackableCards.length
+    ? Math.round(trackableCards.reduce((sum, card) => sum + getProgress(card).percent, 0) / trackableCards.length)
     : 0;
 }
 
 function getProgress(card) {
+  if (card.type === "diary") {
+    const entry = getDiaryEntry(card, getActiveDiaryDate(card));
+    const hasEntry = Boolean(entry.sentence || entry.thoughts);
+    return { percent: hasEntry ? 100 : 0, label: hasEntry ? "Saved" : "Diary" };
+  }
+
+  if (card.type === "quote") {
+    return { percent: 0, label: "Words" };
+  }
+
+  if (card.type === "video") {
+    return { percent: 0, label: "Media" };
+  }
+
   if (card.type === "single") {
     const percent = card.done ? 100 : 0;
     return { percent, label: card.done ? "Complete" : "Not done" };
@@ -3263,6 +3986,24 @@ function resetDailyRepeatingCards() {
     card.lastResetDate = today;
     normalizeTimer(card);
     syncRoutineTodayHistory(card);
+    changed = true;
+  });
+
+  if (changed) saveState();
+}
+
+function resetDiaryCardsToToday() {
+  const today = getTodayKey();
+  let changed = false;
+  state.cards.forEach((card) => {
+    if (card.type !== "diary") return;
+    normalizeDiaryCard(card);
+    if (card.lastDiaryDate === today) return;
+    if (card.activeDate === card.lastDiaryDate) {
+      card.activeDate = today;
+    }
+    card.lastDiaryDate = today;
+    getDiaryEntry(card, today);
     changed = true;
   });
 
@@ -3528,7 +4269,7 @@ function ensureBoards(nextState) {
     nextState.boards.push(
       createBoardRecord({
         id: activeId,
-        name: nextState.board?.name || "My Progress Board",
+        name: nextState.board?.name || "My Life OS",
         visibility: nextState.board?.visibility || "private",
         layout: nextState.board?.layout || "smart",
         cards: Array.isArray(nextState.cards) ? nextState.cards : [],
@@ -3840,6 +4581,48 @@ function buildTemplateCards(templateId) {
         ]
       }),
       makeCard({
+        title: "Daily diary",
+        description: "Capture the day without turning it into another task list.",
+        category: "Personal",
+        type: "diary",
+        theme: "plum",
+        background: "paper",
+        feeling: "Clear",
+        sentence: "Today I will notice what actually moved.",
+        thoughts: "Use the arrows to review older pages when planning the week."
+      }),
+      makeCard({
+        title: "Operating reminder",
+        description: "What gets captured can be improved. What gets reviewed can be trusted.",
+        category: "Personal",
+        type: "quote",
+        theme: "honey",
+        background: "paper",
+        quoteAuthor: "Board principle"
+      }),
+      makeCard({
+        title: "Joy list",
+        description: "Protect small things that keep life enjoyable while the board handles the serious work.",
+        category: "Personal",
+        type: "brief",
+        theme: "honey",
+        background: "paper",
+        sections: [
+          ["Today", "One simple thing you can enjoy after the main priority."],
+          ["This week", "A meal, person, hobby or place you want to make space for."],
+          ["Recovery", "A reset that helps tomorrow feel lighter."]
+        ]
+      }),
+      makeCard({
+        title: "Learning video queue",
+        description: "Keep the video beside the life area it supports instead of losing it in a browser tab.",
+        category: "Learning",
+        type: "video",
+        theme: "tide",
+        background: "sky",
+        videoUrl: "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+      }),
+      makeCard({
         title: "Monthly life scorecard",
         description: "Mark the days you ended with health, work and money under control.",
         category: "Personal",
@@ -3850,6 +4633,425 @@ function buildTemplateCards(templateId) {
         timerMode: "days",
         duration: 30 * 24 * 60 * 60,
         checks: Array.from({ length: daysInCurrentMonth() }, (_, index) => index < 5)
+      })
+    ];
+  }
+
+  if (templateId === "workday-command") {
+    return [
+      makeCard({
+        title: "Morning command brief",
+        description: "Set the day before messages and meetings take over.",
+        category: "Work",
+        priority: "high",
+        type: "brief",
+        theme: "graphite",
+        background: "paper",
+        timerMode: "date",
+        targetAt: getStartOfTomorrow().toISOString(),
+        duration: getSecondsUntilEndOfDay(),
+        sections: [
+          ["Win", "Name the one work outcome that makes today successful."],
+          ["Health", "Pick one energy action: walk, water, training or sleep protection."],
+          ["People", "Choose one person to update, thank or unblock."],
+          ["Boundary", "Protect the first focus block before inbox checking."]
+        ]
+      }),
+      makeCard({
+        title: "First focus block",
+        description: "A protected sprint for the highest-leverage task.",
+        category: "Work",
+        priority: "high",
+        type: "single",
+        theme: "tide",
+        background: "sky",
+        timerMode: "hours",
+        duration: 90 * 60
+      }),
+      makeCard({
+        title: "Deep work bank",
+        description: "Build a weekly reserve of concentrated work minutes.",
+        category: "Work",
+        type: "minutes",
+        theme: "tide",
+        background: "clean",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        targetValue: 600,
+        currentValue: 0,
+        unit: "min"
+      }),
+      makeCard({
+        title: "Meeting follow-up queue",
+        description: "Capture commitments before they become mental load.",
+        category: "Work",
+        type: "daily",
+        plannedDate: getTodayKey(),
+        theme: "graphite",
+        background: "clean",
+        timerMode: "date",
+        targetAt: getStartOfTomorrow().toISOString(),
+        duration: getSecondsUntilEndOfDay(),
+        items: ["Send notes", "Assign owners", "Book next step", "Archive reference"]
+      }),
+      makeCard({
+        title: "Communication window",
+        description: "Batch messages so the day is not broken into fragments.",
+        category: "Work",
+        type: "scheduled",
+        theme: "plum",
+        background: "paper",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        scheduleDays: [0, 1, 2, 3, 4],
+        checks: [false, false, false, false, false, false, false]
+      }),
+      makeCard({
+        title: "Energy check",
+        description: "Keep the basics visible during a demanding workday.",
+        category: "Health",
+        type: "routine",
+        theme: "leaf",
+        background: "mint",
+        items: ["Drink water", "Stand or walk", "Eat protein", "Stop caffeine on time"]
+      }),
+      makeCard({
+        title: "Shutdown review",
+        description: "Close the day and hand tomorrow a cleaner start.",
+        category: "Personal",
+        type: "diary",
+        theme: "plum",
+        background: "paper",
+        feeling: "Clear",
+        sentence: "Today I closed the most important loop.",
+        thoughts: "Log wins, missed promises, and the first task for tomorrow."
+      })
+    ];
+  }
+
+  if (templateId === "business-operator") {
+    return [
+      makeCard({
+        title: "Owner command brief",
+        description: "A concise operating view for revenue, delivery, cash and people.",
+        category: "Work",
+        priority: "high",
+        type: "brief",
+        theme: "graphite",
+        background: "paper",
+        timerMode: "date",
+        targetAt: getStartOfTomorrow().toISOString(),
+        duration: getSecondsUntilEndOfDay(),
+        sections: [
+          ["Revenue", "One action that can create or advance revenue today."],
+          ["Delivery", "The promise that needs the most protection."],
+          ["Cash", "One payment, invoice or expense to clarify."],
+          ["People", "One decision or update that removes friction."]
+        ]
+      }),
+      makeCard({
+        title: "Pipeline pulse",
+        description: "Keep sales conversations moving with clear next steps.",
+        category: "Work",
+        type: "checklist",
+        theme: "coral",
+        background: "blush",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        items: ["List warm leads", "Send follow-ups", "Move one proposal", "Book decision call", "Update next actions"]
+      }),
+      makeCard({
+        title: "Cash commitments",
+        description: "Review invoices, subscriptions, tax items and upcoming payments.",
+        category: "Finance",
+        type: "weekly",
+        theme: "honey",
+        background: "paper",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        checks: [false, false, false, false, false, false, false]
+      }),
+      makeCard({
+        title: "Decision log",
+        description: "Track open decisions so they do not stay in your head.",
+        category: "Work",
+        type: "brief",
+        theme: "leaf",
+        background: "mint",
+        sections: [
+          ["Decide", "What decision needs an answer."],
+          ["Options", "The realistic paths on the table."],
+          ["Owner", "Who can supply missing context."],
+          ["Deadline", "When the decision should be locked."]
+        ]
+      }),
+      makeCard({
+        title: "Delivery promises",
+        description: "Client, team or product commitments that need visible progress.",
+        category: "Work",
+        type: "checklist",
+        theme: "tide",
+        background: "sky",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        items: ["Confirm scope", "Check blockers", "Send progress update", "Review quality", "Plan next delivery"]
+      }),
+      makeCard({
+        title: "People touchpoints",
+        description: "Business moves faster when important people are not forgotten.",
+        category: "Personal",
+        type: "weekly",
+        theme: "plum",
+        background: "clean",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        checks: [false, false, false, false, false, false, false]
+      }),
+      makeCard({
+        title: "Weekly owner review",
+        description: "Review numbers, bottlenecks and the few moves that matter next week.",
+        category: "Work",
+        type: "checklist",
+        theme: "graphite",
+        background: "clean",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        items: ["Review revenue", "Review cash", "Review delivery", "Review people", "Choose next week's Big 3"]
+      })
+    ];
+  }
+
+  if (templateId === "student-life") {
+    return [
+      makeCard({
+        title: "Today class plan",
+        description: "A dated list for lectures, assignments and admin.",
+        category: "Learning",
+        priority: "high",
+        type: "daily",
+        plannedDate: getTodayKey(),
+        theme: "tide",
+        background: "sky",
+        timerMode: "date",
+        targetAt: getStartOfTomorrow().toISOString(),
+        duration: getSecondsUntilEndOfDay(),
+        items: ["Attend class", "Capture key notes", "Submit urgent work", "Pack tomorrow's materials"]
+      }),
+      makeCard({
+        title: "Study block bank",
+        description: "Accumulate focused study minutes without overplanning.",
+        category: "Learning",
+        type: "minutes",
+        theme: "leaf",
+        background: "mint",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        targetValue: 360,
+        currentValue: 0,
+        unit: "min"
+      }),
+      makeCard({
+        title: "Assignment tracker",
+        description: "Move each assignment from brief to submission.",
+        category: "Learning",
+        type: "checklist",
+        theme: "honey",
+        background: "paper",
+        timerMode: "date",
+        targetAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
+        duration: 10 * 24 * 60 * 60,
+        items: ["Read brief", "Research sources", "Draft answer", "Edit", "Submit"]
+      }),
+      makeCard({
+        title: "Exam countdown",
+        description: "Keep the final date visible while the daily plan changes.",
+        category: "Learning",
+        type: "single",
+        theme: "coral",
+        background: "blush",
+        timerMode: "date",
+        targetAt: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString(),
+        duration: 21 * 24 * 60 * 60
+      }),
+      makeCard({
+        title: "Wellbeing basics",
+        description: "Study works better when sleep, food and movement stay visible.",
+        category: "Health",
+        type: "routine",
+        theme: "leaf",
+        background: "mint",
+        items: ["Sleep plan", "Drink water", "Move body", "Eat proper meal", "Short room reset"]
+      }),
+      makeCard({
+        title: "Campus life",
+        description: "Keep social and personal moments beside academic pressure.",
+        category: "Personal",
+        type: "weekly",
+        theme: "plum",
+        background: "clean",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        checks: [false, false, false, false, false, false, false]
+      }),
+      makeCard({
+        title: "Reflection diary",
+        description: "A quick dated page for learning, mood and lessons.",
+        category: "Personal",
+        type: "diary",
+        theme: "plum",
+        background: "paper",
+        feeling: "Focused",
+        sentence: "I studied with a clearer plan today.",
+        thoughts: "Write what worked, what felt hard, and what to adjust tomorrow."
+      })
+    ];
+  }
+
+  if (templateId === "personal-reset") {
+    return [
+      makeCard({
+        title: "Daily reset",
+        description: "A soft daily loop for keeping life from piling up.",
+        category: "Personal",
+        priority: "high",
+        type: "routine",
+        theme: "leaf",
+        background: "mint",
+        items: ["Make bed", "Clear dishes", "Tidy one surface", "Plan tomorrow", "Sleep wind-down"]
+      }),
+      makeCard({
+        title: "Home queue",
+        description: "Small home tasks that free up mental space.",
+        category: "Personal",
+        type: "checklist",
+        theme: "graphite",
+        background: "clean",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        items: ["Laundry", "Groceries", "Bills", "Declutter one spot", "Prepare meals"]
+      }),
+      makeCard({
+        title: "Energy basics",
+        description: "Track the few inputs that shape most days.",
+        category: "Health",
+        type: "routine",
+        theme: "tide",
+        background: "sky",
+        items: ["7+ hours sleep", "2L water", "Walk", "Protein each meal", "Sunlight"]
+      }),
+      makeCard({
+        title: "Relationship deposits",
+        description: "Keep important people visible, not only urgent work.",
+        category: "Personal",
+        type: "weekly",
+        theme: "plum",
+        background: "paper",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        checks: [false, false, false, false, false, false, false]
+      }),
+      makeCard({
+        title: "Joy list",
+        description: "Small things to look forward to this week.",
+        category: "Personal",
+        type: "brief",
+        theme: "honey",
+        background: "paper",
+        sections: [
+          ["Today", "A meal, walk, show, call or hobby block."],
+          ["This week", "One plan that makes the week feel more human."],
+          ["Recovery", "A reset that helps tomorrow feel easier."]
+        ]
+      }),
+      makeCard({
+        title: "Daily diary",
+        description: "Record mood, one sentence and thoughts for the day.",
+        category: "Personal",
+        type: "diary",
+        theme: "plum",
+        background: "paper",
+        feeling: "Calm",
+        sentence: "I made space to notice the day.",
+        thoughts: "Use this for memories, worries, lessons, gratitude and reminders."
+      }),
+      makeCard({
+        title: "Weekly life review",
+        description: "Review health, home, money, relationships and work pressure.",
+        category: "Personal",
+        type: "checklist",
+        theme: "leaf",
+        background: "clean",
+        timerMode: "days",
+        duration: 7 * 24 * 60 * 60,
+        items: ["Review calendar", "Review spending", "Review home queue", "Review energy", "Choose next week focus"]
+      })
+    ];
+  }
+
+  if (templateId === "creative-life") {
+    return [
+      makeCard({
+        title: "Idea inbox",
+        description: "Capture creative sparks before they disappear.",
+        category: "Personal",
+        type: "brief",
+        theme: "honey",
+        background: "paper",
+        sections: [
+          ["Idea", "What caught your attention."],
+          ["Why", "The emotion, audience or problem behind it."],
+          ["Next", "A tiny test you can create."],
+          ["Reference", "Link, image or video to attach later."]
+        ]
+      }),
+      makeCard({
+        title: "Inspiration video",
+        description: "Save a video reference beside the creative project it supports.",
+        category: "Learning",
+        type: "video",
+        theme: "tide",
+        background: "sky",
+        videoUrl: "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+      }),
+      makeCard({
+        title: "Creator habit",
+        description: "Repeat the small creative actions that build momentum.",
+        category: "Personal",
+        type: "routine",
+        theme: "coral",
+        background: "blush",
+        items: ["Capture one idea", "Make one draft", "Save one reference", "Share or review one piece"]
+      }),
+      makeCard({
+        title: "Publishing cadence",
+        description: "Track the days you publish, practice or ship.",
+        category: "Personal",
+        type: "monthly",
+        theme: "plum",
+        background: "paper",
+        timerMode: "days",
+        duration: 30 * 24 * 60 * 60,
+        checks: Array.from({ length: daysInCurrentMonth() }, () => false)
+      }),
+      makeCard({
+        title: "Motivation wall",
+        description: "The work becomes real when you keep showing up.",
+        category: "Personal",
+        type: "quote",
+        theme: "honey",
+        background: "paper",
+        quoteAuthor: "Creative principle"
+      }),
+      makeCard({
+        title: "Project polish list",
+        description: "Move one creative project toward a finished version.",
+        category: "Work",
+        type: "checklist",
+        theme: "graphite",
+        background: "clean",
+        timerMode: "days",
+        duration: 14 * 24 * 60 * 60,
+        items: ["Clarify concept", "Draft", "Edit", "Package", "Publish"]
       })
     ];
   }
@@ -4220,7 +5422,13 @@ function buildTemplateCards(templateId) {
 function makeCard(options) {
   const id = createId();
   const autoTimer = options.type === "routine" ? getDailyAutoTimer() : null;
-  const timerMode = autoTimer ? "daily" : ["none", "date", "days", "hours"].includes(options.timerMode) ? options.timerMode : "none";
+  const timerMode = isUntimedContentType(options.type)
+    ? "none"
+    : autoTimer
+      ? "daily"
+      : ["none", "date", "days", "hours"].includes(options.timerMode)
+        ? options.timerMode
+        : "none";
   const duration = timerMode === "none" ? 0 : autoTimer ? autoTimer.duration : Number(options.duration) || 25 * 60;
   const category = normalizeCategory(options.category || "General");
   const card = {
@@ -4228,7 +5436,7 @@ function makeCard(options) {
     title: options.title,
     description: options.description || "",
     category,
-    reward: options.reward || "",
+    reward: "",
     priority: getSelectedPriority(options.priority),
     metadata: { category },
     type: options.type || "single",
@@ -4248,6 +5456,30 @@ function makeCard(options) {
     order: 0,
     createdAt: Date.now()
   };
+
+  if (card.type === "diary") {
+    const activeDate = normalizeDateKey(options.activeDate) || getTodayKey();
+    card.activeDate = activeDate;
+    card.lastDiaryDate = getTodayKey();
+    card.diaryEntries = options.diaryEntries && typeof options.diaryEntries === "object" ? options.diaryEntries : {};
+    if (!card.diaryEntries[activeDate]) {
+      card.diaryEntries[activeDate] = normalizeDiaryEntry({
+        feeling: options.feeling || "Clear",
+        sentence: options.sentence || "",
+        thoughts: options.thoughts || "",
+        updatedAt: options.sentence || options.thoughts ? Date.now() : 0
+      });
+    }
+    normalizeDiaryCard(card);
+  }
+
+  if (card.type === "quote") {
+    card.quoteAuthor = normalizeLabel(options.quoteAuthor || "");
+  }
+
+  if (card.type === "video") {
+    card.videoUrl = normalizeVideoUrl(options.videoUrl || "");
+  }
 
   if (card.type === "daily") {
     card.plannedDate = normalizeDateKey(options.plannedDate) || getTodayKey();
@@ -4307,34 +5539,38 @@ function loadState() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) return ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())));
   try {
-    const parsed = JSON.parse(stored);
-    const cards = Array.isArray(parsed.cards) ? parsed.cards.map(normalizeCard) : [];
-    const archivedCards = Array.isArray(parsed.archivedCards) ? parsed.archivedCards.map(normalizeArchivedCard) : [];
-    return ensureCourseBoard(
-      ensureSampleCards(
-        ensureBoards({
-          ...cloneDefaultState(),
-          ...parsed,
-          sampleVersion: Number(parsed.sampleVersion) || 0,
-          courseBoardVersion: Number(parsed.courseBoardVersion) || 0,
-          aiCourseBoardVersion: Number(parsed.aiCourseBoardVersion) || 0,
-          lifeOsBoardVersion: Number(parsed.lifeOsBoardVersion) || 0,
-          board: {
-            ...defaultState.board,
-            ...(parsed.board || {})
-          },
-          ui: {
-            ...defaultState.ui,
-            ...(parsed.ui || {})
-          },
-          cards,
-          archivedCards
-        })
-      )
-    );
+    return rehydrateState(JSON.parse(stored));
   } catch {
     return ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())));
   }
+}
+
+function rehydrateState(parsed) {
+  const backup = parsed && parsed.state && typeof parsed.state === "object" ? parsed.state : parsed || {};
+  const cards = Array.isArray(backup.cards) ? backup.cards.map(normalizeCard) : [];
+  const archivedCards = Array.isArray(backup.archivedCards) ? backup.archivedCards.map(normalizeArchivedCard) : [];
+  return ensureCourseBoard(
+    ensureSampleCards(
+      ensureBoards({
+        ...cloneDefaultState(),
+        ...backup,
+        sampleVersion: Number(backup.sampleVersion) || 0,
+        courseBoardVersion: Number(backup.courseBoardVersion) || 0,
+        aiCourseBoardVersion: Number(backup.aiCourseBoardVersion) || 0,
+        lifeOsBoardVersion: Number(backup.lifeOsBoardVersion) || 0,
+        board: {
+          ...defaultState.board,
+          ...(backup.board || {})
+        },
+        ui: {
+          ...defaultState.ui,
+          ...(backup.ui || {})
+        },
+        cards,
+        archivedCards
+      })
+    )
+  );
 }
 
 function ensureSampleCards(nextState) {
@@ -4420,6 +5656,9 @@ function ensureCourseBoard(nextState) {
         createdAt: Date.now()
       })
     );
+  } else if (needsLifeOs) {
+    const lifeOsBoard = nextState.boards.find((board) => board.id === lifeOsId);
+    addMissingTemplateCards(lifeOsBoard, "life-os");
   }
 
   if (needsFitnessCourse || !hasFitnessCourse) {
@@ -4449,6 +5688,26 @@ function ensureCourseBoard(nextState) {
   return nextState;
 }
 
+function addMissingTemplateCards(board, templateId) {
+  if (!board) return;
+  if (!Array.isArray(board.cards)) board.cards = [];
+  const existingTitles = new Set((board.cards || []).map((card) => normalizeLabel(card.title || "").toLowerCase()));
+  let order = board.cards?.length ? Math.max(...board.cards.map((card) => Number(card.order) || 0)) + 1 : 1;
+  buildTemplateCards(templateId).forEach((card) => {
+    const key = normalizeLabel(card.title || "").toLowerCase();
+    if (!key || existingTitles.has(key)) return;
+    board.cards.push(
+      normalizeCard({
+        ...card,
+        order,
+        createdAt: Date.now() - order * 1000
+      })
+    );
+    existingTitles.add(key);
+    order += 1;
+  });
+}
+
 function normalizeCard(card) {
   const next = {
     ...card,
@@ -4458,6 +5717,7 @@ function normalizeCard(card) {
   };
   next.type = TYPE_META[next.type] ? next.type : "single";
   next.timerMode = ["none", "date", "days", "hours", "daily"].includes(next.timerMode) ? next.timerMode : "none";
+  if (isUntimedContentType(next.type)) next.timerMode = "none";
   normalizeTimer(next);
   next.size = "standard";
   if (Number.isFinite(Number(next.layoutColumn))) {
@@ -4468,10 +5728,19 @@ function normalizeCard(card) {
   next.background = BACKGROUNDS[next.background] ? next.background : "clean";
   next.imageData = next.imageData || "";
   next.category = normalizeCategory(next.category || "General");
-  next.reward = normalizeLabel(next.reward || "");
+  next.reward = "";
   next.priority = getSelectedPriority(next.priority);
   next.metadata = next.metadata && typeof next.metadata === "object" ? { ...next.metadata } : {};
   next.metadata.category = next.category;
+  if (next.type === "diary") {
+    normalizeDiaryCard(next);
+  }
+  if (next.type === "quote") {
+    next.quoteAuthor = normalizeLabel(next.quoteAuthor || "");
+  }
+  if (next.type === "video") {
+    next.videoUrl = normalizeVideoUrl(next.videoUrl || "");
+  }
   if (next.type === "brief") {
     normalizeBriefSections(next);
     next.reviewed = Boolean(next.reviewed);
@@ -4554,10 +5823,46 @@ function createId() {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+function exportBoardBackup() {
+  syncActiveBoard();
+  const backup = {
+    app: "Life OS",
+    exportedAt: new Date().toISOString(),
+    state
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `life-os-backup-${getTodayKey()}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  elements.savedState.textContent = "Backup ready";
+}
+
+async function importBoardBackup(file) {
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    state = rehydrateState(parsed);
+    resetFormState();
+    render();
+    saveState();
+    window.alert("Backup imported into this browser.");
+  } catch {
+    window.alert("This backup file could not be imported.");
+  } finally {
+    elements.importDataFile.value = "";
+  }
+}
+
 function saveState() {
   syncActiveBoard();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  elements.savedState.textContent = "Saved";
+  elements.savedState.textContent = "Saved here";
   elements.savedState.classList.remove("is-saving");
 }
 
