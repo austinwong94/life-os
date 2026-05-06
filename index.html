@@ -212,11 +212,15 @@
               <div class="planner-view-options">
                 <label class="toggle-row" id="plannerExcludeTodayField">
                   <input id="plannerViewExcludeToday" type="checkbox" />
-                  <span>Exclude Today view data</span>
+                  <span>Hide Today items</span>
                 </label>
                 <label class="toggle-row" id="plannerExcludeWeekField">
                   <input id="plannerViewExcludeWeek" type="checkbox" />
-                  <span>Exclude Week view data</span>
+                  <span>Hide This week items</span>
+                </label>
+                <label class="toggle-row" id="plannerExcludeMonthField">
+                  <input id="plannerViewExcludeMonth" type="checkbox" />
+                  <span>Hide This month items</span>
                 </label>
               </div>
             </div>
@@ -465,6 +469,7 @@
               <span data-icon="plus"></span>
               <span>Quick add</span>
             </button>
+            <button type="button" class="toolbar-action" id="topControlsToggleButton">Hide controls</button>
             <button type="button" class="toolbar-action" id="openRecordsButton">Archive</button>
             <details class="board-tools-menu">
               <summary>Board tools</summary>

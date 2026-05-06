@@ -449,6 +449,7 @@ const defaultState = {
   ui: {
     sidebarOpen: true,
     categoriesOpen: false,
+    controlsOpen: true,
     recentOpen: getDefaultRecentOpen(),
     recentExpanded: false
   },
@@ -1095,6 +1096,8 @@ const elements = {
   plannerViewExcludeToday: document.querySelector("#plannerViewExcludeToday"),
   plannerExcludeWeekField: document.querySelector("#plannerExcludeWeekField"),
   plannerViewExcludeWeek: document.querySelector("#plannerViewExcludeWeek"),
+  plannerExcludeMonthField: document.querySelector("#plannerExcludeMonthField"),
+  plannerViewExcludeMonth: document.querySelector("#plannerViewExcludeMonth"),
   diaryField: document.querySelector("#diaryField"),
   diaryDate: document.querySelector("#diaryDate"),
   diaryFeeling: document.querySelector("#diaryFeeling"),
@@ -1129,6 +1132,7 @@ const elements = {
   recentToggleButton: document.querySelector("#recentToggleButton"),
   recentToggleLabel: document.querySelector("#recentToggleLabel"),
   quickTodoToggleButton: document.querySelector("#quickTodoToggleButton"),
+  topControlsToggleButton: document.querySelector("#topControlsToggleButton"),
   quickTodoPanel: document.querySelector("#quickTodoPanel"),
   quickTodoForm: document.querySelector("#quickTodoForm"),
   quickTodoTitle: document.querySelector("#quickTodoTitle"),
@@ -1502,6 +1506,12 @@ function bindEvents() {
     openCardComposer({ reset: true });
   });
 
+  elements.topControlsToggleButton.addEventListener("click", () => {
+    state.ui.controlsOpen = state.ui.controlsOpen === false;
+    renderBoardMeta();
+    saveState();
+  });
+
   elements.quickTodoCancelButton.addEventListener("click", () => {
     closeQuickTodoPanel();
   });
@@ -1762,7 +1772,8 @@ function buildCardFromForm({ preview }) {
     card.plannerView = normalizePlannerViewMode(elements.plannerViewMode.value);
     card.plannerViewOptions = normalizePlannerViewOptions({
       excludeToday: elements.plannerViewExcludeToday.checked,
-      excludeWeek: elements.plannerViewExcludeWeek.checked
+      excludeWeek: elements.plannerViewExcludeWeek.checked,
+      excludeMonth: elements.plannerViewExcludeMonth.checked
     });
   }
 
@@ -1917,6 +1928,7 @@ function startEditingCard(id) {
   const plannerViewOptions = normalizePlannerViewOptions(card.plannerViewOptions);
   elements.plannerViewExcludeToday.checked = plannerViewOptions.excludeToday;
   elements.plannerViewExcludeWeek.checked = plannerViewOptions.excludeWeek;
+  elements.plannerViewExcludeMonth.checked = plannerViewOptions.excludeMonth;
   const diaryDate = getActiveDiaryDate(card);
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, diaryDate) : normalizeDiaryEntry();
   elements.diaryDate.value = diaryDate;
@@ -1968,6 +1980,7 @@ function resetFormState() {
   elements.plannerViewMode.value = "today";
   elements.plannerViewExcludeToday.checked = false;
   elements.plannerViewExcludeWeek.checked = false;
+  elements.plannerViewExcludeMonth.checked = false;
   elements.diaryDate.value = getTodayKey();
   elements.diaryFeeling.value = "Calm";
   elements.diarySentence.value = "";
@@ -2064,6 +2077,10 @@ function renderShell() {
 
 function renderBoardMeta() {
   renderBoardSwitcher();
+  const controlsOpen = state.ui.controlsOpen !== false;
+  elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
+  elements.topControlsToggleButton.textContent = controlsOpen ? "Hide controls" : "Show controls";
+  elements.topControlsToggleButton.setAttribute("aria-pressed", String(!controlsOpen));
   elements.boardName.value = state.board.name;
   elements.boardTitle.textContent = state.board.name;
   elements.todayLine.textContent = formatTodayLine();
@@ -2911,6 +2928,7 @@ function renderPlannerLinkedList(card) {
   const options = normalizePlannerViewOptions(card.plannerViewOptions);
   const group = getPlannerGroup(card);
   const viewData = getPlannerViewData(view, group, options);
+  const doneCount = viewData.items.filter((item) => item.done).length;
   const wrapper = document.createElement("div");
   wrapper.className = "planner-linked-list";
 
@@ -2923,12 +2941,19 @@ function renderPlannerLinkedList(card) {
   source.textContent = viewData.sourceLabel;
   copy.append(title, source);
   const count = document.createElement("em");
-  count.textContent = viewData.items.length ? `${viewData.items.length} planned` : "Ready";
+  count.textContent = viewData.items.length ? `${doneCount}/${viewData.items.length} done` : "Ready";
   head.append(copy, count);
 
   const optionSummary = document.createElement("p");
   optionSummary.className = "planner-linked-summary";
   optionSummary.textContent = getPlannerViewSummary(view, options);
+
+  const dateContext = document.createElement("p");
+  dateContext.className = "planner-linked-date-context";
+  dateContext.textContent = view === "today" ? viewData.dateLabel : "";
+  dateContext.hidden = view !== "today";
+
+  const addForm = renderPlannerLinkedAddForm(card, view, options);
 
   const list = document.createElement("div");
   list.className = "planner-linked-items";
@@ -2937,6 +2962,27 @@ function renderPlannerLinkedList(card) {
     empty.className = "planner-linked-empty";
     empty.textContent = viewData.empty;
     list.append(empty);
+  } else if (viewData.sections?.length) {
+    let renderedCount = 0;
+    viewData.sections.forEach((section) => {
+      if (renderedCount >= viewData.limit) return;
+      const visibleItems = section.items.slice(0, viewData.limit - renderedCount);
+      if (!visibleItems.length) return;
+      const sectionHead = document.createElement("div");
+      sectionHead.className = "planner-linked-section";
+      sectionHead.innerHTML = `<span>${escapeHtml(section.label)}</span><em>${section.items.length}</em>`;
+      list.append(sectionHead);
+      visibleItems.forEach((item) => {
+        list.append(renderPlannerLinkedItem(item));
+      });
+      renderedCount += visibleItems.length;
+    });
+    if (viewData.items.length > renderedCount) {
+      const more = document.createElement("p");
+      more.className = "planner-linked-more";
+      more.textContent = `+${viewData.items.length - renderedCount} more in this view`;
+      list.append(more);
+    }
   } else {
     viewData.items.slice(0, viewData.limit).forEach((item) => {
       list.append(renderPlannerLinkedItem(item));
@@ -2949,23 +2995,85 @@ function renderPlannerLinkedList(card) {
     }
   }
 
-  wrapper.append(head, optionSummary, list);
+  wrapper.append(head, optionSummary, dateContext, addForm, list);
   return wrapper;
 }
 
-function renderPlannerLinkedItem(item) {
+function renderPlannerLinkedAddForm(card, view, options) {
+  const form = document.createElement("form");
+  form.className = "planner-linked-add";
+  const mode = normalizePlannerViewMode(view);
+  const dateKey = normalizeDateKey(card.plannerQuickDate) || getDefaultPlannerViewAddDate(mode, options);
+
+  const dateInput = document.createElement("input");
+  dateInput.type = "date";
+  dateInput.className = "planner-linked-add-date";
+  dateInput.value = mode === "today" ? getTodayKey() : dateKey;
+  dateInput.min = getTodayKey();
+  dateInput.setAttribute("aria-label", "Planner task date");
+  dateInput.hidden = mode === "today";
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "planner-linked-add-input";
+  input.maxLength = 160;
+  input.placeholder = mode === "today" ? "Add something for today" : "Add a dated planner task";
+  input.setAttribute("aria-label", "Add planner task");
+
   const button = document.createElement("button");
-  button.type = "button";
-  button.className = "planner-linked-item";
-  button.title = "Open source planner date";
-  button.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
-  const date = document.createElement("span");
+  button.type = "submit";
+  button.className = "planner-linked-add-button";
+  button.title = "Add planner task";
+  button.setAttribute("aria-label", "Add planner task");
+  button.innerHTML = ICONS.plus;
+
+  form.append(dateInput, input, button);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const targetDate = mode === "today" ? getTodayKey() : normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
+    card.plannerQuickDate = targetDate;
+    if (!addPlannerTaskFromPlannerView(card, targetDate, input.value)) return;
+  });
+  return form;
+}
+
+function renderPlannerLinkedItem(item) {
+  const row = document.createElement("div");
+  row.className = "planner-linked-item";
+  row.classList.toggle("is-done", Boolean(item.done));
+
+  const check = document.createElement("input");
+  check.type = "checkbox";
+  check.className = "planner-linked-check";
+  check.checked = Boolean(item.done);
+  check.title = item.done ? "Mark as open" : "Mark as done";
+  check.setAttribute("aria-label", `${item.done ? "Mark open" : "Mark done"}: ${item.title}`);
+  check.addEventListener("change", () => togglePlannerTaskDone(item));
+
+  const date = document.createElement("button");
+  date.type = "button";
   date.className = "planner-linked-date";
   date.textContent = formatPlannerListDate(item.dateKey);
-  const copy = document.createElement("strong");
+  date.title = "Open source planner date";
+  date.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
+
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "planner-linked-copy";
   copy.textContent = item.title;
-  button.append(date, copy);
-  return button;
+  copy.title = "Open source planner date";
+  copy.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "planner-linked-delete";
+  remove.title = "Delete planner task";
+  remove.setAttribute("aria-label", `Delete planner task: ${item.title}`);
+  remove.innerHTML = ICONS["trash-2"];
+  remove.addEventListener("click", () => deletePlannerTask(item));
+
+  row.append(check, date, copy, remove);
+  return row;
 }
 
 function renderDiary(card) {
@@ -3478,10 +3586,22 @@ function normalizePlannerCard(card) {
 }
 
 function normalizePlannerEntry(entry = {}) {
+  const note = cleanPlannerNote(entry.note || entry.text || "");
+  const savedChecks = entry.checkedItems && typeof entry.checkedItems === "object" ? entry.checkedItems : entry.doneItems || {};
+  const checkedItems = {};
+  getPlannerNoteLines(note).forEach((line) => {
+    const key = getPlannerItemKey(line);
+    if (savedChecks[key] || savedChecks[line]) checkedItems[key] = true;
+  });
   return {
-    note: cleanPlannerNote(entry.note || entry.text || ""),
+    note,
+    checkedItems,
     updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : 0
   };
+}
+
+function getPlannerItemKey(value) {
+  return normalizeLabel(value).toLowerCase();
 }
 
 function formatPlannerNoteForEditing(value) {
@@ -3588,6 +3708,89 @@ function updatePlannerEntry(card, dateKey, updates, options = {}) {
   if (options.rerender) renderCardsOnly();
 }
 
+function getPlannerLineIndex(lines, item) {
+  if (Number.isInteger(item?.lineIndex) && getPlannerItemKey(lines[item.lineIndex]) === getPlannerItemKey(item.title)) {
+    return item.lineIndex;
+  }
+  return lines.findIndex((line) => getPlannerItemKey(line) === getPlannerItemKey(item?.title));
+}
+
+function togglePlannerTaskDone(item) {
+  if (!item?.card || !item.dateKey) return;
+  const entry = getPlannerEntry(item.card, item.dateKey);
+  const checkedItems = { ...(entry.checkedItems || {}) };
+  const key = getPlannerItemKey(item.title);
+  if (checkedItems[key]) {
+    delete checkedItems[key];
+  } else {
+    checkedItems[key] = true;
+  }
+  updatePlannerEntry(item.card, item.dateKey, { checkedItems }, { rerender: true });
+}
+
+function deletePlannerTask(item) {
+  if (!item?.card || !item.dateKey) return;
+  const entry = getPlannerEntry(item.card, item.dateKey);
+  const lines = getPlannerNoteLines(entry.note);
+  const lineIndex = getPlannerLineIndex(lines, item);
+  if (lineIndex < 0) return;
+  const [removed] = lines.splice(lineIndex, 1);
+  const checkedItems = { ...(entry.checkedItems || {}) };
+  delete checkedItems[getPlannerItemKey(removed)];
+  updatePlannerEntry(
+    item.card,
+    item.dateKey,
+    {
+      note: lines.map((line) => `- ${line}`).join("\n"),
+      checkedItems
+    },
+    { rerender: true }
+  );
+}
+
+function getDefaultPlannerViewAddDate(view, options = {}) {
+  const mode = normalizePlannerViewMode(view);
+  const viewOptions = normalizePlannerViewOptions(options);
+  const timeline = getPlannerTimelineMeta();
+  if (mode === "today") return timeline.todayKey;
+  if (mode === "week") return viewOptions.excludeToday ? timeline.tomorrowKey : timeline.todayKey;
+  if (mode === "month") {
+    if (viewOptions.excludeWeek) return timeline.nextWeekKey;
+    return viewOptions.excludeToday ? timeline.tomorrowKey : timeline.todayKey;
+  }
+  if (viewOptions.excludeMonth) return timeline.nextMonthKey;
+  if (viewOptions.excludeWeek) return timeline.nextWeekKey;
+  return viewOptions.excludeToday ? timeline.tomorrowKey : timeline.todayKey;
+}
+
+function getPlannerWriteSourceCard(planlistCard, dateKey) {
+  const group = getPlannerGroup(planlistCard);
+  let source = state.cards.find((card) => card.type === "planner" && getPlannerGroup(card) === group);
+  if (source) return source;
+  source = makeCard({
+    title: `${group} planner`,
+    description: "Source planner for dated tasks added from Planner-view cards.",
+    category: group,
+    type: "planner",
+    theme: planlistCard.theme || getThemeForCategory(group),
+    background: planlistCard.background || "clean",
+    timerMode: "none",
+    activePlannerDate: normalizeDateKey(dateKey) || getTodayKey(),
+    plannerEntries: {}
+  });
+  source.order = nextOrder();
+  state.cards.push(source);
+  return source;
+}
+
+function addPlannerTaskFromPlannerView(planlistCard, dateKey, value) {
+  const text = stripPlannerBullet(value);
+  if (!text) return false;
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  const source = getPlannerWriteSourceCard(planlistCard, normalizedDate);
+  return addPlannerTaskToDate(source, normalizedDate, text);
+}
+
 function addPlannerTaskToDate(card, dateKey, value) {
   const text = stripPlannerBullet(value);
   if (!text) return false;
@@ -3640,14 +3843,15 @@ function getPlannerScheduleItems(plannerCard) {
 
   Object.entries(plannerCard.plannerEntries || {}).forEach(([dateKey, entry]) => {
     const normalizedDate = normalizeDateKey(dateKey);
-    const note = normalizePlannerEntry(entry).note;
-    if (!normalizedDate || !note) return;
-    getPlannerNoteLines(note).forEach((line, index) => {
+    const normalizedEntry = normalizePlannerEntry(entry);
+    if (!normalizedDate || !normalizedEntry.note) return;
+    getPlannerNoteLines(normalizedEntry.note).forEach((line, index) => {
       items.push({
         dateKey: normalizedDate,
         title: line,
         source: "Planner",
         group,
+        done: Boolean(normalizedEntry.checkedItems[getPlannerItemKey(line)]),
         priority: 0,
         lineIndex: index
       });
@@ -3682,44 +3886,97 @@ function getPlannerSourceItems(group = "", options = {}) {
     .sort(sortPlannerScheduleItems);
 }
 
-function getPlannerViewData(view, group, options = {}) {
-  const mode = normalizePlannerViewMode(view);
-  const viewOptions = normalizePlannerViewOptions(options);
+function getPlannerTimelineMeta() {
   const todayKey = getTodayKey();
   const today = dateKeyToLocalDate(todayKey);
   const todayTime = today.getTime();
-  const weekEndTime = addDays(today, 6 - getCurrentWeekIndex(today)).getTime();
-  const monthEndTime = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
-  const futureItems = getPlannerSourceItems(group, viewOptions).filter((item) => dateKeyToLocalDate(item.dateKey).getTime() >= todayTime);
+  const weekEnd = addDays(today, 6 - getCurrentWeekIndex(today));
+  const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  return {
+    todayKey,
+    today,
+    todayTime,
+    tomorrowKey: getTodayKey(addDays(today, 1)),
+    weekEnd,
+    weekEndTime: weekEnd.getTime(),
+    monthEnd,
+    monthEndTime: monthEnd.getTime(),
+    nextWeekKey: getTodayKey(addDays(weekEnd, 1)),
+    nextMonthKey: getTodayKey(new Date(today.getFullYear(), today.getMonth() + 1, 1))
+  };
+}
+
+function getPlannerItemTime(item) {
+  return dateKeyToLocalDate(item.dateKey).getTime();
+}
+
+function getPlannerSectionKey(item, timeline = getPlannerTimelineMeta()) {
+  const time = getPlannerItemTime(item);
+  if (time === timeline.todayTime) return "today";
+  if (time <= timeline.weekEndTime) return "week";
+  if (time <= timeline.monthEndTime) return "month";
+  return "future";
+}
+
+function getPlannerSectionLabel(key) {
+  return {
+    today: "Today",
+    week: "This week",
+    month: "This month",
+    future: "Future"
+  }[key] || "Future";
+}
+
+function getPlannerViewData(view, group, options = {}) {
+  const mode = normalizePlannerViewMode(view);
+  const viewOptions = normalizePlannerViewOptions(options);
+  const timeline = getPlannerTimelineMeta();
+  const futureItems = getPlannerSourceItems(group, viewOptions).filter((item) => getPlannerItemTime(item) >= timeline.todayTime);
+  const upcomingItems = futureItems.filter((item) => {
+    const time = getPlannerItemTime(item);
+    if (viewOptions.excludeMonth && time <= timeline.monthEndTime) return false;
+    if (viewOptions.excludeWeek && time <= timeline.weekEndTime) return false;
+    if (viewOptions.excludeToday && time === timeline.todayTime) return false;
+    return true;
+  });
+  const upcomingSections = ["today", "week", "month", "future"]
+    .map((key) => ({
+      key,
+      label: getPlannerSectionLabel(key),
+      items: upcomingItems.filter((item) => getPlannerSectionKey(item, timeline) === key)
+    }))
+    .filter((section) => section.items.length);
   const range = {
     today: {
       limit: 8,
       empty: "Planner items dated today will appear here.",
-      items: futureItems.filter((item) => item.dateKey === todayKey)
+      items: futureItems.filter((item) => item.dateKey === timeline.todayKey),
+      dateLabel: formatPlannerDate(timeline.todayKey)
     },
     week: {
       limit: 8,
       empty: "Planner items for the rest of this week will appear here.",
       items: futureItems.filter((item) => {
-        const time = dateKeyToLocalDate(item.dateKey).getTime();
-        if (viewOptions.excludeToday && time === todayTime) return false;
-        return time >= todayTime && time <= weekEndTime;
+        const time = getPlannerItemTime(item);
+        if (viewOptions.excludeToday && time === timeline.todayTime) return false;
+        return time >= timeline.todayTime && time <= timeline.weekEndTime;
       })
     },
     month: {
       limit: 10,
       empty: "Planner items later this month will appear here.",
       items: futureItems.filter((item) => {
-        const time = dateKeyToLocalDate(item.dateKey).getTime();
-        if (viewOptions.excludeWeek && time <= weekEndTime) return false;
-        if (viewOptions.excludeToday && time === todayTime) return false;
-        return time >= todayTime && time <= monthEndTime;
+        const time = getPlannerItemTime(item);
+        if (viewOptions.excludeWeek && time <= timeline.weekEndTime) return false;
+        if (viewOptions.excludeToday && time === timeline.todayTime) return false;
+        return time >= timeline.todayTime && time <= timeline.monthEndTime;
       })
     },
     upcoming: {
-      limit: 10,
-      empty: "Planner items beyond this month will appear here.",
-      items: futureItems.filter((item) => dateKeyToLocalDate(item.dateKey).getTime() > monthEndTime)
+      limit: 12,
+      empty: "Upcoming planner items will appear here.",
+      items: upcomingItems,
+      sections: upcomingSections
     }
   };
   return {
@@ -3740,14 +3997,17 @@ function getPlannerViewLabel(view) {
 function getPlannerViewSummary(view, options = {}) {
   const mode = normalizePlannerViewMode(view);
   const viewOptions = normalizePlannerViewOptions(options);
-  if (mode === "today") return "Shows only planner items dated today.";
+  if (mode === "today") return "Shows planner items dated today, with quick add for today's list.";
   if (mode === "week") return viewOptions.excludeToday ? "Shows the rest of this week without today's items." : "Shows today through the end of this week.";
   if (mode === "month") {
     if (viewOptions.excludeWeek) return "Shows later this month without today or this week's items.";
     if (viewOptions.excludeToday) return "Shows this month without today's items.";
     return "Shows today through the end of this month.";
   }
-  return "Shows planner items after this month.";
+  if (viewOptions.excludeMonth) return "Shows future items after this month.";
+  if (viewOptions.excludeWeek) return "Groups later this month and future items.";
+  if (viewOptions.excludeToday) return "Groups the rest of this week, this month and future items.";
+  return "Groups today, this week, this month and future items.";
 }
 
 function getUpcomingScheduleItems(plannerCard, limit = 6) {
@@ -4085,8 +4345,9 @@ function renderConditionalFields() {
   const plannerViewMode = normalizePlannerViewMode(elements.plannerViewMode.value);
   elements.plannerViewMode.value = plannerViewMode;
   renderPlannerViewModeButtons(plannerViewMode);
-  elements.plannerExcludeTodayField.hidden = !["week", "month"].includes(plannerViewMode);
-  elements.plannerExcludeWeekField.hidden = plannerViewMode !== "month";
+  elements.plannerExcludeTodayField.hidden = !["week", "month", "upcoming"].includes(plannerViewMode);
+  elements.plannerExcludeWeekField.hidden = !["month", "upcoming"].includes(plannerViewMode);
+  elements.plannerExcludeMonthField.hidden = plannerViewMode !== "upcoming";
   if (type === "diary" && !normalizeDateKey(elements.diaryDate.value)) {
     elements.diaryDate.value = getTodayKey();
   }
@@ -4935,6 +5196,7 @@ function hasDraftInput() {
       normalizePlannerViewMode(elements.plannerViewMode.value) !== "today" ||
       elements.plannerViewExcludeToday.checked ||
       elements.plannerViewExcludeWeek.checked ||
+      elements.plannerViewExcludeMonth.checked ||
       normalizeDateKey(elements.diaryDate.value) !== getTodayKey() ||
       elements.diaryFeeling.value !== "Calm" ||
       normalizeDateKey(elements.cardPlanDate.value) !== getTodayKey() ||
@@ -4976,6 +5238,7 @@ function normalizePlannerViewOptions(options = {}) {
   return {
     excludeToday: Boolean(options.excludeToday),
     excludeWeek: Boolean(options.excludeWeek),
+    excludeMonth: Boolean(options.excludeMonth),
     sourceMode: options.sourceMode === "area" ? "area" : "board"
   };
 }
@@ -5503,7 +5766,8 @@ function getProgress(card) {
 
   if (card.type === "planlist") {
     const data = getPlannerViewData(card.plannerView, getPlannerGroup(card), card.plannerViewOptions);
-    return { percent: 0, label: `${data.items.length} linked` };
+    const done = data.items.filter((item) => item.done).length;
+    return { percent: data.items.length ? Math.round((done / data.items.length) * 100) : 0, label: data.items.length ? `${done}/${data.items.length} done` : "0 linked" };
   }
 
   if (card.type === "diary") {
