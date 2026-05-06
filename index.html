@@ -768,7 +768,7 @@
               <button type="button" class="icon-button archive-card" title="Archive card" aria-label="Archive card">
                 <span data-icon="archive"></span>
               </button>
-              <button type="button" class="icon-button delete-card" title="Delete card" aria-label="Delete card">
+              <button type="button" class="icon-button delete-card" title="Remove from board" aria-label="Remove from board">
                 <span data-icon="trash-2"></span>
               </button>
             </div>
@@ -783,6 +783,12 @@
         <div class="card-body"></div>
       </article>
     </template>
+
+    <div class="undo-toast" id="undoToast" hidden role="status" aria-live="polite">
+      <span id="undoToastText">Card moved to Archive.</span>
+      <button type="button" id="undoToastButton">Undo</button>
+      <button type="button" class="undo-toast-close" id="undoToastCloseButton" aria-label="Close undo message">x</button>
+    </div>
 
     <script src="app.js"></script>
   </body>

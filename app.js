@@ -1017,6 +1017,8 @@ let draftTouched = false;
 let selectedTemplateId = boardTemplates[0]?.id || "";
 let selectedScheduleDays = [0, 2, 4];
 let boardResizeFrame = null;
+let pendingUndoAction = null;
+let undoToastTimer = null;
 
 const elements = {
   appShell: document.querySelector("#appShell"),
@@ -1196,7 +1198,11 @@ const elements = {
   recordsTypeFilter: document.querySelector("#recordsTypeFilter"),
   recordsAreaFilter: document.querySelector("#recordsAreaFilter"),
   recordsReasonFilter: document.querySelector("#recordsReasonFilter"),
-  recordsModalList: document.querySelector("#recordsModalList")
+  recordsModalList: document.querySelector("#recordsModalList"),
+  undoToast: document.querySelector("#undoToast"),
+  undoToastText: document.querySelector("#undoToastText"),
+  undoToastButton: document.querySelector("#undoToastButton"),
+  undoToastCloseButton: document.querySelector("#undoToastCloseButton")
 };
 
 mountSettingsPanels();
@@ -1657,6 +1663,9 @@ function bindEvents() {
       renderRecordsModal();
     });
   });
+
+  elements.undoToastButton.addEventListener("click", runPendingUndo);
+  elements.undoToastCloseButton.addEventListener("click", clearUndoToast);
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !elements.cardComposerPanel.hidden) {
@@ -2766,6 +2775,10 @@ function renderCard(card, options = {}) {
   editButton.disabled = !interactive;
   archiveButton.disabled = !interactive;
   deleteButton.disabled = !interactive;
+  archiveButton.title = "Move to Archive";
+  archiveButton.setAttribute("aria-label", "Move to Archive");
+  deleteButton.title = "Remove from board";
+  deleteButton.setAttribute("aria-label", "Remove from board");
   if (interactive) {
     if (hasTimer) {
       resetButton.addEventListener("click", () => resetTimer(card.id));
@@ -3767,6 +3780,8 @@ function getPlannerWriteSourceCard(planlistCard, dateKey) {
   const group = getPlannerGroup(planlistCard);
   let source = state.cards.find((card) => card.type === "planner" && getPlannerGroup(card) === group);
   if (source) return source;
+  source = getArchivedCards().find((card) => card.type === "planner" && getPlannerGroup(card) === group);
+  if (source) return source;
   source = makeCard({
     title: `${group} planner`,
     description: "Source planner for dated tasks added from Planner-view cards.",
@@ -3865,8 +3880,7 @@ function getPlannerItemsForDate(dateKey, group = "") {
   const normalizedDate = normalizeDateKey(dateKey);
   if (!normalizedDate) return [];
   const normalizedGroup = group ? getPlannerGroup({ category: group }) : "";
-  return state.cards
-    .filter((card) => card.type === "planner")
+  return getPlannerSourceCards()
     .filter((card) => !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
     .flatMap((card) =>
       getPlannerScheduleItems(card)
@@ -3876,11 +3890,21 @@ function getPlannerItemsForDate(dateKey, group = "") {
     .sort(sortPlannerScheduleItems);
 }
 
+function getPlannerSourceCards() {
+  const sources = new Map();
+  state.cards.forEach((card) => {
+    if (card?.type === "planner") sources.set(card.id, card);
+  });
+  getArchivedCards().forEach((card) => {
+    if (card?.type === "planner" && !sources.has(card.id)) sources.set(card.id, card);
+  });
+  return [...sources.values()];
+}
+
 function getPlannerSourceItems(group = "", options = {}) {
   const viewOptions = normalizePlannerViewOptions(options);
   const normalizedGroup = group ? getPlannerGroup({ category: group }) : "";
-  return state.cards
-    .filter((card) => card.type === "planner")
+  return getPlannerSourceCards()
     .filter((card) => viewOptions.sourceMode !== "area" || !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
     .flatMap((card) => getPlannerScheduleItems(card).map((item) => ({ ...item, card })))
     .sort(sortPlannerScheduleItems);
@@ -4970,15 +4994,16 @@ function getCardRecordContext(card) {
   return parts.join(" · ");
 }
 
-function archiveCard(id) {
+function archiveCard(id, options = {}) {
   const index = state.cards.findIndex((card) => card.id === id);
   if (index < 0) return;
   const [card] = state.cards.splice(index, 1);
+  const reason = normalizeLabel(options.reason || getArchiveReason(card));
   const archivedCard = normalizeArchivedCard({
     ...card,
     runningSince: null,
     archivedAt: Date.now(),
-    archiveReason: getArchiveReason(card)
+    archiveReason: reason
   });
   state.archivedCards = [archivedCard, ...getArchivedCards()];
   if (editingCardId === id) {
@@ -4986,9 +5011,18 @@ function archiveCard(id) {
   }
   saveState();
   render();
+  if (!elements.recordsModal.hidden) {
+    renderRecordsModal();
+  }
+  if (options.showUndo !== false) {
+    showUndoToast({
+      message: options.message || `"${card.title}" moved to Archive.`,
+      onUndo: () => restoreArchivedCard(archivedCard.id, { fromUndo: true })
+    });
+  }
 }
 
-function restoreArchivedCard(id) {
+function restoreArchivedCard(id, options = {}) {
   const records = getArchivedCards();
   const index = records.findIndex((card) => card.id === id);
   if (index < 0) return;
@@ -5004,7 +5038,12 @@ function restoreArchivedCard(id) {
   state.cards.push(restoredCard);
   saveState();
   render();
-  renderRecordsModal();
+  if (!elements.recordsModal.hidden) {
+    renderRecordsModal();
+  }
+  if (options.fromUndo) {
+    clearUndoToast();
+  }
 }
 
 function getArchivedCards(sourceState = state) {
@@ -5021,6 +5060,28 @@ function normalizeArchivedCard(card) {
 
 function getArchiveReason(card) {
   return getProgress(card).percent >= 100 ? "completed" : "archived";
+}
+
+function showUndoToast({ message, onUndo }) {
+  pendingUndoAction = typeof onUndo === "function" ? onUndo : null;
+  elements.undoToastText.textContent = message;
+  elements.undoToast.hidden = false;
+  window.clearTimeout(undoToastTimer);
+  undoToastTimer = window.setTimeout(clearUndoToast, 12000);
+}
+
+function runPendingUndo() {
+  if (!pendingUndoAction) return;
+  const action = pendingUndoAction;
+  pendingUndoAction = null;
+  window.clearTimeout(undoToastTimer);
+  action();
+}
+
+function clearUndoToast() {
+  pendingUndoAction = null;
+  window.clearTimeout(undoToastTimer);
+  elements.undoToast.hidden = true;
 }
 
 function formatRecordDate(value) {
@@ -5510,14 +5571,10 @@ function stopAllTimers() {
 function deleteCard(id) {
   const card = state.cards.find((item) => item.id === id);
   if (!card) return;
-  const confirmed = window.confirm(`Permanently delete "${card.title}" from this browser? Archive it instead if you may need the record.`);
-  if (!confirmed) return;
-  state.cards = state.cards.filter((card) => card.id !== id);
-  if (editingCardId === id) {
-    resetFormState();
-  }
-  saveState();
-  renderCardsOnly();
+  archiveCard(id, {
+    reason: "removed from board",
+    message: `"${card.title}" removed from the board and kept in Archive.`
+  });
 }
 
 function moveCardToPosition(sourceId, targetId, targetColumn) {

@@ -2994,6 +2994,60 @@ textarea:focus {
   background: #111111;
 }
 
+.undo-toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 80;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  width: min(430px, calc(100vw - 32px));
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 16px;
+  color: #111111;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 24px 80px rgba(17, 17, 17, 0.2);
+  backdrop-filter: blur(16px);
+}
+
+.undo-toast[hidden] {
+  display: none;
+}
+
+.undo-toast span {
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-toast button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid #e4e4e2;
+  border-radius: 999px;
+  color: #111111;
+  background: #ffffff;
+  font-size: 0.74rem;
+  font-weight: 950;
+}
+
+.undo-toast #undoToastButton {
+  color: #ffffff;
+  border-color: #111111;
+  background: #111111;
+}
+
+.undo-toast-close {
+  width: 32px;
+  padding: 0;
+}
+
 .history-row strong,
 .record-row strong {
   font-size: 0.86rem;
@@ -4947,6 +5001,17 @@ textarea:focus {
 
   .sidebar {
     padding: 8px;
+  }
+
+  .undo-toast {
+    right: 10px;
+    bottom: 88px;
+    left: 10px;
+    width: auto;
+  }
+
+  .undo-toast span {
+    white-space: normal;
   }
 
   .card-composer-panel {
