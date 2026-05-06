@@ -39,10 +39,6 @@
             <span data-icon="archive"></span>
             <small>Archive</small>
           </button>
-          <button type="button" class="rail-button" id="railSyncButton" title="Cloud sync" aria-label="Cloud sync" aria-pressed="false">
-            <span data-icon="cloud"></span>
-            <small>Sync</small>
-          </button>
           <button type="button" class="rail-button" id="railSettingsButton" title="Controls" aria-label="Controls" aria-pressed="false">
             <span data-icon="settings"></span>
             <small>Controls</small>
@@ -83,6 +79,34 @@
               <button type="button" data-value="custom">Manual</button>
             </div>
           </div>
+        </section>
+
+        <section class="panel cloud-panel">
+          <div class="panel-heading">
+            <h2>Cloud sync</h2>
+            <span class="tag" id="cloudStatus">Local</span>
+          </div>
+          <p class="data-note">Use the Life OS login created here. Your Supabase dashboard email is separate unless you created it as an app user. Signed-in browsers auto-save with conflict protection, so a newer cloud copy is not replaced without confirmation.</p>
+          <button type="button" class="template-open-button cloud-check-button" id="cloudCheckButton">Check Supabase setup</button>
+          <label class="field">
+            <span>Email</span>
+            <input id="cloudEmail" type="email" maxlength="120" autocomplete="email" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="cloudPassword" type="password" minlength="6" maxlength="80" autocomplete="current-password" />
+          </label>
+          <div class="cloud-actions">
+            <button type="button" class="secondary-action" id="cloudSignInButton">Sign in</button>
+            <button type="button" class="secondary-action" id="cloudSignUpButton">Create login</button>
+          </div>
+          <button type="button" class="template-open-button cloud-resend-button" id="cloudResendButton">Resend email</button>
+          <div class="cloud-actions">
+            <button type="button" class="secondary-action" id="cloudPullButton">Load cloud</button>
+            <button type="button" class="secondary-action" id="cloudPushButton">Save cloud</button>
+          </div>
+          <button type="button" class="template-open-button" id="cloudSignOutButton" hidden>Sign out</button>
+          <p class="cloud-note" id="cloudNote">Local browser storage is active.</p>
         </section>
 
         <section class="panel card-composer-panel" id="cardComposerPanel" aria-label="Card composer" hidden>
@@ -127,12 +151,6 @@
               </label>
               <input id="cardReward" type="hidden" value="" />
             </div>
-            <div class="form-grid">
-              <label class="field daily-plan-date" id="dailyPlanDateField">
-                <span>Plan day</span>
-                <input id="cardPlanDate" type="date" />
-              </label>
-            </div>
             <label class="field category-custom" id="categoryCustomField">
               <span>Custom area</span>
               <input id="cardCategoryCustom" type="text" maxlength="32" placeholder="Area name" autocomplete="off" />
@@ -141,7 +159,8 @@
               <div class="field type-picker-field">
                 <span>Type</span>
                 <select id="cardType" hidden aria-hidden="true">
-                  <option value="daily">To-do list</option>
+                  <option value="planner">Planner</option>
+                  <option value="daily" selected>To-do list</option>
                   <option value="diary">Daily diary</option>
                   <option value="brief">Strategy brief</option>
                   <option value="quote">Motivation</option>
@@ -160,6 +179,22 @@
               <div class="type-insight" id="typeInsight" aria-live="polite"></div>
               <input id="cardSize" type="hidden" value="standard" />
             </div>
+            <div class="planner-input" id="plannerField">
+              <div class="form-grid">
+                <label class="field">
+                  <span>Planner date</span>
+                  <input id="plannerDate" type="date" />
+                </label>
+              </div>
+              <label class="field">
+                <span>Plan note</span>
+                <textarea id="plannerNote" maxlength="520" rows="4" placeholder="- Write the plan, reminder, meeting note, trip idea or future task"></textarea>
+              </label>
+            </div>
+            <label class="field daily-plan-date" id="dailyPlanDateField">
+              <span>Plan day</span>
+              <input id="cardPlanDate" type="date" />
+            </label>
             <label class="field scorecard-period" id="scorecardPeriodField">
               <span>Scorecard period</span>
               <select id="scorecardPeriod">
@@ -297,7 +332,7 @@
           </form>
         </section>
 
-        <section class="panel template-panel">
+        <section class="panel template-panel" hidden>
           <div class="panel-heading">
             <h2>Templates</h2>
             <span class="tag">Boards</span>
@@ -312,38 +347,11 @@
           </button>
         </section>
 
-        <section class="panel cloud-panel">
-          <div class="panel-heading">
-            <h2>Cloud sync</h2>
-            <span class="tag" id="cloudStatus">Local</span>
-          </div>
-          <p class="data-note">Use the Life OS login created here. Your Supabase dashboard email is separate unless you created it as an app user.</p>
-          <button type="button" class="template-open-button cloud-check-button" id="cloudCheckButton">Check Supabase setup</button>
-          <label class="field">
-            <span>Email</span>
-            <input id="cloudEmail" type="email" maxlength="120" autocomplete="email" />
-          </label>
-          <label class="field">
-            <span>Password</span>
-            <input id="cloudPassword" type="password" minlength="6" maxlength="80" autocomplete="current-password" />
-          </label>
-          <div class="cloud-actions">
-            <button type="button" class="secondary-action" id="cloudSignInButton">Sign in</button>
-            <button type="button" class="secondary-action" id="cloudSignUpButton">Create login</button>
-          </div>
-          <div class="cloud-actions">
-            <button type="button" class="secondary-action" id="cloudPullButton">Load cloud</button>
-            <button type="button" class="secondary-action" id="cloudPushButton">Save cloud</button>
-          </div>
-          <button type="button" class="template-open-button" id="cloudSignOutButton" hidden>Sign out</button>
-          <p class="cloud-note" id="cloudNote">Local browser storage is active.</p>
-        </section>
-
         <section class="panel recent-panel" id="recentPanel">
           <div class="panel-heading recent-heading">
             <div>
-              <h2>Recently edited</h2>
-              <span id="recentCount">Cards</span>
+              <h2>Recent shortcuts</h2>
+              <span id="recentCount">Last cards</span>
             </div>
             <button type="button" class="recent-toggle" id="recentToggleButton" aria-expanded="true">
               <span id="recentToggleLabel">Hide</span>
@@ -461,7 +469,8 @@
               <label class="quick-field">
                 <span>Type</span>
                 <select id="quickTodoType" aria-label="Card type">
-                  <option value="daily">To-do list</option>
+                  <option value="planner">Planner</option>
+                  <option value="daily" selected>To-do list</option>
                   <option value="diary">Daily diary</option>
                   <option value="single">Task</option>
                   <option value="event">Event countdown</option>
@@ -489,6 +498,8 @@
                 <select id="quickTodoPlan" aria-label="Planned day">
                   <option value="today">Today</option>
                   <option value="tomorrow">Tomorrow</option>
+                  <option value="day-after">Day after tomorrow</option>
+                  <option value="next-week">Next week</option>
                 </select>
               </label>
               <label class="quick-field">
