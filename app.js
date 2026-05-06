@@ -1,11 +1,19 @@
 const STORAGE_KEY = "progress-board-v1";
-const SAMPLE_VERSION = 12;
+const SAMPLE_VERSION = 13;
 const COURSE_BOARD_VERSION = 1;
 const AI_COURSE_BOARD_VERSION = 1;
 const LIFE_OS_BOARD_VERSION = 3;
 const HISTORY_LIMIT = 370;
 const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
 const CONTENT_CARD_TYPES = ["diary", "quote", "video"];
+const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
+  url: "https://shrmhjulhfuodtrsqhpu.supabase.co",
+  anonKey: "sb_publishable_DFWPjTEDRTsgM3pA_XPWdw_LAYQk_lP"
+};
+const CLOUD_SESSION_KEY = "life-os-cloud-session";
+let cloudSession = loadCloudSession();
+let cloudSaveTimer = null;
+let cloudSaveEnabled = Boolean(cloudSession?.access_token);
 
 const THEMES = {
   leaf: {
@@ -82,7 +90,6 @@ const ICONS = {
   "trash-2": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>',
   archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="5" x="3" y="3" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 12h4"/></svg>',
   timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 2h4"/><path d="M12 14l3-3"/><circle cx="12" cy="14" r="8"/></svg>',
-  grip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/></svg>',
   "layout-grid": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m20 6-11 11-5-5"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
@@ -91,6 +98,7 @@ const ICONS = {
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.52a2 2 0 0 1-1 1.72l-.15.1a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.52a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>',
   quote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 11H6a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2v1h2v5H5v-6a6 6 0 0 1 6-6"/><path d="M19 11h-4a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2v1h2v5h-5v-6a6 6 0 0 1 6-6"/></svg>',
   video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="14" x="3" y="5" rx="2"/><path d="m10 9 5 3-5 3Z"/></svg>',
   "chevron-left": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg>',
@@ -102,6 +110,7 @@ const ICONS = {
 
 const TYPE_META = {
   single: { label: "Task", icon: "check" },
+  event: { label: "Event", icon: "calendar" },
   brief: { label: "Brief", icon: "list" },
   daily: { label: "To-do", icon: "list" },
   diary: { label: "Diary", icon: "calendar" },
@@ -125,6 +134,7 @@ const TYPE_HELP = {
   quote: "Use for motivational words, reminders, affirmations or principles you want visible on the board.",
   video: "Use for a YouTube, Instagram or Facebook video you want to keep beside the work it supports.",
   single: "Use for one clear outcome that is either done or not done.",
+  event: "Use for a trip, birthday, launch, renewal or important date. The countdown is automatic and cannot be paused.",
   routine: "Use for a daily routine that repeats every day, auto-counts down to midnight, and saves daily history.",
   scheduled: "Use for habits that happen only on selected weekdays, such as gym on Monday, Wednesday and Friday.",
   minutes: "Use for a measurable target such as minutes, calories, steps, pages, reps, or sessions.",
@@ -136,9 +146,82 @@ const TYPE_HELP = {
   workout: "Template-only workout card. Used by fitness boards for exercise prescriptions."
 };
 
-const MANUAL_TYPE_OPTIONS = ["daily", "diary", "brief", "quote", "video", "single", "routine", "scheduled", "minutes", "checklist", "weekly"];
+const TYPE_DETAILS = {
+  daily: {
+    best: "Today or tomorrow task lists",
+    timing: "Plan day is the main signal. Add a deadline only when the list must close by a real time."
+  },
+  diary: {
+    best: "Daily reflection and mood history",
+    timing: "No timer. The date arrows handle past and future pages."
+  },
+  brief: {
+    best: "Decisions, rules, plans and review prompts",
+    timing: "Usually no timer. Add an hour timer only when using it as a focused thinking session."
+  },
+  quote: {
+    best: "Motivation, principles and personal reminders",
+    timing: "No timer. This is a visible anchor, not a task."
+  },
+  video: {
+    best: "YouTube, Instagram or Facebook references",
+    timing: "No timer. Pair it with a task card when action is needed."
+  },
+  single: {
+    best: "One clear task or outcome",
+    timing: "Timer is optional. Use hours for a focus sprint or date for a deadline."
+  },
+  event: {
+    best: "Trips, launches, birthdays, renewals and important dates",
+    timing: "Automatic countdown. It cannot be paused because the event date keeps moving closer."
+  },
+  routine: {
+    best: "Daily repeating checklist",
+    timing: "Automatic countdown to midnight with daily history saved."
+  },
+  scheduled: {
+    best: "Habits on selected weekdays",
+    timing: "Use the repeat days as the main tracker. A 7-day countdown is optional for weekly review."
+  },
+  minutes: {
+    best: "Measurable goals like minutes, calories, pages, steps or sessions",
+    timing: "Timer is optional. Use a deadline when the goal belongs to a week, month or event."
+  },
+  checklist: {
+    best: "Projects with fixed steps",
+    timing: "Timer is optional. Use date for a deadline, or leave it blank for an open project."
+  },
+  weekly: {
+    best: "Seven-day scorecards",
+    timing: "Use when the week itself is the tracking frame."
+  },
+  monthly: {
+    best: "Calendar-month progress",
+    timing: "Use when each day of the month matters."
+  },
+  annual: {
+    best: "Yearly goals and milestones",
+    timing: "Use when progress is reviewed month by month."
+  }
+};
+
+const MANUAL_TYPE_OPTIONS = ["daily", "diary", "brief", "quote", "video", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
 const SCORECARD_TYPES = ["weekly", "monthly", "annual"];
 const TEMPLATE_ONLY_TYPES = ["lab", "workout"];
+const TYPE_PICKER_OPTIONS = [
+  { type: "daily", label: "To-do", hint: "Today plan" },
+  { type: "diary", label: "Diary", hint: "Daily log" },
+  { type: "brief", label: "Brief", hint: "Decision guide" },
+  { type: "quote", label: "Motivation", hint: "Visible words" },
+  { type: "video", label: "Video", hint: "Saved reference" },
+  { type: "single", label: "Task", hint: "One outcome" },
+  { type: "event", label: "Event", hint: "Date countdown" },
+  { type: "routine", label: "Routine", hint: "Daily reset" },
+  { type: "scheduled", label: "Schedule", hint: "Repeat days" },
+  { type: "minutes", label: "Goal", hint: "Track number" },
+  { type: "checklist", label: "Project", hint: "Multi-step" },
+  { type: "weekly", label: "Scorecard", hint: "Week, month, year" }
+];
 
 const CATEGORY_ALIASES = {
   general: "General",
@@ -202,7 +285,7 @@ const boardTemplates = [
   {
     id: "life-os",
     name: "Life & Work Operating Board",
-    description: "Daily command center for priorities, work pipeline, fitness, money and weekly review.",
+    description: "A balanced home board for daily planning, work, health, money, relationships, reflection and weekly review.",
     category: "Life OS"
   },
   {
@@ -236,28 +319,10 @@ const boardTemplates = [
     category: "Creative"
   },
   {
-    id: "ai-starter",
-    name: "AI Starter Course",
-    description: "Beginner AI literacy, prompting, research and automation course.",
-    category: "AI"
-  },
-  {
     id: "foundation",
-    name: "Fitness Foundation Course",
-    description: "8-week strength, cardio, mobility and recovery course.",
-    category: "Fitness"
-  },
-  {
-    id: "fitness",
-    name: "Fitness reset",
-    description: "Daily movement, weekly workouts and sleep rhythm.",
-    category: "Fitness"
-  },
-  {
-    id: "study",
-    name: "Study sprint",
-    description: "Daily study list, exam countdown and monthly reading.",
-    category: "Study"
+    name: "Fitness Foundation Board",
+    description: "8-week strength, cardio, mobility, nutrition and recovery course.",
+    category: "Health"
   }
 ];
 
@@ -728,6 +793,27 @@ const defaultState = {
       reviewed: false,
       order: 17,
       createdAt: Date.now() - 6000
+    },
+    {
+      id: createId(),
+      title: "Japan trip countdown",
+      description: "Flights, packing and travel documents before departure.",
+      category: "Personal",
+      reward: "",
+      metadata: { category: "Personal" },
+      type: "event",
+      size: "standard",
+      theme: "tide",
+      background: "sky",
+      includeImage: false,
+      imageUrl: "",
+      timerMode: "date",
+      targetAt: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+      duration: 60 * 24 * 60 * 60,
+      remaining: 60 * 24 * 60 * 60,
+      runningSince: null,
+      order: 18,
+      createdAt: Date.now() - 5000
     }
   ],
   archivedCards: [],
@@ -743,10 +829,23 @@ let draftPreviewDismissed = false;
 let selectedTemplateId = boardTemplates[0]?.id || "";
 let selectedScheduleDays = [0, 2, 4];
 let boardResizeFrame = null;
+let settingsActiveSection = "board";
 
 const elements = {
   appShell: document.querySelector("#appShell"),
+  workspace: document.querySelector(".workspace"),
   sidebarToggle: document.querySelector("#sidebarToggle"),
+  railAddButton: document.querySelector("#railAddButton"),
+  railTemplatesButton: document.querySelector("#railTemplatesButton"),
+  railArchiveButton: document.querySelector("#railArchiveButton"),
+  railSettingsButton: document.querySelector("#railSettingsButton"),
+  settingsModal: document.querySelector("#settingsModal"),
+  settingsModalCloseButton: document.querySelector("#settingsModalCloseButton"),
+  settingsPanelMount: document.querySelector("#settingsPanelMount"),
+  boardPanel: document.querySelector(".board-panel"),
+  templatePanel: document.querySelector(".template-panel"),
+  cloudPanel: document.querySelector(".cloud-panel"),
+  artistPanel: document.querySelector(".artist-panel"),
   boardName: document.querySelector("#boardName"),
   boardTitle: document.querySelector("#boardTitle"),
   visibilityLabel: document.querySelector("#visibilityLabel"),
@@ -757,6 +856,8 @@ const elements = {
   newBoardButton: document.querySelector("#newBoardButton"),
   deleteBoardButton: document.querySelector("#deleteBoardButton"),
   form: document.querySelector("#cardForm"),
+  cardComposerPanel: document.querySelector("#cardComposerPanel"),
+  composerCloseButton: document.querySelector("#composerCloseButton"),
   formTitle: document.querySelector("#formTitle"),
   submitCardButton: document.querySelector("#submitCardButton"),
   formSubmitLabel: document.querySelector("#formSubmitLabel"),
@@ -771,7 +872,9 @@ const elements = {
   dailyPlanDateField: document.querySelector("#dailyPlanDateField"),
   cardPlanDate: document.querySelector("#cardPlanDate"),
   cardType: document.querySelector("#cardType"),
+  cardTypeButtons: document.querySelector("#cardTypeButtons"),
   cardTypeHelp: document.querySelector("#cardTypeHelp"),
+  typeInsight: document.querySelector("#typeInsight"),
   scorecardPeriodField: document.querySelector("#scorecardPeriodField"),
   scorecardPeriod: document.querySelector("#scorecardPeriod"),
   cardSize: document.querySelector("#cardSize"),
@@ -852,6 +955,15 @@ const elements = {
   arrangeButton: document.querySelector("#arrangeButton"),
   openTemplatesButton: document.querySelector("#openTemplatesButton"),
   openIdeasButton: document.querySelector("#openIdeasButton"),
+  cloudStatus: document.querySelector("#cloudStatus"),
+  cloudEmail: document.querySelector("#cloudEmail"),
+  cloudPassword: document.querySelector("#cloudPassword"),
+  cloudSignInButton: document.querySelector("#cloudSignInButton"),
+  cloudSignUpButton: document.querySelector("#cloudSignUpButton"),
+  cloudPullButton: document.querySelector("#cloudPullButton"),
+  cloudPushButton: document.querySelector("#cloudPushButton"),
+  cloudSignOutButton: document.querySelector("#cloudSignOutButton"),
+  cloudNote: document.querySelector("#cloudNote"),
   templateModal: document.querySelector("#templateModal"),
   templateModalCloseButton: document.querySelector("#templateModalCloseButton"),
   templateList: document.querySelector("#templateList"),
@@ -877,6 +989,7 @@ const elements = {
   packList: document.querySelector("#packList")
 };
 
+mountSettingsPanels();
 hydrateIcons();
 populateThemeOptions();
 populateBackgroundOptions();
@@ -895,12 +1008,37 @@ setInterval(() => {
   }
 }, 1000);
 
+setInterval(() => {
+  if (state.cards.some((card) => isAutomaticCountdown(card))) {
+    settleExpiredTimers();
+    renderCardsOnly();
+  }
+}, 60000);
+
+function mountSettingsPanels() {
+  if (!elements.settingsPanelMount) return;
+  [elements.boardPanel, elements.templatePanel, elements.cloudPanel, elements.recentPanel, elements.artistPanel]
+    .filter(Boolean)
+    .forEach((panel) => elements.settingsPanelMount.append(panel));
+}
+
 function bindEvents() {
   elements.sidebarToggle.addEventListener("click", () => {
-    state.ui.sidebarOpen = !state.ui.sidebarOpen;
-    renderShell();
-    queueBoardRender();
-    saveState();
+    openSettingsModal();
+  });
+
+  elements.railAddButton.addEventListener("click", () => {
+    openCardComposer({ reset: true });
+  });
+
+  elements.railTemplatesButton.addEventListener("click", () => {
+    openTemplateModal();
+  });
+
+  elements.railArchiveButton.addEventListener("click", openRecordsModal);
+
+  elements.railSettingsButton.addEventListener("click", () => {
+    openSettingsModal();
   });
 
   window.addEventListener("resize", queueBoardRender);
@@ -941,6 +1079,12 @@ function bindEvents() {
 
   elements.cardCategory.addEventListener("change", renderConditionalFields);
   elements.cardType.addEventListener("change", renderConditionalFields);
+  elements.cardTypeButtons.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-type]");
+    if (!button) return;
+    setFormType(button.dataset.type);
+    renderConditionalFields();
+  });
   elements.scorecardPeriod.addEventListener("change", renderConditionalFields);
   elements.includeImage.addEventListener("change", renderConditionalFields);
 
@@ -1000,11 +1144,14 @@ function bindEvents() {
   });
 
   elements.cancelEditButton.addEventListener("click", () => {
-    resetFormState();
-    render();
+    closeCardComposer({ reset: true });
+    renderCardsOnly();
   });
 
   elements.draftPreviewCloseButton.addEventListener("click", discardDraftCard);
+  elements.composerCloseButton.addEventListener("click", () => {
+    closeCardComposer({ reset: true });
+  });
 
   document.querySelector(".view-pills").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-filter]");
@@ -1081,7 +1228,7 @@ function bindEvents() {
   });
 
   elements.quickTodoToggleButton.addEventListener("click", () => {
-    toggleQuickTodoPanel();
+    openCardComposer({ reset: true });
   });
 
   elements.quickTodoCancelButton.addEventListener("click", () => {
@@ -1138,15 +1285,32 @@ function bindEvents() {
   });
 
   elements.openTemplatesButton.addEventListener("click", () => {
+    closeSettingsModal();
     openTemplateModal();
   });
 
-  elements.openIdeasButton.addEventListener("click", openIdeasModal);
+  elements.openIdeasButton.addEventListener("click", () => {
+    closeSettingsModal();
+    openIdeasModal();
+  });
+
+  elements.cloudSignInButton.addEventListener("click", () => signInToCloud());
+  elements.cloudSignUpButton.addEventListener("click", () => signUpForCloud());
+  elements.cloudPullButton.addEventListener("click", () => pullCloudState({ confirmReplace: true }));
+  elements.cloudPushButton.addEventListener("click", () => pushCloudState({ manual: true }));
+  elements.cloudSignOutButton.addEventListener("click", signOutCloud);
 
   elements.templateModalCloseButton.addEventListener("click", closeTemplateModal);
+  elements.settingsModalCloseButton.addEventListener("click", closeSettingsModal);
   elements.ideasModalCloseButton.addEventListener("click", closeIdeasModal);
   elements.historyModalCloseButton.addEventListener("click", closeHistoryModal);
   elements.recordsModalCloseButton.addEventListener("click", closeRecordsModal);
+
+  elements.settingsModal.addEventListener("click", (event) => {
+    if (event.target === elements.settingsModal) {
+      closeSettingsModal();
+    }
+  });
 
   elements.templateModal.addEventListener("click", (event) => {
     if (event.target === elements.templateModal) {
@@ -1186,6 +1350,14 @@ function bindEvents() {
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !elements.cardComposerPanel.hidden) {
+      closeCardComposer({ reset: true });
+      return;
+    }
+    if (event.key === "Escape" && !elements.settingsModal.hidden) {
+      closeSettingsModal();
+      return;
+    }
     if (event.key === "Escape" && state.ui.categoriesOpen) {
       state.ui.categoriesOpen = false;
       saveState();
@@ -1234,6 +1406,7 @@ async function saveCardFromForm() {
   }
 
   resetFormState();
+  closeCardComposer();
   render();
   saveState();
 }
@@ -1396,8 +1569,6 @@ function startEditingCard(id) {
   if (!card) return;
 
   editingCardId = id;
-  state.ui.sidebarOpen = true;
-  renderShell();
   elements.formTitle.textContent = "Edit card";
   elements.formSubmitLabel.textContent = "Update card";
   elements.submitCardButton.querySelector("[data-icon]").dataset.icon = "pencil";
@@ -1436,7 +1607,7 @@ function startEditingCard(id) {
   renderBackgroundSwatches();
   renderConditionalFields();
   hydrateIcons(elements.submitCardButton);
-  elements.cardTitle.focus();
+  openCardComposer();
 }
 
 function resetFormState() {
@@ -1479,9 +1650,53 @@ function resetFormState() {
   hydrateIcons(elements.submitCardButton);
 }
 
+function openCardComposer(options = {}) {
+  closeOtherOverlays("composer");
+  if (options.reset) {
+    resetFormState();
+  }
+  elements.cardComposerPanel.hidden = false;
+  elements.appShell.classList.add("composer-open");
+  document.body.classList.add("composer-open");
+  draftPreviewDismissed = false;
+  renderConditionalFields();
+  hydrateIcons(elements.cardComposerPanel);
+  syncRailActiveState();
+  if (options.focus !== false) {
+    requestAnimationFrame(() => elements.cardTitle.focus());
+  }
+}
+
+function closeCardComposer(options = {}) {
+  elements.cardComposerPanel.hidden = true;
+  elements.appShell.classList.remove("composer-open");
+  document.body.classList.remove("composer-open");
+  if (options.dismissPreview) {
+    draftPreviewDismissed = true;
+  }
+  if (options.reset) {
+    resetFormState();
+  }
+  renderFormPreview();
+  syncRailActiveState();
+}
+
+function closeOtherOverlays(activeSurface = "") {
+  if (activeSurface !== "composer" && !elements.cardComposerPanel.hidden) {
+    closeCardComposer({ dismissPreview: true });
+  }
+  if (activeSurface !== "settings") elements.settingsModal.hidden = true;
+  if (activeSurface !== "template") elements.templateModal.hidden = true;
+  if (activeSurface !== "ideas") elements.ideasModal.hidden = true;
+  if (activeSurface !== "history") elements.historyModal.hidden = true;
+  if (activeSurface !== "records") elements.recordsModal.hidden = true;
+  syncModalOpenState();
+}
+
 function render() {
   renderShell();
   renderBoardMeta();
+  renderCloudStatus();
   renderQuickTodoCategories();
   renderConditionalFields();
   renderRecentCards();
@@ -1500,8 +1715,8 @@ function queueBoardRender() {
 }
 
 function renderShell() {
-  elements.appShell.classList.toggle("sidebar-collapsed", !state.ui.sidebarOpen);
-  elements.sidebarToggle.classList.toggle("is-active", state.ui.sidebarOpen);
+  elements.appShell.classList.add("rail-shell");
+  syncRailActiveState();
 }
 
 function renderBoardMeta() {
@@ -1648,6 +1863,9 @@ function renderQuickTodoFields() {
   elements.quickPlanField.hidden = elements.quickTodoType.value !== "daily";
   const isContent = isUntimedContentType(elements.quickTodoType.value);
   elements.quickTodoTiming.closest(".quick-field").hidden = isContent;
+  if (elements.quickTodoType.value === "event" && elements.quickTodoTiming.value === "none") {
+    elements.quickTodoTiming.value = "week";
+  }
 }
 
 function toggleQuickTodoPanel() {
@@ -1738,7 +1956,8 @@ function getQuickCaptureTimer(value) {
     };
   }
   if (value === "week") {
-    return { mode: "days", targetAt: null, duration: 7 * 24 * 60 * 60 };
+    const duration = 7 * 24 * 60 * 60;
+    return { mode: "days", targetAt: new Date(Date.now() + duration * 1000).toISOString(), duration };
   }
   return { mode: "none", targetAt: null, duration: 0 };
 }
@@ -1748,6 +1967,7 @@ function getQuickCaptureFallbackTitle(type) {
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
   if (type === "single") return "New task";
+  if (type === "event") return "New event";
   if (type === "checklist") return "New project";
   if (type === "brief") return "New idea";
   return "New to-do list";
@@ -1758,6 +1978,7 @@ function getDefaultCardTitle(type) {
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
   if (type === "brief") return "Strategy brief";
+  if (type === "event") return "Event countdown";
   if (type === "checklist") return "Project checklist";
   if (type === "minutes") return "Goal";
   if (type === "scheduled") return "Scheduled habit";
@@ -1778,7 +1999,8 @@ function getQuickCaptureFallbackItems(type) {
   return ["Choose top priority", "Finish the next action", "Review before sleep"];
 }
 
-function renderCardsOnly() {
+function renderCardsOnly(options = {}) {
+  const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
   resetDailyRepeatingCards();
   resetDiaryCardsToToday();
@@ -1804,6 +2026,26 @@ function renderCardsOnly() {
   renderStats(visibleCards);
   renderRecentCards();
   hydrateIcons(elements.boardGrid);
+  restoreScrollPosition(scrollSnapshot);
+}
+
+function captureScrollPosition() {
+  return {
+    windowY: window.scrollY || 0,
+    workspaceTop: elements.workspace ? elements.workspace.scrollTop : 0
+  };
+}
+
+function restoreScrollPosition(snapshot) {
+  if (!snapshot) return;
+  requestAnimationFrame(() => {
+    if (elements.workspace) {
+      elements.workspace.scrollTop = snapshot.workspaceTop;
+    }
+    if (window.scrollY !== snapshot.windowY) {
+      window.scrollTo({ top: snapshot.windowY, left: 0, behavior: "auto" });
+    }
+  });
 }
 
 function renderBoardColumns(cards) {
@@ -2017,24 +2259,25 @@ function renderCard(card, options = {}) {
   node.querySelector(".card-progress p").textContent = `${progress.percent}% · ${progress.label}`;
 
   const toggleButton = node.querySelector(".timer-toggle");
-  const isAutoDaily = card.type === "routine";
+  const isAutoTimer = isAutomaticCountdown(card);
   toggleButton.hidden = !hasTimer;
-  toggleButton.title = isAutoDaily ? "Auto daily countdown" : card.runningSince ? "Pause timer" : "Start timer";
+  toggleButton.title = isAutoTimer ? "Automatic countdown" : card.runningSince ? "Pause timer" : "Start timer";
   toggleButton.setAttribute("aria-label", toggleButton.title);
-  toggleButton.innerHTML = isAutoDaily
+  toggleButton.innerHTML = isAutoTimer
     ? `${ICONS.timer}<span>Auto</span>`
     : `${ICONS[card.runningSince ? "pause" : "play"]}<span>${card.runningSince ? "Pause" : "Start"}</span>`;
-  toggleButton.disabled = !interactive || isAutoDaily || !hasTimer;
-  toggleButton.classList.toggle("is-auto", isAutoDaily);
-  if (interactive && hasTimer && !isAutoDaily) {
+  toggleButton.disabled = !interactive || isAutoTimer || !hasTimer;
+  toggleButton.classList.toggle("is-auto", isAutoTimer);
+  if (interactive && hasTimer && !isAutoTimer) {
     toggleButton.addEventListener("click", () => toggleTimer(card.id));
   }
 
+  const cardActions = node.querySelector(".card-actions");
   const resetButton = node.querySelector(".timer-reset");
   const editButton = node.querySelector(".edit-card");
   const archiveButton = node.querySelector(".archive-card");
   const deleteButton = node.querySelector(".delete-card");
-  resetButton.hidden = !hasTimer;
+  resetButton.hidden = !hasTimer || (isAutoTimer && card.type !== "routine");
   resetButton.title = card.type === "routine" ? "Reset today" : "Reset timer";
   resetButton.setAttribute("aria-label", resetButton.title);
   resetButton.disabled = !interactive || !hasTimer;
@@ -2048,6 +2291,12 @@ function renderCard(card, options = {}) {
     editButton.addEventListener("click", () => startEditingCard(card.id));
     archiveButton.addEventListener("click", () => archiveCard(card.id));
     deleteButton.addEventListener("click", () => deleteCard(card.id));
+  }
+
+  if (!hasTimer) {
+    const topLine = node.querySelector(".card-topline");
+    topLine.append(cardActions);
+    node.querySelector(".timer-row").hidden = true;
   }
 
   const body = node.querySelector(".card-body");
@@ -2699,7 +2948,7 @@ function cleanVideoId(value) {
 
 function renderStats(cards = state.cards) {
   const total = cards.length;
-  const running = cards.filter((card) => card.runningSince).length;
+  const running = cards.filter((card) => card.runningSince && isManualTimer(card)).length;
   const donePercent = getAverageProgress(cards);
 
   elements.totalCards.textContent = total;
@@ -2748,10 +2997,15 @@ function removeTemplateOnlyTypeOptions() {
 function renderConditionalFields() {
   elements.categoryCustomField.classList.toggle("is-visible", elements.cardCategory.value === "Custom");
   const type = getSelectedFormType();
+  renderTypeButtons(type);
   const isRoutine = type === "routine";
   const isScheduled = type === "scheduled";
   const isContent = isUntimedContentType(type);
   const isScorecard = elements.cardType.value === "weekly";
+  if (type === "event" && ["none", "hours"].includes(selectedTimerMode)) {
+    selectedTimerMode = "date";
+    setDefaultTimerDate();
+  }
   const needsListInput =
     type === "checklist" ||
     type === "brief" ||
@@ -2781,6 +3035,7 @@ function renderConditionalFields() {
   }
   elements.countdownField.hidden = isRoutine || isContent;
   elements.cardTypeHelp.textContent = TYPE_HELP[type] || TYPE_HELP.daily;
+  renderTypeInsight(type);
   if (type === "workout") {
     elements.checklistLabel.textContent = "Workout exercises";
     elements.checklistItems.placeholder =
@@ -2801,12 +3056,47 @@ function renderConditionalFields() {
   elements.imageUrlField.classList.toggle("is-visible", elements.includeImage.checked);
   renderScheduleDays();
   elements.timerModeControl.querySelectorAll("button").forEach((button) => {
+    const disabled = type === "event" && ["none", "hours"].includes(button.dataset.value);
+    button.disabled = disabled;
     button.classList.toggle("is-active", selectedTimerMode === button.dataset.value);
   });
   document.querySelectorAll("[data-timer-panel]").forEach((panel) => {
     panel.classList.toggle("is-visible", !isRoutine && panel.dataset.timerPanel === selectedTimerMode);
   });
   renderFormPreview();
+}
+
+function renderTypeButtons(activeType = getSelectedFormType()) {
+  if (!elements.cardTypeButtons) return;
+  elements.cardTypeButtons.innerHTML = TYPE_PICKER_OPTIONS.map((option) => {
+    const meta = TYPE_META[option.type] || TYPE_META.single;
+    const isActive = option.type === (SCORECARD_TYPES.includes(activeType) ? "weekly" : activeType);
+    return `
+      <button type="button" class="type-button ${isActive ? "is-active" : ""}" data-type="${escapeAttribute(option.type)}" role="radio" aria-checked="${isActive ? "true" : "false"}">
+        <span class="type-button-icon">${ICONS[meta.icon] || ICONS.check}</span>
+        <span class="type-button-copy">
+          <strong>${escapeHtml(option.label)}</strong>
+          <small>${escapeHtml(option.hint)}</small>
+        </span>
+      </button>
+    `;
+  }).join("");
+  hydrateIcons(elements.cardTypeButtons);
+}
+
+function renderTypeInsight(type) {
+  if (!elements.typeInsight) return;
+  const detail = TYPE_DETAILS[type] || TYPE_DETAILS.daily;
+  elements.typeInsight.innerHTML = `
+    <div>
+      <span>Best for</span>
+      <strong>${escapeHtml(detail.best)}</strong>
+    </div>
+    <div>
+      <span>Time logic</span>
+      <strong>${escapeHtml(detail.timing)}</strong>
+    </div>
+  `;
 }
 
 function renderArtistPacks() {
@@ -2842,7 +3132,8 @@ function renderTemplateList() {
 
 function renderFormPreview() {
   if (!elements.cardPreview) return;
-  const shouldShowPreview = hasDraftInput() && !draftPreviewDismissed;
+  const composerOpen = !elements.cardComposerPanel.hidden;
+  const shouldShowPreview = (composerOpen || hasDraftInput()) && !draftPreviewDismissed;
   elements.boardPreviewPanel.hidden = !shouldShowPreview;
   if (!shouldShowPreview) {
     elements.cardPreview.innerHTML = "";
@@ -2862,11 +3153,36 @@ function handleDraftInputChange() {
 }
 
 function discardDraftCard() {
-  resetFormState();
-  render();
+  closeCardComposer({ reset: true });
+  renderCardsOnly();
+}
+
+function openSettingsModal(section = "board") {
+  settingsActiveSection = section;
+  closeOtherOverlays("settings");
+  elements.settingsModal.hidden = false;
+  syncModalOpenState();
+  renderShell();
+  hydrateIcons(elements.settingsModal);
+  requestAnimationFrame(() => {
+    const target =
+      section === "cloud"
+        ? elements.cloudPanel
+        : section === "recent"
+          ? elements.recentPanel
+          : elements.boardPanel;
+    target?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+}
+
+function closeSettingsModal() {
+  elements.settingsModal.hidden = true;
+  syncModalOpenState();
+  renderShell();
 }
 
 function openIdeasModal() {
+  closeOtherOverlays("ideas");
   renderIdeasModal();
   elements.ideasModal.hidden = false;
   syncModalOpenState();
@@ -2898,6 +3214,7 @@ function renderIdeasModal() {
 }
 
 function openTemplateModal(templateId = selectedTemplateId) {
+  closeOtherOverlays("template");
   selectedTemplateId = boardTemplates.some((template) => template.id === templateId) ? templateId : boardTemplates[0]?.id || "";
   elements.templateModal.hidden = false;
   syncModalOpenState();
@@ -2978,6 +3295,7 @@ function renderTemplateOverview(template, cards) {
 function openRoutineHistory(cardId) {
   const card = state.cards.find((item) => item.id === cardId);
   if (!card || card.type !== "routine") return;
+  closeOtherOverlays("history");
   syncRoutineTodayHistory(card);
   saveState();
   const records = [...(card.history || [])].sort((a, b) => b.date.localeCompare(a.date));
@@ -3009,6 +3327,7 @@ function closeHistoryModal() {
 }
 
 function openRecordsModal() {
+  closeOtherOverlays("records");
   renderRecordsModal();
   elements.recordsModal.hidden = false;
   syncModalOpenState();
@@ -3020,8 +3339,43 @@ function closeRecordsModal() {
 }
 
 function syncModalOpenState() {
-  const hasOpenModal = !elements.templateModal.hidden || !elements.ideasModal.hidden || !elements.historyModal.hidden || !elements.recordsModal.hidden;
+  const hasOpenModal =
+    !elements.settingsModal.hidden ||
+    !elements.templateModal.hidden ||
+    !elements.ideasModal.hidden ||
+    !elements.historyModal.hidden ||
+    !elements.recordsModal.hidden;
   document.body.classList.toggle("modal-open", hasOpenModal);
+  syncRailActiveState();
+}
+
+function syncRailActiveState() {
+  const activeSurface = getActiveRailSurface();
+  const railButtons = {
+    add: elements.railAddButton,
+    templates: elements.railTemplatesButton,
+    archive: elements.railArchiveButton,
+    settings: elements.railSettingsButton
+  };
+
+  Object.entries(railButtons).forEach(([surface, button]) => {
+    const isActive = activeSurface === surface;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+
+  const settingsOpen = activeSurface === "settings";
+  elements.sidebarToggle.classList.toggle("is-active", settingsOpen);
+  elements.sidebarToggle.setAttribute("aria-pressed", settingsOpen ? "true" : "false");
+  elements.appShell.dataset.activeSurface = activeSurface;
+}
+
+function getActiveRailSurface() {
+  if (!elements.cardComposerPanel.hidden) return "add";
+  if (!elements.templateModal.hidden || !elements.ideasModal.hidden) return "templates";
+  if (!elements.recordsModal.hidden || !elements.historyModal.hidden) return "archive";
+  if (!elements.settingsModal.hidden) return "settings";
+  return "";
 }
 
 function renderRecordsModal() {
@@ -3125,7 +3479,7 @@ function getArchiveReason(card) {
 }
 
 function formatRecordDate(value) {
-  const date = new Date(Number(value) || Date.now());
+  const date = new Date(Number(value) || value || Date.now());
   if (!Number.isFinite(date.getTime())) return "today";
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
@@ -3434,20 +3788,24 @@ function getFormTimer() {
     const targetDate = new Date(elements.timerDate.value);
     const targetMs = targetDate.getTime();
     const isValidTarget = Number.isFinite(targetMs) && targetMs > Date.now();
-    const duration = isValidTarget ? Math.ceil((targetMs - Date.now()) / 1000) : 24 * 60 * 60;
+    const fallbackTarget = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    fallbackTarget.setSeconds(0, 0);
+    const finalTarget = isValidTarget ? targetDate : fallbackTarget;
+    const duration = Math.ceil((finalTarget.getTime() - Date.now()) / 1000);
     return {
       mode: "date",
-      targetAt: isValidTarget ? targetDate.toISOString() : null,
+      targetAt: finalTarget.toISOString(),
       duration: Math.max(60, duration)
     };
   }
 
   if (selectedTimerMode === "days") {
     const days = clampInt(elements.timerDays.value, 1, 365, 1);
+    const duration = days * 24 * 60 * 60;
     return {
       mode: "days",
-      targetAt: null,
-      duration: days * 24 * 60 * 60
+      targetAt: new Date(Date.now() + duration * 1000).toISOString(),
+      duration
     };
   }
 
@@ -3504,7 +3862,7 @@ function toggleTimer(id) {
   const card = state.cards.find((item) => item.id === id);
   if (!card) return;
   normalizeTimer(card);
-  if (!hasCountdown(card) || card.type === "routine") return;
+  if (!isManualTimer(card)) return;
   if (card.runningSince) {
     card.remaining = getRemaining(card);
     card.runningSince = null;
@@ -3528,7 +3886,7 @@ function resetTimer(id) {
     return;
   }
   normalizeTimer(card);
-  if (!hasCountdown(card)) return;
+  if (!isManualTimer(card)) return;
   card.remaining = card.duration;
   card.runningSince = null;
   saveState();
@@ -3538,9 +3896,8 @@ function resetTimer(id) {
 function startAllTimers() {
   const now = Date.now();
   state.cards.forEach((card) => {
-    if (card.type === "routine") return;
     normalizeTimer(card);
-    if (!hasCountdown(card)) return;
+    if (!isManualTimer(card)) return;
     if (card.runningSince) return;
     if (getRemaining(card) <= 0) {
       card.remaining = card.duration;
@@ -3554,6 +3911,7 @@ function startAllTimers() {
 function stopAllTimers() {
   state.cards.forEach((card) => {
     if (!card.runningSince) return;
+    if (!isManualTimer(card)) return;
     card.remaining = getRemaining(card);
     card.runningSince = null;
   });
@@ -3723,7 +4081,7 @@ function getOrderedCards() {
 }
 
 function getTypeWeight(type) {
-  const weights = { diary: 0, brief: 1, routine: 2, scheduled: 3, daily: 4, quote: 5, video: 6, lab: 7, workout: 8, minutes: 9, checklist: 10, weekly: 11, monthly: 12, annual: 13, single: 14 };
+  const weights = { diary: 0, brief: 1, routine: 2, scheduled: 3, daily: 4, event: 5, quote: 6, video: 7, lab: 8, workout: 9, minutes: 10, checklist: 11, weekly: 12, monthly: 13, annual: 14, single: 15 };
   return Number.isFinite(weights[type]) ? weights[type] : 9;
 }
 
@@ -3826,6 +4184,14 @@ function getProgress(card) {
     return { percent, label: card.done ? "Complete" : "Not done" };
   }
 
+  if (card.type === "event") {
+    const remaining = getRemaining(card);
+    const duration = Math.max(60, Number(card.duration) || remaining || 60);
+    const elapsed = Math.max(0, duration - remaining);
+    const percent = remaining <= 0 ? 100 : Math.min(99, Math.round((elapsed / duration) * 100));
+    return { percent, label: remaining <= 0 ? "Event reached" : "Countdown" };
+  }
+
   if (card.type === "brief") {
     const percent = card.reviewed ? 100 : 0;
     return { percent, label: card.reviewed ? "Reviewed" : "Open brief" };
@@ -3906,11 +4272,26 @@ function hasCountdown(card) {
   return ["daily", "date", "days", "hours"].includes(card.timerMode);
 }
 
+function isAutomaticCountdown(card) {
+  return hasCountdown(card) && ["daily", "date", "days"].includes(card.timerMode);
+}
+
+function isManualTimer(card) {
+  return hasCountdown(card) && card.timerMode === "hours";
+}
+
 function getRemaining(card) {
   normalizeTimer(card);
   if (!hasCountdown(card)) return 0;
   if (card.type === "routine" || card.timerMode === "daily") {
     return getSecondsUntilEndOfDay();
+  }
+  if ((card.timerMode === "date" || card.timerMode === "days") && card.targetAt) {
+    const targetDate = new Date(card.targetAt);
+    const targetMs = targetDate.getTime();
+    if (Number.isFinite(targetMs)) {
+      return Math.max(0, Math.ceil((targetMs - Date.now()) / 1000));
+    }
   }
   const base = Math.max(0, card.remaining || 0);
   if (!card.runningSince) return base;
@@ -3940,6 +4321,11 @@ function normalizeTimer(card) {
   const previousElapsed = Number(card.elapsed) || 0;
   const duration = Number(card.duration) || Number(card.durationSeconds) || Number(card.remaining) || Math.max(previousElapsed, 25 * 60);
   card.duration = Math.max(60, Math.floor(duration));
+
+  if (card.timerMode === "days" && !card.targetAt) {
+    const remaining = Number.isFinite(Number(card.remaining)) ? Number(card.remaining) : card.duration;
+    card.targetAt = new Date(Date.now() + Math.max(60, remaining) * 1000).toISOString();
+  }
 
   if (!Number.isFinite(Number(card.remaining))) {
     card.remaining = card.duration;
@@ -4105,7 +4491,7 @@ function getCardFill(card, theme) {
 
 function getTimerCaption(card, remaining) {
   if (!hasCountdown(card)) return "No deadline";
-  if (remaining <= 0) return "Time up";
+  if (remaining <= 0) return card.type === "event" ? "Reached" : "Time up";
   if (card.timerMode === "daily") return "Day reset";
   if (card.timerMode === "date" && card.targetAt) {
     const date = new Date(card.targetAt);
@@ -4119,6 +4505,9 @@ function getTimerCaption(card, remaining) {
 
 function formatRemaining(card, totalSeconds) {
   if (!hasCountdown(card)) return "Open";
+  if (totalSeconds <= 0 && !isManualTimer(card)) {
+    return card.type === "event" ? "Reached" : "Closed";
+  }
   if ((card.timerMode === "date" || card.timerMode === "days") && totalSeconds >= 24 * 60 * 60) {
     const days = Math.floor(totalSeconds / (24 * 60 * 60));
     const hours = Math.floor((totalSeconds % (24 * 60 * 60)) / 3600);
@@ -5056,145 +5445,6 @@ function buildTemplateCards(templateId) {
     ];
   }
 
-  if (templateId === "ai-starter") {
-    return [
-      makeCard({
-        title: "AI course orientation",
-        description: "Set up the learning baseline, choose one AI tool and define your first use cases.",
-        category: "AI Basics",
-        reward: "Learning map",
-        priority: "high",
-        type: "checklist",
-        theme: "tide",
-        background: "sky",
-        timerMode: "days",
-        duration: 7 * 24 * 60 * 60,
-        items: [
-          "Write three everyday tasks you want AI to help with",
-          "Create a folder for prompts, outputs and notes",
-          "Pick one assistant tool to practise with",
-          "Write your personal AI safety rules",
-          "Save your first before/after example"
-        ]
-      }),
-      makeCard({
-        title: "Daily AI practice habit",
-        description: "Small repeatable practice to build fluency without getting overwhelmed.",
-        category: "AI Basics",
-        reward: "Practice streak",
-        priority: "high",
-        type: "routine",
-        theme: "leaf",
-        background: "mint",
-        timerMode: "hours",
-        duration: 24 * 60 * 60,
-        items: ["15 min prompt practice", "Save one useful prompt", "Verify one factual claim", "Write one learning note"]
-      }),
-      makeCard({
-        title: "Prompting fundamentals lab",
-        description: "Learn the core pattern: task, context, constraints, examples and output format.",
-        category: "Prompting",
-        reward: "Prompt template",
-        type: "lab",
-        theme: "coral",
-        background: "blush",
-        timerMode: "hours",
-        duration: 45 * 60,
-        steps: [
-          ["Task framing", "Prompt states the job, audience and success criteria"],
-          ["Context block", "Relevant background is separated from instructions"],
-          ["Output format", "Response asks for a table, checklist or concise format"],
-          ["Iteration", "Version 2 improves specificity after reviewing output"]
-        ]
-      }),
-      makeCard({
-        title: "Research and verification lab",
-        description: "Use AI to research faster while checking sources, dates and uncertainty.",
-        category: "Research",
-        reward: "Trust checklist",
-        type: "lab",
-        theme: "honey",
-        background: "paper",
-        timerMode: "hours",
-        duration: 50 * 60,
-        steps: [
-          ["Ask for a research plan", "Plan lists sources to check and unknowns"],
-          ["Compare two sources", "Notes include date, publisher and key disagreement"],
-          ["Find weak claims", "Output labels claims as confirmed, uncertain or unsupported"],
-          ["Write cited summary", "Summary separates facts from recommendations"]
-        ]
-      }),
-      makeCard({
-        title: "Responsible AI checklist",
-        description: "Build safe habits around private data, bias, hallucinations and human judgement.",
-        category: "Ethics",
-        reward: "Safety badge",
-        type: "checklist",
-        theme: "plum",
-        background: "paper",
-        timerMode: "days",
-        duration: 14 * 24 * 60 * 60,
-        items: [
-          "Do not paste passwords, private IDs or sensitive client data",
-          "Check outputs before using them in public or paid work",
-          "Ask for assumptions and limitations",
-          "Look for bias or missing perspectives",
-          "Keep human approval for important decisions"
-        ]
-      }),
-      makeCard({
-        title: "AI workflow automation lab",
-        description: "Turn one repetitive task into a clear reusable workflow.",
-        category: "Automation",
-        reward: "Reusable workflow",
-        type: "lab",
-        theme: "graphite",
-        background: "clean",
-        timerMode: "hours",
-        duration: 60 * 60,
-        steps: [
-          ["Map the current workflow", "List input, process, output and review step"],
-          ["Design the AI assistant role", "Prompt defines role, rules and format"],
-          ["Test with three examples", "Save output quality notes"],
-          ["Create final workflow card", "Checklist is ready to reuse weekly"]
-        ]
-      }),
-      makeCard({
-        title: "Weekly AI practice minutes",
-        description: "Accumulate deliberate practice across prompting, verification and workflow design.",
-        category: "AI Basics",
-        reward: "Skill stack",
-        type: "minutes",
-        theme: "leaf",
-        background: "clean",
-        timerMode: "days",
-        duration: 7 * 24 * 60 * 60,
-        targetValue: 180,
-        currentValue: 0,
-        unit: "min"
-      }),
-      makeCard({
-        title: "Capstone: personal AI assistant",
-        description: "Build one complete assistant workflow for your study, work or personal board.",
-        category: "Project",
-        reward: "Portfolio artefact",
-        type: "checklist",
-        theme: "tide",
-        background: "sky",
-        timerMode: "date",
-        targetAt: new Date(Date.now() + 4 * 7 * 24 * 60 * 60 * 1000).toISOString(),
-        duration: 4 * 7 * 24 * 60 * 60,
-        items: [
-          "Choose one real task",
-          "Write system-style role and boundaries",
-          "Create three test cases",
-          "Improve prompt after failures",
-          "Document final prompt, use case and limits"
-        ]
-      })
-    ];
-  }
-
   if (templateId === "foundation") {
     return [
       makeCard({
@@ -5430,6 +5680,10 @@ function makeCard(options) {
         ? options.timerMode
         : "none";
   const duration = timerMode === "none" ? 0 : autoTimer ? autoTimer.duration : Number(options.duration) || 25 * 60;
+  const targetAt =
+    autoTimer
+      ? autoTimer.targetAt
+      : options.targetAt || (timerMode === "days" ? new Date(Date.now() + duration * 1000).toISOString() : null);
   const category = normalizeCategory(options.category || "General");
   const card = {
     id,
@@ -5447,7 +5701,7 @@ function makeCard(options) {
     imageUrl: options.imageUrl || "",
     imageData: "",
     timerMode,
-    targetAt: autoTimer ? autoTimer.targetAt : options.targetAt || null,
+    targetAt,
     duration,
     remaining: duration,
     runningSince: null,
@@ -5609,41 +5863,11 @@ function ensureSampleCards(nextState) {
 
 function ensureCourseBoard(nextState) {
   if (!Array.isArray(nextState.boards)) return nextState;
-  const fitnessCourseId = "fitness-foundation-course";
-  const aiCourseId = "ai-starter-course";
   const lifeOsId = "life-work-operating-board";
-  const hasFitnessCourse = nextState.boards.some((board) => board.id === fitnessCourseId);
-  const hasAiCourse = nextState.boards.some((board) => board.id === aiCourseId);
+  const removedActiveBoard = nextState.activeBoardId === "ai-starter-course";
+  nextState.boards = nextState.boards.filter((board) => board.id !== "ai-starter-course");
   const hasLifeOs = nextState.boards.some((board) => board.id === lifeOsId);
-  const needsFitnessCourse = (Number(nextState.courseBoardVersion) || 0) < COURSE_BOARD_VERSION;
-  const needsAiCourse = (Number(nextState.aiCourseBoardVersion) || 0) < AI_COURSE_BOARD_VERSION;
   const needsLifeOs = (Number(nextState.lifeOsBoardVersion) || 0) < LIFE_OS_BOARD_VERSION;
-
-  if (!hasFitnessCourse) {
-    nextState.boards.push(
-      createBoardRecord({
-        id: fitnessCourseId,
-        name: "Fitness Foundation Course",
-        visibility: "private",
-        layout: "smart",
-        cards: buildTemplateCards("foundation"),
-        createdAt: Date.now()
-      })
-    );
-  }
-
-  if (!hasAiCourse) {
-    nextState.boards.push(
-      createBoardRecord({
-        id: aiCourseId,
-        name: "AI Starter Course",
-        visibility: "private",
-        layout: "smart",
-        cards: buildTemplateCards("ai-starter"),
-        createdAt: Date.now()
-      })
-    );
-  }
 
   if (!hasLifeOs) {
     nextState.boards.push(
@@ -5661,22 +5885,8 @@ function ensureCourseBoard(nextState) {
     addMissingTemplateCards(lifeOsBoard, "life-os");
   }
 
-  if (needsFitnessCourse || !hasFitnessCourse) {
-    applyBoardToState(nextState, fitnessCourseId);
-    nextState.activeFilter = "all";
-    nextState.activeCategory = "all";
-    nextState.activeCategories = [];
-  }
-
-  if (needsAiCourse || !hasAiCourse) {
-    applyBoardToState(nextState, aiCourseId);
-    nextState.activeFilter = "all";
-    nextState.activeCategory = "all";
-    nextState.activeCategories = [];
-  }
-
-  if (needsLifeOs || !hasLifeOs) {
-    applyBoardToState(nextState, lifeOsId);
+  if (removedActiveBoard || needsLifeOs || !hasLifeOs || !nextState.boards.some((board) => board.id === nextState.activeBoardId)) {
+    applyBoardToState(nextState, nextState.boards.some((board) => board.id === lifeOsId) ? lifeOsId : nextState.boards[0]?.id);
     nextState.activeFilter = "all";
     nextState.activeCategory = "all";
     nextState.activeCategories = [];
@@ -5718,6 +5928,11 @@ function normalizeCard(card) {
   next.type = TYPE_META[next.type] ? next.type : "single";
   next.timerMode = ["none", "date", "days", "hours", "daily"].includes(next.timerMode) ? next.timerMode : "none";
   if (isUntimedContentType(next.type)) next.timerMode = "none";
+  if (next.type === "event" && ["none", "hours", "daily"].includes(next.timerMode)) {
+    next.timerMode = "date";
+    next.targetAt = next.targetAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    next.duration = Number(next.duration) || 7 * 24 * 60 * 60;
+  }
   normalizeTimer(next);
   next.size = "standard";
   if (Number.isFinite(Number(next.layoutColumn))) {
@@ -5842,6 +6057,218 @@ function exportBoardBackup() {
   elements.savedState.textContent = "Backup ready";
 }
 
+function loadCloudSession() {
+  try {
+    const stored = localStorage.getItem(CLOUD_SESSION_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCloudSession(session) {
+  cloudSession = session;
+  if (session) {
+    localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
+    if (elements.cloudPassword) elements.cloudPassword.value = "";
+  } else {
+    localStorage.removeItem(CLOUD_SESSION_KEY);
+  }
+  cloudSaveEnabled = Boolean(session?.access_token);
+  renderCloudStatus();
+}
+
+function renderCloudStatus(message) {
+  if (!elements.cloudStatus) return;
+  const isSignedIn = Boolean(cloudSession?.access_token);
+  elements.cloudStatus.textContent = isSignedIn ? "Cloud" : "Local";
+  elements.cloudEmail.value = cloudSession?.user?.email || elements.cloudEmail.value || "";
+  elements.cloudPullButton.disabled = !isSignedIn;
+  elements.cloudPushButton.disabled = !isSignedIn;
+  elements.cloudSignOutButton.hidden = !isSignedIn;
+  elements.cloudPassword.closest(".field").hidden = isSignedIn;
+  elements.cloudSignInButton.disabled = isSignedIn;
+  elements.cloudSignUpButton.disabled = isSignedIn;
+  elements.cloudNote.textContent =
+    message ||
+    (isSignedIn
+      ? `Signed in as ${cloudSession.user?.email || "your account"}. Changes auto-save to Supabase.`
+      : "Local browser storage is active.");
+}
+
+function getCloudCredentials() {
+  const email = elements.cloudEmail.value.trim();
+  const password = elements.cloudPassword.value;
+  if (!email || !password) {
+    throw new Error("Enter email and password first.");
+  }
+  return { email, password };
+}
+
+async function signUpForCloud() {
+  try {
+    const { email, password } = getCloudCredentials();
+    renderCloudStatus("Creating cloud login...");
+    const result = await cloudAuthRequest("/auth/v1/signup", {
+      email,
+      password
+    });
+    const session = normalizeCloudSession(result);
+    if (session) {
+      saveCloudSession(session);
+      await pushCloudState({ manual: true });
+      return;
+    }
+    renderCloudStatus("Check your email to confirm the login, then sign in here.");
+  } catch (error) {
+    renderCloudStatus(error.message || "Cloud login could not be created.");
+  }
+}
+
+async function signInToCloud() {
+  try {
+    const { email, password } = getCloudCredentials();
+    renderCloudStatus("Signing in...");
+    const result = await cloudAuthRequest("/auth/v1/token?grant_type=password", {
+      email,
+      password
+    });
+    const session = normalizeCloudSession(result);
+    if (!session) throw new Error("Sign in failed.");
+    saveCloudSession(session);
+    await pullCloudState({ confirmReplace: false, silentIfEmpty: true });
+  } catch (error) {
+    const message = String(error.message || "");
+    renderCloudStatus(
+      /invalid login credentials/i.test(message)
+        ? "Invalid login. Use Create login first, or confirm this email in Supabase Auth."
+        : message || "Could not sign in."
+    );
+  }
+}
+
+function signOutCloud() {
+  saveCloudSession(null);
+  renderCloudStatus("Signed out. Local browser storage is active.");
+}
+
+async function cloudAuthRequest(path, body) {
+  const response = await fetch(`${SUPABASE_CONFIG.url}${path}`, {
+    method: "POST",
+    headers: {
+      apikey: SUPABASE_CONFIG.anonKey,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result.error_description || result.msg || result.message || "Supabase auth failed.");
+  }
+  return result;
+}
+
+function normalizeCloudSession(result) {
+  const accessToken = result.access_token || result.session?.access_token;
+  const refreshToken = result.refresh_token || result.session?.refresh_token;
+  const user = result.user || result.session?.user;
+  if (!accessToken || !user?.id) return null;
+  const expiresIn = Number(result.expires_in || result.session?.expires_in || 3600);
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken || "",
+    expires_at: Date.now() + Math.max(60, expiresIn - 30) * 1000,
+    user
+  };
+}
+
+async function ensureCloudSession() {
+  if (!cloudSession?.access_token) throw new Error("Sign in to cloud sync first.");
+  if (!cloudSession.refresh_token || Date.now() < Number(cloudSession.expires_at || 0)) {
+    return cloudSession;
+  }
+  const result = await cloudAuthRequest("/auth/v1/token?grant_type=refresh_token", {
+    refresh_token: cloudSession.refresh_token
+  });
+  const session = normalizeCloudSession(result);
+  if (!session) throw new Error("Cloud session expired. Sign in again.");
+  saveCloudSession(session);
+  return session;
+}
+
+async function pushCloudState(options = {}) {
+  if (!cloudSaveEnabled && !options.manual) return;
+  try {
+    const session = await ensureCloudSession();
+    syncActiveBoard();
+    const payload = {
+      owner_id: session.user.id,
+      state: JSON.parse(JSON.stringify(state))
+    };
+    const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_CONFIG.anonKey,
+        Authorization: `Bearer ${session.access_token}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates,return=minimal"
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.message || "Cloud save failed.");
+    }
+    renderCloudStatus("Saved to Supabase.");
+  } catch (error) {
+    renderCloudStatus(`${error.message || "Cloud save failed."} Run the cloud sync SQL if this is the first setup.`);
+  }
+}
+
+async function pullCloudState(options = {}) {
+  try {
+    const session = await ensureCloudSession();
+    const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&select=state,updated_at`, {
+      headers: {
+        apikey: SUPABASE_CONFIG.anonKey,
+        Authorization: `Bearer ${session.access_token}`
+      }
+    });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      throw new Error(result.message || "Cloud load failed.");
+    }
+    const rows = await response.json();
+    if (!rows.length) {
+      if (options.silentIfEmpty) {
+        await pushCloudState({ manual: true });
+      } else {
+        renderCloudStatus("No cloud board yet. Use Save cloud first.");
+      }
+      return;
+    }
+    if (options.confirmReplace) {
+      const confirmed = window.confirm("Load cloud data into this browser? This replaces the local board view.");
+      if (!confirmed) return;
+    }
+    state = rehydrateState(rows[0].state);
+    resetFormState();
+    render();
+    saveState({ skipCloud: true });
+    renderCloudStatus(`Loaded from Supabase ${formatRecordDate(rows[0].updated_at)}.`);
+  } catch (error) {
+    renderCloudStatus(`${error.message || "Cloud load failed."} Run the cloud sync SQL if this is the first setup.`);
+  }
+}
+
+function queueCloudSave() {
+  if (!cloudSaveEnabled || !cloudSession?.access_token) return;
+  window.clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = window.setTimeout(() => {
+    pushCloudState();
+  }, 1400);
+}
+
 async function importBoardBackup(file) {
   if (!file) return;
   try {
@@ -5859,11 +6286,14 @@ async function importBoardBackup(file) {
   }
 }
 
-function saveState() {
+function saveState(options = {}) {
   syncActiveBoard();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   elements.savedState.textContent = "Saved here";
   elements.savedState.classList.remove("is-saving");
+  if (!options.skipCloud) {
+    queueCloudSave();
+  }
 }
 
 function hydrateIcons(root = document) {

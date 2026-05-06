@@ -8,7 +8,7 @@
   </head>
   <body>
     <div class="app-shell" id="appShell">
-      <aside class="sidebar" aria-label="Board controls">
+      <aside class="sidebar" aria-label="Life OS navigation">
         <div class="brand">
           <div class="brand-main">
             <div class="brand-mark" aria-hidden="true">
@@ -21,10 +21,29 @@
               <h1>Personal board</h1>
             </div>
           </div>
-          <button type="button" class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar" aria-label="Toggle sidebar">
+          <button type="button" class="sidebar-toggle" id="sidebarToggle" title="Open controls" aria-label="Open controls" aria-pressed="false">
             <span data-icon="sidebar"></span>
           </button>
         </div>
+
+        <nav class="rail-nav" aria-label="Board tools">
+          <button type="button" class="rail-button rail-primary" id="railAddButton" title="Add card" aria-label="Add card" aria-pressed="false">
+            <span data-icon="plus"></span>
+            <small>Add</small>
+          </button>
+          <button type="button" class="rail-button" id="railTemplatesButton" title="Templates" aria-label="Templates" aria-pressed="false">
+            <span data-icon="layout-grid"></span>
+            <small>Boards</small>
+          </button>
+          <button type="button" class="rail-button" id="railArchiveButton" title="Archive" aria-label="Archive" aria-pressed="false">
+            <span data-icon="archive"></span>
+            <small>Archive</small>
+          </button>
+          <button type="button" class="rail-button" id="railSettingsButton" title="Controls" aria-label="Controls" aria-pressed="false">
+            <span data-icon="settings"></span>
+            <small>Controls</small>
+          </button>
+        </nav>
 
         <section class="panel board-panel">
           <div class="panel-heading">
@@ -62,9 +81,15 @@
           </div>
         </section>
 
-        <section class="panel">
-          <div class="panel-heading">
-            <h2 id="formTitle">Add card</h2>
+        <section class="panel card-composer-panel" id="cardComposerPanel" aria-label="Card composer" hidden>
+          <div class="panel-heading composer-heading">
+            <div>
+              <p class="eyebrow">Card composer</p>
+              <h2 id="formTitle">Add card</h2>
+            </div>
+            <button type="button" class="icon-button" id="composerCloseButton" title="Close composer" aria-label="Close composer">
+              <span data-icon="x"></span>
+            </button>
           </div>
           <form id="cardForm" class="card-form">
             <label class="field">
@@ -75,7 +100,7 @@
               <span>Description</span>
               <textarea id="cardDescription" maxlength="180" rows="3"></textarea>
             </label>
-            <div class="form-grid">
+            <div class="form-grid composer-meta-grid">
               <label class="field">
                 <span>Area</span>
                 <select id="cardCategory">
@@ -88,9 +113,6 @@
                   <option value="Custom">Custom</option>
                 </select>
               </label>
-              <input id="cardReward" type="hidden" value="" />
-            </div>
-            <div class="form-grid">
               <label class="field">
                 <span>Priority</span>
                 <select id="cardPriority">
@@ -99,6 +121,9 @@
                   <option value="low">Later</option>
                 </select>
               </label>
+              <input id="cardReward" type="hidden" value="" />
+            </div>
+            <div class="form-grid">
               <label class="field daily-plan-date" id="dailyPlanDateField">
                 <span>Plan day</span>
                 <input id="cardPlanDate" type="date" />
@@ -109,23 +134,26 @@
               <input id="cardCategoryCustom" type="text" maxlength="32" placeholder="Area name" autocomplete="off" />
             </label>
             <div>
-              <label class="field">
+              <div class="field type-picker-field">
                 <span>Type</span>
-                <select id="cardType">
+                <select id="cardType" hidden aria-hidden="true">
                   <option value="daily">To-do list</option>
                   <option value="diary">Daily diary</option>
                   <option value="brief">Strategy brief</option>
                   <option value="quote">Motivation</option>
                   <option value="video">Video embed</option>
                   <option value="single">Task</option>
+                  <option value="event">Event countdown</option>
                   <option value="routine">Daily routine</option>
                   <option value="scheduled">Scheduled habit</option>
                   <option value="minutes">Goal</option>
                   <option value="checklist">Project checklist</option>
                   <option value="weekly">Scorecard grid</option>
                 </select>
+                <div class="type-buttons" id="cardTypeButtons" role="radiogroup" aria-label="Card type"></div>
                 <p id="cardTypeHelp" class="type-help"></p>
-              </label>
+              </div>
+              <div class="type-insight" id="typeInsight" aria-live="polite"></div>
               <input id="cardSize" type="hidden" value="standard" />
             </div>
             <label class="field scorecard-period" id="scorecardPeriodField">
@@ -280,6 +308,32 @@
           </button>
         </section>
 
+        <section class="panel cloud-panel">
+          <div class="panel-heading">
+            <h2>Cloud sync</h2>
+            <span class="tag" id="cloudStatus">Local</span>
+          </div>
+          <p class="data-note">Use the Life OS login created here. Your Supabase dashboard email is separate unless you created it as an app user.</p>
+          <label class="field">
+            <span>Email</span>
+            <input id="cloudEmail" type="email" maxlength="120" autocomplete="email" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="cloudPassword" type="password" minlength="6" maxlength="80" autocomplete="current-password" />
+          </label>
+          <div class="cloud-actions">
+            <button type="button" class="secondary-action" id="cloudSignInButton">Sign in</button>
+            <button type="button" class="secondary-action" id="cloudSignUpButton">Create login</button>
+          </div>
+          <div class="cloud-actions">
+            <button type="button" class="secondary-action" id="cloudPullButton">Load cloud</button>
+            <button type="button" class="secondary-action" id="cloudPushButton">Save cloud</button>
+          </div>
+          <button type="button" class="template-open-button" id="cloudSignOutButton" hidden>Sign out</button>
+          <p class="cloud-note" id="cloudNote">Local browser storage is active.</p>
+        </section>
+
         <section class="panel recent-panel" id="recentPanel">
           <div class="panel-heading recent-heading">
             <div>
@@ -315,7 +369,7 @@
             </div>
             <div>
               <span id="runningTimers">0</span>
-              <p>Running</p>
+              <p>Focus</p>
             </div>
             <div>
               <span id="completionRate">0%</span>
@@ -375,8 +429,8 @@
             <details class="board-tools-menu">
               <summary>Board tools</summary>
               <div class="board-tools-popover">
-                <button type="button" class="toolbar-action" id="startAllTimersButton">Start timers</button>
-                <button type="button" class="toolbar-action" id="stopAllTimersButton">Stop timers</button>
+                <button type="button" class="toolbar-action" id="startAllTimersButton">Start focus timers</button>
+                <button type="button" class="toolbar-action" id="stopAllTimersButton">Pause focus timers</button>
                 <button type="button" class="toolbar-action" id="saveLayoutButton">Save layout</button>
                 <button type="button" class="toolbar-action" id="restoreLayoutButton">Restore</button>
                 <button type="button" class="toolbar-action" id="exportDataButton">Backup</button>
@@ -412,6 +466,7 @@
                   <option value="daily">To-do list</option>
                   <option value="diary">Daily diary</option>
                   <option value="single">Task</option>
+                  <option value="event">Event countdown</option>
                   <option value="checklist">Project checklist</option>
                   <option value="brief">Strategy brief</option>
                   <option value="quote">Motivation</option>
@@ -476,6 +531,21 @@
 
         <section class="board-grid" id="boardGrid" aria-label="Life OS cards"></section>
       </main>
+    </div>
+
+    <div class="settings-modal" id="settingsModal" hidden>
+      <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+        <header class="modal-header settings-header">
+          <div>
+            <p class="eyebrow">Life OS controls</p>
+            <h2 id="settingsModalTitle">Board settings</h2>
+          </div>
+          <button type="button" class="icon-button" id="settingsModalCloseButton" title="Close settings" aria-label="Close settings">
+            <span data-icon="x"></span>
+          </button>
+        </header>
+        <div class="settings-modal-body" id="settingsPanelMount"></div>
+      </section>
     </div>
 
     <div class="modal-backdrop" id="templateModal" hidden>
@@ -583,9 +653,6 @@
             <span class="card-priority-chip" hidden></span>
             <span class="card-reward-chip" hidden></span>
           </div>
-          <button type="button" class="ghost-icon drag-handle" title="Drag to reorder" aria-label="Drag to reorder">
-            <span data-icon="grip"></span>
-          </button>
         </div>
         <div class="card-main">
           <h3></h3>
