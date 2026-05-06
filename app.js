@@ -18,9 +18,12 @@ const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
 const CLOUD_SESSION_KEY = "life-os-cloud-session";
 const CLOUD_RECOVERY_KEY = "life-os-cloud-recovery";
 const CLOUD_TABLE_MISSING_MESSAGE = "Supabase table missing. Run supabase/cloud_sync_patch.sql in the Supabase SQL Editor.";
+const LOCAL_CLIENT_KEY = "life-os-client-id";
 let cloudSession = loadCloudSession();
 let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token);
+let cloudStatusMessage = "";
+let localStateSource = "default";
 
 const THEMES = {
   leaf: {
@@ -434,6 +437,9 @@ const defaultState = {
   courseBoardVersion: 0,
   aiCourseBoardVersion: 0,
   lifeOsBoardVersion: 0,
+  updatedAt: Date.now(),
+  updatedBy: getClientId(),
+  hasUserChanges: false,
   activeBoardId: "personal-board",
   board: {
     name: "My Life OS",
@@ -1217,16 +1223,19 @@ setInterval(() => {
 }, 60000);
 
 setInterval(() => {
-  saveState({ quiet: true });
+  saveState({ quiet: true, touch: false });
 }, AUTO_SAVE_INTERVAL_MS);
 
 window.addEventListener("pagehide", () => {
-  saveState({ quiet: true, skipCloud: true });
+  saveState({ quiet: true, skipCloud: true, touch: false });
 });
 
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
-    saveState({ quiet: true, skipCloud: true });
+    saveState({ quiet: true, skipCloud: true, touch: false });
+    if (cloudSaveEnabled) {
+      queueCloudSave({ immediate: true, silent: true });
+    }
     return;
   }
   if (cloudSaveEnabled) {
@@ -2363,6 +2372,9 @@ function renderCardsOnly(options = {}) {
   const filteredByStatus = orderedCards.filter((card) => matchesFilter(card));
   const filteredBySearch = filteredByStatus.filter((card) => matchesSearch(card));
   const filteredByFocus = filteredBySearch.filter((card) => matchesFocus(card));
+  if (!draggedCardId) {
+    elements.boardGrid.classList.remove("is-dragging-card");
+  }
   elements.boardGrid.innerHTML = "";
   renderTodayFocus(orderedCards);
   renderCategoryPills(filteredByFocus);
@@ -2427,6 +2439,16 @@ function renderBoardColumns(cards) {
   const columnsShell = document.createElement("div");
   columnsShell.className = "board-columns-grid";
   columnsShell.style.setProperty("--board-columns", columnCount);
+  columnsShell.addEventListener("dragover", (event) => {
+    if (!draggedCardId) return;
+    event.preventDefault();
+  });
+  columnsShell.addEventListener("drop", (event) => {
+    if (!draggedCardId) return;
+    event.preventDefault();
+    const targetColumn = getPointerColumnIndex(event, columnsShell, columnCount);
+    moveCardToColumnEnd(draggedCardId, targetColumn);
+  });
   const columns = buildBoardColumns(columnCards, columnCount);
   columns.forEach((columnCards, columnIndex) => {
     const column = document.createElement("div");
@@ -2444,6 +2466,7 @@ function renderBoardColumns(cards) {
     });
     column.addEventListener("drop", (event) => {
       event.preventDefault();
+      event.stopPropagation();
       column.classList.remove("is-drop-ready");
       if (!draggedCardId) return;
       moveCardToColumnEnd(draggedCardId, columnIndex);
@@ -2465,9 +2488,22 @@ function isFeaturedBoardCard(card) {
 
 function getBoardColumnCount() {
   const width = elements.boardGrid.clientWidth || elements.boardGrid.getBoundingClientRect().width || window.innerWidth;
-  if (width < 700) return 1;
-  if (width < 920) return 2;
+  if (width < 680) return 1;
+  if (width < 860) return 2;
   return 3;
+}
+
+function getRenderedBoardColumnCount() {
+  const renderedColumns = elements.boardGrid.querySelectorAll(".board-columns-grid > .board-column").length;
+  return renderedColumns || getBoardColumnCount();
+}
+
+function getPointerColumnIndex(event, container, columnCount) {
+  const count = Math.max(1, Number(columnCount) || 1);
+  const rect = container.getBoundingClientRect();
+  if (!rect.width) return 0;
+  const progress = (event.clientX - rect.left) / rect.width;
+  return clampInt(Math.floor(progress * count), 0, count - 1, 0);
 }
 
 function buildBoardColumns(cards, columnCount) {
@@ -2770,11 +2806,13 @@ function renderCard(card, options = {}) {
       draggedCardId = card.id;
       event.dataTransfer.effectAllowed = "move";
       node.classList.add("is-dragging");
+      elements.boardGrid.classList.add("is-dragging-card");
     });
 
     node.addEventListener("dragend", () => {
       draggedCardId = null;
       node.classList.remove("is-dragging");
+      elements.boardGrid.classList.remove("is-dragging-card");
       document.querySelectorAll(".is-drop-ready, .is-drop-target").forEach((item) => {
         item.classList.remove("is-drop-ready", "is-drop-target");
       });
@@ -2796,7 +2834,7 @@ function renderCard(card, options = {}) {
       event.stopPropagation();
       node.classList.remove("is-drop-target");
       if (!draggedCardId || draggedCardId === card.id) return;
-      moveCardToPosition(draggedCardId, card.id, options.columnIndex || 0);
+      moveCardToPosition(draggedCardId, card.id, options.columnIndex ?? 0);
     });
   }
 
@@ -3804,8 +3842,10 @@ function updateDiaryEntry(card, dateKey, updates, options = {}) {
 
 function persistDiaryEntryImmediately(card, dateKey, entry) {
   try {
+    touchState();
     syncActiveBoard();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStateSource = "stored";
     upsertDiaryBackup(card, dateKey, entry);
     if (elements.savedState) {
       const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -5199,7 +5239,7 @@ function deleteCard(id) {
 
 function moveCardToPosition(sourceId, targetId, targetColumn) {
   if (!sourceId || sourceId === targetId) return;
-  const columnCount = getBoardColumnCount();
+  const columnCount = getRenderedBoardColumnCount();
   const columns = getCustomLayoutColumns(columnCount);
   const source = removeCardFromColumns(columns, sourceId);
   if (!source) return;
@@ -5212,7 +5252,7 @@ function moveCardToPosition(sourceId, targetId, targetColumn) {
 
 function moveCardToColumnEnd(sourceId, targetColumn) {
   if (!sourceId) return;
-  const columnCount = getBoardColumnCount();
+  const columnCount = getRenderedBoardColumnCount();
   const columns = getCustomLayoutColumns(columnCount);
   const source = removeCardFromColumns(columns, sourceId);
   if (!source) return;
@@ -5246,6 +5286,8 @@ function commitCustomLayoutColumns(columns) {
   });
   state.cards = columns.flat();
   state.board.layout = "custom";
+  draggedCardId = null;
+  elements.boardGrid.classList.remove("is-dragging-card");
   saveState();
   renderBoardMeta();
   renderCardsOnly();
@@ -5271,7 +5313,7 @@ function smartArrange() {
 }
 
 function saveCurrentLayout() {
-  const columns = getCustomLayoutColumns(getBoardColumnCount());
+  const columns = getCustomLayoutColumns(getRenderedBoardColumnCount());
   let order = 1;
   columns.forEach((column, columnIndex) => {
     column.forEach((card) => {
@@ -7164,10 +7206,15 @@ function makeCard(options) {
 
 function loadState() {
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState()))));
+  if (!stored) {
+    localStateSource = "default";
+    return restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState()))));
+  }
   try {
+    localStateSource = "stored";
     return restoreDiaryBackups(rehydrateState(JSON.parse(stored)));
   } catch {
+    localStateSource = "default";
     return restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState()))));
   }
 }
@@ -7176,11 +7223,15 @@ function rehydrateState(parsed) {
   const backup = parsed && parsed.state && typeof parsed.state === "object" ? parsed.state : parsed || {};
   const cards = Array.isArray(backup.cards) ? backup.cards.map(normalizeCard) : [];
   const archivedCards = Array.isArray(backup.archivedCards) ? backup.archivedCards.map(normalizeArchivedCard) : [];
-  return ensureCourseBoard(
+  const backupUpdatedAt = getStateUpdatedAt(backup);
+  const nextState = ensureCourseBoard(
     ensureSampleCards(
       ensureBoards({
         ...cloneDefaultState(),
         ...backup,
+        updatedAt: backupUpdatedAt || Date.now(),
+        updatedBy: backup.updatedBy || getClientId(),
+        hasUserChanges: typeof backup.hasUserChanges === "boolean" ? backup.hasUserChanges : true,
         sampleVersion: Number(backup.sampleVersion) || 0,
         courseBoardVersion: Number(backup.courseBoardVersion) || 0,
         aiCourseBoardVersion: Number(backup.aiCourseBoardVersion) || 0,
@@ -7198,6 +7249,9 @@ function rehydrateState(parsed) {
       })
     )
   );
+  nextState.updatedAt = backupUpdatedAt || nextState.updatedAt || Date.now();
+  nextState.updatedBy = nextState.updatedBy || getClientId();
+  return nextState;
 }
 
 function restoreDiaryBackups(nextState) {
@@ -7432,6 +7486,62 @@ function createId() {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+function getClientId() {
+  try {
+    const stored = localStorage.getItem(LOCAL_CLIENT_KEY);
+    if (stored) return stored;
+    const clientId = createId();
+    localStorage.setItem(LOCAL_CLIENT_KEY, clientId);
+    return clientId;
+  } catch {
+    return "this-browser";
+  }
+}
+
+function normalizeTimestamp(value) {
+  if (!value) return 0;
+  const date = new Date(Number(value) || value);
+  const time = date.getTime();
+  return Number.isFinite(time) && time > 0 ? time : 0;
+}
+
+function getCardUpdatedAt(card) {
+  const times = [normalizeTimestamp(card?.updatedAt), normalizeTimestamp(card?.createdAt), normalizeTimestamp(card?.archivedAt)];
+  Object.values(card?.diaryEntries || {}).forEach((entry) => {
+    times.push(normalizeTimestamp(entry?.updatedAt));
+  });
+  Object.values(card?.plannerEntries || {}).forEach((entry) => {
+    times.push(normalizeTimestamp(entry?.updatedAt));
+  });
+  return Math.max(0, ...times);
+}
+
+function deriveStateUpdatedAt(nextState) {
+  const times = [
+    normalizeTimestamp(nextState?.updatedAt),
+    normalizeTimestamp(nextState?.createdAt),
+    normalizeTimestamp(nextState?.savedAt)
+  ];
+  (nextState?.cards || []).forEach((card) => times.push(getCardUpdatedAt(card)));
+  (nextState?.archivedCards || []).forEach((card) => times.push(getCardUpdatedAt(card)));
+  (nextState?.boards || []).forEach((board) => {
+    times.push(normalizeTimestamp(board?.updatedAt), normalizeTimestamp(board?.createdAt));
+    (board?.cards || []).forEach((card) => times.push(getCardUpdatedAt(card)));
+    (board?.archivedCards || []).forEach((card) => times.push(getCardUpdatedAt(card)));
+  });
+  return Math.max(0, ...times);
+}
+
+function getStateUpdatedAt(nextState = state) {
+  return normalizeTimestamp(nextState?.updatedAt) || deriveStateUpdatedAt(nextState);
+}
+
+function touchState() {
+  state.updatedAt = Date.now();
+  state.updatedBy = getClientId();
+  state.hasUserChanges = true;
+}
+
 function exportBoardBackup() {
   syncActiveBoard();
   const backup = {
@@ -7510,6 +7620,7 @@ function saveCloudRecoveryPoint(reason) {
 
 function renderCloudStatus(message) {
   if (!elements.cloudStatus) return;
+  if (message) cloudStatusMessage = message;
   const isSignedIn = Boolean(cloudSession?.access_token);
   elements.cloudStatus.textContent = isSignedIn ? "Cloud" : "Local";
   elements.cloudEmail.value = cloudSession?.user?.email || elements.cloudEmail.value || "";
@@ -7521,10 +7632,15 @@ function renderCloudStatus(message) {
   elements.cloudSignUpButton.disabled = isSignedIn;
   elements.cloudResendButton.hidden = isSignedIn;
   elements.cloudResendButton.disabled = isSignedIn;
+  const localSavedAt = getStateUpdatedAt(state);
+  const cloudSavedAt = getKnownCloudUpdatedAt();
+  const savedDetail = cloudSavedAt
+    ? `Last local edit: ${formatRecordDateTime(localSavedAt)}. Supabase copy: ${formatRecordDateTime(cloudSavedAt)}.`
+    : `Last local edit: ${formatRecordDateTime(localSavedAt)}.`;
   elements.cloudNote.textContent =
-    message ||
+    cloudStatusMessage ||
     (isSignedIn
-      ? `Signed in as ${cloudSession.user?.email || "your account"}. Auto-save checks for newer cloud changes before replacing them.`
+      ? `Signed in as ${cloudSession.user?.email || "your account"}. Auto-save checks timestamps before replacing cloud data. ${savedDetail}`
       : "Local browser storage is active.");
 }
 
@@ -7591,7 +7707,7 @@ async function handleCloudAuthRedirect() {
     });
     clearCloudAuthUrl();
     openSettingsModal();
-    renderCloudStatus("Email confirmed. You are signed in. Use Save cloud to sync this board.");
+    await syncCloudAfterSignIn();
   } catch (error) {
     renderCloudStatus(normalizeCloudError(error.message || "Email confirmed, but cloud sign-in could not finish."));
     openSettingsModal();
@@ -7706,10 +7822,40 @@ async function signInToCloud() {
     const session = normalizeCloudSession(result);
     if (!session) throw new Error("Sign in failed.");
     saveCloudSession(session);
-    await pullCloudState({ confirmReplace: false, silentIfEmpty: true });
+    await syncCloudAfterSignIn();
   } catch (error) {
     renderCloudStatus(normalizeCloudError(error.message || "Could not sign in."));
   }
+}
+
+async function syncCloudAfterSignIn() {
+  const session = await ensureCloudSession();
+  syncActiveBoard();
+  const cloudRow = await fetchCloudStateRow(session);
+  if (!cloudRow) {
+    renderCloudStatus("No Supabase copy yet. Saving this browser to cloud...");
+    await pushCloudState({ manual: true, replaceCloud: true });
+    return;
+  }
+  if (!state.hasUserChanges || localStateSource === "default") {
+    await pullCloudState({ confirmReplace: false });
+    return;
+  }
+  if (doesCloudStateMatchLocal(cloudRow.state)) {
+    setKnownCloudUpdatedAt(cloudRow.updated_at);
+    renderCloudStatus(`Cloud is current. Supabase copy: ${formatRecordDateTime(cloudRow.updated_at)}.`);
+    return;
+  }
+  if (isLocalNewerThanCloud(cloudRow)) {
+    renderCloudStatus("This browser has newer changes. Saving this browser to Supabase...");
+    await pushCloudState({ manual: true, replaceCloud: true });
+    return;
+  }
+  if (isCloudNewerThanLocal(cloudRow)) {
+    await pullCloudState({ confirmReplace: false });
+    return;
+  }
+  renderCloudStatus("Cloud and this browser both have changes. Use Load cloud to review Supabase, or Save cloud to keep this browser.");
 }
 
 function signOutCloud() {
@@ -7771,6 +7917,20 @@ async function fetchCloudStateRow(session) {
   return rows[0] || null;
 }
 
+function getCloudRowStateUpdatedAt(cloudRow) {
+  const payloadUpdatedAt = normalizeTimestamp(cloudRow?.state?.updatedAt);
+  if (payloadUpdatedAt) return payloadUpdatedAt;
+  return Math.max(getStateUpdatedAt(cloudRow?.state || {}), normalizeTimestamp(cloudRow?.updated_at));
+}
+
+function isCloudNewerThanLocal(cloudRow) {
+  return getCloudRowStateUpdatedAt(cloudRow) - getStateUpdatedAt(state) > CLOUD_CONFLICT_TOLERANCE_MS;
+}
+
+function isLocalNewerThanCloud(cloudRow) {
+  return getStateUpdatedAt(state) - getCloudRowStateUpdatedAt(cloudRow) > CLOUD_CONFLICT_TOLERANCE_MS;
+}
+
 function isRemoteNewerThanKnown(remoteUpdatedAt) {
   const knownUpdatedAt = getKnownCloudUpdatedAt();
   if (!remoteUpdatedAt) return false;
@@ -7796,6 +7956,13 @@ async function getCloudSavePlan(session, options = {}) {
   }
   if (doesCloudStateMatchLocal(cloudRow.state)) {
     setKnownCloudUpdatedAt(cloudRow.updated_at);
+    return { allowed: true, noop: true, expectedUpdatedAt: cloudRow.updated_at };
+  }
+  if (options.replaceCloud || isLocalNewerThanCloud(cloudRow)) {
+    if (options.replaceCloud) saveCloudRecoveryPoint("before-cloud-overwrite");
+    return { allowed: true, expectedUpdatedAt: cloudRow.updated_at };
+  }
+  if (!isCloudNewerThanLocal(cloudRow) && !isRemoteNewerThanKnown(cloudRow.updated_at)) {
     return { allowed: true, expectedUpdatedAt: cloudRow.updated_at };
   }
   if (!isRemoteNewerThanKnown(cloudRow.updated_at)) {
@@ -7847,13 +8014,32 @@ async function pushCloudState(options = {}) {
     syncActiveBoard();
     const savePlan = await getCloudSavePlan(session, options);
     if (!savePlan.allowed) return;
+    if (savePlan.noop) {
+      if (elements.savedState) {
+        elements.savedState.textContent = "Saved here + cloud";
+        elements.savedState.classList.remove("is-saving");
+      }
+      if (!options.silent) {
+        renderCloudStatus(`Supabase is already current ${formatRecordDateTime(savePlan.expectedUpdatedAt)}.`);
+      }
+      return;
+    }
     const payload = {
       owner_id: session.user.id,
       state: JSON.parse(JSON.stringify(state))
     };
-    setKnownCloudUpdatedAt(await writeCloudState(session, payload, savePlan));
+    const cloudUpdatedAt = await writeCloudState(session, payload, savePlan);
+    setKnownCloudUpdatedAt(cloudUpdatedAt);
+    if (elements.savedState) {
+      elements.savedState.textContent = "Saved here + cloud";
+      elements.savedState.classList.remove("is-saving");
+    }
+    const savedMessage = `Saved to Supabase ${formatRecordDateTime(cloudUpdatedAt)}.`;
     if (!options.silent) {
-      renderCloudStatus("Saved to Supabase.");
+      renderCloudStatus(savedMessage);
+    } else {
+      cloudStatusMessage = savedMessage;
+      renderCloudStatus();
     }
   } catch (error) {
     renderCloudStatus(normalizeCloudError(error.message || "Cloud save failed."));
@@ -7873,7 +8059,10 @@ async function pullCloudState(options = {}) {
       return;
     }
     if (options.confirmReplace) {
-      const confirmed = window.confirm("Load cloud data into this browser? This replaces the local board view.");
+      const loadMessage = isLocalNewerThanCloud(cloudRow)
+        ? "Supabase looks older than this browser. Load it and replace the newer local board view?"
+        : "Load Supabase data into this browser? This replaces the local board view.";
+      const confirmed = window.confirm(loadMessage);
       if (!confirmed) return;
     }
     saveCloudRecoveryPoint("before-cloud-load");
@@ -7881,7 +8070,8 @@ async function pullCloudState(options = {}) {
     setKnownCloudUpdatedAt(cloudRow.updated_at);
     resetFormState();
     render();
-    saveState({ skipCloud: true });
+    saveState({ skipCloud: true, touch: false });
+    localStateSource = "stored";
     renderCloudStatus(`Loaded from Supabase ${formatRecordDate(cloudRow.updated_at)}.`);
   } catch (error) {
     renderCloudStatus(normalizeCloudError(error.message || "Cloud load failed."));
@@ -7891,6 +8081,9 @@ async function pullCloudState(options = {}) {
 function queueCloudSave(options = {}) {
   if (!cloudSaveEnabled || !cloudSession?.access_token) return;
   window.clearTimeout(cloudSaveTimer);
+  if (elements.savedState && !elements.savedState.textContent.startsWith("Diary saved")) {
+    elements.savedState.textContent = "Saved here, syncing";
+  }
   if (options.immediate) {
     pushCloudState({ silent: options.silent });
     return;
@@ -7918,13 +8111,18 @@ async function importBoardBackup(file) {
 }
 
 function saveState(options = {}) {
+  const touched = options.touch !== false;
+  if (touched) {
+    touchState();
+  }
   syncActiveBoard();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStateSource = "stored";
   if (!options.quiet) {
-    elements.savedState.textContent = "Saved here";
+    elements.savedState.textContent = cloudSaveEnabled ? "Saved here, syncing" : "Saved here";
     elements.savedState.classList.remove("is-saving");
   }
-  if (!options.skipCloud) {
+  if (!options.skipCloud && touched) {
     queueCloudSave({ silent: options.quiet });
   }
 }

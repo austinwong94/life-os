@@ -2050,9 +2050,14 @@ textarea:focus {
 }
 
 .board-column.is-empty .column-drop-target,
-.board-column.is-drop-ready .column-drop-target {
+.board-column.is-drop-ready .column-drop-target,
+.board-grid.is-dragging-card .column-drop-target {
   display: grid;
   opacity: 1;
+}
+
+.board-grid.is-dragging-card .board-column {
+  min-height: 180px;
 }
 
 .task-card {
