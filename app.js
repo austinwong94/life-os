@@ -11,6 +11,7 @@ const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
   anonKey: "sb_publishable_DFWPjTEDRTsgM3pA_XPWdw_LAYQk_lP"
 };
 const CLOUD_SESSION_KEY = "life-os-cloud-session";
+const CLOUD_TABLE_MISSING_MESSAGE = "Supabase table missing. Run supabase/cloud_sync_patch.sql in the Supabase SQL Editor.";
 let cloudSession = loadCloudSession();
 let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token);
@@ -956,6 +957,7 @@ const elements = {
   openTemplatesButton: document.querySelector("#openTemplatesButton"),
   openIdeasButton: document.querySelector("#openIdeasButton"),
   cloudStatus: document.querySelector("#cloudStatus"),
+  cloudCheckButton: document.querySelector("#cloudCheckButton"),
   cloudEmail: document.querySelector("#cloudEmail"),
   cloudPassword: document.querySelector("#cloudPassword"),
   cloudSignInButton: document.querySelector("#cloudSignInButton"),
@@ -1296,6 +1298,7 @@ function bindEvents() {
 
   elements.cloudSignInButton.addEventListener("click", () => signInToCloud());
   elements.cloudSignUpButton.addEventListener("click", () => signUpForCloud());
+  elements.cloudCheckButton.addEventListener("click", () => checkCloudSetup());
   elements.cloudPullButton.addEventListener("click", () => pullCloudState({ confirmReplace: true }));
   elements.cloudPushButton.addEventListener("click", () => pushCloudState({ manual: true }));
   elements.cloudSignOutButton.addEventListener("click", signOutCloud);
@@ -2253,20 +2256,20 @@ function renderCard(card, options = {}) {
   }
   node.querySelector("h3").textContent = card.title;
   node.querySelector(".card-description").textContent = card.description;
-  node.querySelector(".timer-display strong").textContent = formatRemaining(card, remaining);
+  const timerDisplay = node.querySelector(".timer-display");
+  const isAutoTimer = isAutomaticCountdown(card);
+  timerDisplay.classList.toggle("is-auto", isAutoTimer);
+  timerDisplay.querySelector("strong").textContent = formatRemaining(card, remaining);
   node.querySelector(".timer-caption").textContent = getTimerCaption(card, remaining);
   node.querySelector(".progress-track span").style.width = `${progress.percent}%`;
   node.querySelector(".card-progress p").textContent = `${progress.percent}% · ${progress.label}`;
 
   const toggleButton = node.querySelector(".timer-toggle");
-  const isAutoTimer = isAutomaticCountdown(card);
-  toggleButton.hidden = !hasTimer;
+  toggleButton.hidden = !hasTimer || isAutoTimer;
   toggleButton.title = isAutoTimer ? "Automatic countdown" : card.runningSince ? "Pause timer" : "Start timer";
   toggleButton.setAttribute("aria-label", toggleButton.title);
-  toggleButton.innerHTML = isAutoTimer
-    ? `${ICONS.timer}<span>Auto</span>`
-    : `${ICONS[card.runningSince ? "pause" : "play"]}<span>${card.runningSince ? "Pause" : "Start"}</span>`;
-  toggleButton.disabled = !interactive || isAutoTimer || !hasTimer;
+  toggleButton.innerHTML = `${ICONS[card.runningSince ? "pause" : "play"]}<span>${card.runningSince ? "Pause" : "Start"}</span>`;
+  toggleButton.disabled = !interactive || !hasTimer;
   toggleButton.classList.toggle("is-auto", isAutoTimer);
   if (interactive && hasTimer && !isAutoTimer) {
     toggleButton.addEventListener("click", () => toggleTimer(card.id));
@@ -4492,14 +4495,14 @@ function getCardFill(card, theme) {
 function getTimerCaption(card, remaining) {
   if (!hasCountdown(card)) return "No deadline";
   if (remaining <= 0) return card.type === "event" ? "Reached" : "Time up";
-  if (card.timerMode === "daily") return "Day reset";
+  if (card.timerMode === "daily") return "Auto day reset";
   if (card.timerMode === "date" && card.targetAt) {
     const date = new Date(card.targetAt);
     if (Number.isFinite(date.getTime())) {
-      return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      return `Auto · ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
     }
   }
-  if (card.timerMode === "days") return "Days left";
+  if (card.timerMode === "days") return "Auto days left";
   return "Time left";
 }
 
@@ -6105,6 +6108,48 @@ function getCloudCredentials() {
   return { email, password };
 }
 
+function getCloudHeaders(session) {
+  return {
+    apikey: SUPABASE_CONFIG.anonKey,
+    Authorization: `Bearer ${session?.access_token || SUPABASE_CONFIG.anonKey}`,
+    Accept: "application/json"
+  };
+}
+
+function normalizeCloudError(message) {
+  if (/invalid login credentials/i.test(message)) {
+    return "Invalid login. Use Create login first, or confirm this email in Supabase Auth.";
+  }
+  if (/PGRST205|Could not find the table|user_states/i.test(message)) {
+    return CLOUD_TABLE_MISSING_MESSAGE;
+  }
+  if (/JWT|token|expired/i.test(message)) {
+    return "Cloud session expired. Sign out, sign in again, then save cloud.";
+  }
+  return message;
+}
+
+async function getCloudResponseError(response, fallback) {
+  const result = await response.json().catch(() => ({}));
+  const message = result.error_description || result.msg || result.message || result.hint || fallback;
+  return normalizeCloudError(`${result.code ? `${result.code}: ` : ""}${message}`);
+}
+
+async function checkCloudSetup() {
+  try {
+    renderCloudStatus("Checking Supabase setup...");
+    const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?select=owner_id&limit=1`, {
+      headers: getCloudHeaders()
+    });
+    if (!response.ok) {
+      throw new Error(await getCloudResponseError(response, "Supabase setup check failed."));
+    }
+    renderCloudStatus("Supabase setup is reachable. Sign in, then save cloud.");
+  } catch (error) {
+    renderCloudStatus(normalizeCloudError(error.message || "Supabase setup check failed."));
+  }
+}
+
 async function signUpForCloud() {
   try {
     const { email, password } = getCloudCredentials();
@@ -6121,7 +6166,7 @@ async function signUpForCloud() {
     }
     renderCloudStatus("Check your email to confirm the login, then sign in here.");
   } catch (error) {
-    renderCloudStatus(error.message || "Cloud login could not be created.");
+    renderCloudStatus(normalizeCloudError(error.message || "Cloud login could not be created."));
   }
 }
 
@@ -6138,12 +6183,7 @@ async function signInToCloud() {
     saveCloudSession(session);
     await pullCloudState({ confirmReplace: false, silentIfEmpty: true });
   } catch (error) {
-    const message = String(error.message || "");
-    renderCloudStatus(
-      /invalid login credentials/i.test(message)
-        ? "Invalid login. Use Create login first, or confirm this email in Supabase Auth."
-        : message || "Could not sign in."
-    );
+    renderCloudStatus(normalizeCloudError(error.message || "Could not sign in."));
   }
 }
 
@@ -6156,16 +6196,15 @@ async function cloudAuthRequest(path, body) {
   const response = await fetch(`${SUPABASE_CONFIG.url}${path}`, {
     method: "POST",
     headers: {
-      apikey: SUPABASE_CONFIG.anonKey,
+      ...getCloudHeaders(),
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
   });
-  const result = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(result.error_description || result.msg || result.message || "Supabase auth failed.");
+    throw new Error(await getCloudResponseError(response, "Supabase auth failed."));
   }
-  return result;
+  return response.json().catch(() => ({}));
 }
 
 function normalizeCloudSession(result) {
@@ -6205,38 +6244,32 @@ async function pushCloudState(options = {}) {
       owner_id: session.user.id,
       state: JSON.parse(JSON.stringify(state))
     };
-    const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states`, {
+    const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?on_conflict=owner_id`, {
       method: "POST",
       headers: {
-        apikey: SUPABASE_CONFIG.anonKey,
-        Authorization: `Bearer ${session.access_token}`,
+        ...getCloudHeaders(session),
         "Content-Type": "application/json",
         Prefer: "resolution=merge-duplicates,return=minimal"
       },
       body: JSON.stringify(payload)
     });
     if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      throw new Error(result.message || "Cloud save failed.");
+      throw new Error(await getCloudResponseError(response, "Cloud save failed."));
     }
     renderCloudStatus("Saved to Supabase.");
   } catch (error) {
-    renderCloudStatus(`${error.message || "Cloud save failed."} Run the cloud sync SQL if this is the first setup.`);
+    renderCloudStatus(normalizeCloudError(error.message || "Cloud save failed."));
   }
 }
 
 async function pullCloudState(options = {}) {
   try {
     const session = await ensureCloudSession();
-    const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&select=state,updated_at`, {
-      headers: {
-        apikey: SUPABASE_CONFIG.anonKey,
-        Authorization: `Bearer ${session.access_token}`
-      }
+    const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&select=state,updated_at&limit=1`, {
+      headers: getCloudHeaders(session)
     });
     if (!response.ok) {
-      const result = await response.json().catch(() => ({}));
-      throw new Error(result.message || "Cloud load failed.");
+      throw new Error(await getCloudResponseError(response, "Cloud load failed."));
     }
     const rows = await response.json();
     if (!rows.length) {
@@ -6257,7 +6290,7 @@ async function pullCloudState(options = {}) {
     saveState({ skipCloud: true });
     renderCloudStatus(`Loaded from Supabase ${formatRecordDate(rows[0].updated_at)}.`);
   } catch (error) {
-    renderCloudStatus(`${error.message || "Cloud load failed."} Run the cloud sync SQL if this is the first setup.`);
+    renderCloudStatus(normalizeCloudError(error.message || "Cloud load failed."));
   }
 }
 
