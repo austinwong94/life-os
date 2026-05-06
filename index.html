@@ -160,7 +160,7 @@
                 <span>Type</span>
                 <select id="cardType" hidden aria-hidden="true">
                   <option value="planner">Planner</option>
-                  <option value="planlist">Plan view</option>
+                  <option value="planlist">Planner-view</option>
                   <option value="daily" selected>To-do list</option>
                   <option value="diary">Daily diary</option>
                   <option value="brief">Strategy brief</option>
@@ -202,11 +202,11 @@
                     <option value="month">This month</option>
                     <option value="upcoming">Upcoming</option>
                   </select>
-                  <div class="planner-view-mode-buttons" id="plannerViewModeButtons" role="radiogroup" aria-label="Planner view"></div>
+                  <div class="planner-view-mode-buttons" id="plannerViewModeButtons" role="radiogroup" aria-label="Planner-view"></div>
                 </label>
                 <div class="field planner-view-note">
                   <span>Source</span>
-                  <p>Reads Planner cards in the same area. Use exclusions to stop Today, Week and Month views repeating the same plans.</p>
+                  <p>Reads Planner cards on this board. Use exclusions to stop Today, Week and Month views repeating the same plans.</p>
                 </div>
               </div>
               <div class="planner-view-options">
@@ -321,7 +321,7 @@
                   <select id="diaryFeeling">
                     <option value="Happy">Happy</option>
                     <option value="Okay">Okay</option>
-                    <option value="Calm">Calm</option>
+                    <option value="Calm" selected>Calm</option>
                     <option value="Sad">Sad</option>
                     <option value="Angry">Angry</option>
                     <option value="Anxious">Anxious</option>
@@ -453,7 +453,7 @@
             </button>
             <label class="board-search">
               <span data-icon="search"></span>
-              <input id="boardSearch" type="search" placeholder="Search cards, areas, dates" autocomplete="off" aria-label="Search board cards" />
+              <input id="boardSearch" type="search" name="life-os-board-search" placeholder="Search cards, areas, dates" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" data-lpignore="true" aria-label="Search board cards" />
               <button type="button" id="clearSearchButton" title="Clear search" aria-label="Clear search" hidden>
                 <span data-icon="x"></span>
               </button>

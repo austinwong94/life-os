@@ -125,7 +125,7 @@ const TYPE_META = {
   brief: { label: "Brief", icon: "list" },
   daily: { label: "To-do", icon: "list" },
   planner: { label: "Planner", icon: "calendar" },
-  planlist: { label: "Plan view", icon: "list" },
+  planlist: { label: "Planner-view", icon: "list" },
   diary: { label: "Diary", icon: "calendar" },
   quote: { label: "Motivation", icon: "quote" },
   video: { label: "Video", icon: "video" },
@@ -143,7 +143,7 @@ const TYPE_META = {
 const TYPE_HELP = {
   daily: "Use for a one-day to-do list. It does not reset automatically, so it is best for today, tomorrow, or a specific short plan.",
   planner: "Use like a physical planner book. Pick a date and write future plans inside one card without splitting the board.",
-  planlist: "Use for Today, This week, This month, or Upcoming lists connected to Planner cards in the same area.",
+  planlist: "Use for Today, This week, This month, or Upcoming lists connected to Planner cards on this board.",
   diary: "Use for a dated daily diary with feeling, one sentence and thoughts. Each date is saved as its own page.",
   brief: "Use for strategy, rules, decisions, priorities, or a review prompt. It is a guidance card, not a task.",
   quote: "Use for motivational words, reminders, affirmations or principles you want visible on the board.",
@@ -176,7 +176,7 @@ const TYPE_DETAILS = {
   },
   planlist: {
     best: "A linked Today, Week, Month, or Upcoming list from Planner",
-    timing: "No timer. It reads dated planner notes and can exclude earlier views to avoid duplicate items."
+    timing: "No timer. It reads dated Planner notes on this board and can exclude earlier views to avoid duplicate items."
   },
   brief: {
     best: "Decisions, rules, plans and review prompts",
@@ -237,7 +237,7 @@ const TYPE_PICKER_GROUPS = [
     description: "Tasks, projects, dates",
     options: [
       { type: "planner", label: "Planner", hint: "Future dates" },
-      { type: "planlist", label: "Plan view", hint: "Linked list" },
+      { type: "planlist", label: "Planner-view", hint: "Linked list" },
       { type: "daily", label: "To-do", hint: "Plan ahead" },
       { type: "single", label: "Task", hint: "One outcome" },
       { type: "checklist", label: "Project", hint: "Multi-step" },
@@ -1012,6 +1012,7 @@ let editingCardId = null;
 let selectedTimerMode = "none";
 let attachedImageData = "";
 let draftPreviewDismissed = false;
+let draftTouched = false;
 let selectedTemplateId = boardTemplates[0]?.id || "";
 let selectedScheduleDays = [0, 2, 4];
 let boardResizeFrame = null;
@@ -1201,11 +1202,11 @@ populateBackgroundOptions();
 setDefaultTimerDate();
 renderTemplateList();
 bindEvents();
-elements.cardPlanDate.value = getTodayKey();
-elements.plannerDate.value = getTodayKey();
-elements.diaryDate.value = getTodayKey();
+resetFormState();
 render();
 handleCloudAuthRedirect();
+clearStartupBoardSearch();
+[100, 400, 900].forEach((delay) => window.setTimeout(clearStartupBoardSearch, delay));
 
 setInterval(() => {
   if (state.cards.some((card) => card.runningSince || shouldTickCountdownEverySecond(card))) {
@@ -1947,6 +1948,7 @@ function startEditingCard(id) {
 function resetFormState() {
   editingCardId = null;
   draftPreviewDismissed = false;
+  draftTouched = false;
   elements.form.reset();
   elements.formTitle.textContent = "Add card";
   elements.formSubmitLabel.textContent = "Add card";
@@ -2013,6 +2015,7 @@ function closeCardComposer(options = {}) {
   document.body.classList.remove("composer-open");
   if (options.dismissPreview) {
     draftPreviewDismissed = true;
+    draftTouched = false;
   }
   if (options.reset) {
     resetFormState();
@@ -2091,6 +2094,16 @@ function renderBoardMeta() {
   document.querySelectorAll(".view-pills .pill").forEach((pill) => {
     pill.classList.toggle("is-active", state.activeFilter === pill.dataset.filter);
   });
+}
+
+function clearStartupBoardSearch() {
+  const hadSearch = Boolean(normalizeLabel(state.searchQuery || elements.boardSearch.value || ""));
+  state.searchQuery = "";
+  elements.boardSearch.value = "";
+  elements.clearSearchButton.hidden = true;
+  if (hadSearch) {
+    renderCardsOnly({ preserveScroll: false });
+  }
 }
 
 function renderBoardSwitcher() {
@@ -2323,7 +2336,7 @@ function getQuickCaptureTimer(value) {
 
 function getQuickCaptureFallbackTitle(type) {
   if (type === "planner") return "Future planner";
-  if (type === "planlist") return "Plan view";
+  if (type === "planlist") return "Planner-view";
   if (type === "diary") return "Daily diary";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
@@ -2336,7 +2349,7 @@ function getQuickCaptureFallbackTitle(type) {
 
 function getDefaultCardTitle(type) {
   if (type === "planner") return "Future planner";
-  if (type === "planlist") return "Planner view";
+  if (type === "planlist") return "Planner-view";
   if (type === "diary") return "Daily diary";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
@@ -2907,7 +2920,7 @@ function renderPlannerLinkedList(card) {
   const title = document.createElement("strong");
   title.textContent = getPlannerViewLabel(view);
   const source = document.createElement("span");
-  source.textContent = `${group} planner source`;
+  source.textContent = viewData.sourceLabel;
   copy.append(title, source);
   const count = document.createElement("em");
   count.textContent = viewData.items.length ? `${viewData.items.length} planned` : "Ready";
@@ -3659,11 +3672,12 @@ function getPlannerItemsForDate(dateKey, group = "") {
     .sort(sortPlannerScheduleItems);
 }
 
-function getPlannerSourceItems(group = "") {
+function getPlannerSourceItems(group = "", options = {}) {
+  const viewOptions = normalizePlannerViewOptions(options);
   const normalizedGroup = group ? getPlannerGroup({ category: group }) : "";
   return state.cards
     .filter((card) => card.type === "planner")
-    .filter((card) => !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
+    .filter((card) => viewOptions.sourceMode !== "area" || !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
     .flatMap((card) => getPlannerScheduleItems(card).map((item) => ({ ...item, card })))
     .sort(sortPlannerScheduleItems);
 }
@@ -3676,7 +3690,7 @@ function getPlannerViewData(view, group, options = {}) {
   const todayTime = today.getTime();
   const weekEndTime = addDays(today, 6 - getCurrentWeekIndex(today)).getTime();
   const monthEndTime = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
-  const futureItems = getPlannerSourceItems(group).filter((item) => dateKeyToLocalDate(item.dateKey).getTime() >= todayTime);
+  const futureItems = getPlannerSourceItems(group, viewOptions).filter((item) => dateKeyToLocalDate(item.dateKey).getTime() >= todayTime);
   const range = {
     today: {
       limit: 8,
@@ -3708,7 +3722,10 @@ function getPlannerViewData(view, group, options = {}) {
       items: futureItems.filter((item) => dateKeyToLocalDate(item.dateKey).getTime() > monthEndTime)
     }
   };
-  return range[mode] || range.today;
+  return {
+    ...(range[mode] || range.today),
+    sourceLabel: viewOptions.sourceMode === "area" ? `${getPlannerGroup({ category: group })} Planner source` : "Board Planner source"
+  };
 }
 
 function getPlannerViewLabel(view) {
@@ -3844,7 +3861,7 @@ function persistDiaryEntryImmediately(card, dateKey, entry) {
   try {
     touchState();
     syncActiveBoard();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(getStateForStorage()));
     localStateSource = "stored";
     upsertDiaryBackup(card, dateKey, entry);
     if (elements.savedState) {
@@ -4206,7 +4223,7 @@ function renderTemplateList() {
 function renderFormPreview() {
   if (!elements.cardPreview) return;
   const composerOpen = !elements.cardComposerPanel.hidden;
-  const shouldShowPreview = (composerOpen || hasDraftInput()) && !draftPreviewDismissed;
+  const shouldShowPreview = (composerOpen || (draftTouched && hasDraftInput())) && !draftPreviewDismissed;
   elements.boardPreviewPanel.hidden = !shouldShowPreview;
   if (!shouldShowPreview) {
     elements.cardPreview.innerHTML = "";
@@ -4221,6 +4238,8 @@ function renderFormPreview() {
 }
 
 function handleDraftInputChange() {
+  if (elements.cardComposerPanel.hidden && !editingCardId) return;
+  draftTouched = true;
   draftPreviewDismissed = false;
   renderFormPreview();
 }
@@ -4956,7 +4975,8 @@ function normalizePlannerViewMode(value) {
 function normalizePlannerViewOptions(options = {}) {
   return {
     excludeToday: Boolean(options.excludeToday),
-    excludeWeek: Boolean(options.excludeWeek)
+    excludeWeek: Boolean(options.excludeWeek),
+    sourceMode: options.sourceMode === "area" ? "area" : "board"
   };
 }
 
@@ -7208,15 +7228,33 @@ function loadState() {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) {
     localStateSource = "default";
-    return restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState()))));
+    return resetBoardViewState(restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())))));
   }
   try {
     localStateSource = "stored";
-    return restoreDiaryBackups(rehydrateState(JSON.parse(stored)));
+    return resetBoardViewState(restoreDiaryBackups(rehydrateState(JSON.parse(stored))));
   } catch {
     localStateSource = "default";
-    return restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState()))));
+    return resetBoardViewState(restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())))));
   }
+}
+
+function resetBoardViewState(nextState) {
+  nextState.activeFilter = "all";
+  nextState.activeCategory = "all";
+  nextState.activeCategories = [];
+  nextState.focusFilter = "all";
+  nextState.searchQuery = "";
+  nextState.ui = {
+    ...defaultState.ui,
+    ...(nextState.ui || {}),
+    categoriesOpen: false
+  };
+  return nextState;
+}
+
+function getStateForStorage() {
+  return resetBoardViewState(JSON.parse(JSON.stringify(state)));
 }
 
 function rehydrateState(parsed) {
@@ -7547,7 +7585,7 @@ function exportBoardBackup() {
   const backup = {
     app: "Life OS",
     exportedAt: new Date().toISOString(),
-    state
+    state: getStateForStorage()
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -7943,7 +7981,7 @@ function isRemoteNewerThanKnown(remoteUpdatedAt) {
 
 function doesCloudStateMatchLocal(cloudState) {
   try {
-    return JSON.stringify(cloudState) === JSON.stringify(JSON.parse(JSON.stringify(state)));
+    return JSON.stringify(resetBoardViewState(JSON.parse(JSON.stringify(cloudState)))) === JSON.stringify(getStateForStorage());
   } catch {
     return false;
   }
@@ -8026,7 +8064,7 @@ async function pushCloudState(options = {}) {
     }
     const payload = {
       owner_id: session.user.id,
-      state: JSON.parse(JSON.stringify(state))
+      state: getStateForStorage()
     };
     const cloudUpdatedAt = await writeCloudState(session, payload, savePlan);
     setKnownCloudUpdatedAt(cloudUpdatedAt);
@@ -8116,7 +8154,7 @@ function saveState(options = {}) {
     touchState();
   }
   syncActiveBoard();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(getStateForStorage()));
   localStateSource = "stored";
   if (!options.quiet) {
     elements.savedState.textContent = cloudSaveEnabled ? "Saved here, syncing" : "Saved here";
