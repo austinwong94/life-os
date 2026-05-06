@@ -90,6 +90,7 @@ const ICONS = {
   "rotate-ccw": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>',
   "trash-2": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>',
   archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="5" x="3" y="3" rx="1"/><path d="M5 8v11h14V8"/><path d="M10 12h4"/></svg>',
+  cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17.5 19H8a5 5 0 1 1 1.2-9.86A6 6 0 0 1 20 12.5 3.5 3.5 0 0 1 17.5 19Z"/></svg>',
   timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 2h4"/><path d="M12 14l3-3"/><circle cx="12" cy="14" r="8"/></svg>',
   "layout-grid": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m20 6-11 11-5-5"/></svg>',
@@ -268,19 +269,6 @@ const VISIBILITY_META = {
   unlisted: { label: "Unlisted", icon: "link" },
   public: { label: "Public", icon: "eye" }
 };
-
-const artistPacks = [
-  {
-    name: "Moon Garden",
-    price: "RM 12",
-    theme: "linear-gradient(135deg, #283348, #638d8c 48%, #f0c979)"
-  },
-  {
-    name: "Street Pop",
-    price: "RM 18",
-    theme: "linear-gradient(135deg, #242424, #e05b4f 48%, #f2cf53)"
-  }
-];
 
 const boardTemplates = [
   {
@@ -839,14 +827,15 @@ const elements = {
   railAddButton: document.querySelector("#railAddButton"),
   railTemplatesButton: document.querySelector("#railTemplatesButton"),
   railArchiveButton: document.querySelector("#railArchiveButton"),
+  railSyncButton: document.querySelector("#railSyncButton"),
   railSettingsButton: document.querySelector("#railSettingsButton"),
   settingsModal: document.querySelector("#settingsModal"),
+  settingsModalTitle: document.querySelector("#settingsModalTitle"),
   settingsModalCloseButton: document.querySelector("#settingsModalCloseButton"),
   settingsPanelMount: document.querySelector("#settingsPanelMount"),
   boardPanel: document.querySelector(".board-panel"),
   templatePanel: document.querySelector(".template-panel"),
   cloudPanel: document.querySelector(".cloud-panel"),
-  artistPanel: document.querySelector(".artist-panel"),
   boardName: document.querySelector("#boardName"),
   boardTitle: document.querySelector("#boardTitle"),
   visibilityLabel: document.querySelector("#visibilityLabel"),
@@ -987,8 +976,7 @@ const elements = {
   recordsModalCloseButton: document.querySelector("#recordsModalCloseButton"),
   recordsModalTitle: document.querySelector("#recordsModalTitle"),
   recordsModalSummary: document.querySelector("#recordsModalSummary"),
-  recordsModalList: document.querySelector("#recordsModalList"),
-  packList: document.querySelector("#packList")
+  recordsModalList: document.querySelector("#recordsModalList")
 };
 
 mountSettingsPanels();
@@ -996,7 +984,6 @@ hydrateIcons();
 populateThemeOptions();
 populateBackgroundOptions();
 setDefaultTimerDate();
-renderArtistPacks();
 renderTemplateList();
 bindEvents();
 elements.cardPlanDate.value = getTodayKey();
@@ -1019,7 +1006,7 @@ setInterval(() => {
 
 function mountSettingsPanels() {
   if (!elements.settingsPanelMount) return;
-  [elements.boardPanel, elements.templatePanel, elements.cloudPanel, elements.recentPanel, elements.artistPanel]
+  [elements.boardPanel, elements.templatePanel, elements.cloudPanel, elements.recentPanel]
     .filter(Boolean)
     .forEach((panel) => elements.settingsPanelMount.append(panel));
 }
@@ -1038,6 +1025,10 @@ function bindEvents() {
   });
 
   elements.railArchiveButton.addEventListener("click", openRecordsModal);
+
+  elements.railSyncButton.addEventListener("click", () => {
+    openSettingsModal("cloud");
+  });
 
   elements.railSettingsButton.addEventListener("click", () => {
     openSettingsModal();
@@ -3102,23 +3093,6 @@ function renderTypeInsight(type) {
   `;
 }
 
-function renderArtistPacks() {
-  elements.packList.innerHTML = artistPacks
-    .map(
-      (pack) => `
-        <div class="pack">
-          <div class="pack-preview" style="background: ${pack.theme}"></div>
-          <div>
-            <h3>${pack.name}</h3>
-            <p>${pack.price}</p>
-          </div>
-          <button type="button" title="Locked" aria-label="Locked">${ICONS.lock}</button>
-        </div>
-      `
-    )
-    .join("");
-}
-
 function renderTemplateList() {
   elements.templateList.innerHTML = boardTemplates
     .map(
@@ -3163,6 +3137,7 @@ function discardDraftCard() {
 function openSettingsModal(section = "board") {
   settingsActiveSection = section;
   closeOtherOverlays("settings");
+  elements.settingsModalTitle.textContent = section === "cloud" ? "Cloud sync" : "Board settings";
   elements.settingsModal.hidden = false;
   syncModalOpenState();
   renderShell();
@@ -3358,6 +3333,7 @@ function syncRailActiveState() {
     add: elements.railAddButton,
     templates: elements.railTemplatesButton,
     archive: elements.railArchiveButton,
+    sync: elements.railSyncButton,
     settings: elements.railSettingsButton
   };
 
@@ -3367,7 +3343,7 @@ function syncRailActiveState() {
     button.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
 
-  const settingsOpen = activeSurface === "settings";
+  const settingsOpen = activeSurface === "settings" || activeSurface === "sync";
   elements.sidebarToggle.classList.toggle("is-active", settingsOpen);
   elements.sidebarToggle.setAttribute("aria-pressed", settingsOpen ? "true" : "false");
   elements.appShell.dataset.activeSurface = activeSurface;
@@ -3377,7 +3353,7 @@ function getActiveRailSurface() {
   if (!elements.cardComposerPanel.hidden) return "add";
   if (!elements.templateModal.hidden || !elements.ideasModal.hidden) return "templates";
   if (!elements.recordsModal.hidden || !elements.historyModal.hidden) return "archive";
-  if (!elements.settingsModal.hidden) return "settings";
+  if (!elements.settingsModal.hidden) return settingsActiveSection === "cloud" ? "sync" : "settings";
   return "";
 }
 
@@ -6120,8 +6096,11 @@ function normalizeCloudError(message) {
   if (/invalid login credentials/i.test(message)) {
     return "Invalid login. Use Create login first, or confirm this email in Supabase Auth.";
   }
-  if (/PGRST205|Could not find the table|user_states/i.test(message)) {
+  if (/PGRST205|Could not find the table/i.test(message)) {
     return CLOUD_TABLE_MISSING_MESSAGE;
+  }
+  if (/42501|permission denied/i.test(message)) {
+    return "Supabase table exists. Create or sign in to your Life OS login, then save cloud.";
   }
   if (/JWT|token|expired/i.test(message)) {
     return "Cloud session expired. Sign out, sign in again, then save cloud.";
@@ -6142,7 +6121,12 @@ async function checkCloudSetup() {
       headers: getCloudHeaders()
     });
     if (!response.ok) {
-      throw new Error(await getCloudResponseError(response, "Supabase setup check failed."));
+      const message = await getCloudResponseError(response, "Supabase setup check failed.");
+      if (/table exists|permission denied/i.test(message)) {
+        renderCloudStatus("Supabase table exists. Create or sign in to your Life OS login, then save cloud.");
+        return;
+      }
+      throw new Error(message);
     }
     renderCloudStatus("Supabase setup is reachable. Sign in, then save cloud.");
   } catch (error) {
