@@ -4364,11 +4364,11 @@ textarea:focus {
 
 .planner-linked-item {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 26px;
-  align-items: start;
+  grid-template-columns: 18px minmax(0, 1fr) 26px;
+  align-items: center;
   gap: 6px;
-  min-height: 42px;
-  padding: 6px;
+  min-height: 46px;
+  padding: 7px 7px;
   border: 1px solid rgba(17, 17, 17, 0.06);
   border-radius: 10px;
   color: var(--card-ink);
@@ -4387,16 +4387,18 @@ textarea:focus {
 }
 
 .planner-linked-check {
-  width: 14px;
-  height: 14px;
-  margin: 3px 0 0;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
   accent-color: var(--card-accent);
+  cursor: pointer;
 }
 
 .planner-linked-main {
   display: grid;
   gap: 3px;
-  align-content: start;
+  align-content: center;
   min-width: 0;
 }
 
@@ -4474,6 +4476,7 @@ textarea:focus {
 .planner-linked-delete {
   display: inline-flex;
   align-items: center;
+  align-self: center;
   justify-content: center;
   width: 24px;
   height: 24px;
@@ -5246,7 +5249,7 @@ textarea:focus {
   }
 
   .planner-linked-item {
-    grid-template-columns: 15px minmax(0, 1fr) 24px;
+    grid-template-columns: 18px minmax(0, 1fr) 24px;
     gap: 6px;
     padding: 6px;
   }
