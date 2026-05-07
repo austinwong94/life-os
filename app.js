@@ -1019,6 +1019,9 @@ let selectedScheduleDays = [0, 2, 4];
 let boardResizeFrame = null;
 let pendingUndoAction = null;
 let undoToastTimer = null;
+let textEditGuardUntil = 0;
+let deferredBoardRenderTimer = null;
+let pendingBoardRenderOptions = null;
 
 const elements = {
   appShell: document.querySelector("#appShell"),
@@ -1100,6 +1103,7 @@ const elements = {
   plannerViewExcludeWeek: document.querySelector("#plannerViewExcludeWeek"),
   plannerExcludeMonthField: document.querySelector("#plannerExcludeMonthField"),
   plannerViewExcludeMonth: document.querySelector("#plannerViewExcludeMonth"),
+  plannerViewShowGuide: document.querySelector("#plannerViewShowGuide"),
   diaryField: document.querySelector("#diaryField"),
   diaryDate: document.querySelector("#diaryDate"),
   diaryFeeling: document.querySelector("#diaryFeeling"),
@@ -1221,7 +1225,7 @@ clearStartupBoardSearch();
 setInterval(() => {
   if (state.cards.some((card) => card.runningSince || shouldTickCountdownEverySecond(card))) {
     settleExpiredTimers();
-    renderCardsOnly();
+    renderCardsOnly({ reason: "tick" });
   }
 }, 1000);
 
@@ -1229,7 +1233,7 @@ setInterval(() => {
   renderBoardMeta();
   if (state.cards.some((card) => isAutomaticCountdown(card))) {
     settleExpiredTimers();
-    renderCardsOnly();
+    renderCardsOnly({ reason: "auto" });
   }
 }, 60000);
 
@@ -1667,6 +1671,18 @@ function bindEvents() {
   elements.undoToastButton.addEventListener("click", runPendingUndo);
   elements.undoToastCloseButton.addEventListener("click", clearUndoToast);
 
+  document.addEventListener("focusin", (event) => {
+    if (isProtectedDraftElement(event.target)) {
+      textEditGuardUntil = Date.now() + 1000;
+    }
+  });
+
+  document.addEventListener("focusout", (event) => {
+    if (!isProtectedDraftElement(event.target)) return;
+    textEditGuardUntil = Date.now() + 1200;
+    scheduleDeferredBoardRender(1250);
+  });
+
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !elements.cardComposerPanel.hidden) {
       closeCardComposer({ reset: true });
@@ -1782,8 +1798,10 @@ function buildCardFromForm({ preview }) {
     card.plannerViewOptions = normalizePlannerViewOptions({
       excludeToday: elements.plannerViewExcludeToday.checked,
       excludeWeek: elements.plannerViewExcludeWeek.checked,
-      excludeMonth: elements.plannerViewExcludeMonth.checked
+      excludeMonth: elements.plannerViewExcludeMonth.checked,
+      showGuide: elements.plannerViewShowGuide.checked
     });
+    syncPlannerViewCardCopy(card);
   }
 
   if (type === "diary") {
@@ -1921,8 +1939,8 @@ function startEditingCard(id) {
   elements.submitCardButton.querySelector("[data-icon]").dataset.icon = "pencil";
   elements.cancelEditButton.hidden = false;
 
-  elements.cardTitle.value = card.title || "";
-  elements.cardDescription.value = card.description || "";
+  elements.cardTitle.value = getCardDisplayTitle(card);
+  elements.cardDescription.value = getCardDisplayDescription(card);
   setCategoryField(card.category || "General");
   elements.cardPriority.value = getSelectedPriority(card.priority);
   elements.cardPlanDate.value = getCardPlanDate(card);
@@ -1938,6 +1956,7 @@ function startEditingCard(id) {
   elements.plannerViewExcludeToday.checked = plannerViewOptions.excludeToday;
   elements.plannerViewExcludeWeek.checked = plannerViewOptions.excludeWeek;
   elements.plannerViewExcludeMonth.checked = plannerViewOptions.excludeMonth;
+  elements.plannerViewShowGuide.checked = plannerViewOptions.showGuide;
   const diaryDate = getActiveDiaryDate(card);
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, diaryDate) : normalizeDiaryEntry();
   elements.diaryDate.value = diaryDate;
@@ -1990,6 +2009,7 @@ function resetFormState() {
   elements.plannerViewExcludeToday.checked = false;
   elements.plannerViewExcludeWeek.checked = false;
   elements.plannerViewExcludeMonth.checked = false;
+  elements.plannerViewShowGuide.checked = false;
   elements.diaryDate.value = getTodayKey();
   elements.diaryFeeling.value = "Calm";
   elements.diarySentence.value = "";
@@ -2403,6 +2423,10 @@ function getQuickCaptureFallbackItems(type) {
 }
 
 function renderCardsOnly(options = {}) {
+  if (shouldDeferBoardRender(options)) {
+    queueDeferredBoardRender(options);
+    return;
+  }
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
   resetDailyRepeatingCards();
@@ -2433,6 +2457,60 @@ function renderCardsOnly(options = {}) {
   renderRecentCards();
   hydrateIcons(elements.boardGrid);
   restoreScrollPosition(scrollSnapshot);
+}
+
+function isDraftTextElement(element) {
+  if (!element || element.disabled || element.readOnly) return false;
+  if (element.tagName === "TEXTAREA") return true;
+  if (element.tagName !== "INPUT") return false;
+  return ["text", "search", "url", "email", "password", "number", "date", "datetime-local", "time"].includes(element.type);
+}
+
+function isProtectedDraftElement(element) {
+  if (!isDraftTextElement(element)) return false;
+  return Boolean(
+    elements.boardGrid?.contains(element) ||
+      elements.cardComposerPanel?.contains(element) ||
+      elements.quickTodoPanel?.contains(element)
+  );
+}
+
+function hasUnsubmittedDraftText() {
+  return state.cards.some((card) => normalizeLabel(card.dailyDraftText || card.plannerDraftText || ""));
+}
+
+function isBackgroundBoardRender(options = {}) {
+  return options.reason === "tick" || options.reason === "auto";
+}
+
+function shouldDeferBoardRender(options = {}) {
+  if (options.force) return false;
+  if (draggedCardId) return false;
+  const active = document.activeElement;
+  if (isProtectedDraftElement(active)) return true;
+  if (hasUnsubmittedDraftText() && isBackgroundBoardRender(options)) return true;
+  return Date.now() < textEditGuardUntil;
+}
+
+function queueDeferredBoardRender(options = {}) {
+  const preserveScroll = pendingBoardRenderOptions?.preserveScroll === false || options.preserveScroll === false ? false : undefined;
+  pendingBoardRenderOptions = { ...(pendingBoardRenderOptions || {}), ...options };
+  if (preserveScroll === false) pendingBoardRenderOptions.preserveScroll = false;
+  scheduleDeferredBoardRender();
+}
+
+function scheduleDeferredBoardRender(delay = 500) {
+  window.clearTimeout(deferredBoardRenderTimer);
+  deferredBoardRenderTimer = window.setTimeout(() => {
+    if (shouldDeferBoardRender({ force: false })) {
+      scheduleDeferredBoardRender(500);
+      return;
+    }
+    if (!pendingBoardRenderOptions) return;
+    const nextOptions = { ...(pendingBoardRenderOptions || {}), force: true };
+    pendingBoardRenderOptions = null;
+    renderCardsOnly(nextOptions);
+  }, delay);
 }
 
 function captureScrollPosition() {
@@ -2696,6 +2774,19 @@ function isOverdueCard(card) {
   return getCardPlanDate(card) < getTodayKey() && getProgress(card).percent < 100;
 }
 
+function getCardDisplayTitle(card) {
+  if (card?.type === "planlist") return getPlannerViewCardTitle(card.plannerView);
+  return card?.title || getDefaultCardTitle(card?.type || "single");
+}
+
+function getCardDisplayDescription(card) {
+  if (card?.type === "planlist") {
+    const options = normalizePlannerViewOptions(card.plannerViewOptions);
+    return options.showGuide ? getPlannerViewCardDescription(card.plannerView, options) : "";
+  }
+  return card?.description || "";
+}
+
 function renderCard(card, options = {}) {
   const interactive = options.interactive !== false;
   const template = document.querySelector("#cardTemplate");
@@ -2742,8 +2833,8 @@ function renderCard(card, options = {}) {
     dateChip.textContent = plannedDateLabel;
     dateChip.title = getPlannedDateTitle(card);
   }
-  node.querySelector("h3").textContent = card.title;
-  node.querySelector(".card-description").textContent = card.description;
+  node.querySelector("h3").textContent = getCardDisplayTitle(card);
+  node.querySelector(".card-description").textContent = getCardDisplayDescription(card);
   const timerDisplay = node.querySelector(".timer-display");
   const isAutoTimer = isAutomaticCountdown(card);
   timerDisplay.classList.toggle("is-auto", isAutoTimer);
@@ -2917,8 +3008,13 @@ function renderPlanner(card) {
   taskInput.className = "planner-task-input";
   taskInput.type = "text";
   taskInput.maxLength = 160;
+  taskInput.value = card.plannerDraftText || "";
   taskInput.placeholder = "Write a task, meeting, trip idea or reminder";
   taskInput.setAttribute("aria-label", "Planner task");
+  taskInput.addEventListener("input", () => {
+    card.plannerDraftText = taskInput.value;
+    persistLocalDraftState();
+  });
   const addButton = document.createElement("button");
   addButton.type = "submit";
   addButton.className = "planner-submit-button";
@@ -2928,7 +3024,9 @@ function renderPlanner(card) {
   addForm.append(taskInput, addButton);
   addForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    addPlannerTaskToDate(card, activeDate, taskInput.value);
+    if (!addPlannerTaskToDate(card, activeDate, taskInput.value)) return;
+    card.plannerDraftText = "";
+    persistLocalDraftState();
   });
 
   dayPanel.append(dateRow, addForm);
@@ -2960,6 +3058,7 @@ function renderPlannerLinkedList(card) {
   const optionSummary = document.createElement("p");
   optionSummary.className = "planner-linked-summary";
   optionSummary.textContent = getPlannerViewSummary(view, options);
+  optionSummary.hidden = !options.showGuide;
 
   const dateContext = document.createElement("p");
   dateContext.className = "planner-linked-date-context";
@@ -3008,7 +3107,9 @@ function renderPlannerLinkedList(card) {
     }
   }
 
-  wrapper.append(head, optionSummary, dateContext, addForm, list);
+  wrapper.append(head);
+  if (options.showGuide) wrapper.append(optionSummary);
+  wrapper.append(dateContext, addForm, list);
   return wrapper;
 }
 
@@ -3030,8 +3131,17 @@ function renderPlannerLinkedAddForm(card, view, options) {
   input.type = "text";
   input.className = "planner-linked-add-input";
   input.maxLength = 160;
+  input.value = card.plannerDraftText || "";
   input.placeholder = mode === "today" ? "Add something for today" : "Add a dated planner task";
   input.setAttribute("aria-label", "Add planner task");
+  input.addEventListener("input", () => {
+    card.plannerDraftText = input.value;
+    persistLocalDraftState();
+  });
+  dateInput.addEventListener("change", () => {
+    card.plannerQuickDate = normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
+    persistLocalDraftState();
+  });
 
   const button = document.createElement("button");
   button.type = "submit";
@@ -3046,6 +3156,8 @@ function renderPlannerLinkedAddForm(card, view, options) {
     const targetDate = mode === "today" ? getTodayKey() : normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
     card.plannerQuickDate = targetDate;
     if (!addPlannerTaskFromPlannerView(card, targetDate, input.value)) return;
+    card.plannerDraftText = "";
+    persistLocalDraftState();
   });
   return form;
 }
@@ -3362,8 +3474,13 @@ function renderDailyAddForm(card) {
   const input = document.createElement("input");
   input.type = "text";
   input.maxLength = 120;
+  input.value = card.dailyDraftText || "";
   input.placeholder = getCardPlanDate(card) === getTodayKey() ? "Add something for today" : "Add item for this day";
   input.setAttribute("aria-label", "Add to-do item");
+  input.addEventListener("input", () => {
+    card.dailyDraftText = input.value;
+    persistLocalDraftState();
+  });
   const button = document.createElement("button");
   button.type = "submit";
   button.title = "Add item";
@@ -3372,7 +3489,9 @@ function renderDailyAddForm(card) {
   form.append(input, button);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    addDailyItemToCard(card, input.value);
+    if (!addDailyItemToCard(card, input.value)) return;
+    card.dailyDraftText = "";
+    persistLocalDraftState();
   });
   return form;
 }
@@ -3936,7 +4055,6 @@ function getPlannerItemTime(item) {
 
 function getPlannerSectionKey(item, timeline = getPlannerTimelineMeta()) {
   const time = getPlannerItemTime(item);
-  if (time === timeline.todayTime) return "today";
   if (time <= timeline.weekEndTime) return "week";
   if (time <= timeline.monthEndTime) return "month";
   return "future";
@@ -3944,9 +4062,8 @@ function getPlannerSectionKey(item, timeline = getPlannerTimelineMeta()) {
 
 function getPlannerSectionLabel(key) {
   return {
-    today: "Today",
     week: "This week",
-    month: "This month",
+    month: "Later this month",
     future: "Future"
   }[key] || "Future";
 }
@@ -3963,7 +4080,7 @@ function getPlannerViewData(view, group, options = {}) {
     if (viewOptions.excludeToday && time === timeline.todayTime) return false;
     return true;
   });
-  const upcomingSections = ["today", "week", "month", "future"]
+  const upcomingSections = ["week", "month", "future"]
     .map((key) => ({
       key,
       label: getPlannerSectionLabel(key),
@@ -3998,7 +4115,7 @@ function getPlannerViewData(view, group, options = {}) {
     },
     upcoming: {
       limit: 12,
-      empty: "Upcoming planner items will appear here.",
+      empty: "Planner tasks will appear under This week, Later this month, or Future.",
       items: upcomingItems,
       sections: upcomingSections
     }
@@ -4018,6 +4135,27 @@ function getPlannerViewLabel(view) {
   }[normalizePlannerViewMode(view)];
 }
 
+function getPlannerViewCardTitle(view) {
+  return {
+    today: "Today planner",
+    week: "This week planner",
+    month: "This month planner",
+    upcoming: "Upcoming planner"
+  }[normalizePlannerViewMode(view)];
+}
+
+function getPlannerViewCardDescription(view, options = {}) {
+  return getPlannerViewSummary(view, options);
+}
+
+function syncPlannerViewCardCopy(card) {
+  if (!card || card.type !== "planlist") return card;
+  const options = normalizePlannerViewOptions(card.plannerViewOptions);
+  card.title = getPlannerViewCardTitle(card.plannerView);
+  card.description = options.showGuide ? getPlannerViewCardDescription(card.plannerView, options) : "";
+  return card;
+}
+
 function getPlannerViewSummary(view, options = {}) {
   const mode = normalizePlannerViewMode(view);
   const viewOptions = normalizePlannerViewOptions(options);
@@ -4030,8 +4168,8 @@ function getPlannerViewSummary(view, options = {}) {
   }
   if (viewOptions.excludeMonth) return "Shows future items after this month.";
   if (viewOptions.excludeWeek) return "Groups later this month and future items.";
-  if (viewOptions.excludeToday) return "Groups the rest of this week, this month and future items.";
-  return "Groups today, this week, this month and future items.";
+  if (viewOptions.excludeToday) return "Groups the rest of this week, later this month and future items.";
+  return "Groups this week, later this month and future items.";
 }
 
 function getUpcomingScheduleItems(plannerCard, limit = 6) {
@@ -5258,6 +5396,7 @@ function hasDraftInput() {
       elements.plannerViewExcludeToday.checked ||
       elements.plannerViewExcludeWeek.checked ||
       elements.plannerViewExcludeMonth.checked ||
+      elements.plannerViewShowGuide.checked ||
       normalizeDateKey(elements.diaryDate.value) !== getTodayKey() ||
       elements.diaryFeeling.value !== "Calm" ||
       normalizeDateKey(elements.cardPlanDate.value) !== getTodayKey() ||
@@ -5300,6 +5439,7 @@ function normalizePlannerViewOptions(options = {}) {
     excludeToday: Boolean(options.excludeToday),
     excludeWeek: Boolean(options.excludeWeek),
     excludeMonth: Boolean(options.excludeMonth),
+    showGuide: Boolean(options.showGuide),
     sourceMode: options.sourceMode === "area" ? "area" : "board"
   };
 }
@@ -7481,6 +7621,7 @@ function makeCard(options) {
     card.plannerGroup = getPlannerGroup(card);
     card.plannerView = normalizePlannerViewMode(options.plannerView);
     card.plannerViewOptions = normalizePlannerViewOptions(options.plannerViewOptions);
+    syncPlannerViewCardCopy(card);
   }
 
   if (card.type === "quote") {
@@ -7753,6 +7894,7 @@ function normalizeCard(card) {
     next.plannerGroup = getPlannerGroup(next);
     next.plannerView = normalizePlannerViewMode(next.plannerView);
     next.plannerViewOptions = normalizePlannerViewOptions(next.plannerViewOptions);
+    syncPlannerViewCardCopy(next);
   }
   if (next.type === "diary") {
     normalizeDiaryCard(next);
@@ -8483,6 +8625,16 @@ function saveState(options = {}) {
   }
   if (!options.skipCloud && touched) {
     queueCloudSave({ silent: options.quiet });
+  }
+}
+
+function persistLocalDraftState() {
+  try {
+    syncActiveBoard();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(getStateForStorage()));
+    localStateSource = "stored";
+  } catch {
+    // Draft persistence is best-effort so typing never gets interrupted by storage errors.
   }
 }
 
