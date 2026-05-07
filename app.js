@@ -3222,12 +3222,15 @@ function renderPlannerLinkedItem(item) {
   const originalDateKey = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : "";
   const displayDateKey = originalDateKey || item.dateKey;
   date.classList.toggle("is-carryover", Boolean(originalDateKey));
-  date.textContent = originalDateKey ? `From ${formatPlannerOriginDate(originalDateKey)}` : formatPlannerListDate(item.dateKey);
+  date.textContent = originalDateKey ? formatPlannerOriginDate(originalDateKey) : formatPlannerListDate(item.dateKey);
   date.title = originalDateKey ? `Open original planner date: ${formatPlannerOriginDate(originalDateKey)}` : "Open planner date";
   date.addEventListener("click", () => setPlannerDate(item.card, displayDateKey));
 
   const main = document.createElement("div");
   main.className = "planner-linked-main";
+  const meta = document.createElement("div");
+  meta.className = "planner-linked-meta";
+  meta.append(date);
 
   const copy = document.createElement("button");
   copy.type = "button";
@@ -3239,12 +3242,9 @@ function renderPlannerLinkedItem(item) {
     badge.className = "planner-linked-carryover";
     badge.textContent = "Incomplete";
     badge.title = originalDateKey ? `Carried from ${formatPlannerOriginDate(originalDateKey)}` : "Carried from a past planner day";
-    const titleText = document.createElement("span");
-    titleText.textContent = item.title;
-    copy.append(badge, titleText);
-  } else {
-    copy.textContent = item.title;
+    meta.append(badge);
   }
+  copy.textContent = item.title;
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -3254,7 +3254,7 @@ function renderPlannerLinkedItem(item) {
   remove.innerHTML = ICONS["trash-2"];
   remove.addEventListener("click", () => deletePlannerTask(item));
 
-  main.append(date, copy);
+  main.append(meta, copy);
   row.append(check, main, remove);
   return row;
 }

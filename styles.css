@@ -4364,11 +4364,11 @@ textarea:focus {
 
 .planner-linked-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 30px;
+  grid-template-columns: 16px minmax(0, 1fr) 26px;
   align-items: start;
-  gap: 7px;
-  min-height: 38px;
-  padding: 6px 7px;
+  gap: 6px;
+  min-height: 42px;
+  padding: 6px;
   border: 1px solid rgba(17, 17, 17, 0.06);
   border-radius: 10px;
   color: var(--card-ink);
@@ -4387,31 +4387,38 @@ textarea:focus {
 }
 
 .planner-linked-check {
-  width: 15px;
-  height: 15px;
-  margin: 5px 0 0;
+  width: 14px;
+  height: 14px;
+  margin: 3px 0 0;
   accent-color: var(--card-accent);
 }
 
 .planner-linked-main {
+  display: grid;
+  gap: 3px;
+  align-content: start;
+  min-width: 0;
+}
+
+.planner-linked-meta {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: center;
+  gap: 5px;
+  min-height: 18px;
   min-width: 0;
 }
 
 .planner-linked-date {
-  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 20px;
-  max-width: 64px;
-  padding: 0 5px;
+  width: 48px;
+  min-height: 18px;
+  padding: 0 4px;
   border-radius: 999px;
   color: var(--card-accent);
   background: var(--card-soft);
-  font-size: 0.54rem;
+  font-size: 0.51rem;
   font-weight: 950;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4423,37 +4430,36 @@ textarea:focus {
 .planner-linked-date.is-carryover {
   color: #7a3d22;
   background: rgba(196, 95, 67, 0.14);
-  font-size: 0.53rem;
 }
 
 .planner-linked-copy {
   display: block;
   overflow: visible;
-  flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   padding: 0;
   border: 0;
   color: var(--card-ink);
   background: transparent;
-  font-size: 0.72rem;
-  font-weight: 900;
-  line-height: 1.25;
+  font-size: 0.7rem;
+  font-weight: 850;
+  line-height: 1.18;
   text-align: left;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   white-space: normal;
 }
 
 .planner-linked-carryover {
   display: inline-flex;
   align-items: center;
-  width: fit-content;
+  justify-content: center;
+  width: 70px;
   min-height: 18px;
-  margin: 0 6px 2px 0;
-  padding: 0 7px;
+  padding: 0 4px;
   border-radius: 999px;
   color: #7a3d22;
   background: rgba(196, 95, 67, 0.14);
-  font-size: 0.54rem;
+  font-size: 0.5rem;
   font-weight: 950;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -4469,9 +4475,9 @@ textarea:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  margin-top: -2px;
+  width: 24px;
+  height: 24px;
+  margin-top: 0;
   border: 1px solid rgba(17, 17, 17, 0.06);
   border-radius: 999px;
   color: var(--card-muted);
@@ -4484,8 +4490,8 @@ textarea:focus {
 }
 
 .planner-linked-delete svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
 }
 
 .planner-linked-empty,
@@ -5240,17 +5246,17 @@ textarea:focus {
   }
 
   .planner-linked-item {
-    grid-template-columns: 16px minmax(0, 1fr) 28px;
+    grid-template-columns: 15px minmax(0, 1fr) 24px;
     gap: 6px;
     padding: 6px;
   }
 
-  .planner-linked-main {
-    gap: 5px;
+  .planner-linked-date {
+    width: 44px;
   }
 
-  .planner-linked-date {
-    max-width: 58px;
+  .planner-linked-carryover {
+    width: 64px;
   }
 }
 
