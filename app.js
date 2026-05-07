@@ -24,6 +24,7 @@ let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token);
 let cloudStatusMessage = "";
 let localStateSource = "default";
+let lastDailyMaintenanceDate = getTodayKey();
 
 const THEMES = {
   leaf: {
@@ -1233,6 +1234,12 @@ setInterval(() => {
 
 setInterval(() => {
   renderBoardMeta();
+  const todayKey = getTodayKey();
+  if (todayKey !== lastDailyMaintenanceDate) {
+    lastDailyMaintenanceDate = todayKey;
+    renderCardsOnly({ reason: "daily-rollover" });
+    return;
+  }
   if (state.cards.some((card) => isAutomaticCountdown(card))) {
     settleExpiredTimers();
     renderCardsOnly({ reason: "auto" });
@@ -2450,6 +2457,7 @@ function renderCardsOnly(options = {}) {
   settleExpiredTimers();
   resetDailyRepeatingCards();
   resetDiaryCardsToToday();
+  carryPlannerIncompleteTasksToToday();
   const orderedCards = getOrderedCards();
   const filteredByStatus = orderedCards.filter((card) => matchesFilter(card));
   const filteredBySearch = filteredByStatus.filter((card) => matchesSearch(card));
@@ -3218,9 +3226,19 @@ function renderPlannerLinkedItem(item) {
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "planner-linked-copy";
-  copy.textContent = item.title;
   copy.title = "Open source planner date";
   copy.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
+  if (item.isCarryover) {
+    const badge = document.createElement("span");
+    badge.className = "planner-linked-carryover";
+    badge.textContent = "Incomplete";
+    badge.title = item.carryoverFrom ? `Carried from ${formatPlannerListDate(item.carryoverFrom)}` : "Carried from a past planner day";
+    const titleText = document.createElement("span");
+    titleText.textContent = item.title;
+    copy.append(badge, titleText);
+  } else {
+    copy.textContent = item.title;
+  }
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -3754,16 +3772,88 @@ function normalizePlannerCard(card) {
 function normalizePlannerEntry(entry = {}) {
   const note = cleanPlannerNote(entry.note || entry.text || "");
   const savedChecks = entry.checkedItems && typeof entry.checkedItems === "object" ? entry.checkedItems : entry.doneItems || {};
+  const savedCarryovers = entry.carryoverItems && typeof entry.carryoverItems === "object" ? entry.carryoverItems : {};
   const checkedItems = {};
+  const carryoverItems = {};
   getPlannerNoteLines(note).forEach((line) => {
     const key = getPlannerItemKey(line);
     if (savedChecks[key] || savedChecks[line]) checkedItems[key] = true;
+    const carryover = savedCarryovers[key] || savedCarryovers[line];
+    const fromDate = normalizeDateKey(carryover?.fromDate || carryover);
+    if (fromDate) {
+      carryoverItems[key] = {
+        fromDate,
+        carriedAt: Number.isFinite(Number(carryover?.carriedAt)) ? Number(carryover.carriedAt) : 0
+      };
+    }
   });
   return {
     note,
     checkedItems,
+    carryoverItems,
     updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : 0
   };
+}
+
+function getPlannerEntryCarryoverDate(entry, itemKey, fallbackDate) {
+  const carryover = entry?.carryoverItems?.[itemKey];
+  return normalizeDateKey(carryover?.fromDate || carryover) || normalizeDateKey(fallbackDate);
+}
+
+function carryPlannerIncompleteTasksToToday() {
+  const todayKey = getTodayKey();
+  const todayTime = dateKeyToLocalDate(todayKey).getTime();
+  const plannerCards = [...state.cards, ...getArchivedCards()].filter((card) => card?.type === "planner");
+  let changed = false;
+
+  plannerCards.forEach((card) => {
+    normalizePlannerCard(card);
+    const todayEntry = getPlannerEntry(card, todayKey);
+    const todayLines = getPlannerNoteLines(todayEntry.note);
+    const todayKeys = new Set(todayLines.map(getPlannerItemKey));
+    const carryoverItems = { ...(todayEntry.carryoverItems || {}) };
+    const nextLines = [...todayLines];
+    let cardChanged = false;
+
+    Object.entries(card.plannerEntries || {})
+      .sort(([leftDate], [rightDate]) => {
+        const leftKey = normalizeDateKey(leftDate);
+        const rightKey = normalizeDateKey(rightDate);
+        const leftTime = leftKey ? dateKeyToLocalDate(leftKey).getTime() : 0;
+        const rightTime = rightKey ? dateKeyToLocalDate(rightKey).getTime() : 0;
+        return leftTime - rightTime;
+      })
+      .forEach(([dateKey, entry]) => {
+        const sourceDate = normalizeDateKey(dateKey);
+        if (!sourceDate || sourceDate === todayKey) return;
+        if (dateKeyToLocalDate(sourceDate).getTime() >= todayTime) return;
+        const sourceEntry = normalizePlannerEntry(entry);
+        getPlannerNoteLines(sourceEntry.note).forEach((line) => {
+          const itemKey = getPlannerItemKey(line);
+          if (!itemKey || sourceEntry.checkedItems[itemKey] || todayKeys.has(itemKey)) return;
+          nextLines.push(line);
+          todayKeys.add(itemKey);
+          carryoverItems[itemKey] = {
+            fromDate: getPlannerEntryCarryoverDate(sourceEntry, itemKey, sourceDate),
+            carriedAt: Date.now()
+          };
+          cardChanged = true;
+        });
+      });
+
+    if (!cardChanged) return;
+    card.plannerEntries[todayKey] = normalizePlannerEntry({
+      ...todayEntry,
+      note: nextLines.map((line) => `- ${line}`).join("\n"),
+      carryoverItems,
+      updatedAt: Date.now()
+    });
+    changed = true;
+  });
+
+  if (changed) {
+    saveState({ quiet: true });
+  }
 }
 
 function getPlannerItemKey(value) {
@@ -3888,11 +3978,13 @@ function togglePlannerTaskDone(item) {
   const entry = getPlannerEntry(item.card, item.dateKey);
   const checkedItems = { ...(entry.checkedItems || {}) };
   const key = getPlannerItemKey(item.title);
+  const nextDone = !checkedItems[key];
   if (checkedItems[key]) {
     delete checkedItems[key];
   } else {
     checkedItems[key] = true;
   }
+  syncCarryoverSourceTask(item, nextDone);
   updatePlannerEntry(item.card, item.dateKey, { checkedItems }, { rerender: true });
 }
 
@@ -3905,6 +3997,7 @@ function deletePlannerTask(item) {
   const [removed] = lines.splice(lineIndex, 1);
   const checkedItems = { ...(entry.checkedItems || {}) };
   delete checkedItems[getPlannerItemKey(removed)];
+  syncCarryoverSourceTask(item, true);
   updatePlannerEntry(
     item.card,
     item.dateKey,
@@ -3914,6 +4007,31 @@ function deletePlannerTask(item) {
     },
     { rerender: true }
   );
+}
+
+function syncCarryoverSourceTask(item, done) {
+  const sourceDate = normalizeDateKey(item?.carryoverFrom);
+  if (!item?.card || !item?.isCarryover || !sourceDate || sourceDate === item.dateKey) return;
+  const itemKey = getPlannerItemKey(item.title);
+  const targetTime = dateKeyToLocalDate(item.dateKey).getTime();
+  Object.entries(item.card.plannerEntries || {}).forEach(([dateKey, entry]) => {
+    const plannerDate = normalizeDateKey(dateKey);
+    if (!plannerDate || dateKeyToLocalDate(plannerDate).getTime() >= targetTime) return;
+    const sourceEntry = normalizePlannerEntry(entry);
+    const sourceLines = getPlannerNoteLines(sourceEntry.note);
+    if (!sourceLines.some((line) => getPlannerItemKey(line) === itemKey)) return;
+    const sourceChecks = { ...(sourceEntry.checkedItems || {}) };
+    if (done) {
+      sourceChecks[itemKey] = true;
+    } else {
+      delete sourceChecks[itemKey];
+    }
+    item.card.plannerEntries[plannerDate] = normalizePlannerEntry({
+      ...sourceEntry,
+      checkedItems: sourceChecks,
+      updatedAt: Date.now()
+    });
+  });
 }
 
 function getDefaultPlannerViewAddDate(view, options = {}) {
@@ -4016,12 +4134,16 @@ function getPlannerScheduleItems(plannerCard) {
     const normalizedEntry = normalizePlannerEntry(entry);
     if (!normalizedDate || !normalizedEntry.note) return;
     getPlannerNoteLines(normalizedEntry.note).forEach((line, index) => {
+      const itemKey = getPlannerItemKey(line);
+      const carryoverFrom = getPlannerEntryCarryoverDate(normalizedEntry, itemKey, "");
       items.push({
         dateKey: normalizedDate,
         title: line,
         source: "Planner",
         group,
-        done: Boolean(normalizedEntry.checkedItems[getPlannerItemKey(line)]),
+        done: Boolean(normalizedEntry.checkedItems[itemKey]),
+        isCarryover: Boolean(carryoverFrom),
+        carryoverFrom,
         priority: 0,
         lineIndex: index
       });

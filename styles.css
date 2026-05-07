@@ -4425,6 +4425,23 @@ textarea:focus {
   white-space: normal;
 }
 
+.planner-linked-carryover {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 18px;
+  margin: 0 6px 2px 0;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: #7a3d22;
+  background: rgba(196, 95, 67, 0.14);
+  font-size: 0.54rem;
+  font-weight: 950;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 .planner-linked-item.is-done .planner-linked-copy {
   text-decoration: line-through;
   text-decoration-thickness: 2px;
