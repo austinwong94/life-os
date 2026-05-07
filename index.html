@@ -405,10 +405,18 @@
 
       <main class="workspace">
         <header class="workspace-header">
-          <div>
-            <p class="eyebrow" id="visibilityLabel">Private board</p>
-            <h2 id="boardTitle">My Life OS</h2>
-            <p class="today-line" id="todayLine">Today</p>
+          <div class="workspace-title-block">
+            <div class="board-kicker-row">
+              <p class="eyebrow" id="visibilityLabel">Private board</p>
+              <p class="today-line" id="todayLine">Today</p>
+            </div>
+            <div class="board-title-row">
+              <h2 id="boardTitle" class="sr-only">My Life OS</h2>
+              <label class="board-title-picker">
+                <span class="sr-only">Switch board</span>
+                <select id="boardQuickSelect" aria-label="Switch board"></select>
+              </label>
+            </div>
           </div>
           <div class="stats" aria-label="Board stats">
             <div>
@@ -423,6 +431,10 @@
               <span id="completionRate">0%</span>
               <p>Complete</p>
             </div>
+            <button type="button" class="stat-toggle" id="topControlsToggleButton" aria-pressed="false">
+              <span data-icon="sliders"></span>
+              <p>Controls</p>
+            </button>
           </div>
         </header>
 
@@ -469,11 +481,10 @@
             <div class="category-pills" id="categoryPills" aria-label="Area filters"></div>
           </div>
           <div class="board-global-actions">
-            <button type="button" class="toolbar-action toolbar-primary" id="quickTodoToggleButton">
+            <button type="button" class="toolbar-action toolbar-primary" id="quickTodoToggleButton" hidden>
               <span data-icon="plus"></span>
               <span>Quick add</span>
             </button>
-            <button type="button" class="toolbar-action" id="topControlsToggleButton">Hide controls</button>
             <button type="button" class="toolbar-action" id="openRecordsButton">Archive</button>
             <details class="board-tools-menu">
               <summary>Board tools</summary>

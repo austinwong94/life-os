@@ -110,6 +110,7 @@ const ICONS = {
   link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
   eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.52a2 2 0 0 1-1 1.72l-.15.1a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.38a2 2 0 0 0-.73-2.73l-.15-.1a2 2 0 0 1-1-1.72v-.52a2 2 0 0 1 1-1.72l.15-.1a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  sliders: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h10"/><path d="M18 6h2"/><circle cx="16" cy="6" r="2"/><path d="M4 12h4"/><path d="M12 12h8"/><circle cx="10" cy="12" r="2"/><path d="M4 18h12"/><path d="M20 18h0"/><circle cx="18" cy="18" r="2"/></svg>',
   quote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 11H6a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2v1h2v5H5v-6a6 6 0 0 1 6-6"/><path d="M19 11h-4a4 4 0 0 1 4-4v2a2 2 0 0 0-2 2v1h2v5h-5v-6a6 6 0 0 1 6-6"/></svg>',
   video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="18" height="14" x="3" y="5" rx="2"/><path d="m10 9 5 3-5 3Z"/></svg>',
   "chevron-left": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg>',
@@ -1046,6 +1047,7 @@ const elements = {
   layoutControl: document.querySelector("#layoutControl"),
   savedState: document.querySelector("#savedState"),
   boardSelect: document.querySelector("#boardSelect"),
+  boardQuickSelect: document.querySelector("#boardQuickSelect"),
   newBoardButton: document.querySelector("#newBoardButton"),
   deleteBoardButton: document.querySelector("#deleteBoardButton"),
   form: document.querySelector("#cardForm"),
@@ -1302,6 +1304,10 @@ function bindEvents() {
     switchBoard(event.target.value);
   });
 
+  elements.boardQuickSelect.addEventListener("change", (event) => {
+    switchBoard(event.target.value);
+  });
+
   elements.newBoardButton.addEventListener("click", () => {
     createBlankBoard();
   });
@@ -1516,11 +1522,7 @@ function bindEvents() {
     openCardComposer({ reset: true });
   });
 
-  elements.topControlsToggleButton.addEventListener("click", () => {
-    state.ui.controlsOpen = state.ui.controlsOpen === false;
-    renderBoardMeta();
-    saveState();
-  });
+  elements.topControlsToggleButton.addEventListener("click", toggleBoardControls);
 
   elements.quickTodoCancelButton.addEventListener("click", () => {
     closeQuickTodoPanel();
@@ -1641,6 +1643,11 @@ function bindEvents() {
     if (archiveButton) {
       archiveCard(archiveButton.dataset.archiveReadyCard);
       renderRecordsModal();
+      return;
+    }
+    const deleteButton = event.target.closest("button[data-delete-archived-card]");
+    if (deleteButton) {
+      permanentlyDeleteArchivedCard(deleteButton.dataset.deleteArchivedCard);
       return;
     }
     const button = event.target.closest("button[data-restore-card]");
@@ -2104,12 +2111,21 @@ function renderShell() {
   syncRailActiveState();
 }
 
+function toggleBoardControls() {
+  state.ui.controlsOpen = state.ui.controlsOpen === false;
+  renderBoardMeta();
+  saveState();
+}
+
 function renderBoardMeta() {
   renderBoardSwitcher();
   const controlsOpen = state.ui.controlsOpen !== false;
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
-  elements.topControlsToggleButton.textContent = controlsOpen ? "Hide controls" : "Show controls";
+  const controlsLabel = controlsOpen ? "Hide controls" : "Show controls";
+  elements.topControlsToggleButton.title = controlsLabel;
+  elements.topControlsToggleButton.setAttribute("aria-label", controlsLabel);
   elements.topControlsToggleButton.setAttribute("aria-pressed", String(!controlsOpen));
+  elements.topControlsToggleButton.classList.toggle("is-active", !controlsOpen);
   elements.boardName.value = state.board.name;
   elements.boardTitle.textContent = state.board.name;
   elements.todayLine.textContent = formatTodayLine();
@@ -2154,10 +2170,13 @@ function clearStartupBoardSearch() {
 
 function renderBoardSwitcher() {
   syncActiveBoard();
-  elements.boardSelect.innerHTML = state.boards
+  const boardOptions = state.boards
     .map((board) => `<option value="${escapeAttribute(board.id)}">${escapeHtml(board.name)}</option>`)
     .join("");
+  elements.boardSelect.innerHTML = boardOptions;
+  elements.boardQuickSelect.innerHTML = boardOptions;
   elements.boardSelect.value = state.activeBoardId;
+  elements.boardQuickSelect.value = state.activeBoardId;
   elements.deleteBoardButton.disabled = state.boards.length < 2;
   elements.deleteBoardButton.title =
     state.boards.length < 2 ? "Create another board before deleting this one" : `Delete ${state.board.name}`;
@@ -2784,6 +2803,7 @@ function getCardDisplayDescription(card) {
     const options = normalizePlannerViewOptions(card.plannerViewOptions);
     return options.showGuide ? getPlannerViewCardDescription(card.plannerView, options) : "";
   }
+  if (card?.type === "quote") return "";
   return card?.description || "";
 }
 
@@ -2835,6 +2855,10 @@ function renderCard(card, options = {}) {
   }
   node.querySelector("h3").textContent = getCardDisplayTitle(card);
   node.querySelector(".card-description").textContent = getCardDisplayDescription(card);
+  if (card.type === "quote") {
+    node.querySelector("h3").hidden = true;
+    node.querySelector(".card-description").hidden = true;
+  }
   const timerDisplay = node.querySelector(".timer-display");
   const isAutoTimer = isAutomaticCountdown(card);
   timerDisplay.classList.toggle("is-auto", isAutoTimer);
@@ -2883,6 +2907,9 @@ function renderCard(card, options = {}) {
     const topLine = node.querySelector(".card-topline");
     topLine.append(cardActions);
     node.querySelector(".timer-row").hidden = true;
+    if (card.type === "quote") {
+      node.querySelector(".card-main").hidden = true;
+    }
   }
 
   const body = node.querySelector(".card-body");
@@ -3024,8 +3051,11 @@ function renderPlanner(card) {
   addForm.append(taskInput, addButton);
   addForm.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!addPlannerTaskToDate(card, activeDate, taskInput.value)) return;
+    const submittedText = stripPlannerBullet(taskInput.value);
+    if (!submittedText) return;
     card.plannerDraftText = "";
+    taskInput.value = "";
+    if (!addPlannerTaskToDate(card, activeDate, submittedText)) return;
     persistLocalDraftState();
   });
 
@@ -3154,9 +3184,12 @@ function renderPlannerLinkedAddForm(card, view, options) {
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const targetDate = mode === "today" ? getTodayKey() : normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
+    const submittedText = stripPlannerBullet(input.value);
+    if (!submittedText) return;
     card.plannerQuickDate = targetDate;
-    if (!addPlannerTaskFromPlannerView(card, targetDate, input.value)) return;
     card.plannerDraftText = "";
+    input.value = "";
+    if (!addPlannerTaskFromPlannerView(card, targetDate, submittedText)) return;
     persistLocalDraftState();
   });
   return form;
@@ -3285,10 +3318,11 @@ function renderQuote(card) {
   const wrapper = document.createElement("blockquote");
   wrapper.className = "quote-block";
   const quote = document.createElement("p");
-  quote.textContent = card.description || "Add words you want to keep visible.";
+  quote.textContent = card.description || card.title || "Add words you want to keep visible.";
   const footer = document.createElement("footer");
-  footer.textContent = card.quoteAuthor || card.title || "Motivation";
-  wrapper.append(quote, footer);
+  footer.textContent = card.quoteAuthor || "";
+  wrapper.append(quote);
+  if (footer.textContent) wrapper.append(footer);
   return wrapper;
 }
 
@@ -3837,7 +3871,9 @@ function updatePlannerEntry(card, dateKey, updates, options = {}) {
     updatedAt: Date.now()
   });
   saveState();
-  if (options.rerender) renderCardsOnly();
+  if (options.rerender) {
+    renderCardsOnly(options.forceRender ? { force: true } : {});
+  }
 }
 
 function getPlannerLineIndex(lines, item) {
@@ -3937,7 +3973,7 @@ function addPlannerTaskToDate(card, dateKey, value) {
     card,
     normalizedDate,
     { note: lines.map((line) => `- ${line}`).join("\n") },
-    { rerender: true }
+    { rerender: true, forceRender: true }
   );
   return true;
 }
@@ -5090,7 +5126,7 @@ function renderArchiveCardFrame(card, options) {
   const context = getCardRecordContext(card);
   const frame = document.createElement("article");
   frame.className = `archive-card-frame ${options.actionAttribute === "data-archive-ready-card" ? "is-ready" : "is-archived"}`;
-  frame.append(renderCard(cloneCardForArchivePreview(card), { interactive: false }));
+  frame.append(renderArchivePreviewCard(card, progress, typeMeta));
   const footer = document.createElement("div");
   footer.className = "archive-card-footer";
   const meta = document.createElement("div");
@@ -5105,13 +5141,72 @@ function renderArchiveCardFrame(card, options) {
   button.className = `secondary-action ${options.actionClass}`;
   button.textContent = options.actionLabel;
   button.setAttribute(options.actionAttribute, card.id);
-  footer.append(meta, button);
+  const actions = document.createElement("div");
+  actions.className = "archive-card-actions";
+  actions.append(button);
+  if (options.actionAttribute === "data-restore-card") {
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "secondary-action record-delete";
+    deleteButton.textContent = "Delete";
+    deleteButton.title = "Delete forever";
+    deleteButton.setAttribute("aria-label", `Delete forever: ${card.title || "archived card"}`);
+    deleteButton.setAttribute("data-delete-archived-card", card.id);
+    actions.append(deleteButton);
+  }
+  footer.append(meta, actions);
   frame.append(footer);
   return frame;
 }
 
-function cloneCardForArchivePreview(card) {
-  return JSON.parse(JSON.stringify(card || {}));
+function renderArchivePreviewCard(card, progress, typeMeta) {
+  const theme = THEMES[card.theme] || THEMES.leaf;
+  const priorityMeta = PRIORITY_META[getSelectedPriority(card.priority)];
+  const preview = document.createElement("div");
+  preview.className = `archive-card-preview theme-${card.theme || "leaf"} type-${card.type || "single"}`;
+  preview.style.setProperty("--card-bg", theme.bg);
+  preview.style.setProperty("--card-ink", theme.ink);
+  preview.style.setProperty("--card-muted", theme.muted);
+  preview.style.setProperty("--card-accent", theme.accent);
+  preview.style.setProperty("--card-soft", theme.soft);
+  preview.style.setProperty("--card-fill", getCardFill(card, theme));
+  preview.style.setProperty("--card-shadow-color", hexToRgba(theme.accent, 0.2));
+  preview.style.setProperty("--priority-color", priorityMeta.color);
+
+  const top = document.createElement("div");
+  top.className = "archive-preview-top";
+  const type = document.createElement("span");
+  type.className = "archive-preview-chip";
+  type.innerHTML = `${ICONS[typeMeta.icon] || ""}<span>${typeMeta.label}</span>`;
+  const area = document.createElement("span");
+  area.className = "archive-preview-chip";
+  area.textContent = card.category || "General";
+  const percent = document.createElement("span");
+  percent.className = "archive-preview-chip";
+  percent.textContent = isProgresslessCard(card) ? progress.label : `${progress.percent}%`;
+  top.append(type, area, percent);
+
+  const title = document.createElement("strong");
+  title.className = "archive-preview-title";
+  title.textContent = getCardDisplayTitle(card);
+
+  const description = document.createElement("p");
+  description.className = "archive-preview-description";
+  description.textContent = getArchivePreviewDescription(card);
+
+  const track = document.createElement("div");
+  track.className = "archive-preview-track";
+  const fill = document.createElement("span");
+  fill.style.width = `${progress.percent}%`;
+  track.append(fill);
+
+  preview.append(top, title, description, track);
+  return preview;
+}
+
+function getArchivePreviewDescription(card) {
+  if (card?.type === "quote") return card.description || card.title || "Motivation";
+  return getCardDisplayDescription(card) || getCardRecordContext(card) || "Archived card";
 }
 
 function getCardRecordContext(card) {
@@ -5181,6 +5276,25 @@ function restoreArchivedCard(id, options = {}) {
   }
   if (options.fromUndo) {
     clearUndoToast();
+  }
+}
+
+function permanentlyDeleteArchivedCard(id) {
+  const records = getArchivedCards();
+  const index = records.findIndex((card) => card.id === id);
+  if (index < 0) return;
+  const card = records[index];
+  const title = card.title || "this archived card";
+  const firstConfirm = window.confirm(`Delete "${title}" forever? This cannot be undone.`);
+  if (!firstConfirm) return;
+  const secondConfirm = window.confirm(`Final confirmation: permanently delete "${title}" from Archive?`);
+  if (!secondConfirm) return;
+  records.splice(index, 1);
+  state.archivedCards = records;
+  saveState();
+  renderBoardMeta();
+  if (!elements.recordsModal.hidden) {
+    renderRecordsModal();
   }
 }
 
