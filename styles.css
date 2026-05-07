@@ -1331,18 +1331,18 @@ textarea:focus {
 
 .workspace-header h2 {
   margin: 0;
-  font-size: clamp(1.65rem, 2.5vw, 2.45rem);
+  font-size: clamp(0.95rem, 1.02vw, 1.05rem);
   line-height: 1;
   letter-spacing: 0;
 }
 
 .workspace-title-block {
   display: grid;
-  grid-template-rows: 18px minmax(40px, 1fr);
+  grid-template-rows: 18px minmax(32px, 1fr);
   align-content: stretch;
   gap: 7px;
   min-width: 0;
-  min-height: 66px;
+  min-height: 58px;
 }
 
 .board-kicker-row,
@@ -1363,7 +1363,7 @@ textarea:focus {
 }
 
 .board-title-row {
-  align-items: end;
+  align-items: center;
   min-width: 0;
   max-width: 100%;
 }
@@ -1388,12 +1388,12 @@ textarea:focus {
 .board-title-picker::after {
   content: "";
   position: absolute;
-  right: 3px;
+  right: 4px;
   top: 50%;
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
+  width: 6px;
+  height: 6px;
+  border-right: 1.6px solid currentColor;
+  border-bottom: 1.6px solid currentColor;
   opacity: 0.46;
   pointer-events: none;
   transform: translateY(-65%) rotate(45deg);
@@ -1402,9 +1402,9 @@ textarea:focus {
 .board-title-picker select {
   width: auto;
   max-width: min(680px, calc(100vw - 620px));
-  min-width: 220px;
-  height: 42px;
-  padding: 0 30px 0 0;
+  min-width: 170px;
+  height: 26px;
+  padding: 0 21px 0 0;
   border: 0;
   border-radius: 0;
   color: #111111;
@@ -1413,9 +1413,9 @@ textarea:focus {
   box-shadow: none;
   cursor: pointer;
   field-sizing: content;
-  font-size: clamp(1.65rem, 2.5vw, 2.45rem);
-  font-weight: 950;
-  line-height: 1;
+  font-size: clamp(0.95rem, 1.02vw, 1.05rem);
+  font-weight: 850;
+  line-height: 1.1;
   letter-spacing: 0;
   outline: 0;
   overflow: hidden;
@@ -5384,7 +5384,7 @@ textarea:focus {
   }
 
   .workspace-header h2 {
-    font-size: 2rem;
+    font-size: 1.1rem;
   }
 
   .stats {
