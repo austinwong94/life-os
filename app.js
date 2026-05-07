@@ -3219,20 +3219,26 @@ function renderPlannerLinkedItem(item) {
   const date = document.createElement("button");
   date.type = "button";
   date.className = "planner-linked-date";
-  date.textContent = formatPlannerListDate(item.dateKey);
-  date.title = "Open source planner date";
-  date.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
+  const originalDateKey = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : "";
+  const displayDateKey = originalDateKey || item.dateKey;
+  date.classList.toggle("is-carryover", Boolean(originalDateKey));
+  date.textContent = originalDateKey ? `From ${formatPlannerOriginDate(originalDateKey)}` : formatPlannerListDate(item.dateKey);
+  date.title = originalDateKey ? `Open original planner date: ${formatPlannerOriginDate(originalDateKey)}` : "Open planner date";
+  date.addEventListener("click", () => setPlannerDate(item.card, displayDateKey));
+
+  const main = document.createElement("div");
+  main.className = "planner-linked-main";
 
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "planner-linked-copy";
-  copy.title = "Open source planner date";
-  copy.addEventListener("click", () => setPlannerDate(item.card, item.dateKey));
+  copy.title = originalDateKey ? `Open original planner date: ${formatPlannerOriginDate(originalDateKey)}` : "Open planner date";
+  copy.addEventListener("click", () => setPlannerDate(item.card, displayDateKey));
   if (item.isCarryover) {
     const badge = document.createElement("span");
     badge.className = "planner-linked-carryover";
     badge.textContent = "Incomplete";
-    badge.title = item.carryoverFrom ? `Carried from ${formatPlannerListDate(item.carryoverFrom)}` : "Carried from a past planner day";
+    badge.title = originalDateKey ? `Carried from ${formatPlannerOriginDate(originalDateKey)}` : "Carried from a past planner day";
     const titleText = document.createElement("span");
     titleText.textContent = item.title;
     copy.append(badge, titleText);
@@ -3248,7 +3254,8 @@ function renderPlannerLinkedItem(item) {
   remove.innerHTML = ICONS["trash-2"];
   remove.addEventListener("click", () => deletePlannerTask(item));
 
-  row.append(check, date, copy, remove);
+  main.append(date, copy);
+  row.append(check, main, remove);
   return row;
 }
 
@@ -4372,6 +4379,14 @@ function formatPlannerListDate(dateKey) {
   const relative = getRelativeDateLabel(dateKey, 0);
   if (relative) return relative;
   return dateKeyToLocalDate(dateKey).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatPlannerOriginDate(dateKey) {
+  const date = dateKeyToLocalDate(dateKey);
+  if (!Number.isFinite(date.getTime())) return "past date";
+  const today = new Date();
+  const options = date.getFullYear() === today.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" };
+  return date.toLocaleDateString(undefined, options);
 }
 
 function normalizeDiaryCard(card) {
