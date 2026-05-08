@@ -1809,6 +1809,7 @@ function buildCardFromForm({ preview }) {
   if (type === "planlist") {
     card.plannerGroup = getPlannerGroup(card);
     card.plannerView = normalizePlannerViewMode(elements.plannerViewMode.value);
+    card.plannerViewDate = getTodayKey();
     card.plannerViewOptions = normalizePlannerViewOptions({
       excludeToday: elements.plannerViewExcludeToday.checked,
       excludeWeek: elements.plannerViewExcludeWeek.checked,
@@ -3076,7 +3077,7 @@ function renderPlannerLinkedList(card) {
   const view = normalizePlannerViewMode(card.plannerView);
   const options = normalizePlannerViewOptions(card.plannerViewOptions);
   const group = getPlannerGroup(card);
-  const viewData = getPlannerViewData(view, group, options);
+  const viewData = getPlannerViewData(view, group, options, getPlannerViewDate(card));
   const doneCount = viewData.items.filter((item) => item.done).length;
   const wrapper = document.createElement("div");
   wrapper.className = "planner-linked-list";
@@ -3084,11 +3085,34 @@ function renderPlannerLinkedList(card) {
   const head = document.createElement("div");
   head.className = "planner-linked-head";
   const copy = document.createElement("div");
+  const titleRow = document.createElement("div");
+  titleRow.className = "planner-linked-title-row";
+  if (view === "today") {
+    const previousButton = document.createElement("button");
+    previousButton.type = "button";
+    previousButton.className = "planner-linked-day-button";
+    previousButton.title = "Previous day";
+    previousButton.setAttribute("aria-label", "Previous planner day");
+    previousButton.innerHTML = ICONS["chevron-left"];
+    previousButton.addEventListener("click", () => shiftPlannerViewDate(card, -1));
+    titleRow.append(previousButton);
+  }
   const title = document.createElement("strong");
   title.textContent = getPlannerViewLabel(view);
+  titleRow.append(title);
+  if (view === "today") {
+    const nextButton = document.createElement("button");
+    nextButton.type = "button";
+    nextButton.className = "planner-linked-day-button";
+    nextButton.title = "Next day";
+    nextButton.setAttribute("aria-label", "Next planner day");
+    nextButton.innerHTML = ICONS["chevron-right"];
+    nextButton.addEventListener("click", () => shiftPlannerViewDate(card, 1));
+    titleRow.append(nextButton);
+  }
   const source = document.createElement("span");
   source.textContent = viewData.sourceLabel;
-  copy.append(title, source);
+  copy.append(titleRow, source);
   const count = document.createElement("em");
   count.textContent = viewData.items.length ? `${doneCount}/${viewData.items.length} done` : "Ready";
   head.append(copy, count);
@@ -3103,7 +3127,7 @@ function renderPlannerLinkedList(card) {
   dateContext.textContent = view === "today" ? viewData.dateLabel : "";
   dateContext.hidden = view !== "today";
 
-  const addForm = renderPlannerLinkedAddForm(card, view, options);
+  const addForm = renderPlannerLinkedAddForm(card, view, options, viewData.dayKey);
 
   const list = document.createElement("div");
   list.className = "planner-linked-items";
@@ -3134,10 +3158,11 @@ function renderPlannerLinkedList(card) {
       list.append(more);
     }
   } else {
-    viewData.items.slice(0, viewData.limit).forEach((item) => {
+    const visibleItems = Number.isFinite(viewData.limit) ? viewData.items.slice(0, viewData.limit) : viewData.items;
+    visibleItems.forEach((item) => {
       list.append(renderPlannerLinkedItem(item));
     });
-    if (viewData.items.length > viewData.limit) {
+    if (Number.isFinite(viewData.limit) && viewData.items.length > viewData.limit) {
       const more = document.createElement("p");
       more.className = "planner-linked-more";
       more.textContent = `+${viewData.items.length - viewData.limit} more in this view`;
@@ -3151,17 +3176,17 @@ function renderPlannerLinkedList(card) {
   return wrapper;
 }
 
-function renderPlannerLinkedAddForm(card, view, options) {
+function renderPlannerLinkedAddForm(card, view, options, dayKey = getTodayKey()) {
   const form = document.createElement("form");
   form.className = "planner-linked-add";
   const mode = normalizePlannerViewMode(view);
   const dateKey = normalizeDateKey(card.plannerQuickDate) || getDefaultPlannerViewAddDate(mode, options);
+  const selectedDayKey = normalizeDateKey(dayKey) || getTodayKey();
 
   const dateInput = document.createElement("input");
   dateInput.type = "date";
   dateInput.className = "planner-linked-add-date";
-  dateInput.value = mode === "today" ? getTodayKey() : dateKey;
-  dateInput.min = getTodayKey();
+  dateInput.value = mode === "today" ? selectedDayKey : dateKey;
   dateInput.setAttribute("aria-label", "Planner task date");
   dateInput.hidden = mode === "today";
 
@@ -3170,7 +3195,7 @@ function renderPlannerLinkedAddForm(card, view, options) {
   input.className = "planner-linked-add-input";
   input.maxLength = 160;
   input.value = card.plannerDraftText || "";
-  input.placeholder = mode === "today" ? "Add something for today" : "Add a dated planner task";
+  input.placeholder = mode === "today" ? "Add something for this day" : "Add a dated planner task";
   input.setAttribute("aria-label", "Add planner task");
   input.addEventListener("input", () => {
     card.plannerDraftText = input.value;
@@ -3191,7 +3216,7 @@ function renderPlannerLinkedAddForm(card, view, options) {
   form.append(dateInput, input, button);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const targetDate = mode === "today" ? getTodayKey() : normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
+    const targetDate = mode === "today" ? selectedDayKey : normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
     const submittedText = stripPlannerBullet(input.value);
     if (!submittedText) return;
     card.plannerQuickDate = targetDate;
@@ -3243,6 +3268,13 @@ function renderPlannerLinkedItem(item) {
     badge.textContent = "Incomplete";
     badge.title = originalDateKey ? `Carried from ${formatPlannerOriginDate(originalDateKey)}` : "Carried from a past planner day";
     meta.append(badge);
+  }
+  if (item.done && item.completedAt) {
+    const completed = document.createElement("span");
+    completed.className = "planner-linked-completed";
+    completed.textContent = formatPlannerCompletedAt(item.completedAt);
+    completed.title = `Completed ${formatPlannerCompletedTooltip(item.completedAt)}`;
+    meta.append(completed);
   }
   copy.textContent = item.title;
 
@@ -3784,7 +3816,8 @@ function normalizePlannerEntry(entry = {}) {
   const carryoverItems = {};
   getPlannerNoteLines(note).forEach((line) => {
     const key = getPlannerItemKey(line);
-    if (savedChecks[key] || savedChecks[line]) checkedItems[key] = true;
+    const savedCheck = savedChecks[key] || savedChecks[line];
+    if (savedCheck) checkedItems[key] = normalizePlannerDoneRecord(savedCheck);
     const carryover = savedCarryovers[key] || savedCarryovers[line];
     const fromDate = normalizeDateKey(carryover?.fromDate || carryover);
     if (fromDate) {
@@ -3800,6 +3833,24 @@ function normalizePlannerEntry(entry = {}) {
     carryoverItems,
     updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : 0
   };
+}
+
+function normalizePlannerDoneRecord(value) {
+  if (!value) return null;
+  if (value === true) {
+    return { completedAt: 0 };
+  }
+  if (typeof value === "object") {
+    return {
+      completedAt: Number.isFinite(Number(value.completedAt)) ? Number(value.completedAt) : 0
+    };
+  }
+  return { completedAt: 0 };
+}
+
+function getPlannerCompletedAt(entry, itemKey) {
+  const doneRecord = normalizePlannerDoneRecord(entry?.checkedItems?.[itemKey]);
+  return Number(doneRecord?.completedAt) || 0;
 }
 
 function getPlannerEntryCarryoverDate(entry, itemKey, fallbackDate) {
@@ -3986,12 +4037,13 @@ function togglePlannerTaskDone(item) {
   const checkedItems = { ...(entry.checkedItems || {}) };
   const key = getPlannerItemKey(item.title);
   const nextDone = !checkedItems[key];
+  const completedAt = nextDone ? Date.now() : 0;
   if (checkedItems[key]) {
     delete checkedItems[key];
   } else {
-    checkedItems[key] = true;
+    checkedItems[key] = { completedAt };
   }
-  syncCarryoverSourceTask(item, nextDone);
+  syncCarryoverSourceTask(item, nextDone, completedAt);
   updatePlannerEntry(item.card, item.dateKey, { checkedItems }, { rerender: true });
 }
 
@@ -4004,7 +4056,7 @@ function deletePlannerTask(item) {
   const [removed] = lines.splice(lineIndex, 1);
   const checkedItems = { ...(entry.checkedItems || {}) };
   delete checkedItems[getPlannerItemKey(removed)];
-  syncCarryoverSourceTask(item, true);
+  syncCarryoverSourceTask(item, true, Date.now());
   updatePlannerEntry(
     item.card,
     item.dateKey,
@@ -4016,7 +4068,7 @@ function deletePlannerTask(item) {
   );
 }
 
-function syncCarryoverSourceTask(item, done) {
+function syncCarryoverSourceTask(item, done, completedAt = Date.now()) {
   const sourceDate = normalizeDateKey(item?.carryoverFrom);
   if (!item?.card || !item?.isCarryover || !sourceDate || sourceDate === item.dateKey) return;
   const itemKey = getPlannerItemKey(item.title);
@@ -4029,7 +4081,7 @@ function syncCarryoverSourceTask(item, done) {
     if (!sourceLines.some((line) => getPlannerItemKey(line) === itemKey)) return;
     const sourceChecks = { ...(sourceEntry.checkedItems || {}) };
     if (done) {
-      sourceChecks[itemKey] = true;
+      sourceChecks[itemKey] = { completedAt };
     } else {
       delete sourceChecks[itemKey];
     }
@@ -4124,6 +4176,22 @@ function setPlannerDate(card, dateKey) {
   renderCardsOnly();
 }
 
+function getPlannerViewDate(card) {
+  return normalizeDateKey(card?.plannerViewDate) || getTodayKey();
+}
+
+function setPlannerViewDate(card, dateKey) {
+  if (!card || card.type !== "planlist") return;
+  card.plannerViewDate = normalizeDateKey(dateKey) || getTodayKey();
+  saveState();
+  renderCardsOnly();
+}
+
+function shiftPlannerViewDate(card, dayDelta) {
+  const currentDate = dateKeyToLocalDate(getPlannerViewDate(card));
+  setPlannerViewDate(card, getTodayKey(addDays(currentDate, dayDelta)));
+}
+
 function formatPlannerDate(dateKey) {
   const date = dateKeyToLocalDate(dateKey);
   const relative = getRelativeDateLabel(dateKey, 0);
@@ -4149,6 +4217,7 @@ function getPlannerScheduleItems(plannerCard) {
         source: "Planner",
         group,
         done: Boolean(normalizedEntry.checkedItems[itemKey]),
+        completedAt: getPlannerCompletedAt(normalizedEntry, itemKey),
         isCarryover: Boolean(carryoverFrom),
         carryoverFrom,
         priority: 0,
@@ -4233,11 +4302,13 @@ function getPlannerSectionLabel(key) {
   }[key] || "Future";
 }
 
-function getPlannerViewData(view, group, options = {}) {
+function getPlannerViewData(view, group, options = {}, dayKey = getTodayKey()) {
   const mode = normalizePlannerViewMode(view);
   const viewOptions = normalizePlannerViewOptions(options);
   const timeline = getPlannerTimelineMeta();
-  const futureItems = getPlannerSourceItems(group, viewOptions).filter((item) => getPlannerItemTime(item) >= timeline.todayTime);
+  const selectedDayKey = normalizeDateKey(dayKey) || timeline.todayKey;
+  const allItems = getPlannerSourceItems(group, viewOptions);
+  const futureItems = allItems.filter((item) => getPlannerItemTime(item) >= timeline.todayTime);
   const upcomingItems = futureItems.filter((item) => {
     const time = getPlannerItemTime(item);
     if (viewOptions.excludeMonth && time <= timeline.monthEndTime) return false;
@@ -4254,10 +4325,11 @@ function getPlannerViewData(view, group, options = {}) {
     .filter((section) => section.items.length);
   const range = {
     today: {
-      limit: 8,
-      empty: "Planner items dated today will appear here.",
-      items: futureItems.filter((item) => item.dateKey === timeline.todayKey),
-      dateLabel: formatPlannerDate(timeline.todayKey)
+      limit: Number.POSITIVE_INFINITY,
+      empty: "Planner items for this day will appear here.",
+      items: allItems.filter((item) => item.dateKey === selectedDayKey),
+      dateLabel: formatPlannerDate(selectedDayKey),
+      dayKey: selectedDayKey
     },
     week: {
       limit: 8,
@@ -4387,6 +4459,21 @@ function formatPlannerOriginDate(dateKey) {
   const today = new Date();
   const options = date.getFullYear() === today.getFullYear() ? { month: "short", day: "numeric" } : { month: "short", day: "numeric", year: "numeric" };
   return date.toLocaleDateString(undefined, options);
+}
+
+function formatPlannerCompletedAt(timestamp) {
+  const date = new Date(Number(timestamp) || 0);
+  if (!Number.isFinite(date.getTime())) return "Done";
+  const dateKey = getTodayKey(date);
+  const todayKey = getTodayKey();
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return dateKey === todayKey ? `Done ${time}` : `Done ${formatPlannerOriginDate(dateKey)}`;
+}
+
+function formatPlannerCompletedTooltip(timestamp) {
+  const date = new Date(Number(timestamp) || 0);
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function normalizeDiaryCard(card) {
@@ -7871,6 +7958,7 @@ function makeCard(options) {
   if (card.type === "planlist") {
     card.plannerGroup = getPlannerGroup(card);
     card.plannerView = normalizePlannerViewMode(options.plannerView);
+    card.plannerViewDate = normalizeDateKey(options.plannerViewDate) || getTodayKey();
     card.plannerViewOptions = normalizePlannerViewOptions(options.plannerViewOptions);
     syncPlannerViewCardCopy(card);
   }
@@ -8144,6 +8232,7 @@ function normalizeCard(card) {
   if (next.type === "planlist") {
     next.plannerGroup = getPlannerGroup(next);
     next.plannerView = normalizePlannerViewMode(next.plannerView);
+    next.plannerViewDate = normalizeDateKey(next.plannerViewDate) || getTodayKey();
     next.plannerViewOptions = normalizePlannerViewOptions(next.plannerViewOptions);
     syncPlannerViewCardCopy(next);
   }
@@ -8598,6 +8687,10 @@ async function syncCloudAfterSignIn() {
     renderCloudStatus(`Cloud is current. Supabase copy: ${formatRecordDateTime(cloudRow.updated_at)}.`);
     return;
   }
+  if (isRemoteNewerThanKnown(cloudRow.updated_at)) {
+    renderCloudStatus("This browser and Supabase both have saved data. Use Load cloud to use Supabase here, or Save cloud if this browser is the copy to keep.");
+    return;
+  }
   if (isLocalNewerThanCloud(cloudRow)) {
     renderCloudStatus("This browser has newer changes. Saving this browser to Supabase...");
     await pushCloudState({ manual: true, replaceCloud: true });
@@ -8710,25 +8803,37 @@ async function getCloudSavePlan(session, options = {}) {
     setKnownCloudUpdatedAt(cloudRow.updated_at);
     return { allowed: true, noop: true, expectedUpdatedAt: cloudRow.updated_at };
   }
+  const cloudChangedAfterThisBrowserLoaded = isRemoteNewerThanKnown(cloudRow.updated_at);
+  if (cloudChangedAfterThisBrowserLoaded && !options.replaceCloud) {
+    const message = `Cloud has newer changes from another browser (${formatRecordDate(cloudRow.updated_at)}). Load cloud first, or press Save cloud again and confirm replace.`;
+    if (!options.manual) {
+      renderCloudStatus(message);
+      return { allowed: false, conflict: true };
+    }
+    const confirmed = window.confirm("Cloud has newer changes from another browser. Save this browser anyway and replace the cloud copy?");
+    if (!confirmed) {
+      renderCloudStatus("Cloud save cancelled. Load cloud to review the newer copy first.");
+      return { allowed: false, conflict: true };
+    }
+    saveCloudRecoveryPoint("before-cloud-overwrite");
+    return { allowed: true, expectedUpdatedAt: "", force: true };
+  }
   if (options.replaceCloud || isLocalNewerThanCloud(cloudRow)) {
     if (options.replaceCloud) saveCloudRecoveryPoint("before-cloud-overwrite");
     return { allowed: true, expectedUpdatedAt: cloudRow.updated_at };
   }
-  if (!isCloudNewerThanLocal(cloudRow) && !isRemoteNewerThanKnown(cloudRow.updated_at)) {
-    return { allowed: true, expectedUpdatedAt: cloudRow.updated_at };
-  }
-  if (!isRemoteNewerThanKnown(cloudRow.updated_at)) {
+  if (!isCloudNewerThanLocal(cloudRow)) {
     return { allowed: true, expectedUpdatedAt: cloudRow.updated_at };
   }
   const message = `Cloud has newer changes from another browser (${formatRecordDate(cloudRow.updated_at)}). Load cloud first, or press Save cloud again and confirm replace.`;
   if (!options.manual) {
     renderCloudStatus(message);
-    return { allowed: false };
+    return { allowed: false, conflict: true };
   }
   const confirmed = window.confirm("Cloud has newer changes from another browser. Save this browser anyway and replace the cloud copy?");
   if (!confirmed) {
     renderCloudStatus("Cloud save cancelled. Load cloud to review the newer copy first.");
-    return { allowed: false };
+    return { allowed: false, conflict: true };
   }
   saveCloudRecoveryPoint("before-cloud-overwrite");
   return { allowed: true, expectedUpdatedAt: "", force: true };

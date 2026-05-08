@@ -4223,10 +4223,40 @@ textarea:focus {
   min-width: 0;
 }
 
-.planner-linked-head div {
+.planner-linked-head > div {
   display: grid;
   gap: 2px;
   min-width: 0;
+}
+
+.planner-linked-title-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.planner-linked-day-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 999px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.planner-linked-day-button:hover {
+  color: var(--card-accent);
+  border-color: var(--card-accent);
+  background: #ffffff;
+}
+
+.planner-linked-day-button svg {
+  width: 13px;
+  height: 13px;
 }
 
 .planner-linked-head strong {
@@ -4466,6 +4496,24 @@ textarea:focus {
   letter-spacing: 0;
   text-transform: uppercase;
   vertical-align: middle;
+}
+
+.planner-linked-completed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 86px;
+  min-height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: var(--card-accent);
+  background: var(--card-soft);
+  font-size: 0.5rem;
+  font-weight: 950;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: uppercase;
 }
 
 .planner-linked-item.is-done .planner-linked-copy {
