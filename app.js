@@ -3418,16 +3418,21 @@ function updatePlannerTask(item, nextTitle, nextDateKey) {
   const newKey = getPlannerItemKey(title);
   const oldCheckedItems = { ...(oldEntry.checkedItems || {}) };
   const oldCarryoverItems = { ...(oldEntry.carryoverItems || {}) };
+  const oldItemRecords = { ...(oldEntry.itemRecords || {}) };
   const preservedCheck = oldCheckedItems[oldKey];
   const preservedCarryover = oldCarryoverItems[oldKey];
+  const preservedRecord = oldItemRecords[oldKey] || { createdAt: Date.now() };
 
   oldLines.splice(lineIndex, 1);
   delete oldCheckedItems[oldKey];
   delete oldCarryoverItems[oldKey];
+  delete oldItemRecords[oldKey];
+  removeCarryoverCopyForSourceTask(item.card, oldDate, oldLine);
   item.card.plannerEntries[oldDate] = normalizePlannerEntry({
     note: buildPlannerNote(oldLines),
     checkedItems: oldCheckedItems,
     carryoverItems: oldCarryoverItems,
+    itemRecords: oldItemRecords,
     updatedAt: Date.now()
   });
 
@@ -3435,18 +3440,25 @@ function updatePlannerTask(item, nextTitle, nextDateKey) {
   const targetLines = oldDate === newDate ? oldLines : getPlannerNoteLines(targetEntry.note);
   const targetCheckedItems = { ...(targetEntry.checkedItems || {}) };
   const targetCarryoverItems = { ...(targetEntry.carryoverItems || {}) };
+  const targetItemRecords = { ...(targetEntry.itemRecords || {}) };
   const insertIndex = oldDate === newDate ? Math.min(lineIndex, targetLines.length) : targetLines.length;
 
   targetLines.splice(insertIndex, 0, title);
   if (preservedCheck) targetCheckedItems[newKey] = normalizePlannerDoneRecord(preservedCheck);
   if (preservedCarryover) targetCarryoverItems[newKey] = preservedCarryover;
+  targetItemRecords[newKey] = preservedRecord;
 
   item.card.plannerEntries[newDate] = normalizePlannerEntry({
     note: buildPlannerNote(targetLines),
     checkedItems: targetCheckedItems,
     carryoverItems: targetCarryoverItems,
+    itemRecords: targetItemRecords,
     updatedAt: Date.now()
   });
+  const preservedCompletedAt = Number(normalizePlannerDoneRecord(preservedCheck)?.completedAt) || 0;
+  if (isTimestampOnDate(preservedCompletedAt, getTodayKey())) {
+    ensureCompletedTodayCopyForSourceTask(item.card, newDate, title, preservedCompletedAt);
+  }
   item.card.activePlannerDate = newDate;
   editingPlannerTaskKey = "";
   plannerTaskEditDraft = null;
@@ -3977,8 +3989,10 @@ function normalizePlannerEntry(entry = {}) {
   const note = cleanPlannerNote(entry.note || entry.text || "");
   const savedChecks = entry.checkedItems && typeof entry.checkedItems === "object" ? entry.checkedItems : entry.doneItems || {};
   const savedCarryovers = entry.carryoverItems && typeof entry.carryoverItems === "object" ? entry.carryoverItems : {};
+  const savedRecords = entry.itemRecords && typeof entry.itemRecords === "object" ? entry.itemRecords : {};
   const checkedItems = {};
   const carryoverItems = {};
+  const itemRecords = {};
   getPlannerNoteLines(note).forEach((line) => {
     const key = getPlannerItemKey(line);
     const savedCheck = savedChecks[key] || savedChecks[line];
@@ -3991,11 +4005,17 @@ function normalizePlannerEntry(entry = {}) {
         carriedAt: Number.isFinite(Number(carryover?.carriedAt)) ? Number(carryover.carriedAt) : 0
       };
     }
+    const record = savedRecords[key] || savedRecords[line];
+    const createdAt = normalizeTimestamp(record?.createdAt || record || entry.updatedAt);
+    itemRecords[key] = {
+      createdAt: createdAt || 0
+    };
   });
   return {
     note,
     checkedItems,
     carryoverItems,
+    itemRecords,
     updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : 0
   };
 }
@@ -4023,6 +4043,89 @@ function getPlannerEntryCarryoverDate(entry, itemKey, fallbackDate) {
   return normalizeDateKey(carryover?.fromDate || carryover) || normalizeDateKey(fallbackDate);
 }
 
+function getPlannerItemCreatedAt(entry, itemKey) {
+  return normalizeTimestamp(entry?.itemRecords?.[itemKey]?.createdAt) || normalizeTimestamp(entry?.updatedAt);
+}
+
+function wasPlannerItemCreatedOnOrAfter(entry, itemKey, dateKey) {
+  const createdAt = getPlannerItemCreatedAt(entry, itemKey);
+  if (!createdAt) return false;
+  return createdAt >= dateKeyToLocalDate(dateKey).getTime();
+}
+
+function isTimestampOnDate(timestamp, dateKey) {
+  const time = normalizeTimestamp(timestamp);
+  const normalizedDate = normalizeDateKey(dateKey);
+  if (!time || !normalizedDate) return false;
+  return getTodayKey(new Date(time)) === normalizedDate;
+}
+
+function ensureCompletedTodayCopyForSourceTask(card, sourceDate, title, completedAt = Date.now()) {
+  const todayKey = getTodayKey();
+  const normalizedSourceDate = normalizeDateKey(sourceDate);
+  if (!card || !normalizedSourceDate || normalizedSourceDate === todayKey) return false;
+  if (dateKeyToLocalDate(normalizedSourceDate).getTime() >= dateKeyToLocalDate(todayKey).getTime()) return false;
+  if (!isTimestampOnDate(completedAt, todayKey)) return false;
+
+  const itemKey = getPlannerItemKey(title);
+  if (!itemKey) return false;
+  const sourceEntry = normalizePlannerEntry(card.plannerEntries?.[normalizedSourceDate] || {});
+  const todayEntry = getPlannerEntry(card, todayKey);
+  const lines = getPlannerNoteLines(todayEntry.note);
+  if (!lines.some((line) => getPlannerItemKey(line) === itemKey)) {
+    lines.push(title);
+  }
+  const checkedItems = { ...(todayEntry.checkedItems || {}) };
+  const carryoverItems = { ...(todayEntry.carryoverItems || {}) };
+  const itemRecords = { ...(todayEntry.itemRecords || {}) };
+  checkedItems[itemKey] = { completedAt };
+  carryoverItems[itemKey] = {
+    fromDate: getPlannerEntryCarryoverDate(sourceEntry, itemKey, normalizedSourceDate),
+    carriedAt: Date.now()
+  };
+  itemRecords[itemKey] = itemRecords[itemKey] || { createdAt: completedAt };
+  card.plannerEntries[todayKey] = normalizePlannerEntry({
+    ...todayEntry,
+    note: buildPlannerNote(lines),
+    checkedItems,
+    carryoverItems,
+    itemRecords,
+    updatedAt: Date.now()
+  });
+  return true;
+}
+
+function removeCarryoverCopyForSourceTask(card, sourceDate, title) {
+  const todayKey = getTodayKey();
+  const normalizedSourceDate = normalizeDateKey(sourceDate);
+  if (!card || !normalizedSourceDate || normalizedSourceDate === todayKey) return false;
+  if (dateKeyToLocalDate(normalizedSourceDate).getTime() >= dateKeyToLocalDate(todayKey).getTime()) return false;
+
+  const todayEntry = getPlannerEntry(card, todayKey);
+  const itemKey = getPlannerItemKey(title);
+  if (!itemKey) return false;
+  const carryoverDate = getPlannerEntryCarryoverDate(todayEntry, itemKey, "");
+  if (carryoverDate !== normalizedSourceDate) return false;
+
+  const lines = getPlannerNoteLines(todayEntry.note).filter((line) => getPlannerItemKey(line) !== itemKey);
+  const checkedItems = { ...(todayEntry.checkedItems || {}) };
+  const carryoverItems = { ...(todayEntry.carryoverItems || {}) };
+  const itemRecords = { ...(todayEntry.itemRecords || {}) };
+  delete checkedItems[itemKey];
+  delete carryoverItems[itemKey];
+  delete itemRecords[itemKey];
+
+  card.plannerEntries[todayKey] = normalizePlannerEntry({
+    ...todayEntry,
+    note: buildPlannerNote(lines),
+    checkedItems,
+    carryoverItems,
+    itemRecords,
+    updatedAt: Date.now()
+  });
+  return true;
+}
+
 function carryPlannerIncompleteTasksToToday() {
   const todayKey = getTodayKey();
   const todayTime = dateKeyToLocalDate(todayKey).getTime();
@@ -4033,10 +4136,32 @@ function carryPlannerIncompleteTasksToToday() {
     normalizePlannerCard(card);
     const todayEntry = getPlannerEntry(card, todayKey);
     const todayLines = getPlannerNoteLines(todayEntry.note);
-    const todayKeys = new Set(todayLines.map(getPlannerItemKey));
+    const checkedItems = { ...(todayEntry.checkedItems || {}) };
     const carryoverItems = { ...(todayEntry.carryoverItems || {}) };
-    const nextLines = [...todayLines];
+    const itemRecords = { ...(todayEntry.itemRecords || {}) };
     let cardChanged = false;
+    const nextLines = todayLines.filter((line) => {
+      const itemKey = getPlannerItemKey(line);
+      const sourceDate = getPlannerEntryCarryoverDate(todayEntry, itemKey, "");
+      if (!sourceDate) return true;
+      const sourceEntry = normalizePlannerEntry(card.plannerEntries?.[sourceDate] || {});
+      const sourceLines = getPlannerNoteLines(sourceEntry.note);
+      const sourceExists = sourceLines.some((sourceLine) => getPlannerItemKey(sourceLine) === itemKey);
+      const sourceCompletedAt = getPlannerCompletedAt(sourceEntry, itemKey);
+      const sourceCompletedToday = sourceExists && isTimestampOnDate(sourceCompletedAt, todayKey);
+      if (sourceCompletedToday) {
+        checkedItems[itemKey] = { completedAt: sourceCompletedAt };
+        return true;
+      }
+      const sourceStillOpen = sourceExists && !sourceEntry.checkedItems[itemKey];
+      if (sourceStillOpen) return true;
+      delete checkedItems[itemKey];
+      delete carryoverItems[itemKey];
+      delete itemRecords[itemKey];
+      cardChanged = true;
+      return false;
+    });
+    const todayKeys = new Set(nextLines.map(getPlannerItemKey));
 
     Object.entries(card.plannerEntries || {})
       .sort(([leftDate], [rightDate]) => {
@@ -4053,7 +4178,21 @@ function carryPlannerIncompleteTasksToToday() {
         const sourceEntry = normalizePlannerEntry(entry);
         getPlannerNoteLines(sourceEntry.note).forEach((line) => {
           const itemKey = getPlannerItemKey(line);
-          if (!itemKey || sourceEntry.checkedItems[itemKey] || todayKeys.has(itemKey)) return;
+          if (!itemKey || todayKeys.has(itemKey)) return;
+          const sourceCompletedAt = getPlannerCompletedAt(sourceEntry, itemKey);
+          if (isTimestampOnDate(sourceCompletedAt, todayKey)) {
+            nextLines.push(line);
+            todayKeys.add(itemKey);
+            checkedItems[itemKey] = { completedAt: sourceCompletedAt };
+            carryoverItems[itemKey] = {
+              fromDate: getPlannerEntryCarryoverDate(sourceEntry, itemKey, sourceDate),
+              carriedAt: Date.now()
+            };
+            itemRecords[itemKey] = itemRecords[itemKey] || { createdAt: sourceCompletedAt };
+            cardChanged = true;
+            return;
+          }
+          if (sourceEntry.checkedItems[itemKey]) return;
           nextLines.push(line);
           todayKeys.add(itemKey);
           carryoverItems[itemKey] = {
@@ -4067,8 +4206,10 @@ function carryPlannerIncompleteTasksToToday() {
     if (!cardChanged) return;
     card.plannerEntries[todayKey] = normalizePlannerEntry({
       ...todayEntry,
-      note: nextLines.map((line) => `- ${line}`).join("\n"),
+      note: buildPlannerNote(nextLines),
+      checkedItems,
       carryoverItems,
+      itemRecords,
       updatedAt: Date.now()
     });
     changed = true;
@@ -4208,6 +4349,12 @@ function togglePlannerTaskDone(item) {
   } else {
     checkedItems[key] = { completedAt };
   }
+  if (nextDone && !item.isCarryover) {
+    ensureCompletedTodayCopyForSourceTask(item.card, item.dateKey, item.title, completedAt);
+  }
+  if (!nextDone && !item.isCarryover) {
+    removeCarryoverCopyForSourceTask(item.card, item.dateKey, item.title);
+  }
   syncCarryoverSourceTask(item, nextDone, completedAt);
   updatePlannerEntry(item.card, item.dateKey, { checkedItems }, { rerender: true });
 }
@@ -4221,6 +4368,7 @@ function deletePlannerTask(item) {
   const [removed] = lines.splice(lineIndex, 1);
   const checkedItems = { ...(entry.checkedItems || {}) };
   delete checkedItems[getPlannerItemKey(removed)];
+  removeCarryoverCopyForSourceTask(item.card, item.dateKey, removed);
   syncCarryoverSourceTask(item, true, Date.now());
   updatePlannerEntry(
     item.card,
@@ -4309,12 +4457,17 @@ function addPlannerTaskToDate(card, dateKey, value) {
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
   const current = getPlannerEntry(card, normalizedDate);
   const lines = getPlannerNoteLines(current.note);
+  const itemRecords = { ...(current.itemRecords || {}) };
   lines.push(text);
+  itemRecords[getPlannerItemKey(text)] = { createdAt: Date.now() };
   card.activePlannerDate = normalizedDate;
   updatePlannerEntry(
     card,
     normalizedDate,
-    { note: lines.map((line) => `- ${line}`).join("\n") },
+    {
+      note: buildPlannerNote(lines),
+      itemRecords
+    },
     { rerender: true, forceRender: true }
   );
   return true;
