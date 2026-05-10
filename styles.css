@@ -4394,7 +4394,7 @@ textarea:focus {
 
 .planner-linked-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 26px;
+  grid-template-columns: 18px minmax(0, 1fr) 52px;
   align-items: center;
   gap: 6px;
   min-height: 46px;
@@ -4521,6 +4521,14 @@ textarea:focus {
   text-decoration-thickness: 2px;
 }
 
+.planner-linked-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.planner-linked-edit-button,
 .planner-linked-delete {
   display: inline-flex;
   align-items: center;
@@ -4535,14 +4543,85 @@ textarea:focus {
   background: rgba(255, 255, 255, 0.68);
 }
 
+.planner-linked-edit-button:hover {
+  color: var(--card-accent);
+  background: #ffffff;
+}
+
 .planner-linked-delete:hover {
   color: var(--danger);
   background: #ffffff;
 }
 
+.planner-linked-edit-button svg,
 .planner-linked-delete svg {
   width: 12px;
   height: 12px;
+}
+
+.planner-linked-item.is-editing {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.planner-linked-edit-form {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) 28px 28px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.planner-linked-edit-date,
+.planner-linked-edit-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--card-ink);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.planner-linked-edit-date {
+  padding: 0 8px;
+}
+
+.planner-linked-edit-input {
+  padding: 0 10px;
+}
+
+.planner-linked-edit-save,
+.planner-linked-edit-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--card-ink);
+}
+
+.planner-linked-edit-save:hover {
+  color: var(--card-accent);
+  background: #ffffff;
+}
+
+.planner-linked-edit-cancel:hover {
+  color: var(--danger);
+  background: #ffffff;
+}
+
+.planner-linked-edit-save svg,
+.planner-linked-edit-cancel svg {
+  width: 13px;
+  height: 13px;
 }
 
 .planner-linked-empty,
@@ -5297,9 +5376,17 @@ textarea:focus {
   }
 
   .planner-linked-item {
-    grid-template-columns: 18px minmax(0, 1fr) 24px;
+    grid-template-columns: 18px minmax(0, 1fr) 48px;
     gap: 6px;
     padding: 6px;
+  }
+
+  .planner-linked-edit-form {
+    grid-template-columns: 1fr 28px 28px;
+  }
+
+  .planner-linked-edit-date {
+    grid-column: 1 / -1;
   }
 
   .planner-linked-date {

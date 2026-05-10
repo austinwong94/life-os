@@ -1012,6 +1012,8 @@ const defaultState = {
 let state = loadState();
 let draggedCardId = null;
 let editingCardId = null;
+let editingPlannerTaskKey = "";
+let plannerTaskEditDraft = null;
 let selectedTimerMode = "none";
 let attachedImageData = "";
 let draftPreviewDismissed = false;
@@ -3098,7 +3100,7 @@ function renderPlannerLinkedList(card) {
     titleRow.append(previousButton);
   }
   const title = document.createElement("strong");
-  title.textContent = getPlannerViewLabel(view);
+  title.textContent = view === "today" ? getPlannerViewDayHeading(viewData.dayKey) : getPlannerViewLabel(view);
   titleRow.append(title);
   if (view === "today") {
     const nextButton = document.createElement("button");
@@ -3229,6 +3231,11 @@ function renderPlannerLinkedAddForm(card, view, options, dayKey = getTodayKey())
 }
 
 function renderPlannerLinkedItem(item) {
+  const taskKey = getPlannerTaskRowKey(item);
+  if (editingPlannerTaskKey === taskKey) {
+    return renderPlannerLinkedEditItem(item);
+  }
+
   const row = document.createElement("div");
   row.className = "planner-linked-item";
   row.classList.toggle("is-done", Boolean(item.done));
@@ -3260,8 +3267,8 @@ function renderPlannerLinkedItem(item) {
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "planner-linked-copy";
-  copy.title = originalDateKey ? `Open original planner date: ${formatPlannerOriginDate(originalDateKey)}` : "Open planner date";
-  copy.addEventListener("click", () => setPlannerDate(item.card, displayDateKey));
+  copy.title = "Edit task name or date";
+  copy.addEventListener("click", () => startPlannerTaskEdit(item));
   if (item.isCarryover) {
     const badge = document.createElement("span");
     badge.className = "planner-linked-carryover";
@@ -3278,6 +3285,14 @@ function renderPlannerLinkedItem(item) {
   }
   copy.textContent = item.title;
 
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "planner-linked-edit-button";
+  edit.title = "Edit task";
+  edit.setAttribute("aria-label", `Edit planner task: ${item.title}`);
+  edit.innerHTML = ICONS.pencil;
+  edit.addEventListener("click", () => startPlannerTaskEdit(item));
+
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "planner-linked-delete";
@@ -3286,10 +3301,160 @@ function renderPlannerLinkedItem(item) {
   remove.innerHTML = ICONS["trash-2"];
   remove.addEventListener("click", () => deletePlannerTask(item));
 
+  const actions = document.createElement("div");
+  actions.className = "planner-linked-actions";
+  actions.append(edit, remove);
+
   main.append(meta, copy);
-  row.append(check, main, remove);
+  row.append(check, main, actions);
   return row;
 }
+
+function getPlannerTaskRowKey(item) {
+  return [item?.card?.id || "", normalizeDateKey(item?.dateKey), Number.isInteger(item?.lineIndex) ? item.lineIndex : "", getPlannerItemKey(item?.title)].join("|");
+}
+
+function startPlannerTaskEdit(item) {
+  editingPlannerTaskKey = getPlannerTaskRowKey(item);
+  plannerTaskEditDraft = {
+    key: editingPlannerTaskKey,
+    title: item.title || "",
+    dateKey: normalizeDateKey(item.dateKey) || getTodayKey()
+  };
+  renderCardsOnly({ force: true });
+}
+
+function cancelPlannerTaskEdit() {
+  editingPlannerTaskKey = "";
+  plannerTaskEditDraft = null;
+  renderCardsOnly({ force: true });
+}
+
+function getPlannerTaskEditDraft(item) {
+  const key = getPlannerTaskRowKey(item);
+  if (!plannerTaskEditDraft || plannerTaskEditDraft.key !== key) {
+    plannerTaskEditDraft = {
+      key,
+      title: item.title || "",
+      dateKey: normalizeDateKey(item.dateKey) || getTodayKey()
+    };
+  }
+  return plannerTaskEditDraft;
+}
+
+function renderPlannerLinkedEditItem(item) {
+  const draft = getPlannerTaskEditDraft(item);
+  const row = document.createElement("div");
+  row.className = "planner-linked-item is-editing";
+
+  const form = document.createElement("form");
+  form.className = "planner-linked-edit-form";
+
+  const dateInput = document.createElement("input");
+  dateInput.type = "date";
+  dateInput.className = "planner-linked-edit-date";
+  dateInput.value = normalizeDateKey(draft.dateKey) || normalizeDateKey(item.dateKey) || getTodayKey();
+  dateInput.setAttribute("aria-label", "Task date");
+  dateInput.addEventListener("input", () => {
+    draft.dateKey = normalizeDateKey(dateInput.value) || draft.dateKey;
+  });
+
+  const titleInput = document.createElement("input");
+  titleInput.type = "text";
+  titleInput.className = "planner-linked-edit-input";
+  titleInput.value = draft.title;
+  titleInput.setAttribute("aria-label", "Task name");
+  titleInput.addEventListener("input", () => {
+    draft.title = titleInput.value;
+  });
+
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.className = "planner-linked-edit-save";
+  save.title = "Save task";
+  save.setAttribute("aria-label", "Save planner task");
+  save.innerHTML = ICONS.check;
+
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.className = "planner-linked-edit-cancel";
+  cancel.title = "Cancel edit";
+  cancel.setAttribute("aria-label", "Cancel planner task edit");
+  cancel.innerHTML = ICONS.x;
+  cancel.addEventListener("click", cancelPlannerTaskEdit);
+
+  form.append(dateInput, titleInput, save, cancel);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const saved = updatePlannerTask(item, titleInput.value, dateInput.value);
+    if (!saved) return;
+    editingPlannerTaskKey = "";
+    plannerTaskEditDraft = null;
+  });
+
+  row.append(form);
+  window.requestAnimationFrame(() => titleInput.focus());
+  return row;
+}
+
+function buildPlannerNote(lines) {
+  return lines.map((line) => `- ${line}`).join("\n");
+}
+
+function updatePlannerTask(item, nextTitle, nextDateKey) {
+  if (!item?.card || !item.dateKey) return false;
+  const title = stripPlannerBullet(nextTitle);
+  const oldDate = normalizeDateKey(item.dateKey);
+  const newDate = normalizeDateKey(nextDateKey) || oldDate;
+  if (!title || !oldDate || !newDate) return false;
+
+  const oldEntry = getPlannerEntry(item.card, oldDate);
+  const oldLines = getPlannerNoteLines(oldEntry.note);
+  const lineIndex = getPlannerLineIndex(oldLines, item);
+  if (lineIndex < 0) return false;
+
+  const oldLine = oldLines[lineIndex];
+  const oldKey = getPlannerItemKey(oldLine);
+  const newKey = getPlannerItemKey(title);
+  const oldCheckedItems = { ...(oldEntry.checkedItems || {}) };
+  const oldCarryoverItems = { ...(oldEntry.carryoverItems || {}) };
+  const preservedCheck = oldCheckedItems[oldKey];
+  const preservedCarryover = oldCarryoverItems[oldKey];
+
+  oldLines.splice(lineIndex, 1);
+  delete oldCheckedItems[oldKey];
+  delete oldCarryoverItems[oldKey];
+  item.card.plannerEntries[oldDate] = normalizePlannerEntry({
+    note: buildPlannerNote(oldLines),
+    checkedItems: oldCheckedItems,
+    carryoverItems: oldCarryoverItems,
+    updatedAt: Date.now()
+  });
+
+  const targetEntry = oldDate === newDate ? item.card.plannerEntries[oldDate] : getPlannerEntry(item.card, newDate);
+  const targetLines = oldDate === newDate ? oldLines : getPlannerNoteLines(targetEntry.note);
+  const targetCheckedItems = { ...(targetEntry.checkedItems || {}) };
+  const targetCarryoverItems = { ...(targetEntry.carryoverItems || {}) };
+  const insertIndex = oldDate === newDate ? Math.min(lineIndex, targetLines.length) : targetLines.length;
+
+  targetLines.splice(insertIndex, 0, title);
+  if (preservedCheck) targetCheckedItems[newKey] = normalizePlannerDoneRecord(preservedCheck);
+  if (preservedCarryover) targetCarryoverItems[newKey] = preservedCarryover;
+
+  item.card.plannerEntries[newDate] = normalizePlannerEntry({
+    note: buildPlannerNote(targetLines),
+    checkedItems: targetCheckedItems,
+    carryoverItems: targetCarryoverItems,
+    updatedAt: Date.now()
+  });
+  item.card.activePlannerDate = newDate;
+  editingPlannerTaskKey = "";
+  plannerTaskEditDraft = null;
+  saveState();
+  renderCardsOnly({ force: true });
+  return true;
+}
+
 
 function renderDiary(card) {
   normalizeDiaryCard(card);
@@ -4192,9 +4357,25 @@ function shiftPlannerViewDate(card, dayDelta) {
   setPlannerViewDate(card, getTodayKey(addDays(currentDate, dayDelta)));
 }
 
+function getPlannerRelativeDateLabel(dateKey) {
+  const today = dateKeyToLocalDate(getTodayKey());
+  const date = dateKeyToLocalDate(dateKey);
+  const dayDelta = Math.round((date.getTime() - today.getTime()) / 86400000);
+  if (dayDelta === 0) return "Today";
+  if (dayDelta === 1) return "Tomorrow";
+  if (dayDelta === -1) return "Yesterday";
+  return "";
+}
+
+function getPlannerViewDayHeading(dateKey) {
+  const relative = getPlannerRelativeDateLabel(dateKey);
+  if (relative) return relative;
+  return dateKeyToLocalDate(dateKey).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
 function formatPlannerDate(dateKey) {
   const date = dateKeyToLocalDate(dateKey);
-  const relative = getRelativeDateLabel(dateKey, 0);
+  const relative = getPlannerRelativeDateLabel(dateKey);
   const label = date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
   return relative ? `${relative} · ${label}` : label;
 }
@@ -4448,7 +4629,7 @@ function sortPlannerScheduleItems(a, b) {
 }
 
 function formatPlannerListDate(dateKey) {
-  const relative = getRelativeDateLabel(dateKey, 0);
+  const relative = getPlannerRelativeDateLabel(dateKey);
   if (relative) return relative;
   return dateKeyToLocalDate(dateKey).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
