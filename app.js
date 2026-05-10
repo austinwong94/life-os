@@ -4825,10 +4825,7 @@ function formatPlannerOriginDate(dateKey) {
 function formatPlannerCompletedAt(timestamp) {
   const date = new Date(Number(timestamp) || 0);
   if (!Number.isFinite(date.getTime())) return "Done";
-  const dateKey = getTodayKey(date);
-  const todayKey = getTodayKey();
-  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  return dateKey === todayKey ? `Done ${time}` : `Done ${formatPlannerOriginDate(dateKey)}`;
+  return `Done ${formatPlannerOriginDate(getTodayKey(date))}`;
 }
 
 function formatPlannerCompletedTooltip(timestamp) {
