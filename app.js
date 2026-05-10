@@ -4638,6 +4638,14 @@ function getPlannerItemTime(item) {
   return dateKeyToLocalDate(item.dateKey).getTime();
 }
 
+function getPlannerItemDisplayDateKey(item) {
+  return normalizeDateKey(item?.carryoverFrom) || normalizeDateKey(item?.dateKey) || getTodayKey();
+}
+
+function getPlannerItemDisplayTime(item) {
+  return dateKeyToLocalDate(getPlannerItemDisplayDateKey(item)).getTime();
+}
+
 function getPlannerSectionKey(item, timeline = getPlannerTimelineMeta()) {
   const time = getPlannerItemTime(item);
   if (time <= timeline.weekEndTime) return "week";
@@ -4793,9 +4801,11 @@ function getUpcomingScheduleItems(plannerCard, limit = 6) {
 }
 
 function sortPlannerScheduleItems(a, b) {
-  const dateSort = dateKeyToLocalDate(a.dateKey).getTime() - dateKeyToLocalDate(b.dateKey).getTime();
+  const dateSort = getPlannerItemDisplayTime(a) - getPlannerItemDisplayTime(b);
+  const doneSort = Number(Boolean(a.done)) - Number(Boolean(b.done));
+  const actualDateSort = getPlannerItemTime(a) - getPlannerItemTime(b);
   const lineSort = (a.lineIndex ?? 0) - (b.lineIndex ?? 0);
-  return dateSort || a.priority - b.priority || lineSort || a.title.localeCompare(b.title);
+  return dateSort || doneSort || actualDateSort || a.priority - b.priority || lineSort || a.title.localeCompare(b.title);
 }
 
 function formatPlannerListDate(dateKey) {
