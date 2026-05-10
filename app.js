@@ -3269,7 +3269,7 @@ function renderPlannerLinkedItem(item) {
   copy.className = "planner-linked-copy";
   copy.title = "Edit task name or date";
   copy.addEventListener("click", () => startPlannerTaskEdit(item));
-  if (item.isCarryover) {
+  if (item.isCarryover && !item.done) {
     const badge = document.createElement("span");
     badge.className = "planner-linked-carryover";
     badge.textContent = "Incomplete";
@@ -4150,7 +4150,13 @@ function carryPlannerIncompleteTasksToToday() {
       const sourceCompletedAt = getPlannerCompletedAt(sourceEntry, itemKey);
       const sourceCompletedToday = sourceExists && isTimestampOnDate(sourceCompletedAt, todayKey);
       if (sourceCompletedToday) {
+        if (!checkedItems[itemKey] || Number(checkedItems[itemKey].completedAt || 0) !== sourceCompletedAt) cardChanged = true;
         checkedItems[itemKey] = { completedAt: sourceCompletedAt };
+        carryoverItems[itemKey] = carryoverItems[itemKey] || {
+          fromDate: getPlannerEntryCarryoverDate(sourceEntry, itemKey, sourceDate),
+          carriedAt: Date.now()
+        };
+        itemRecords[itemKey] = itemRecords[itemKey] || { createdAt: sourceCompletedAt };
         return true;
       }
       const sourceStillOpen = sourceExists && !sourceEntry.checkedItems[itemKey];
