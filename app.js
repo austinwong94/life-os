@@ -4060,6 +4060,14 @@ function isTimestampOnDate(timestamp, dateKey) {
   return getTodayKey(new Date(time)) === normalizedDate;
 }
 
+function getPlannerCompletionTimestamp(dateKey) {
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  const now = new Date();
+  const completionDate = dateKeyToLocalDate(normalizedDate);
+  completionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
+  return completionDate.getTime();
+}
+
 function ensureCompletedTodayCopyForSourceTask(card, sourceDate, title, completedAt = Date.now()) {
   const todayKey = getTodayKey();
   const normalizedSourceDate = normalizeDateKey(sourceDate);
@@ -4349,14 +4357,17 @@ function togglePlannerTaskDone(item) {
   const checkedItems = { ...(entry.checkedItems || {}) };
   const key = getPlannerItemKey(item.title);
   const nextDone = !checkedItems[key];
-  const completedAt = nextDone ? Date.now() : 0;
+  const completedAt = nextDone ? getPlannerCompletionTimestamp(item.dateKey) : 0;
   if (checkedItems[key]) {
     delete checkedItems[key];
   } else {
     checkedItems[key] = { completedAt };
   }
   if (nextDone && !item.isCarryover) {
-    ensureCompletedTodayCopyForSourceTask(item.card, item.dateKey, item.title, completedAt);
+    const copiedToToday = ensureCompletedTodayCopyForSourceTask(item.card, item.dateKey, item.title, completedAt);
+    if (!copiedToToday) {
+      removeCarryoverCopyForSourceTask(item.card, item.dateKey, item.title);
+    }
   }
   if (!nextDone && !item.isCarryover) {
     removeCarryoverCopyForSourceTask(item.card, item.dateKey, item.title);
