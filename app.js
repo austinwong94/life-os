@@ -3416,6 +3416,8 @@ function updatePlannerTask(item, nextTitle, nextDateKey) {
   const oldLine = oldLines[lineIndex];
   const oldKey = getPlannerItemKey(oldLine);
   const newKey = getPlannerItemKey(title);
+  const linkedSourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : oldDate;
+  const nextLinkedSourceDate = item.isCarryover ? linkedSourceDate : newDate;
   const oldCheckedItems = { ...(oldEntry.checkedItems || {}) };
   const oldCarryoverItems = { ...(oldEntry.carryoverItems || {}) };
   const oldItemRecords = { ...(oldEntry.itemRecords || {}) };
@@ -3455,6 +3457,7 @@ function updatePlannerTask(item, nextTitle, nextDateKey) {
     itemRecords: targetItemRecords,
     updatedAt: Date.now()
   });
+  updatePlannerLinkedTaskReferences(item.card, oldLine, title, linkedSourceDate, nextLinkedSourceDate);
   const preservedCompletedAt = Number(normalizePlannerDoneRecord(preservedCheck)?.completedAt) || 0;
   if (isTimestampOnDate(preservedCompletedAt, getTodayKey())) {
     ensureCompletedTodayCopyForSourceTask(item.card, newDate, title, preservedCompletedAt);
@@ -3465,6 +3468,90 @@ function updatePlannerTask(item, nextTitle, nextDateKey) {
   saveState();
   renderCardsOnly({ force: true });
   return true;
+}
+
+function mergePlannerItemRecord(currentRecord, incomingRecord) {
+  const currentCreatedAt = normalizeTimestamp(currentRecord?.createdAt || currentRecord);
+  const incomingCreatedAt = normalizeTimestamp(incomingRecord?.createdAt || incomingRecord);
+  const createdAt = [currentCreatedAt, incomingCreatedAt].filter(Boolean).sort((a, b) => a - b)[0] || Date.now();
+  return { createdAt };
+}
+
+function updatePlannerLinkedTaskReferences(card, oldTitle, newTitle, sourceDate, nextSourceDate = sourceDate) {
+  const oldKey = getPlannerItemKey(oldTitle);
+  const newKey = getPlannerItemKey(newTitle);
+  const normalizedSourceDate = normalizeDateKey(sourceDate);
+  const normalizedNextSourceDate = normalizeDateKey(nextSourceDate) || normalizedSourceDate;
+  if (!card || !oldKey || !newKey || !normalizedSourceDate) return false;
+
+  let changed = false;
+  Object.entries(card.plannerEntries || {}).forEach(([dateKey, entry]) => {
+    const plannerDate = normalizeDateKey(dateKey);
+    if (!plannerDate) return;
+    const normalizedEntry = normalizePlannerEntry(entry);
+    const lines = getPlannerNoteLines(normalizedEntry.note);
+    const isLinkedSource = plannerDate === normalizedSourceDate;
+    const isLinkedCarryover = getPlannerEntryCarryoverDate(normalizedEntry, oldKey, "") === normalizedSourceDate;
+    if (!isLinkedSource && !isLinkedCarryover) return;
+    if (!lines.some((line) => getPlannerItemKey(line) === oldKey)) return;
+
+    let entryChanged = false;
+    const checkedItems = { ...(normalizedEntry.checkedItems || {}) };
+    const carryoverItems = { ...(normalizedEntry.carryoverItems || {}) };
+    const itemRecords = { ...(normalizedEntry.itemRecords || {}) };
+
+    if (oldKey !== newKey) {
+      if (checkedItems[oldKey] && !checkedItems[newKey]) checkedItems[newKey] = checkedItems[oldKey];
+      delete checkedItems[oldKey];
+
+      if (carryoverItems[oldKey]) {
+        carryoverItems[newKey] = {
+          ...(carryoverItems[newKey] || carryoverItems[oldKey]),
+          fromDate: normalizedNextSourceDate
+        };
+      }
+      delete carryoverItems[oldKey];
+
+      if (itemRecords[oldKey]) itemRecords[newKey] = mergePlannerItemRecord(itemRecords[newKey], itemRecords[oldKey]);
+      delete itemRecords[oldKey];
+      entryChanged = true;
+    } else if (carryoverItems[oldKey] && getPlannerEntryCarryoverDate(normalizedEntry, oldKey, "") !== normalizedNextSourceDate) {
+      carryoverItems[oldKey] = {
+        ...carryoverItems[oldKey],
+        fromDate: normalizedNextSourceDate
+      };
+      entryChanged = true;
+    }
+
+    const alreadyHasNewLine = oldKey !== newKey && lines.some((line) => getPlannerItemKey(line) === newKey);
+    let insertedNewLine = alreadyHasNewLine;
+    const nextLines = [];
+    lines.forEach((line) => {
+      if (getPlannerItemKey(line) !== oldKey) {
+        nextLines.push(line);
+        return;
+      }
+      if (insertedNewLine) {
+        entryChanged = true;
+        return;
+      }
+      nextLines.push(newTitle);
+      insertedNewLine = true;
+      if (line !== newTitle) entryChanged = true;
+    });
+
+    if (!entryChanged) return;
+    card.plannerEntries[plannerDate] = normalizePlannerEntry({
+      ...normalizedEntry,
+      note: buildPlannerNote(nextLines),
+      checkedItems,
+      carryoverItems,
+      itemRecords,
+      updatedAt: Date.now()
+    });
+    changed = true;
+  });
+  return changed;
 }
 
 
@@ -4134,6 +4221,44 @@ function removeCarryoverCopyForSourceTask(card, sourceDate, title) {
   return true;
 }
 
+function removeLinkedCarryoverCopiesAfterDate(card, sourceDate, title, afterDate) {
+  const itemKey = getPlannerItemKey(title);
+  const normalizedSourceDate = normalizeDateKey(sourceDate);
+  const normalizedAfterDate = normalizeDateKey(afterDate);
+  if (!card || !itemKey || !normalizedSourceDate || !normalizedAfterDate) return false;
+  const afterTime = dateKeyToLocalDate(normalizedAfterDate).getTime();
+  let changed = false;
+
+  Object.entries(card.plannerEntries || {}).forEach(([dateKey, entry]) => {
+    const plannerDate = normalizeDateKey(dateKey);
+    if (!plannerDate || dateKeyToLocalDate(plannerDate).getTime() <= afterTime) return;
+    const normalizedEntry = normalizePlannerEntry(entry);
+    if (getPlannerEntryCarryoverDate(normalizedEntry, itemKey, "") !== normalizedSourceDate) return;
+    const lines = getPlannerNoteLines(normalizedEntry.note);
+    const nextLines = lines.filter((line) => getPlannerItemKey(line) !== itemKey);
+    if (nextLines.length === lines.length) return;
+
+    const checkedItems = { ...(normalizedEntry.checkedItems || {}) };
+    const carryoverItems = { ...(normalizedEntry.carryoverItems || {}) };
+    const itemRecords = { ...(normalizedEntry.itemRecords || {}) };
+    delete checkedItems[itemKey];
+    delete carryoverItems[itemKey];
+    delete itemRecords[itemKey];
+
+    card.plannerEntries[plannerDate] = normalizePlannerEntry({
+      ...normalizedEntry,
+      note: buildPlannerNote(nextLines),
+      checkedItems,
+      carryoverItems,
+      itemRecords,
+      updatedAt: Date.now()
+    });
+    changed = true;
+  });
+
+  return changed;
+}
+
 function carryPlannerIncompleteTasksToToday() {
   const todayKey = getTodayKey();
   const todayTime = dateKeyToLocalDate(todayKey).getTime();
@@ -4373,6 +4498,10 @@ function togglePlannerTaskDone(item) {
     removeCarryoverCopyForSourceTask(item.card, item.dateKey, item.title);
   }
   syncCarryoverSourceTask(item, nextDone, completedAt);
+  if (nextDone) {
+    const sourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : normalizeDateKey(item.dateKey);
+    removeLinkedCarryoverCopiesAfterDate(item.card, sourceDate, item.title, item.dateKey);
+  }
   updatePlannerEntry(item.card, item.dateKey, { checkedItems }, { rerender: true });
 }
 
