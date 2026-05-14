@@ -11,7 +11,13 @@ const CLOUD_CONFLICT_TOLERANCE_MS = 1000;
 const LOCAL_DEV_RELOAD_POLL_MS = 1500;
 const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "app.js"];
 const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
+const MAX_IMAGE_FILE_BYTES = 1_500_000;
 const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "quote", "video"];
+const TRUSTED_VIDEO_DOMAINS = {
+  youtube: ["youtube.com", "youtu.be"],
+  instagram: ["instagram.com"],
+  facebook: ["facebook.com", "fb.watch"]
+};
 const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
   url: "https://shrmhjulhfuodtrsqhpu.supabase.co",
   anonKey: "sb_publishable_DFWPjTEDRTsgM3pA_XPWdw_LAYQk_lP",
@@ -1444,8 +1450,17 @@ function bindEvents() {
 
   elements.imageFile.addEventListener("change", async () => {
     const file = elements.imageFile.files && elements.imageFile.files[0];
-    attachedImageData = file ? await fileToDataUrl(file) : "";
-    if (file) elements.includeImage.checked = true;
+    attachedImageData = "";
+    if (file) {
+      try {
+        attachedImageData = await fileToSafeImageDataUrl(file);
+        elements.includeImage.checked = Boolean(attachedImageData);
+      } catch (error) {
+        window.alert(error.message || "This image could not be attached.");
+        elements.imageFile.value = "";
+        elements.includeImage.checked = false;
+      }
+    }
     renderConditionalFields();
   });
 
@@ -1757,7 +1772,12 @@ async function saveCardFromForm() {
   if (!title) return;
 
   if (elements.includeImage.checked && elements.imageFile.files && elements.imageFile.files[0] && !attachedImageData) {
-    attachedImageData = await fileToDataUrl(elements.imageFile.files[0]);
+    try {
+      attachedImageData = await fileToSafeImageDataUrl(elements.imageFile.files[0]);
+    } catch (error) {
+      window.alert(error.message || "This image could not be attached.");
+      return;
+    }
   }
 
   const card = buildCardFromForm({ preview: false });
@@ -1793,7 +1813,7 @@ function buildCardFromForm({ preview }) {
     theme: elements.cardTheme.value || "leaf",
     background: elements.cardBackground.value || "clean",
     includeImage,
-    imageUrl: includeImage ? elements.imageUrl.value.trim() : "",
+    imageUrl: includeImage ? normalizeRemoteAssetUrl(elements.imageUrl.value) : "",
     imageData: includeImage ? attachedImageData : "",
     timerMode: timer.mode,
     targetAt: timer.targetAt,
@@ -3673,6 +3693,7 @@ function renderVideoCard(card) {
     iframe.title = card.title || "Embedded video";
     iframe.loading = "lazy";
     iframe.referrerPolicy = "strict-origin-when-cross-origin";
+    iframe.sandbox = "allow-scripts allow-same-origin allow-presentation allow-popups";
     iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
     iframe.allowFullscreen = true;
     shell.append(iframe);
@@ -3697,7 +3718,7 @@ function renderVideoCard(card) {
     link.className = "video-link";
     link.href = card.videoUrl;
     link.target = "_blank";
-    link.rel = "noreferrer";
+    link.rel = "noopener noreferrer";
     link.innerHTML = `${ICONS["external-link"]}<span>Open video</span>`;
     wrapper.append(link);
   }
@@ -5204,12 +5225,14 @@ function persistDiaryEntryImmediately(card, dateKey, entry) {
     touchState();
     syncActiveBoard();
     mergeStoredBoardsIntoState();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(getStateForStorage()));
-    localStateSource = "stored";
+    const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
+      message: "Diary save failed locally. Try removing large images."
+    });
+    if (localSaved) localStateSource = "stored";
     upsertDiaryBackup(card, dateKey, entry);
     if (elements.savedState) {
       const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      elements.savedState.textContent = `Diary saved ${time}`;
+      elements.savedState.textContent = localSaved ? `Diary saved ${time}` : "Diary saved to backup only";
       elements.savedState.classList.remove("is-saving");
     }
     queueCloudSave({ silent: true });
@@ -5244,7 +5267,7 @@ function upsertDiaryBackup(card, dateKey, entry) {
     entry,
     savedAt: Date.now()
   };
-  localStorage.setItem(DIARY_BACKUP_KEY, JSON.stringify(backups));
+  writeLocalJson(DIARY_BACKUP_KEY, backups, { silent: true });
 }
 
 function readDiaryBackups() {
@@ -5315,23 +5338,27 @@ function parseSupportedVideoUrl(url) {
 
   const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
   const pathParts = parsed.pathname.split("/").filter(Boolean);
-  if (host === "youtu.be" && pathParts[0]) {
+  if (isTrustedHost(host, TRUSTED_VIDEO_DOMAINS.youtube) && host === "youtu.be" && pathParts[0]) {
     const id = cleanVideoId(pathParts[0]);
     return id ? { provider: "youtube", id } : null;
   }
-  if (host.endsWith("youtube.com")) {
+  if (isTrustedHost(host, TRUSTED_VIDEO_DOMAINS.youtube)) {
     const id = cleanVideoId(parsed.searchParams.get("v") || (["shorts", "embed"].includes(pathParts[0]) ? pathParts[1] : ""));
     if (id) return { provider: "youtube", id };
   }
-  if (host.endsWith("instagram.com")) {
+  if (isTrustedHost(host, TRUSTED_VIDEO_DOMAINS.instagram)) {
     const kind = ["p", "reel", "tv"].includes(pathParts[0]) ? pathParts[0] : "";
     const id = cleanVideoId(pathParts[1]);
     if (kind && id) return { provider: "instagram", kind, id };
   }
-  if (host.endsWith("facebook.com") || host === "fb.watch") {
+  if (isTrustedHost(host, TRUSTED_VIDEO_DOMAINS.facebook)) {
     return { provider: "facebook", href: normalized };
   }
   return null;
+}
+
+function isTrustedHost(host, allowedDomains) {
+  return allowedDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
 function cleanVideoId(value) {
@@ -6419,6 +6446,17 @@ function normalizeVideoUrl(value) {
   }
 }
 
+function normalizeRemoteAssetUrl(value) {
+  const label = String(value || "").trim();
+  if (!label) return "";
+  try {
+    const url = new URL(label);
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
 function normalizeCategory(value) {
   const label = normalizeLabel(String(value || ""));
   if (!label) return "General";
@@ -7385,6 +7423,17 @@ function clampInt(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed));
 }
 
+async function fileToSafeImageDataUrl(file) {
+  if (!file) return "";
+  if (!String(file.type || "").startsWith("image/")) {
+    throw new Error("Choose an image file.");
+  }
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    throw new Error("Image is too large. Use an image under 1.5 MB so the board can save reliably.");
+  }
+  return fileToDataUrl(file);
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -7395,7 +7444,7 @@ function fileToDataUrl(file) {
 }
 
 function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (character) => {
+  return String(value || "").replace(/[&<>"']/g, (character) => {
     const entities = {
       "&": "&amp;",
       "<": "&lt;",
@@ -8575,7 +8624,7 @@ function makeCard(options) {
     theme: options.theme || "leaf",
     background: options.background || "clean",
     includeImage: Boolean(options.includeImage),
-    imageUrl: options.imageUrl || "",
+    imageUrl: normalizeRemoteAssetUrl(options.imageUrl || ""),
     imageData: "",
     timerMode,
     targetAt,
@@ -8884,6 +8933,7 @@ function normalizeCard(card) {
     delete next.layoutColumn;
   }
   next.background = BACKGROUNDS[next.background] ? next.background : "clean";
+  next.imageUrl = normalizeRemoteAssetUrl(next.imageUrl || "");
   next.imageData = next.imageData || "";
   next.category = normalizeCategory(next.category || "General");
   next.reward = "";
@@ -9251,7 +9301,7 @@ function saveCloudSession(session) {
     if (previousCloudStamp && !session.cloud_updated_at) {
       cloudSession.cloud_updated_at = previousCloudStamp;
     }
-    localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(session));
+    writeLocalJson(CLOUD_SESSION_KEY, session, { silent: true });
     if (elements.cloudPassword) elements.cloudPassword.value = "";
   } else {
     localStorage.removeItem(CLOUD_SESSION_KEY);
@@ -9283,9 +9333,22 @@ function saveCloudRecoveryPoint(reason) {
       savedAt: new Date().toISOString(),
       state: JSON.parse(JSON.stringify(state))
     };
-    localStorage.setItem(CLOUD_RECOVERY_KEY, JSON.stringify([recovery, ...existing].slice(0, 5)));
+    writeLocalJson(CLOUD_RECOVERY_KEY, [recovery, ...existing].slice(0, 5), { silent: true });
   } catch {
     // Recovery is best effort only. The main save flow should continue.
+  }
+}
+
+function writeLocalJson(key, value, options = {}) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    if (!options.silent && elements.savedState) {
+      elements.savedState.textContent = options.message || "Save failed locally";
+      elements.savedState.classList.remove("is-saving");
+    }
+    return false;
   }
 }
 
@@ -9805,10 +9868,17 @@ function saveState(options = {}) {
   }
   syncActiveBoard();
   mergeStoredBoardsIntoState();
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(getStateForStorage()));
-  localStateSource = "stored";
+  const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
+    silent: options.quiet,
+    message: "Local save failed. Remove large images or export a backup."
+  });
+  if (localSaved) localStateSource = "stored";
   if (!options.quiet) {
-    elements.savedState.textContent = cloudSaveEnabled ? "Saved here, syncing" : "Saved here";
+    elements.savedState.textContent = localSaved
+      ? cloudSaveEnabled
+        ? "Saved here, syncing"
+        : "Saved here"
+      : "Local save failed";
     elements.savedState.classList.remove("is-saving");
   }
   if (!options.skipCloud && touched) {
@@ -9821,8 +9891,9 @@ function persistLocalDraftState() {
     if (applyingExternalStorageUpdate) return;
     syncActiveBoard();
     mergeStoredBoardsIntoState();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(getStateForStorage()));
-    localStateSource = "stored";
+    if (writeLocalJson(STORAGE_KEY, getStateForStorage(), { silent: true })) {
+      localStateSource = "stored";
+    }
   } catch {
     // Draft persistence is best-effort so typing never gets interrupted by storage errors.
   }
