@@ -2,7 +2,7 @@ const STORAGE_KEY = "progress-board-v1";
 const SAMPLE_VERSION = 15;
 const COURSE_BOARD_VERSION = 1;
 const AI_COURSE_BOARD_VERSION = 1;
-const LIFE_OS_BOARD_VERSION = 4;
+const LIFE_OS_BOARD_VERSION = 5;
 const HISTORY_LIMIT = 370;
 const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
 const AUTO_SAVE_INTERVAL_MS = 30000;
@@ -12,7 +12,7 @@ const LOCAL_DEV_RELOAD_POLL_MS = 1500;
 const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "app.js"];
 const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
-const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "quote", "video", "fitness"];
+const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "quote", "video", "fitness", "food"];
 const TRUSTED_VIDEO_DOMAINS = {
   youtube: ["youtube.com", "youtu.be"],
   instagram: ["instagram.com"],
@@ -113,6 +113,7 @@ const ICONS = {
   "layout-grid": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>',
   "bar-chart": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>',
   dumbbell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 7v10"/><path d="M18 7v10"/><path d="M8 9v6"/><path d="M16 9v6"/><path d="M8 12h8"/><path d="M3 10v4"/><path d="M21 10v4"/></svg>',
+  utensils: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 3v8"/><path d="M8 3v8"/><path d="M4 7h4"/><path d="M6 11v10"/><path d="M18 3v18"/><path d="M15 3v7a3 3 0 0 0 3 3"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
   "more-vertical": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>',
   "move-right": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8l4 4-4 4"/><path d="M2 12h20"/><path d="M7 16l-4-4 4-4"/></svg>',
@@ -145,6 +146,7 @@ const TYPE_META = {
   quote: { label: "Motivation", icon: "quote" },
   video: { label: "Video", icon: "video" },
   fitness: { label: "Fitness log", icon: "dumbbell" },
+  food: { label: "Food tracker", icon: "utensils" },
   routine: { label: "Routine", icon: "timer" },
   scheduled: { label: "Schedule", icon: "calendar" },
   lab: { label: "AI Lab", icon: "list" },
@@ -165,6 +167,7 @@ const TYPE_HELP = {
   quote: "Use for motivational words, reminders, affirmations or principles you want visible on the board.",
   video: "Use for a YouTube, Instagram or Facebook video you want to keep beside the work it supports.",
   fitness: "Use for detailed workout sessions, body metrics and report-ready fitness history.",
+  food: "Use for daily meals, reusable foods, calories, macros, fiber and month-specific nutrition targets.",
   single: "Use for one clear outcome that is either done or not done.",
   event: "Use for a trip, birthday, launch, renewal or important date. The countdown is automatic and cannot be paused.",
   routine: "Use for a daily routine that repeats every day, auto-counts down to midnight, and saves daily history.",
@@ -211,6 +214,10 @@ const TYPE_DETAILS = {
     best: "Detailed workout logging, strength parts, running, missed areas and body metrics",
     timing: "No timer. Use the date inside the card so reports can group sessions by week or month."
   },
+  food: {
+    best: "Daily food logging, meal totals, reusable foods and month-by-month nutrition targets",
+    timing: "No timer. The date inside the card records each day; targets are saved by month so future target changes do not rewrite old months."
+  },
   single: {
     best: "One clear task or outcome",
     timing: "Timer is optional. Use hours for a focus sprint or date for a deadline."
@@ -249,7 +256,7 @@ const TYPE_DETAILS = {
   }
 };
 
-const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "brief", "quote", "video", "fitness", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
+const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "brief", "quote", "video", "fitness", "food", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
 const SCORECARD_TYPES = ["weekly", "monthly", "annual"];
 const TEMPLATE_ONLY_TYPES = ["lab", "workout"];
 const TYPE_PICKER_GROUPS = [
@@ -263,7 +270,8 @@ const TYPE_PICKER_GROUPS = [
       { type: "single", label: "Task", hint: "One outcome" },
       { type: "checklist", label: "Project", hint: "Multi-step" },
       { type: "event", label: "Event", hint: "Fixed date" },
-      { type: "fitness", label: "Fitness log", hint: "Workout detail" }
+      { type: "fitness", label: "Fitness log", hint: "Workout detail" },
+      { type: "food", label: "Food tracker", hint: "Meals + macros" }
     ]
   },
   {
@@ -306,6 +314,8 @@ const CATEGORY_ALIASES = {
   project: "Work",
   health: "Health",
   fitness: "Health",
+  food: "Health",
+  nutrition: "Health",
   strength: "Health",
   conditioning: "Health",
   recovery: "Health",
@@ -366,14 +376,41 @@ const FITNESS_PARTS = [
 ];
 
 const FITNESS_METRIC_FIELDS = [
-  { key: "weightKg", label: "Weight", suffix: "kg" },
-  { key: "heightCm", label: "Height", suffix: "cm" },
-  { key: "bmi", label: "BMI", suffix: "" },
-  { key: "bodyFatPercent", label: "Fat", suffix: "%" },
-  { key: "waistCm", label: "Waist", suffix: "cm" },
-  { key: "restingHr", label: "Resting HR", suffix: "bpm" },
-  { key: "sleepHours", label: "Sleep", suffix: "h" },
-  { key: "energy", label: "Energy", suffix: "/5" }
+  { key: "weightKg", label: "Weight", suffix: "kg", step: "0.01", decimals: 2, min: 0 },
+  { key: "heightCm", label: "Height", suffix: "cm", step: "0.1", decimals: 1, min: 0 },
+  { key: "bmi", label: "BMI", suffix: "", step: "0.1", decimals: 1, min: 0 },
+  { key: "bodyFatPercent", label: "Fat", suffix: "%", step: "0.1", decimals: 1, min: 0, max: 100 },
+  { key: "waistCm", label: "Waist", suffix: "cm", step: "0.1", decimals: 1, min: 0 },
+  { key: "restingHr", label: "Resting HR", suffix: "bpm", step: "1", decimals: 0, min: 0 },
+  { key: "sleepHours", label: "Sleep", suffix: "h", step: "0.1", decimals: 1, min: 0 },
+  { key: "energy", label: "Energy", suffix: "/5", step: "1", decimals: 0, min: 1, max: 5 }
+];
+
+const FOOD_NUTRIENT_KEYS = ["calories", "protein", "carbs", "fat", "fiber"];
+const FOOD_NUTRIENT_META = {
+  calories: { label: "Calories", short: "kcal", unit: "kcal", decimals: 0 },
+  protein: { label: "Protein", short: "P", unit: "g", decimals: 1 },
+  carbs: { label: "Carbs", short: "C", unit: "g", decimals: 1 },
+  fat: { label: "Fat", short: "F", unit: "g", decimals: 1 },
+  fiber: { label: "Fiber", short: "Fi", unit: "g", decimals: 1 }
+};
+const DEFAULT_FOOD_TARGETS = {
+  calories: 2200,
+  protein: 150,
+  carbs: 230,
+  fat: 65,
+  fiber: 30
+};
+const DEFAULT_FOOD_LIBRARY = [
+  { id: "rice-white-cooked", name: "Rice", servingUnit: "100g", servingGrams: 100, calories: 130, protein: 2.7, carbs: 28.2, fat: 0.3, fiber: 0.4, source: "USDA FoodData Central, cooked white rice" },
+  { id: "purple-sweet-potato", name: "Purple potato", servingUnit: "100g", servingGrams: 100, calories: 90, protein: 2.0, carbs: 20.7, fat: 0.2, fiber: 3.3, source: "USDA FoodData Central, baked sweet potato proxy" },
+  { id: "edamame-cooked", name: "Edamame", servingUnit: "100g", servingGrams: 100, calories: 121, protein: 11.9, carbs: 8.9, fat: 5.2, fiber: 5.2, source: "USDA FoodData Central, cooked edamame" },
+  { id: "corn-cooked", name: "Corn", servingUnit: "100g", servingGrams: 100, calories: 96, protein: 3.4, carbs: 21.0, fat: 1.5, fiber: 2.4, source: "USDA FoodData Central, cooked sweet corn" },
+  { id: "spinach-cooked", name: "Spinach", servingUnit: "100g", servingGrams: 100, calories: 23, protein: 3.0, carbs: 3.8, fat: 0.3, fiber: 2.4, source: "USDA FoodData Central, cooked spinach" },
+  { id: "chicken-breast-cooked", name: "Chicken breast", servingUnit: "100g", servingGrams: 100, calories: 165, protein: 31.0, carbs: 0, fat: 3.6, fiber: 0, source: "USDA FoodData Central, cooked skinless chicken breast" },
+  { id: "egg-hard-boiled", name: "Egg", servingUnit: "egg", servingGrams: 50, calories: 78, protein: 6.3, carbs: 0.6, fat: 5.3, fiber: 0, source: "USDA FoodData Central, hard-boiled egg scaled to 50g" },
+  { id: "tuna-can-water", name: "Tuna can", servingUnit: "can", servingGrams: 120, calories: 139, protein: 30.6, carbs: 0, fat: 1.0, fiber: 0, source: "USDA FoodData Central generic canned tuna, edit to match label" },
+  { id: "whey-protein", name: "Whey protein", servingUnit: "scoop", servingGrams: 30, calories: 120, protein: 24, carbs: 3, fat: 1.5, fiber: 0, source: "Common label default, edit to match your brand" }
 ];
 
 const VISIBILITY_META = {
@@ -1981,6 +2018,21 @@ function buildCardFromForm({ preview }) {
     };
   }
 
+  if (type === "food") {
+    card.category = "Health";
+    card.metadata.category = "Health";
+    card.activeFoodDate = getTodayKey();
+    card.activeFoodMealId = "";
+    card.foodLibrary = normalizeFoodLibrary();
+    card.foodTargets = {
+      [getFoodMonthKey(getTodayKey())]: normalizeFoodTarget(DEFAULT_FOOD_TARGETS)
+    };
+    card.foodEntries = {
+      [getTodayKey()]: normalizeFoodEntry()
+    };
+    normalizeFoodCard(card);
+  }
+
   if (type === "daily") {
     card.plannedDate = normalizeDateKey(elements.cardPlanDate.value) || getTodayKey();
   }
@@ -2071,10 +2123,21 @@ function updateExistingCard(nextCard) {
     current.type === "planner" && nextCard.type === "planner"
       ? { ...(current.plannerEntries || {}), ...(nextCard.plannerEntries || {}) }
       : nextCard.plannerEntries;
+  const mergedFoodEntries =
+    current.type === "food" && nextCard.type === "food"
+      ? { ...(current.foodEntries || {}), ...(nextCard.foodEntries || {}) }
+      : nextCard.foodEntries;
+  const mergedFoodTargets =
+    current.type === "food" && nextCard.type === "food"
+      ? { ...(current.foodTargets || {}), ...(nextCard.foodTargets || {}) }
+      : nextCard.foodTargets;
   state.cards[index] = {
     ...nextCard,
     diaryEntries: mergedDiaryEntries,
     plannerEntries: mergedPlannerEntries,
+    foodEntries: mergedFoodEntries,
+    foodTargets: mergedFoodTargets,
+    foodLibrary: current.type === "food" && nextCard.type === "food" ? current.foodLibrary : nextCard.foodLibrary,
     id: current.id,
     order: current.order,
     layoutColumn: current.layoutColumn,
@@ -2282,7 +2345,7 @@ function renderMoveCardModal(card) {
       ? "Planner-view cards on the old board will no longer read this planner card after it moves."
       : card.type === "planlist"
         ? "Planner-view cards read Planner data from the destination board after moving."
-        : "The card keeps its checklist, notes, diary pages, fitness logs and history.";
+        : "The card keeps its checklist, notes, diary pages, fitness logs, food logs and history.";
   elements.moveCardNote.textContent = destinations.length ? linkedWarning : "Create another board before moving this card.";
   elements.moveCardConfirmButton.disabled = destinations.length === 0;
   hydrateIcons(elements.moveCardModal);
@@ -2620,6 +2683,7 @@ function getQuickCaptureFallbackTitle(type) {
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
   if (type === "fitness") return "Fitness workout log";
+  if (type === "food") return "Daily food tracker";
   if (type === "single") return "New task";
   if (type === "event") return "New event";
   if (type === "checklist") return "New project";
@@ -2633,6 +2697,7 @@ function getDefaultCardTitle(type) {
   if (type === "diary") return "Daily diary";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
+  if (type === "food") return "Daily food tracker";
   if (type === "brief") return "Strategy brief";
   if (type === "event") return "Event countdown";
   if (type === "checklist") return "Project checklist";
@@ -2648,6 +2713,7 @@ function getQuickCaptureDescription(type, notes) {
   if (type === "diary") return "A quick dated diary page.";
   if (type === "quote") return normalizeLabel(notes) || "A useful reminder for the day.";
   if (type === "video") return "Saved video to watch or reference from the board.";
+  if (type === "food") return "Track meals, macros, fiber and monthly nutrition targets.";
   return "Quick capture added from the board.";
 }
 
@@ -2905,6 +2971,7 @@ function estimateCardHeight(card) {
   if (card.type === "quote") height += 96;
   if (card.type === "video") height += 190;
   if (card.type === "fitness") height += 360;
+  if (card.type === "food") height += 440;
   if (card.type === "single") height += 48;
   return height;
 }
@@ -2949,6 +3016,7 @@ function renderTodayFocus(cards) {
 function getPlanningDateKey(card) {
   if (!card) return "";
   if (card.type === "daily") return getCardPlanDate(card);
+  if (card.type === "food") return getActiveFoodDate(card);
   if (card.type === "event" && card.targetAt) return getDateKeyFromIso(card.targetAt);
   if (card.timerMode === "date" && card.targetAt) return getDateKeyFromIso(card.targetAt);
   return "";
@@ -2996,7 +3064,7 @@ function matchesFocus(card) {
 function isTodayFocusCard(card) {
   if (card.type === "daily") return getCardPlanDate(card) === getTodayKey();
   if (card.type === "planner" || card.type === "diary") return true;
-  if (card.type === "fitness") return true;
+  if (card.type === "fitness" || card.type === "food") return true;
   if (card.type === "planlist") return normalizePlannerViewMode(card.plannerView) === "today";
   if (card.type === "routine") return true;
   if (card.runningSince) return true;
@@ -3162,6 +3230,9 @@ function renderCard(card, options = {}) {
   }
   if (card.type === "fitness") {
     body.append(renderFitnessLog(card));
+  }
+  if (card.type === "food") {
+    body.append(renderFoodTracker(card));
   }
   if (card.type === "checklist") {
     body.append(renderChecklist(card));
@@ -3921,6 +3992,7 @@ function normalizeFitnessCard(card) {
   card.fitnessEntries = card.fitnessEntries && typeof card.fitnessEntries === "object" ? card.fitnessEntries : {};
   card.activeFitnessDate = normalizeDateKey(card.activeFitnessDate) || getTodayKey();
   card.activeFitnessPart = FITNESS_PARTS.some((part) => part.key === card.activeFitnessPart) ? card.activeFitnessPart : "";
+  card.fitnessMetricsOpen = Boolean(card.fitnessMetricsOpen);
   Object.entries(card.fitnessEntries).forEach(([dateKey, entry]) => {
     const normalizedDate = normalizeDateKey(dateKey);
     if (!normalizedDate) {
@@ -3991,8 +4063,9 @@ function normalizeFitnessMetrics(metrics = {}) {
   FITNESS_METRIC_FIELDS.forEach((field) => {
     next[field.key] = normalizeOptionalNumber(metrics[field.key]);
   });
-  if (!next.bmi && next.weightKg && next.heightCm) {
-    next.bmi = calculateBMI(next.weightKg, next.heightCm);
+  const calculatedBmi = calculateBMI(next.weightKg, next.heightCm);
+  if (calculatedBmi !== "") {
+    next.bmi = calculatedBmi;
   }
   return next;
 }
@@ -4037,6 +4110,9 @@ function getActiveFitnessParts(entry) {
 }
 
 function updateFitnessEntry(card, dateKey, updater, options = {}) {
+  if (options.rerender) {
+    syncFitnessUiStateFromDom(card);
+  }
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
   const entry = getFitnessEntry(card, normalizedDate);
   updater(entry);
@@ -4045,6 +4121,14 @@ function updateFitnessEntry(card, dateKey, updater, options = {}) {
   card.fitnessEntries[normalizedDate] = normalizeFitnessEntry(entry);
   saveState({ quiet: true });
   if (options.rerender) renderCardsOnly({ force: true });
+}
+
+function syncFitnessUiStateFromDom(card) {
+  const node = [...(elements.boardGrid?.querySelectorAll(".task-card") || [])].find((item) => item.dataset.id === card.id);
+  const metrics = node?.querySelector(".fitness-metrics");
+  if (metrics) {
+    card.fitnessMetricsOpen = Boolean(metrics.open);
+  }
 }
 
 function ensureFitnessStrengthExercise(part, meta) {
@@ -4180,10 +4264,10 @@ function renderFitnessCardioEditor(card, dateKey, meta, part) {
   grid.append(
     createFitnessNumberField("Km", part.distanceKm, (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].distanceKm = value; });
-    }),
+    }, { step: "0.01", decimals: 2, min: 0 }),
     createFitnessNumberField("Minutes", part.durationMinutes, (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].durationMinutes = value; });
-    }),
+    }, { step: "0.1", decimals: 1, min: 0 }),
     createFitnessSelectField("Effort", part.intensity, ["Easy", "Moderate", "Hard", "Max"], (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].intensity = value; });
     })
@@ -4209,10 +4293,10 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
     row.className = "fitness-exercise-row";
     row.append(
       createFitnessTextField("Exercise", exercise.name, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { name: value })),
-      createFitnessNumberField("Sets", exercise.sets, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { sets: value })),
+      createFitnessNumberField("Sets", exercise.sets, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { sets: value }), { step: "1", decimals: 0, min: 0 }),
       createFitnessTextField("Reps", exercise.reps, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { reps: value })),
-      createFitnessNumberField("Kg", exercise.weightKg, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { weightKg: value })),
-      createFitnessNumberField("RPE", exercise.rpe, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { rpe: value }))
+      createFitnessNumberField("Kg", exercise.weightKg, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { weightKg: value }), { step: "0.25", decimals: 2, min: 0 }),
+      createFitnessNumberField("RPE", exercise.rpe, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { rpe: value }), { step: "0.5", decimals: 1, min: 1, max: 10 })
     );
     const remove = document.createElement("button");
     remove.type = "button";
@@ -4251,7 +4335,7 @@ function renderFitnessSimpleEditor(card, dateKey, meta, part) {
   grid.append(
     createFitnessNumberField("Minutes", part.durationMinutes, (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].durationMinutes = value; });
-    }),
+    }, { step: "0.1", decimals: 1, min: 0 }),
     createFitnessTextField("Area", part.area, (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].area = value; });
     })
@@ -4281,17 +4365,31 @@ function updateFitnessExercise(card, dateKey, partKey, index, updates) {
 function renderFitnessMetrics(card, dateKey, entry) {
   const section = document.createElement("details");
   section.className = "fitness-section fitness-metrics fitness-disclosure";
-  section.open = FITNESS_METRIC_FIELDS.some((field) => entry.metrics[field.key] !== "");
+  section.open = Boolean(card.fitnessMetricsOpen);
   const summary = document.createElement("summary");
   const summaryText = getFitnessMetricsSummary(entry.metrics);
   summary.innerHTML = `<strong>Body metrics</strong><span>${escapeHtml(summaryText)}</span>`;
+  section.addEventListener("toggle", () => {
+    card.fitnessMetricsOpen = section.open;
+    saveState({ quiet: true });
+  });
   const grid = document.createElement("div");
   grid.className = "fitness-metric-grid";
   FITNESS_METRIC_FIELDS.forEach((field) => {
-    grid.append(createFitnessNumberField(`${field.label}${field.suffix ? ` (${field.suffix})` : ""}`, entry.metrics[field.key], (value) => {
+    if (field.key === "bmi" && calculateBMI(entry.metrics.weightKg, entry.metrics.heightCm) !== "") {
+      grid.append(createFitnessReadonlyField(`${field.label}${field.suffix ? ` (${field.suffix})` : ""}`, formatFitnessMetricNumber(field.key, entry.metrics.bmi), "Auto"));
+      return;
+    }
+    grid.append(createFitnessNumberField(`${field.label}${field.suffix ? ` (${field.suffix})` : ""}`, formatFitnessMetricInputValue(field.key, entry.metrics[field.key]), (value) => {
       updateFitnessEntry(card, dateKey, (nextEntry) => {
         nextEntry.metrics[field.key] = value;
-      }, { rerender: field.key === "weightKg" || field.key === "heightCm" });
+      });
+    }, {
+      step: field.step,
+      decimals: field.decimals,
+      min: field.min,
+      max: field.max,
+      onCommit: field.key === "weightKg" || field.key === "heightCm" ? () => queueDeferredBoardRender({ reason: "fitness-metrics" }) : null
     }));
   });
   section.append(summary, grid, createFitnessNotesDisclosure("Session notes", entry.notes, (value) => {
@@ -4302,9 +4400,9 @@ function renderFitnessMetrics(card, dateKey, entry) {
 
 function getFitnessMetricsSummary(metrics) {
   const summary = [];
-  if (metrics.weightKg !== "") summary.push(`${formatReportNumber(metrics.weightKg)} kg`);
-  if (metrics.bodyFatPercent !== "") summary.push(`${formatReportNumber(metrics.bodyFatPercent)}% fat`);
-  if (metrics.bmi !== "") summary.push(`BMI ${formatReportNumber(metrics.bmi)}`);
+  if (metrics.weightKg !== "") summary.push(`${formatFitnessMetricNumber("weightKg", metrics.weightKg)} kg`);
+  if (metrics.bodyFatPercent !== "") summary.push(`${formatFitnessMetricNumber("bodyFatPercent", metrics.bodyFatPercent)}% fat`);
+  if (metrics.bmi !== "") summary.push(`BMI ${formatFitnessMetricNumber("bmi", metrics.bmi)}`);
   return summary.join(" · ") || "Optional";
 }
 
@@ -4328,8 +4426,15 @@ function createFitnessSection(title, onRemove) {
   return section;
 }
 
-function createFitnessNumberField(label, value, onInput) {
-  return createFitnessTextField(label, value, onInput, { type: "number", step: "0.1" });
+function createFitnessNumberField(label, value, onInput, options = {}) {
+  return createFitnessTextField(label, value, onInput, {
+    type: "number",
+    inputMode: "decimal",
+    step: options.step || "0.1",
+    min: options.min,
+    max: options.max,
+    onCommit: options.onCommit
+  });
 }
 
 function createFitnessTextField(label, value, onInput, options = {}) {
@@ -4340,10 +4445,51 @@ function createFitnessTextField(label, value, onInput, options = {}) {
   const input = document.createElement("input");
   input.type = options.type || "text";
   if (options.step) input.step = options.step;
-  input.value = value || "";
+  if (typeof options.min !== "undefined") input.min = String(options.min);
+  if (typeof options.max !== "undefined") input.max = String(options.max);
+  if (options.inputMode) input.inputMode = options.inputMode;
+  input.value = value === "" || value === null || typeof value === "undefined" ? "" : String(value);
   input.addEventListener("input", () => onInput(input.value));
+  if (typeof options.onCommit === "function") {
+    input.addEventListener("change", () => options.onCommit(input.value));
+  }
   field.append(span, input);
   return field;
+}
+
+function createFitnessReadonlyField(label, value, badge = "") {
+  const field = document.createElement("div");
+  field.className = "fitness-field fitness-readonly-field";
+  const span = document.createElement("span");
+  span.textContent = label;
+  const output = document.createElement("div");
+  output.className = "fitness-readonly-value";
+  output.innerHTML = `<strong>${escapeHtml(value || "-")}</strong>${badge ? `<small>${escapeHtml(badge)}</small>` : ""}`;
+  field.append(span, output);
+  return field;
+}
+
+function getFitnessMetricField(key) {
+  return FITNESS_METRIC_FIELDS.find((field) => field.key === key) || {};
+}
+
+function formatFitnessMetricInputValue(key, value) {
+  if (value === "" || value === null || typeof value === "undefined") return "";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  const field = getFitnessMetricField(key);
+  if (field.decimals === 0) return String(Math.round(number));
+  return String(number);
+}
+
+function formatFitnessMetricNumber(key, value) {
+  if (value === "" || value === null || typeof value === "undefined") return "";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  const field = getFitnessMetricField(key);
+  const decimals = typeof field.decimals === "number" ? field.decimals : 1;
+  if (decimals === 0) return String(Math.round(number));
+  return number.toFixed(decimals).replace(/\.?0+$/, "");
 }
 
 function createFitnessSelectField(label, value, options, onChange) {
@@ -4393,6 +4539,649 @@ function createFitnessNotesDisclosure(label, value, onInput) {
   });
   details.append(summary, textarea);
   return details;
+}
+
+function normalizeFoodCard(card) {
+  card.activeFoodDate = normalizeDateKey(card.activeFoodDate) || getTodayKey();
+  card.foodLibrary = normalizeFoodLibrary(card.foodLibrary);
+  card.foodEntries = card.foodEntries && typeof card.foodEntries === "object" ? card.foodEntries : {};
+  card.foodTargets = card.foodTargets && typeof card.foodTargets === "object" ? card.foodTargets : {};
+  card.foodTargetsOpen = Boolean(card.foodTargetsOpen);
+  card.foodLibraryOpen = Boolean(card.foodLibraryOpen);
+  Object.entries(card.foodEntries).forEach(([dateKey, entry]) => {
+    const normalizedDate = normalizeDateKey(dateKey);
+    if (!normalizedDate) {
+      delete card.foodEntries[dateKey];
+      return;
+    }
+    card.foodEntries[normalizedDate] = normalizeFoodEntry(entry);
+    if (normalizedDate !== dateKey) delete card.foodEntries[dateKey];
+  });
+  hydrateFoodEntrySnapshots(card);
+  const entry = getFoodEntry(card, card.activeFoodDate);
+  if (!entry.meals.some((meal) => meal.id === card.activeFoodMealId)) {
+    card.activeFoodMealId = entry.meals[0]?.id || "";
+  }
+  const monthKey = getFoodMonthKey(card.activeFoodDate);
+  if (!card.foodTargets[monthKey]) {
+    card.foodTargets[monthKey] = normalizeFoodTarget(card.foodTargets.default || DEFAULT_FOOD_TARGETS);
+  }
+}
+
+function normalizeFoodLibrary(library = []) {
+  const byId = new Map();
+  const sourceLibrary = Array.isArray(library) && library.length ? library : DEFAULT_FOOD_LIBRARY;
+  sourceLibrary.forEach((food) => {
+    const normalized = normalizeFoodDefinition(food);
+    if (normalized.name) byId.set(normalized.id, normalized);
+  });
+  if (!byId.size) {
+    DEFAULT_FOOD_LIBRARY.forEach((food) => {
+      const normalized = normalizeFoodDefinition(food);
+      byId.set(normalized.id, normalized);
+    });
+  }
+  return [...byId.values()];
+}
+
+function normalizeFoodDefinition(food = {}) {
+  const id = normalizeLabel(food.id || "").replace(/[^a-zA-Z0-9_-]/g, "") || createId();
+  return {
+    id,
+    name: normalizeLabel(food.name || "Food"),
+    servingUnit: normalizeLabel(food.servingUnit || "100g") || "100g",
+    servingGrams: Math.max(1, normalizeOptionalNumber(food.servingGrams) || 100),
+    source: normalizeLabel(food.source || "Custom"),
+    ...normalizeFoodNutrients(food)
+  };
+}
+
+function normalizeFoodNutrients(source = {}) {
+  return FOOD_NUTRIENT_KEYS.reduce((nutrients, key) => {
+    nutrients[key] = Math.max(0, normalizeOptionalNumber(source[key]) || 0);
+    return nutrients;
+  }, {});
+}
+
+function normalizeFoodTarget(target = {}) {
+  return {
+    ...DEFAULT_FOOD_TARGETS,
+    ...FOOD_NUTRIENT_KEYS.reduce((next, key) => {
+      const value = normalizeOptionalNumber(target[key]);
+      next[key] = value === "" ? DEFAULT_FOOD_TARGETS[key] : Math.max(0, value);
+      return next;
+    }, {})
+  };
+}
+
+function normalizeFoodEntry(entry = {}) {
+  const meals = Array.isArray(entry.meals) && entry.meals.length
+    ? entry.meals.map(normalizeFoodMeal)
+    : getDefaultFoodMeals();
+  return {
+    meals,
+    updatedAt: normalizeTimestamp(entry.updatedAt) || 0
+  };
+}
+
+function normalizeFoodMeal(meal = {}, index = 0) {
+  return {
+    id: meal.id || createId(),
+    name: normalizeLabel(meal.name || `Meal ${index + 1}`),
+    items: Array.isArray(meal.items) ? meal.items.map(normalizeFoodItem).filter(Boolean) : []
+  };
+}
+
+function normalizeFoodItem(item = {}) {
+  const amount = normalizeOptionalNumber(item.amount);
+  return {
+    id: item.id || createId(),
+    foodId: normalizeLabel(item.foodId || item.food || ""),
+    amount: amount === "" ? 1 : Math.max(0, amount),
+    unit: item.unit === "g" ? "g" : "serving",
+    name: normalizeLabel(item.name || ""),
+    servingUnit: normalizeLabel(item.servingUnit || ""),
+    servingGrams: Math.max(0, normalizeOptionalNumber(item.servingGrams) || 0),
+    source: normalizeLabel(item.source || ""),
+    ...normalizeFoodNutrients(item)
+  };
+}
+
+function createFoodItemSnapshot(food = {}) {
+  const normalized = normalizeFoodDefinition(food);
+  return {
+    name: normalized.name,
+    servingUnit: normalized.servingUnit,
+    servingGrams: normalized.servingGrams,
+    source: normalized.source,
+    ...normalizeFoodNutrients(normalized)
+  };
+}
+
+function hasFoodItemSnapshot(item = {}) {
+  return Boolean(
+    normalizeLabel(item.name || "") &&
+    normalizeLabel(item.servingUnit || "") &&
+    Number(item.servingGrams) > 0 &&
+    FOOD_NUTRIENT_KEYS.some((key) => Number(item[key]) > 0)
+  );
+}
+
+function hydrateFoodEntrySnapshots(card) {
+  Object.values(card.foodEntries || {}).forEach((entry) => {
+    (entry.meals || []).forEach((meal) => {
+      (meal.items || []).forEach((item) => {
+        if (hasFoodItemSnapshot(item)) return;
+        const food = getFoodById(card, item.foodId);
+        if (food) Object.assign(item, createFoodItemSnapshot(food));
+      });
+    });
+  });
+}
+
+function getDefaultFoodMeals() {
+  return [1, 2, 3].map((number) => ({
+    id: createId(),
+    name: `Meal ${number}`,
+    items: []
+  }));
+}
+
+function getActiveFoodDate(card) {
+  normalizeFoodCard(card);
+  return normalizeDateKey(card.activeFoodDate) || getTodayKey();
+}
+
+function getFoodEntry(card, dateKey = getActiveFoodDate(card)) {
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  if (!card.foodEntries || typeof card.foodEntries !== "object") card.foodEntries = {};
+  if (!card.foodEntries[normalizedDate]) {
+    card.foodEntries[normalizedDate] = normalizeFoodEntry();
+  }
+  return card.foodEntries[normalizedDate];
+}
+
+function getFoodMonthKey(dateKey) {
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  return normalizedDate.slice(0, 7);
+}
+
+function getFoodTarget(card, dateKey = getActiveFoodDate(card)) {
+  normalizeFoodCard(card);
+  const monthKey = getFoodMonthKey(dateKey);
+  card.foodTargets[monthKey] = normalizeFoodTarget(card.foodTargets[monthKey] || card.foodTargets.default || DEFAULT_FOOD_TARGETS);
+  return card.foodTargets[monthKey];
+}
+
+function getFoodById(card, foodId) {
+  return normalizeFoodLibrary(card.foodLibrary).find((food) => food.id === foodId) || null;
+}
+
+function getFoodForLoggedItem(card, item = {}) {
+  if (hasFoodItemSnapshot(item)) {
+    return normalizeFoodDefinition({
+      id: item.foodId || item.id,
+      name: item.name,
+      servingUnit: item.servingUnit,
+      servingGrams: item.servingGrams,
+      source: item.source,
+      ...normalizeFoodNutrients(item)
+    });
+  }
+  return getFoodById(card, item.foodId);
+}
+
+function calculateFoodItem(card, item) {
+  const food = getFoodForLoggedItem(card, item);
+  if (!food) return createEmptyFoodTotals();
+  const amount = Math.max(0, Number(item.amount) || 0);
+  const multiplier = item.unit === "g" ? amount / Math.max(1, Number(food.servingGrams) || 100) : amount;
+  return multiplyFoodNutrients(food, multiplier);
+}
+
+function multiplyFoodNutrients(source, multiplier = 1) {
+  return FOOD_NUTRIENT_KEYS.reduce((totals, key) => {
+    totals[key] = (Number(source[key]) || 0) * multiplier;
+    return totals;
+  }, {});
+}
+
+function createEmptyFoodTotals() {
+  return FOOD_NUTRIENT_KEYS.reduce((totals, key) => {
+    totals[key] = 0;
+    return totals;
+  }, {});
+}
+
+function addFoodTotals(...items) {
+  return items.reduce((totals, item) => {
+    FOOD_NUTRIENT_KEYS.forEach((key) => {
+      totals[key] += Number(item?.[key]) || 0;
+    });
+    return totals;
+  }, createEmptyFoodTotals());
+}
+
+function getFoodMealTotals(card, meal) {
+  return addFoodTotals(...(meal.items || []).map((item) => calculateFoodItem(card, item)));
+}
+
+function getFoodEntryTotals(card, entry) {
+  return addFoodTotals(...(entry.meals || []).map((meal) => getFoodMealTotals(card, meal)));
+}
+
+function renderFoodTracker(card) {
+  normalizeFoodCard(card);
+  const dateKey = getActiveFoodDate(card);
+  const entry = getFoodEntry(card, dateKey);
+  const target = getFoodTarget(card, dateKey);
+  const totals = getFoodEntryTotals(card, entry);
+  const wrapper = document.createElement("div");
+  wrapper.className = "food-tracker";
+
+  wrapper.append(
+    renderFoodDateNav(card, dateKey, entry),
+    renderFoodTotalSummary(card, totals, target, dateKey),
+    renderFoodTargetEditor(card, dateKey, target),
+    renderFoodAddPanel(card, dateKey, entry),
+    renderFoodMeals(card, dateKey, entry),
+    renderFoodLibraryEditor(card)
+  );
+  return wrapper;
+}
+
+function renderFoodDateNav(card, dateKey, entry) {
+  const nav = document.createElement("div");
+  nav.className = "food-nav";
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.innerHTML = ICONS["chevron-left"];
+  previous.title = "Previous day";
+  previous.addEventListener("click", () => {
+    card.activeFoodDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), -1));
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  const dateInput = document.createElement("input");
+  dateInput.type = "date";
+  dateInput.value = dateKey;
+  dateInput.addEventListener("change", () => {
+    card.activeFoodDate = normalizeDateKey(dateInput.value) || getTodayKey();
+    getFoodEntry(card, card.activeFoodDate);
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  const next = document.createElement("button");
+  next.type = "button";
+  next.innerHTML = ICONS["chevron-right"];
+  next.title = "Next day";
+  next.addEventListener("click", () => {
+    card.activeFoodDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), 1));
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  const status = document.createElement("span");
+  status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "No meals yet";
+  nav.append(previous, dateInput, next, status);
+  return nav;
+}
+
+function renderFoodTotalSummary(card, totals, target, dateKey) {
+  const section = document.createElement("section");
+  section.className = "food-summary-panel";
+  const header = document.createElement("div");
+  header.className = "food-summary-header";
+  const title = document.createElement("div");
+  title.innerHTML = `<strong>${escapeHtml(formatFoodDateTitle(dateKey))}</strong><span>${escapeHtml(getFoodStatusLabel(totals, target))}</span>`;
+  const calories = document.createElement("div");
+  calories.className = "food-calories";
+  calories.innerHTML = `<strong>${formatFoodNumber(totals.calories, "calories")}</strong><span>/ ${formatFoodNumber(target.calories, "calories")} kcal</span>`;
+  header.append(title, calories);
+
+  const grid = document.createElement("div");
+  grid.className = "food-macro-grid";
+  FOOD_NUTRIENT_KEYS.forEach((key) => {
+    const item = document.createElement("div");
+    item.className = "food-macro";
+    const percent = target[key] ? Math.min(140, (totals[key] / target[key]) * 100) : 0;
+    item.innerHTML = `
+      <span>${escapeHtml(FOOD_NUTRIENT_META[key].short)}</span>
+      <strong>${formatFoodNumber(totals[key], key)}${key === "calories" ? "" : "g"}</strong>
+      <small>${formatFoodNumber(target[key], key)}${key === "calories" ? " kcal" : "g"}</small>
+      <i style="--food-progress:${percent}%"></i>
+    `;
+    grid.append(item);
+  });
+  section.append(header, grid);
+  return section;
+}
+
+function renderFoodTargetEditor(card, dateKey, target) {
+  const details = document.createElement("details");
+  details.className = "food-target-panel";
+  details.open = Boolean(card.foodTargetsOpen);
+  details.addEventListener("toggle", () => {
+    card.foodTargetsOpen = details.open;
+    saveState({ quiet: true });
+  });
+  const monthLabel = dateKeyToLocalDate(dateKey).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const summary = document.createElement("summary");
+  summary.innerHTML = `<strong>Monthly target</strong><span>${escapeHtml(monthLabel)}</span>`;
+  const grid = document.createElement("div");
+  grid.className = "food-target-grid";
+  FOOD_NUTRIENT_KEYS.forEach((key) => {
+    grid.append(createFoodNumberField(FOOD_NUTRIENT_META[key].label, target[key], (value) => {
+      const monthKey = getFoodMonthKey(dateKey);
+      const currentTarget = normalizeFoodTarget(card.foodTargets[monthKey] || target);
+      card.foodTargets[monthKey] = normalizeFoodTarget({
+        ...currentTarget,
+        [key]: value
+      });
+      saveFoodCard(card, dateKey);
+    }, { step: key === "calories" ? "10" : "1", onCommit: () => renderCardsOnly({ force: true }) }));
+  });
+  const note = document.createElement("p");
+  note.className = "food-source-note";
+  note.textContent = "Targets are saved by month, so changing June targets will not rewrite May records.";
+  details.append(summary, grid, note);
+  return details;
+}
+
+function renderFoodAddPanel(card, dateKey, entry) {
+  const panel = document.createElement("section");
+  panel.className = "food-add-panel";
+  const mealTabs = document.createElement("div");
+  mealTabs.className = "food-meal-tabs";
+  entry.meals.forEach((meal) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.classList.toggle("is-active", meal.id === card.activeFoodMealId);
+    button.textContent = meal.name;
+    button.addEventListener("click", () => {
+      card.activeFoodMealId = meal.id;
+      saveState();
+      renderCardsOnly({ force: true });
+    });
+    mealTabs.append(button);
+  });
+  const addMeal = document.createElement("button");
+  addMeal.type = "button";
+  addMeal.className = "food-add-meal";
+  addMeal.innerHTML = `${ICONS.plus}<span>Meal</span>`;
+  addMeal.addEventListener("click", () => {
+    const meal = { id: createId(), name: `Meal ${entry.meals.length + 1}`, items: [] };
+    entry.meals.push(meal);
+    card.activeFoodMealId = meal.id;
+    saveFoodCard(card, dateKey, { rerender: true });
+  });
+  mealTabs.append(addMeal);
+
+  const foodChips = document.createElement("div");
+  foodChips.className = "food-chip-row";
+  card.foodLibrary.forEach((food) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = food.name;
+    button.title = `${food.name}: ${formatFoodNumber(food.calories, "calories")} kcal, ${formatFoodNumber(food.protein, "protein")}g protein per ${food.servingUnit}`;
+    button.addEventListener("click", () => addFoodItemToMeal(card, dateKey, card.activeFoodMealId, food.id));
+    foodChips.append(button);
+  });
+  panel.append(mealTabs, foodChips);
+  return panel;
+}
+
+function renderFoodMeals(card, dateKey, entry) {
+  const list = document.createElement("div");
+  list.className = "food-meals";
+  entry.meals.forEach((meal) => list.append(renderFoodMeal(card, dateKey, meal)));
+  return list;
+}
+
+function renderFoodMeal(card, dateKey, meal) {
+  const section = document.createElement("section");
+  section.className = "food-meal";
+  section.classList.toggle("is-active", meal.id === card.activeFoodMealId);
+  const totals = getFoodMealTotals(card, meal);
+  const header = document.createElement("div");
+  header.className = "food-meal-header";
+  const name = document.createElement("input");
+  name.type = "text";
+  name.value = meal.name;
+  name.maxLength = 32;
+  name.setAttribute("aria-label", "Meal name");
+  name.addEventListener("input", () => {
+    meal.name = normalizeLabel(name.value) || "Meal";
+    saveFoodCard(card, dateKey);
+  });
+  name.addEventListener("change", () => renderCardsOnly({ force: true }));
+  const summary = document.createElement("span");
+  summary.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")}g · C ${formatFoodNumber(totals.carbs, "carbs")}g · F ${formatFoodNumber(totals.fat, "fat")}g`;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "food-meal-remove";
+  remove.innerHTML = ICONS["trash-2"];
+  remove.title = "Remove meal";
+  remove.disabled = getFoodEntry(card, dateKey).meals.length <= 1;
+  remove.addEventListener("click", () => removeFoodMeal(card, dateKey, meal.id));
+  header.append(name, summary, remove);
+
+  const items = document.createElement("div");
+  items.className = "food-items";
+  if (!meal.items.length) {
+    const empty = document.createElement("p");
+    empty.className = "food-empty";
+    empty.textContent = "Click a food above to add it here.";
+    items.append(empty);
+  } else {
+    meal.items.forEach((item) => items.append(renderFoodItem(card, dateKey, meal, item)));
+  }
+  section.append(header, items);
+  return section;
+}
+
+function renderFoodItem(card, dateKey, meal, item) {
+  const food = getFoodForLoggedItem(card, item);
+  const totals = calculateFoodItem(card, item);
+  const row = document.createElement("div");
+  row.className = "food-item-row";
+  const name = document.createElement("strong");
+  name.textContent = food?.name || "Unknown food";
+  const amount = document.createElement("input");
+  amount.type = "number";
+  amount.inputMode = "decimal";
+  amount.min = "0";
+  amount.step = item.unit === "g" ? "1" : "0.25";
+  amount.value = String(item.amount || "");
+  amount.setAttribute("aria-label", `${food?.name || "Food"} amount`);
+  amount.addEventListener("input", () => {
+    item.amount = Math.max(0, normalizeOptionalNumber(amount.value) || 0);
+    saveFoodCard(card, dateKey);
+  });
+  amount.addEventListener("change", () => renderCardsOnly({ force: true }));
+  const unit = document.createElement("select");
+  unit.setAttribute("aria-label", `${food?.name || "Food"} unit`);
+  unit.innerHTML = `
+    <option value="g">g</option>
+    <option value="serving">${escapeHtml(food?.servingUnit || "unit")}</option>
+  `;
+  unit.value = item.unit;
+  unit.addEventListener("change", () => {
+    item.unit = unit.value === "g" ? "g" : "serving";
+    saveFoodCard(card, dateKey, { rerender: true });
+  });
+  const macros = document.createElement("span");
+  macros.className = "food-item-macros";
+  macros.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")} · C ${formatFoodNumber(totals.carbs, "carbs")} · F ${formatFoodNumber(totals.fat, "fat")} · Fi ${formatFoodNumber(totals.fiber, "fiber")}`;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.innerHTML = ICONS["trash-2"];
+  remove.title = "Remove food";
+  remove.addEventListener("click", () => {
+    meal.items = meal.items.filter((nextItem) => nextItem.id !== item.id);
+    saveFoodCard(card, dateKey, { rerender: true });
+  });
+  row.append(name, amount, unit, macros, remove);
+  return row;
+}
+
+function renderFoodLibraryEditor(card) {
+  const details = document.createElement("details");
+  details.className = "food-library-panel";
+  details.open = Boolean(card.foodLibraryOpen);
+  details.addEventListener("toggle", () => {
+    card.foodLibraryOpen = details.open;
+    saveState({ quiet: true });
+  });
+  const summary = document.createElement("summary");
+  summary.innerHTML = `<strong>Food library</strong><span>${card.foodLibrary.length} foods</span>`;
+  const list = document.createElement("div");
+  list.className = "food-library-list";
+  card.foodLibrary.forEach((food) => list.append(renderFoodLibraryRow(card, food)));
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "food-library-add";
+  add.innerHTML = `${ICONS.plus}<span>Add custom food</span>`;
+  add.addEventListener("click", () => {
+    card.foodLibrary.push(normalizeFoodDefinition({
+      id: createId(),
+      name: "New food",
+      servingUnit: "100g",
+      servingGrams: 100,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
+      fiber: 0,
+      source: "Custom"
+    }));
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  const note = document.createElement("p");
+  note.className = "food-source-note";
+  note.textContent = "Defaults use public nutrition references. Edit tuna, whey and packaged foods to match your label.";
+  details.append(summary, list, add, note);
+  return details;
+}
+
+function renderFoodLibraryRow(card, food) {
+  const row = document.createElement("div");
+  row.className = "food-library-row";
+  row.append(
+    createFoodTextField("Food", food.name, (value) => updateFoodDefinition(card, food.id, { name: value || "Food" })),
+    createFoodTextField("Unit", food.servingUnit, (value) => updateFoodDefinition(card, food.id, { servingUnit: value || "unit" })),
+    createFoodNumberField("Grams", food.servingGrams, (value) => updateFoodDefinition(card, food.id, { servingGrams: value }), { step: "1" }),
+    ...FOOD_NUTRIENT_KEYS.map((key) => createFoodNumberField(FOOD_NUTRIENT_META[key].short, food[key], (value) => updateFoodDefinition(card, food.id, { [key]: value }), { step: key === "calories" ? "1" : "0.1" }))
+  );
+  const source = document.createElement("small");
+  source.textContent = food.source || "Custom";
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.innerHTML = ICONS["trash-2"];
+  remove.title = "Remove food from library";
+  remove.disabled = card.foodLibrary.length <= 1;
+  remove.addEventListener("click", () => {
+    card.foodLibrary = card.foodLibrary.filter((item) => item.id !== food.id);
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  row.append(source, remove);
+  return row;
+}
+
+function createFoodTextField(label, value, onInput) {
+  const field = document.createElement("label");
+  field.className = "food-field";
+  const span = document.createElement("span");
+  span.textContent = label;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value || "";
+  input.addEventListener("input", () => onInput(normalizeLabel(input.value)));
+  input.addEventListener("change", () => renderCardsOnly({ force: true }));
+  field.append(span, input);
+  return field;
+}
+
+function createFoodNumberField(label, value, onInput, options = {}) {
+  const field = document.createElement("label");
+  field.className = "food-field";
+  const span = document.createElement("span");
+  span.textContent = label;
+  const input = document.createElement("input");
+  input.type = "number";
+  input.inputMode = "decimal";
+  input.min = "0";
+  input.step = options.step || "0.1";
+  input.value = value === "" || value === null || typeof value === "undefined" ? "" : String(value);
+  input.addEventListener("input", () => onInput(normalizeOptionalNumber(input.value)));
+  input.addEventListener("change", () => {
+    if (typeof options.onCommit === "function") options.onCommit(input.value);
+  });
+  field.append(span, input);
+  return field;
+}
+
+function updateFoodDefinition(card, foodId, updates) {
+  const index = card.foodLibrary.findIndex((food) => food.id === foodId);
+  if (index < 0) return;
+  card.foodLibrary[index] = normalizeFoodDefinition({
+    ...card.foodLibrary[index],
+    ...updates,
+    id: foodId
+  });
+  saveState({ quiet: true });
+}
+
+function addFoodItemToMeal(card, dateKey, mealId, foodId) {
+  const entry = getFoodEntry(card, dateKey);
+  const meal = entry.meals.find((item) => item.id === mealId) || entry.meals[0];
+  const food = getFoodById(card, foodId);
+  if (!meal || !food) return;
+  meal.items.push({
+    id: createId(),
+    foodId,
+    amount: food.servingUnit === "100g" ? 100 : 1,
+    unit: food.servingUnit === "100g" ? "g" : "serving",
+    ...createFoodItemSnapshot(food)
+  });
+  card.activeFoodMealId = meal.id;
+  saveFoodCard(card, dateKey, { rerender: true });
+}
+
+function removeFoodMeal(card, dateKey, mealId) {
+  const entry = getFoodEntry(card, dateKey);
+  if (entry.meals.length <= 1) return;
+  entry.meals = entry.meals.filter((meal) => meal.id !== mealId);
+  card.activeFoodMealId = entry.meals[0]?.id || "";
+  saveFoodCard(card, dateKey, { rerender: true });
+}
+
+function saveFoodCard(card, dateKey, options = {}) {
+  const entry = getFoodEntry(card, dateKey);
+  entry.updatedAt = Date.now();
+  card.foodEntries[dateKey] = normalizeFoodEntry(entry);
+  saveState({ quiet: true });
+  if (options.rerender) renderCardsOnly({ force: true });
+}
+
+function getFoodStatusLabel(totals, target) {
+  if (!totals.calories) return "Ready to log";
+  if (target.calories && totals.calories > target.calories * 1.05) return "Over calorie target";
+  if (target.protein && totals.protein < target.protein * 0.7) return "Protein left";
+  return "On track";
+}
+
+function formatFoodDateTitle(dateKey) {
+  const date = dateKeyToLocalDate(dateKey);
+  return date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+}
+
+function formatFoodNumber(value, key) {
+  const number = Number(value) || 0;
+  const decimals = FOOD_NUTRIENT_META[key]?.decimals ?? 1;
+  if (decimals === 0) return String(Math.round(number));
+  return number.toFixed(decimals).replace(/\.?0+$/, "");
 }
 
 function renderChecklist(card) {
@@ -6536,7 +7325,7 @@ function renderFitnessReport(range) {
   summary.className = "report-metric-grid";
   summary.append(
     createReportMetric("Sessions", sessions.length, "logged workout days"),
-    createReportMetric("Running", `${formatReportNumber(totals.runningKm)} km`, `${Math.round(totals.runningMinutes)} min`),
+    createReportMetric("Running", `${formatReportNumber(totals.runningKm)} km`, `${formatReportNumber(totals.runningMinutes)} min`),
     createReportMetric("Strength", `${totals.strengthSets} sets`, `${totals.strengthDays} training days`),
     createReportMetric("Coverage", `${totals.partLabels.length}`, totals.partLabels.join(", ") || "no parts yet")
   );
@@ -6646,7 +7435,7 @@ function createFitnessMetricsTrendSection(sessions) {
   ["weightKg", "bmi", "bodyFatPercent", "waistCm"].forEach((key) => {
     const field = FITNESS_METRIC_FIELDS.find((item) => item.key === key);
     const row = document.createElement("div");
-    row.innerHTML = `<strong>${escapeHtml(field.label)}</strong><span>${formatMetricValue(first.entry.metrics[key], field.suffix)}</span><span>${formatMetricValue(latest.entry.metrics[key], field.suffix)}</span>`;
+    row.innerHTML = `<strong>${escapeHtml(field.label)}</strong><span>${formatMetricValue(first.entry.metrics[key], field.suffix, field.decimals)}</span><span>${formatMetricValue(latest.entry.metrics[key], field.suffix, field.decimals)}</span>`;
     table.append(row);
   });
   section.append(heading, createReportSubhead(`${formatRecordDate(first.dateKey)} to ${formatRecordDate(latest.dateKey)}`), table);
@@ -6840,9 +7629,15 @@ function formatReportNumber(value) {
   return Number.isInteger(number) ? String(number) : number.toFixed(1);
 }
 
-function formatMetricValue(value, suffix) {
+function formatMetricValue(value, suffix, decimals = null) {
   if (value === "" || value === null || typeof value === "undefined") return "-";
-  return `${value}${suffix ? ` ${suffix}` : ""}`;
+  const number = Number(value);
+  const formatted = Number.isFinite(number) && typeof decimals === "number"
+    ? decimals === 0
+      ? String(Math.round(number))
+      : number.toFixed(decimals).replace(/\.?0+$/, "")
+    : String(value);
+  return `${formatted}${suffix ? ` ${suffix}` : ""}`;
 }
 
 function printCurrentReport() {
@@ -7656,10 +8451,17 @@ function getPlannedDateChip(card) {
 }
 
 function getPlannedDateTitle(card) {
-  if (!card || !["daily", "planner", "diary"].includes(card.type)) return "";
-  const dateKey = card.type === "planner" ? getActivePlannerDate(card) : card.type === "diary" ? getActiveDiaryDate(card) : getCardPlanDate(card);
+  if (!card || !["daily", "planner", "diary", "food"].includes(card.type)) return "";
+  const dateKey =
+    card.type === "planner"
+      ? getActivePlannerDate(card)
+      : card.type === "diary"
+        ? getActiveDiaryDate(card)
+        : card.type === "food"
+          ? getActiveFoodDate(card)
+          : getCardPlanDate(card);
   const date = dateKeyToLocalDate(dateKey);
-  const prefix = card.type === "diary" ? "Diary page for" : card.type === "planner" ? "Planner date for" : "Planned for";
+  const prefix = card.type === "diary" ? "Diary page for" : card.type === "planner" ? "Planner date for" : card.type === "food" ? "Food log for" : "Planned for";
   return `${prefix} ${date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`;
 }
 
@@ -8048,7 +8850,7 @@ function getOrderedCards() {
 }
 
 function getTypeWeight(type) {
-  const weights = { planner: 0, planlist: 1, diary: 2, brief: 3, fitness: 4, routine: 5, scheduled: 6, daily: 7, event: 8, quote: 9, video: 10, lab: 11, workout: 12, minutes: 13, checklist: 14, weekly: 15, monthly: 16, annual: 17, single: 18 };
+  const weights = { planner: 0, planlist: 1, diary: 2, brief: 3, fitness: 4, food: 5, routine: 6, scheduled: 7, daily: 8, event: 9, quote: 10, video: 11, lab: 12, workout: 13, minutes: 14, checklist: 15, weekly: 16, monthly: 17, annual: 18, single: 19 };
   return Number.isFinite(weights[type]) ? weights[type] : 9;
 }
 
@@ -8080,6 +8882,13 @@ function getCardSearchText(card) {
   const plannerEntry = card.type === "planner" ? getPlannerEntry(card, getActivePlannerDate(card)) : null;
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, getActiveDiaryDate(card)) : null;
   const fitnessEntry = card.type === "fitness" ? getFitnessEntry(card, getActiveFitnessDate(card)) : null;
+  const foodEntry = card.type === "food" ? getFoodEntry(card, getActiveFoodDate(card)) : null;
+  const foodText = foodEntry
+    ? [
+        ...foodEntry.meals.map((meal) => meal.name),
+        ...foodEntry.meals.flatMap((meal) => meal.items.map((item) => getFoodById(card, item.foodId)?.name || ""))
+      ].join(" ")
+    : "";
   const parts = [
     card.title,
     card.description,
@@ -8094,10 +8903,12 @@ function getCardSearchText(card) {
     diaryEntry?.thoughts,
     fitnessEntry?.notes,
     fitnessEntry ? getActiveFitnessParts(fitnessEntry).map((part) => part.label).join(" ") : "",
+    foodText,
+    card.type === "food" ? "calories protein carbs fat fiber meals nutrition food target" : "",
     typeMeta.label,
     progress.label,
     getSelectedPriority(card.priority),
-    ["daily", "planner", "diary"].includes(card.type) ? getPlannedDateTitle(card) : ""
+    ["daily", "planner", "diary", "food"].includes(card.type) ? getPlannedDateTitle(card) : ""
   ];
   return parts.map((part) => normalizeLabel(part || "").toLowerCase()).join(" ");
 }
@@ -8168,6 +8979,15 @@ function getProgress(card) {
     const entry = getFitnessEntry(card, getActiveFitnessDate(card));
     const activeParts = getActiveFitnessParts(entry);
     return { percent: activeParts.length ? 100 : 0, label: activeParts.length ? `${activeParts.length} parts` : "Fitness" };
+  }
+
+  if (card.type === "food") {
+    const entry = getFoodEntry(card, getActiveFoodDate(card));
+    const totals = getFoodEntryTotals(card, entry);
+    const target = getFoodTarget(card, getActiveFoodDate(card));
+    const percent = target.calories ? Math.min(100, Math.round((totals.calories / target.calories) * 100)) : 0;
+    const itemCount = entry.meals.reduce((sum, meal) => sum + meal.items.length, 0);
+    return { percent, label: itemCount ? `${formatFoodNumber(totals.calories, "calories")} kcal` : "Food" };
   }
 
   if (card.type === "single") {
@@ -8989,6 +9809,14 @@ function buildTemplateCards(templateId) {
         theme: "leaf",
         background: "mint",
         items: ["7+ hours sleep", "2L water", "8,000 steps", "Protein each meal", "Log calories"]
+      }),
+      makeCard({
+        title: "Daily food tracker",
+        description: "Log meals by grams or unit, then compare calories, protein, carbs, fats and fiber against this month's targets.",
+        category: "Health",
+        type: "food",
+        theme: "leaf",
+        background: "mint"
       }),
       makeCard({
         title: "Calorie awareness",
@@ -9855,6 +10683,19 @@ function makeCard(options) {
     normalizeFitnessCard(card);
   }
 
+  if (card.type === "food") {
+    const activeDate = normalizeDateKey(options.activeFoodDate) || getTodayKey();
+    card.activeFoodDate = activeDate;
+    card.activeFoodMealId = options.activeFoodMealId || "";
+    card.foodLibrary = normalizeFoodLibrary(options.foodLibrary);
+    card.foodTargets = options.foodTargets && typeof options.foodTargets === "object" ? options.foodTargets : {};
+    card.foodEntries = options.foodEntries && typeof options.foodEntries === "object" ? options.foodEntries : {};
+    if (!card.foodEntries[activeDate]) {
+      card.foodEntries[activeDate] = normalizeFoodEntry(options.foodEntry || {});
+    }
+    normalizeFoodCard(card);
+  }
+
   if (card.type === "daily") {
     card.plannedDate = normalizeDateKey(options.plannedDate) || getTodayKey();
   }
@@ -10132,6 +10973,9 @@ function normalizeCard(card) {
   }
   if (next.type === "fitness") {
     normalizeFitnessCard(next);
+  }
+  if (next.type === "food") {
+    normalizeFoodCard(next);
   }
   if (next.type === "brief") {
     normalizeBriefSections(next);
