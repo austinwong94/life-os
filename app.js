@@ -380,13 +380,17 @@ const FITNESS_METRIC_FIELDS = [
   { key: "heightCm", label: "Height", suffix: "cm", step: "0.1", decimals: 1, min: 0 },
   { key: "bmi", label: "BMI", suffix: "", step: "0.1", decimals: 1, min: 0 },
   { key: "bodyFatPercent", label: "Fat", suffix: "%", step: "0.1", decimals: 1, min: 0, max: 100 },
+  { key: "chestCm", label: "Chest", suffix: "cm", step: "0.1", decimals: 1, min: 0 },
   { key: "waistCm", label: "Waist", suffix: "cm", step: "0.1", decimals: 1, min: 0 },
+  { key: "leftArmCm", label: "Left arm", suffix: "cm", step: "0.1", decimals: 1, min: 0 },
+  { key: "rightArmCm", label: "Right arm", suffix: "cm", step: "0.1", decimals: 1, min: 0 },
   { key: "restingHr", label: "Resting HR", suffix: "bpm", step: "1", decimals: 0, min: 0 },
   { key: "sleepHours", label: "Sleep", suffix: "h", step: "0.1", decimals: 1, min: 0 },
-  { key: "energy", label: "Energy", suffix: "/5", step: "1", decimals: 0, min: 1, max: 5 }
+  { key: "energy", label: "Energy", suffix: "/5", step: "1", decimals: 0, min: 1, max: 5, help: "1 drained, 3 okay, 5 strong readiness" }
 ];
 
 const FOOD_NUTRIENT_KEYS = ["calories", "protein", "carbs", "fat", "fiber"];
+const FOOD_MEAL_NAME_PRESETS = ["Breakfast", "Brunch", "Lunch", "Dinner", "Supper"];
 const FOOD_NUTRIENT_META = {
   calories: { label: "Calories", short: "kcal", unit: "kcal", decimals: 0 },
   protein: { label: "Protein", short: "P", unit: "g", decimals: 1 },
@@ -526,7 +530,8 @@ const defaultState = {
   board: {
     name: "My Life OS",
     visibility: "private",
-    layout: "smart"
+    layout: "smart",
+    columnCount: 3
   },
   ui: {
     sidebarOpen: true,
@@ -1134,6 +1139,7 @@ const elements = {
   visibilityLabel: document.querySelector("#visibilityLabel"),
   visibilityControl: document.querySelector("#visibilityControl"),
   layoutControl: document.querySelector("#layoutControl"),
+  columnControl: document.querySelector("#columnControl"),
   savedState: document.querySelector("#savedState"),
   boardSelect: document.querySelector("#boardSelect"),
   boardQuickSelect: document.querySelector("#boardQuickSelect"),
@@ -1447,6 +1453,17 @@ function bindEvents() {
     if (!button) return;
     state.board.layout = button.dataset.value;
     render();
+    saveState();
+  });
+
+  elements.columnControl.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-columns]");
+    if (!button) return;
+    const nextColumnCount = normalizeBoardColumnCount(button.dataset.columns);
+    if (state.board.columnCount === nextColumnCount) return;
+    state.board.columnCount = nextColumnCount;
+    renderBoardMeta();
+    renderCardsOnly({ force: true, preserveScroll: false });
     saveState();
   });
 
@@ -2302,6 +2319,7 @@ function closeOtherOverlays(activeSurface = "") {
 function closeCardActionMenus() {
   document.querySelectorAll(".card-menu-shell.is-open").forEach((shell) => {
     shell.classList.remove("is-open");
+    shell.closest(".task-card")?.classList.remove("is-menu-open");
     const menu = shell.querySelector(".card-menu");
     const toggle = shell.querySelector(".card-menu-toggle");
     if (menu) menu.hidden = true;
@@ -2430,6 +2448,11 @@ function renderBoardMeta() {
 
   elements.layoutControl.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("is-active", state.board.layout === button.dataset.value);
+  });
+
+  elements.columnControl.querySelectorAll("button").forEach((button) => {
+    const columnCount = normalizeBoardColumnCount(button.dataset.columns);
+    button.classList.toggle("is-active", getPreferredBoardColumnCount() === columnCount);
   });
 
   document.querySelectorAll(".view-pills .pill").forEach((pill) => {
@@ -2909,9 +2932,23 @@ function isFeaturedBoardCard(card) {
 
 function getBoardColumnCount() {
   const width = elements.boardGrid.clientWidth || elements.boardGrid.getBoundingClientRect().width || window.innerWidth;
-  if (width < 680) return 1;
-  if (width < 860) return 2;
+  return Math.min(getPreferredBoardColumnCount(), getMaximumBoardColumnsForWidth(width));
+}
+
+function getPreferredBoardColumnCount() {
+  state.board.columnCount = normalizeBoardColumnCount(state.board.columnCount);
+  return state.board.columnCount;
+}
+
+function getMaximumBoardColumnsForWidth(width) {
+  const availableWidth = Number(width) || window.innerWidth || 0;
+  if (availableWidth < 680) return 1;
+  if (availableWidth < 900) return 2;
   return 3;
+}
+
+function normalizeBoardColumnCount(value) {
+  return clampInt(value, 2, 3, 3);
 }
 
 function getRenderedBoardColumnCount() {
@@ -3190,6 +3227,7 @@ function renderCard(card, options = {}) {
       closeCardActionMenus();
       cardMenu.hidden = isOpen;
       menuShell.classList.toggle("is-open", !isOpen);
+      node.classList.toggle("is-menu-open", !isOpen);
       menuToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
     });
     cardMenu.addEventListener("click", (event) => {
@@ -4391,10 +4429,14 @@ function renderFitnessMetrics(card, dateKey, entry) {
       decimals: field.decimals,
       min: field.min,
       max: field.max,
+      help: field.help,
       onCommit: field.key === "weightKg" || field.key === "heightCm" ? () => queueDeferredBoardRender({ reason: "fitness-metrics" }) : null
     }));
   });
-  section.append(summary, grid, createFitnessNotesDisclosure("Session notes", entry.notes, (value) => {
+  const hint = document.createElement("p");
+  hint.className = "fitness-metrics-hint";
+  hint.textContent = "Energy is your 1-5 readiness score: 1 drained, 3 okay, 5 strong.";
+  section.append(summary, grid, hint, createFitnessNotesDisclosure("Session notes", entry.notes, (value) => {
     updateFitnessEntry(card, dateKey, (nextEntry) => { nextEntry.notes = value; });
   }));
   return section;
@@ -4435,6 +4477,7 @@ function createFitnessNumberField(label, value, onInput, options = {}) {
     step: options.step || "0.1",
     min: options.min,
     max: options.max,
+    help: options.help,
     onCommit: options.onCommit
   });
 }
@@ -4442,14 +4485,17 @@ function createFitnessNumberField(label, value, onInput, options = {}) {
 function createFitnessTextField(label, value, onInput, options = {}) {
   const field = document.createElement("label");
   field.className = "fitness-field";
+  if (options.help) field.title = options.help;
   const span = document.createElement("span");
   span.textContent = label;
+  if (options.help) span.title = options.help;
   const input = document.createElement("input");
   input.type = options.type || "text";
   if (options.step) input.step = options.step;
   if (typeof options.min !== "undefined") input.min = String(options.min);
   if (typeof options.max !== "undefined") input.max = String(options.max);
   if (options.inputMode) input.inputMode = options.inputMode;
+  if (options.help) input.title = options.help;
   input.value = value === "" || value === null || typeof value === "undefined" ? "" : String(value);
   input.addEventListener("input", () => onInput(input.value));
   if (typeof options.onCommit === "function") {
@@ -4550,6 +4596,9 @@ function normalizeFoodCard(card) {
   card.foodTargets = card.foodTargets && typeof card.foodTargets === "object" ? card.foodTargets : {};
   card.foodTargetsOpen = Boolean(card.foodTargetsOpen);
   card.foodLibraryOpen = Boolean(card.foodLibraryOpen);
+  card.foodAddOpen = card.foodAddOpen !== false;
+  card.foodMealOpen = card.foodMealOpen !== false;
+  card.foodMealPickerOpen = Boolean(card.foodMealPickerOpen);
   Object.entries(card.foodEntries).forEach(([dateKey, entry]) => {
     const normalizedDate = normalizeDateKey(dateKey);
     if (!normalizedDate) {
@@ -4703,6 +4752,15 @@ function getFoodEntry(card, dateKey = getActiveFoodDate(card)) {
   return card.foodEntries[normalizedDate];
 }
 
+function getFoodMealById(card, dateKey, mealId) {
+  return getFoodEntry(card, dateKey).meals.find((meal) => meal.id === mealId) || null;
+}
+
+function getFoodItemById(card, dateKey, mealId, itemId) {
+  const meal = getFoodMealById(card, dateKey, mealId);
+  return meal?.items?.find((item) => item.id === itemId) || null;
+}
+
 function getFoodMonthKey(dateKey) {
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
   return normalizedDate.slice(0, 7);
@@ -4772,11 +4830,17 @@ function getFoodEntryTotals(card, entry) {
   return addFoodTotals(...(entry.meals || []).map((meal) => getFoodMealTotals(card, meal)));
 }
 
+function getActiveFoodMeal(card, entry) {
+  const meal = entry.meals.find((item) => item.id === card.activeFoodMealId) || entry.meals[0] || null;
+  if (meal && card.activeFoodMealId !== meal.id) card.activeFoodMealId = meal.id;
+  return meal;
+}
+
 function renderFoodTracker(card) {
   normalizeFoodCard(card);
   const dateKey = getActiveFoodDate(card);
-  const entry = getFoodEntry(card, dateKey);
   const target = getFoodTarget(card, dateKey);
+  const entry = getFoodEntry(card, dateKey);
   const totals = getFoodEntryTotals(card, entry);
   const wrapper = document.createElement("div");
   wrapper.className = "food-tracker";
@@ -4892,57 +4956,169 @@ function renderFoodTargetEditor(card, dateKey, target) {
 function renderFoodAddPanel(card, dateKey, entry) {
   const panel = document.createElement("section");
   panel.className = "food-add-panel";
+  const activeMeal = getActiveFoodMeal(card, entry);
+
+  const mealHead = document.createElement("div");
+  mealHead.className = "food-add-head";
+  const mealLabel = document.createElement("div");
+  mealLabel.innerHTML = `<strong>Active meal</strong><span>${escapeHtml(activeMeal?.name || "Meal 1")} receives the food you tap below</span>`;
+  const addMeal = document.createElement("button");
+  addMeal.type = "button";
+  addMeal.className = "food-add-meal";
+  addMeal.innerHTML = `${ICONS.plus}<span>${card.foodMealPickerOpen ? "Close" : "Add meal"}</span>`;
+  addMeal.addEventListener("click", (event) => {
+    event.stopPropagation();
+    card.foodMealPickerOpen = !card.foodMealPickerOpen;
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  mealHead.append(mealLabel, addMeal);
+  const mealPicker = renderFoodMealPicker(card, dateKey, entry);
+
+  const activeMealIndex = Math.max(0, entry.meals.findIndex((meal) => meal.id === activeMeal?.id));
+  const mealNav = document.createElement("div");
+  mealNav.className = "food-meal-nav";
+  const previousMeal = document.createElement("button");
+  previousMeal.type = "button";
+  previousMeal.className = "food-meal-nav-button";
+  previousMeal.innerHTML = ICONS["chevron-left"];
+  previousMeal.title = "Previous meal";
+  previousMeal.disabled = activeMealIndex <= 0;
+  previousMeal.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const previous = entry.meals[activeMealIndex - 1];
+    if (!previous) return;
+    card.activeFoodMealId = previous.id;
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+
   const mealTabs = document.createElement("div");
   mealTabs.className = "food-meal-tabs";
+  mealTabs.setAttribute("role", "tablist");
+  mealTabs.setAttribute("aria-label", "Meals");
   entry.meals.forEach((meal) => {
+    const totals = getFoodMealTotals(card, meal);
+    const itemCount = meal.items.length;
     const button = document.createElement("button");
     button.type = "button";
     button.classList.toggle("is-active", meal.id === card.activeFoodMealId);
-    button.textContent = meal.name;
-    button.addEventListener("click", () => {
+    button.setAttribute("role", "tab");
+    button.setAttribute("aria-selected", String(meal.id === card.activeFoodMealId));
+    button.innerHTML = `<span>${escapeHtml(meal.name)}</span><small>${formatFoodNumber(totals.calories, "calories")} kcal · ${itemCount} item${itemCount === 1 ? "" : "s"}</small>`;
+    button.title = `Edit ${meal.name}`;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
       card.activeFoodMealId = meal.id;
       saveState();
       renderCardsOnly({ force: true });
     });
     mealTabs.append(button);
   });
-  const addMeal = document.createElement("button");
-  addMeal.type = "button";
-  addMeal.className = "food-add-meal";
-  addMeal.innerHTML = `${ICONS.plus}<span>Meal</span>`;
-  addMeal.addEventListener("click", () => {
-    const meal = { id: createId(), name: `Meal ${entry.meals.length + 1}`, items: [] };
-    entry.meals.push(meal);
-    card.activeFoodMealId = meal.id;
-    saveFoodCard(card, dateKey, { rerender: true });
+  requestAnimationFrame(() => {
+    mealTabs.querySelector(".is-active")?.scrollIntoView({ block: "nearest", inline: "center" });
   });
-  mealTabs.append(addMeal);
 
+  const nextMeal = document.createElement("button");
+  nextMeal.type = "button";
+  nextMeal.className = "food-meal-nav-button";
+  nextMeal.innerHTML = ICONS["chevron-right"];
+  nextMeal.title = "Next meal";
+  nextMeal.disabled = activeMealIndex >= entry.meals.length - 1;
+  nextMeal.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const next = entry.meals[activeMealIndex + 1];
+    if (!next) return;
+    card.activeFoodMealId = next.id;
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  mealNav.append(previousMeal, mealTabs, nextMeal);
+
+  const addFoodDetails = document.createElement("details");
+  addFoodDetails.className = "food-add-food-panel";
+  addFoodDetails.open = card.foodAddOpen !== false;
+  addFoodDetails.addEventListener("toggle", () => {
+    card.foodAddOpen = addFoodDetails.open;
+    saveState({ quiet: true, touch: false });
+  });
+  const foodHead = document.createElement("summary");
+  foodHead.className = "food-add-subhead";
+  foodHead.innerHTML = `<strong>Add food</strong><span>${card.foodLibrary.length} foods</span>`;
   const foodChips = document.createElement("div");
   foodChips.className = "food-chip-row";
   card.foodLibrary.forEach((food) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = food.name;
+    button.innerHTML = `${ICONS.plus}<span>${escapeHtml(food.name)}</span>`;
     button.title = `${food.name}: ${formatFoodNumber(food.calories, "calories")} kcal, ${formatFoodNumber(food.protein, "protein")}g protein per ${food.servingUnit}`;
-    button.addEventListener("click", () => addFoodItemToMeal(card, dateKey, card.activeFoodMealId, food.id));
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      addFoodItemToMeal(card, dateKey, card.activeFoodMealId, food.id);
+    });
     foodChips.append(button);
   });
-  panel.append(mealTabs, foodChips);
+  addFoodDetails.append(foodHead, foodChips);
+  panel.append(mealHead, mealPicker, mealNav, addFoodDetails);
   return panel;
+}
+
+function renderFoodMealPicker(card, dateKey, entry) {
+  const picker = document.createElement("div");
+  picker.className = "food-meal-picker";
+  picker.hidden = !card.foodMealPickerOpen;
+  const presets = document.createElement("div");
+  presets.className = "food-meal-preset-row";
+  FOOD_MEAL_NAME_PRESETS.forEach((label) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.title = `Add ${label}`;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      addFoodMeal(card, dateKey, label);
+    });
+    presets.append(button);
+  });
+  const custom = document.createElement("div");
+  custom.className = "food-meal-custom";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 32;
+  input.placeholder = `Meal ${entry.meals.length + 1}`;
+  input.setAttribute("aria-label", "Custom meal name");
+  const add = document.createElement("button");
+  add.type = "button";
+  add.innerHTML = `${ICONS.plus}<span>Add</span>`;
+  add.title = "Add custom meal";
+  const addCustomMeal = () => addFoodMeal(card, dateKey, input.value || input.placeholder);
+  add.addEventListener("click", (event) => {
+    event.stopPropagation();
+    addCustomMeal();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    addCustomMeal();
+  });
+  custom.append(input, add);
+  picker.append(presets, custom);
+  return picker;
 }
 
 function renderFoodMeals(card, dateKey, entry) {
   const list = document.createElement("div");
-  list.className = "food-meals";
-  entry.meals.forEach((meal) => list.append(renderFoodMeal(card, dateKey, meal)));
+  list.className = "food-meals food-active-meal";
+  const activeMeal = getActiveFoodMeal(card, entry);
+  if (activeMeal) {
+    list.append(renderFoodMeal(card, dateKey, activeMeal));
+  }
   return list;
 }
 
 function renderFoodMeal(card, dateKey, meal) {
   const section = document.createElement("section");
-  section.className = "food-meal";
-  section.classList.toggle("is-active", meal.id === card.activeFoodMealId);
+  section.className = "food-meal food-meal-editor is-active";
   const totals = getFoodMealTotals(card, meal);
   const header = document.createElement("div");
   header.className = "food-meal-header";
@@ -4951,33 +5127,82 @@ function renderFoodMeal(card, dateKey, meal) {
   name.value = meal.name;
   name.maxLength = 32;
   name.setAttribute("aria-label", "Meal name");
+  const listId = `food-meal-names-${card.id}-${meal.id}`;
+  name.setAttribute("list", listId);
   name.addEventListener("input", () => {
-    meal.name = normalizeLabel(name.value) || "Meal";
+    const currentMeal = getFoodMealById(card, dateKey, meal.id);
+    if (!currentMeal) return;
+    currentMeal.name = normalizeLabel(name.value) || "Meal";
     saveFoodCard(card, dateKey);
   });
   name.addEventListener("change", () => renderCardsOnly({ force: true }));
-  const summary = document.createElement("span");
-  summary.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")}g · C ${formatFoodNumber(totals.carbs, "carbs")}g · F ${formatFoodNumber(totals.fat, "fat")}g`;
+  const datalist = document.createElement("datalist");
+  datalist.id = listId;
+  FOOD_MEAL_NAME_PRESETS.forEach((label) => {
+    const option = document.createElement("option");
+    option.value = label;
+    datalist.append(option);
+  });
+  const quickNames = document.createElement("div");
+  quickNames.className = "food-meal-name-presets";
+  FOOD_MEAL_NAME_PRESETS.forEach((label) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.title = `Rename to ${label}`;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const currentMeal = getFoodMealById(card, dateKey, meal.id);
+      if (!currentMeal) return;
+      currentMeal.name = label;
+      saveFoodCard(card, dateKey, { rerender: true });
+    });
+    quickNames.append(button);
+  });
+  const summary = document.createElement("div");
+  summary.className = "food-meal-summary";
+  FOOD_NUTRIENT_KEYS.forEach((key) => {
+    const item = document.createElement("span");
+    const unit = key === "calories" ? "kcal" : "g";
+    item.innerHTML = `<strong>${escapeHtml(FOOD_NUTRIENT_META[key].short)}</strong><small>${formatFoodNumber(totals[key], key)}${unit}</small>`;
+    summary.append(item);
+  });
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "food-meal-remove";
   remove.innerHTML = ICONS["trash-2"];
   remove.title = "Remove meal";
   remove.disabled = getFoodEntry(card, dateKey).meals.length <= 1;
-  remove.addEventListener("click", () => removeFoodMeal(card, dateKey, meal.id));
-  header.append(name, summary, remove);
+  remove.addEventListener("click", (event) => {
+    event.stopPropagation();
+    removeFoodMeal(card, dateKey, meal.id);
+  });
+  header.append(name, remove, datalist, quickNames, summary);
+
+  const mealDetails = document.createElement("details");
+  mealDetails.className = "food-meal-details";
+  mealDetails.open = card.foodMealOpen !== false || !meal.items.length;
+  mealDetails.addEventListener("toggle", () => {
+    card.foodMealOpen = mealDetails.open;
+    saveState({ quiet: true, touch: false });
+  });
+  const mealSummary = document.createElement("summary");
+  const itemCount = meal.items.length;
+  mealSummary.innerHTML = `<strong>Foods in meal</strong><span>${itemCount} item${itemCount === 1 ? "" : "s"}</span>`;
 
   const items = document.createElement("div");
   items.className = "food-items";
   if (!meal.items.length) {
     const empty = document.createElement("p");
     empty.className = "food-empty";
-    empty.textContent = "Click a food above to add it here.";
+    empty.textContent = "Tap a food above to start this meal.";
     items.append(empty);
   } else {
     meal.items.forEach((item) => items.append(renderFoodItem(card, dateKey, meal, item)));
   }
-  section.append(header, items);
+  mealDetails.append(mealSummary, items);
+  section.append(header, mealDetails);
   return section;
 }
 
@@ -4986,8 +5211,35 @@ function renderFoodItem(card, dateKey, meal, item) {
   const totals = calculateFoodItem(card, item);
   const row = document.createElement("div");
   row.className = "food-item-row";
+  row.addEventListener("click", (event) => event.stopPropagation());
+
+  const top = document.createElement("div");
+  top.className = "food-item-top";
   const name = document.createElement("strong");
   name.textContent = food?.name || "Unknown food";
+  const macros = document.createElement("span");
+  macros.className = "food-item-macros";
+  macros.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")}g · C ${formatFoodNumber(totals.carbs, "carbs")}g · F ${formatFoodNumber(totals.fat, "fat")}g · Fi ${formatFoodNumber(totals.fiber, "fiber")}g`;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "food-item-remove";
+  remove.innerHTML = ICONS["trash-2"];
+  remove.title = "Remove food";
+  remove.setAttribute("aria-label", `Remove ${food?.name || "food"}`);
+  remove.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const currentMeal = getFoodMealById(card, dateKey, meal.id);
+    if (!currentMeal) return;
+    currentMeal.items = (currentMeal.items || []).filter((nextItem) => nextItem.id !== item.id);
+    saveFoodCard(card, dateKey, { rerender: true });
+  });
+  top.append(name, macros, remove);
+
+  const controls = document.createElement("div");
+  controls.className = "food-item-controls";
+  const amountField = document.createElement("label");
+  amountField.className = "food-field";
+  amountField.innerHTML = "<span>Amount</span>";
   const amount = document.createElement("input");
   amount.type = "number";
   amount.inputMode = "decimal";
@@ -4996,10 +5248,17 @@ function renderFoodItem(card, dateKey, meal, item) {
   amount.value = String(item.amount || "");
   amount.setAttribute("aria-label", `${food?.name || "Food"} amount`);
   amount.addEventListener("input", () => {
-    item.amount = Math.max(0, normalizeOptionalNumber(amount.value) || 0);
+    const currentItem = getFoodItemById(card, dateKey, meal.id, item.id);
+    if (!currentItem) return;
+    currentItem.amount = Math.max(0, normalizeOptionalNumber(amount.value) || 0);
     saveFoodCard(card, dateKey);
   });
   amount.addEventListener("change", () => renderCardsOnly({ force: true }));
+  amountField.append(amount);
+
+  const unitField = document.createElement("label");
+  unitField.className = "food-field";
+  unitField.innerHTML = "<span>Unit</span>";
   const unit = document.createElement("select");
   unit.setAttribute("aria-label", `${food?.name || "Food"} unit`);
   unit.innerHTML = `
@@ -5008,21 +5267,14 @@ function renderFoodItem(card, dateKey, meal, item) {
   `;
   unit.value = item.unit;
   unit.addEventListener("change", () => {
-    item.unit = unit.value === "g" ? "g" : "serving";
+    const currentItem = getFoodItemById(card, dateKey, meal.id, item.id);
+    if (!currentItem) return;
+    currentItem.unit = unit.value === "g" ? "g" : "serving";
     saveFoodCard(card, dateKey, { rerender: true });
   });
-  const macros = document.createElement("span");
-  macros.className = "food-item-macros";
-  macros.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")}g · C ${formatFoodNumber(totals.carbs, "carbs")}g · F ${formatFoodNumber(totals.fat, "fat")}g · Fi ${formatFoodNumber(totals.fiber, "fiber")}g`;
-  const remove = document.createElement("button");
-  remove.type = "button";
-  remove.innerHTML = ICONS["trash-2"];
-  remove.title = "Remove food";
-  remove.addEventListener("click", () => {
-    meal.items = meal.items.filter((nextItem) => nextItem.id !== item.id);
-    saveFoodCard(card, dateKey, { rerender: true });
-  });
-  row.append(name, amount, unit, macros, remove);
+  unitField.append(unit);
+  controls.append(amountField, unitField);
+  row.append(top, controls);
   return row;
 }
 
@@ -5164,6 +5416,29 @@ function updateFoodDefinition(card, foodId, updates) {
     id: foodId
   });
   saveState({ quiet: true });
+}
+
+function getNextFoodMealName(entry, preferredName = "") {
+  const fallback = `Meal ${(entry.meals || []).length + 1}`;
+  const baseName = normalizeLabel(preferredName || fallback) || fallback;
+  const existing = new Set((entry.meals || []).map((meal) => normalizeLabel(meal.name || "").toLowerCase()).filter(Boolean));
+  if (!existing.has(baseName.toLowerCase())) return baseName;
+  let suffix = 2;
+  while (existing.has(`${baseName} ${suffix}`.toLowerCase())) suffix += 1;
+  return `${baseName} ${suffix}`;
+}
+
+function addFoodMeal(card, dateKey, preferredName = "") {
+  const currentEntry = getFoodEntry(card, dateKey);
+  const meal = {
+    id: createId(),
+    name: getNextFoodMealName(currentEntry, preferredName),
+    items: []
+  };
+  currentEntry.meals.push(meal);
+  card.activeFoodMealId = meal.id;
+  card.foodMealPickerOpen = false;
+  saveFoodCard(card, dateKey, { rerender: true });
 }
 
 function addFoodItemToMeal(card, dateKey, mealId, foodId) {
@@ -7470,7 +7745,7 @@ function createFitnessMetricsTrendSection(sessions) {
   const latest = metricSessions[metricSessions.length - 1];
   const table = document.createElement("div");
   table.className = "report-table";
-  ["weightKg", "bmi", "bodyFatPercent", "waistCm"].forEach((key) => {
+  ["weightKg", "bmi", "bodyFatPercent", "chestCm", "waistCm", "leftArmCm", "rightArmCm"].forEach((key) => {
     const field = FITNESS_METRIC_FIELDS.find((item) => item.key === key);
     const row = document.createElement("div");
     row.innerHTML = `<strong>${escapeHtml(field.label)}</strong><span>${formatMetricValue(first.entry.metrics[key], field.suffix, field.decimals)}</span><span>${formatMetricValue(latest.entry.metrics[key], field.suffix, field.decimals)}</span>`;
@@ -9674,7 +9949,7 @@ function nextOrder() {
   return state.cards.length ? Math.max(...state.cards.map((card) => card.order || 0)) + 1 : 1;
 }
 
-function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", savedLayout = [], cards = [], archivedCards = [], createdAt = Date.now(), updatedAt = createdAt }) {
+function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], createdAt = Date.now(), updatedAt = createdAt }) {
   const normalizedCards = cards.map(normalizeCard).map((card, index) => ({
     ...card,
     order: Number(card.order) > 0 ? Number(card.order) : index + 1
@@ -9685,6 +9960,7 @@ function createBoardRecord({ id = createId(), name, visibility = "private", layo
     name: normalizeLabel(name || "New board"),
     visibility,
     layout,
+    columnCount: normalizeBoardColumnCount(columnCount),
     savedLayout: Array.isArray(savedLayout) ? savedLayout : [],
     cards: normalizedCards,
     archivedCards: normalizedArchivedCards,
@@ -9702,6 +9978,7 @@ function ensureBoards(nextState) {
           name: board.name || board.board?.name || "Board",
           visibility: board.visibility || board.board?.visibility || "private",
           layout: board.layout || board.board?.layout || "smart",
+          columnCount: board.columnCount || board.board?.columnCount || 3,
           savedLayout: Array.isArray(board.savedLayout) ? board.savedLayout : [],
           cards: Array.isArray(board.cards) ? board.cards : [],
           archivedCards: Array.isArray(board.archivedCards) ? board.archivedCards : [],
@@ -9719,6 +9996,7 @@ function ensureBoards(nextState) {
         name: nextState.board?.name || "My Life OS",
         visibility: nextState.board?.visibility || "private",
         layout: nextState.board?.layout || "smart",
+        columnCount: nextState.board?.columnCount || 3,
         cards: Array.isArray(nextState.cards) ? nextState.cards : [],
         archivedCards: Array.isArray(nextState.archivedCards) ? nextState.archivedCards : []
       })
@@ -9744,6 +10022,7 @@ function applyBoardToState(nextState, boardId) {
     name: board.name,
     visibility: board.visibility,
     layout: board.layout,
+    columnCount: normalizeBoardColumnCount(board.columnCount),
     savedLayout: Array.isArray(board.savedLayout) ? board.savedLayout : []
   };
   nextState.cards = board.cards.map(normalizeCard);
@@ -9758,6 +10037,7 @@ function syncActiveBoard() {
         name: state.board.name,
         visibility: state.board.visibility,
         layout: state.board.layout,
+        columnCount: state.board.columnCount,
         cards: state.cards,
         archivedCards: getArchivedCards()
       })
@@ -9771,6 +10051,7 @@ function syncActiveBoard() {
     name: state.board.name,
     visibility: state.board.visibility,
     layout: state.board.layout,
+    columnCount: normalizeBoardColumnCount(state.board.columnCount),
     savedLayout: Array.isArray(state.board.savedLayout) ? state.board.savedLayout : [],
     cards: state.cards.map(normalizeCard),
     archivedCards: getArchivedCards().map(normalizeArchivedCard),
