@@ -1784,7 +1784,9 @@ function bindEvents() {
   elements.reportsModal.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-report-type]");
     if (!button) return;
-    activeReportType = button.dataset.reportType === "diary" ? "diary" : "fitness";
+    activeReportType = ["fitness", "food", "diary"].includes(button.dataset.reportType)
+      ? button.dataset.reportType
+      : "fitness";
     renderReportsModal();
   });
 
@@ -5059,7 +5061,7 @@ function renderFoodLibraryEditor(card) {
   });
   const note = document.createElement("p");
   note.className = "food-source-note";
-  note.textContent = "Defaults use public nutrition references. Edit tuna, whey and packaged foods to match your label.";
+  note.textContent = "Nutrition values are per serving. Serving label is what appears in the meal unit dropdown; grams per serving lets gram entries calculate correctly. Example: rice is 130 kcal per 100g, egg is 78 kcal per egg.";
   details.append(summary, list, add, note);
   return details;
 }
@@ -5067,14 +5069,6 @@ function renderFoodLibraryEditor(card) {
 function renderFoodLibraryRow(card, food) {
   const row = document.createElement("div");
   row.className = "food-library-row";
-  row.append(
-    createFoodTextField("Food", food.name, (value) => updateFoodDefinition(card, food.id, { name: value || "Food" })),
-    createFoodTextField("Unit", food.servingUnit, (value) => updateFoodDefinition(card, food.id, { servingUnit: value || "unit" })),
-    createFoodNumberField("Grams", food.servingGrams, (value) => updateFoodDefinition(card, food.id, { servingGrams: value }), { step: "1" }),
-    ...FOOD_NUTRIENT_KEYS.map((key) => createFoodNumberField(FOOD_NUTRIENT_META[key].short, food[key], (value) => updateFoodDefinition(card, food.id, { [key]: value }), { step: key === "calories" ? "1" : "0.1" }))
-  );
-  const source = document.createElement("small");
-  source.textContent = food.source || "Custom";
   const remove = document.createElement("button");
   remove.type = "button";
   remove.innerHTML = ICONS["trash-2"];
@@ -5085,7 +5079,36 @@ function renderFoodLibraryRow(card, food) {
     saveState();
     renderCardsOnly({ force: true });
   });
-  row.append(source, remove);
+
+  const top = document.createElement("div");
+  top.className = "food-library-top";
+  top.append(
+    createFoodTextField("Food name", food.name, (value) => updateFoodDefinition(card, food.id, { name: value || "Food" })),
+    remove
+  );
+
+  const serving = document.createElement("div");
+  serving.className = "food-library-serving-grid";
+  serving.append(
+    createFoodTextField("Serving label", food.servingUnit, (value) => updateFoodDefinition(card, food.id, { servingUnit: value || "unit" })),
+    createFoodNumberField("g per serving", food.servingGrams, (value) => updateFoodDefinition(card, food.id, { servingGrams: value }), { step: "1" }),
+    createFoodNumberField("kcal per serving", food.calories, (value) => updateFoodDefinition(card, food.id, { calories: value }), { step: "1" })
+  );
+
+  const macros = document.createElement("div");
+  macros.className = "food-library-macro-grid";
+  [
+    ["Protein g", "protein"],
+    ["Carbs g", "carbs"],
+    ["Fat g", "fat"],
+    ["Fiber g", "fiber"]
+  ].forEach(([label, key]) => {
+    macros.append(createFoodNumberField(label, food[key], (value) => updateFoodDefinition(card, food.id, { [key]: value }), { step: "0.1" }));
+  });
+
+  const source = document.createElement("small");
+  source.textContent = food.source || "Custom";
+  row.append(top, serving, macros, source);
   return row;
 }
 
@@ -5094,9 +5117,11 @@ function createFoodTextField(label, value, onInput) {
   field.className = "food-field";
   const span = document.createElement("span");
   span.textContent = label;
+  span.title = label;
   const input = document.createElement("input");
   input.type = "text";
   input.value = value || "";
+  input.title = label;
   input.addEventListener("input", () => onInput(normalizeLabel(input.value)));
   input.addEventListener("change", () => renderCardsOnly({ force: true }));
   field.append(span, input);
@@ -5108,12 +5133,14 @@ function createFoodNumberField(label, value, onInput, options = {}) {
   field.className = "food-field";
   const span = document.createElement("span");
   span.textContent = label;
+  span.title = label;
   const input = document.createElement("input");
   input.type = "number";
   input.inputMode = "decimal";
   input.min = "0";
   input.step = options.step || "0.1";
   input.value = value === "" || value === null || typeof value === "undefined" ? "" : String(value);
+  input.title = label;
   input.addEventListener("input", () => onInput(normalizeOptionalNumber(input.value)));
   input.addEventListener("change", () => {
     if (typeof options.onCommit === "function") options.onCommit(input.value);
@@ -7283,7 +7310,11 @@ function renderReportsModal() {
   });
   elements.reportPrintArea.innerHTML = "";
   const range = getReportRangeMeta();
-  const report = activeReportType === "diary" ? renderDiaryReport(range) : renderFitnessReport(range);
+  const report = activeReportType === "diary"
+    ? renderDiaryReport(range)
+    : activeReportType === "food"
+      ? renderFoodReport(range)
+      : renderFitnessReport(range);
   elements.reportPrintArea.append(report);
   hydrateIcons(elements.reportsModal);
 }
@@ -7479,6 +7510,186 @@ function getFitnessSessionLine(session) {
   });
   if (session.entry.notes) lines.push(session.entry.notes);
   return lines.join(" · ") || "Metrics recorded";
+}
+
+function renderFoodReport(range) {
+  const days = collectFoodReportDays(range);
+  const totals = getFoodReportTotals(days);
+  const documentNode = createReportDocument("Nutrition report", `${state.board.name} · ${range.label}`);
+  const intro = document.createElement("p");
+  intro.className = "report-lede";
+  intro.textContent = "Built from Food tracker cards on this board. Logged foods use the nutrition snapshot saved on that day, so future library edits do not rewrite old records.";
+  documentNode.append(intro);
+
+  const summary = document.createElement("div");
+  summary.className = "report-metric-grid";
+  const averageCalories = days.length ? totals.consumed.calories / days.length : 0;
+  const averageProtein = days.length ? totals.consumed.protein / days.length : 0;
+  const averageFiber = days.length ? totals.consumed.fiber / days.length : 0;
+  const calorieTarget = days.length ? totals.targets.calories / days.length : DEFAULT_FOOD_TARGETS.calories;
+  summary.append(
+    createReportMetric("Logged days", days.length, "nutrition records"),
+    createReportMetric("Avg kcal", `${formatFoodNumber(averageCalories, "calories")}`, `/ ${formatFoodNumber(calorieTarget, "calories")} daily target`),
+    createReportMetric("Protein avg", `${formatFoodNumber(averageProtein, "protein")}g`, `${formatFoodNumber(totals.targets.protein / Math.max(1, days.length), "protein")}g target`),
+    createReportMetric("Fiber avg", `${formatFoodNumber(averageFiber, "fiber")}g`, `${formatFoodNumber(totals.targets.fiber / Math.max(1, days.length), "fiber")}g target`)
+  );
+  documentNode.append(summary);
+  documentNode.append(createFoodTargetProgressSection(days, totals));
+  documentNode.append(createFoodMealPatternSection(days));
+  documentNode.append(createFoodRecentDaysSection(days));
+  return documentNode;
+}
+
+function collectFoodReportDays(range) {
+  const daysByDate = new Map();
+  getCurrentBoardReportCards()
+    .filter((card) => card.type === "food")
+    .forEach((card) => {
+      normalizeFoodCard(card);
+      Object.entries(card.foodEntries || {}).forEach(([dateKey, entry]) => {
+        const normalizedDate = normalizeDateKey(dateKey);
+        if (!isDateInReportRange(normalizedDate, range)) return;
+        const normalizedEntry = normalizeFoodEntry(entry);
+        const hasFood = normalizedEntry.meals.some((meal) => meal.items?.length);
+        if (!hasFood) return;
+        const entryTotals = getFoodEntryTotals(card, normalizedEntry);
+        const dateRecord = daysByDate.get(normalizedDate) || {
+          dateKey: normalizedDate,
+          entries: [],
+          meals: [],
+          consumed: createEmptyFoodTotals(),
+          target: normalizeFoodTarget(card.foodTargets?.[getFoodMonthKey(normalizedDate)] || card.foodTargets?.default || DEFAULT_FOOD_TARGETS)
+        };
+        dateRecord.consumed = addFoodTotals(dateRecord.consumed, entryTotals);
+        normalizedEntry.meals.forEach((meal) => {
+          if (!meal.items?.length) return;
+          dateRecord.meals.push({
+            cardTitle: card.title,
+            name: meal.name,
+            totals: getFoodMealTotals(card, meal),
+            itemCount: meal.items.length
+          });
+        });
+        dateRecord.entries.push({ card, entry: normalizedEntry, totals: entryTotals });
+        daysByDate.set(normalizedDate, dateRecord);
+      });
+    });
+  return [...daysByDate.values()].sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+}
+
+function getFoodReportTotals(days) {
+  return days.reduce(
+    (totals, day) => {
+      totals.consumed = addFoodTotals(totals.consumed, day.consumed);
+      totals.targets = addFoodTotals(totals.targets, day.target);
+      return totals;
+    },
+    { consumed: createEmptyFoodTotals(), targets: createEmptyFoodTotals() }
+  );
+}
+
+function createFoodTargetProgressSection(days, totals) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Target progress";
+  if (!days.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No nutrition records in this period.";
+    section.append(heading, empty);
+    return section;
+  }
+  const table = document.createElement("div");
+  table.className = "report-table food-report-table";
+  FOOD_NUTRIENT_KEYS.forEach((key) => {
+    const consumed = totals.consumed[key] || 0;
+    const target = totals.targets[key] || 0;
+    const percent = target ? Math.round((consumed / target) * 100) : 0;
+    const unit = key === "calories" ? "kcal" : "g";
+    const row = document.createElement("div");
+    row.innerHTML = `
+      <strong>${escapeHtml(FOOD_NUTRIENT_META[key].label)}</strong>
+      <span>${formatFoodNumber(consumed, key)} ${unit}</span>
+      <span>${target ? `${percent}% of ${formatFoodNumber(target, key)} ${unit}` : "No target"}</span>
+    `;
+    table.append(row);
+  });
+  section.append(heading, createReportSubhead(`${days.length} logged day${days.length === 1 ? "" : "s"} in this period`), table);
+  return section;
+}
+
+function createFoodMealPatternSection(days) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Meal pattern";
+  const mealMap = new Map();
+  days.forEach((day) => {
+    day.meals.forEach((meal) => {
+      const key = normalizeLabel(meal.name || "Meal").toLowerCase();
+      const current = mealMap.get(key) || { name: meal.name || "Meal", count: 0, totals: createEmptyFoodTotals() };
+      current.count += 1;
+      current.totals = addFoodTotals(current.totals, meal.totals);
+      mealMap.set(key, current);
+    });
+  });
+  const meals = [...mealMap.values()].sort((a, b) => b.totals.calories - a.totals.calories);
+  if (!meals.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No meals logged in this period.";
+    section.append(heading, empty);
+    return section;
+  }
+  const grid = document.createElement("div");
+  grid.className = "report-chip-grid food-report-meals";
+  meals.forEach((meal) => {
+    const chip = document.createElement("span");
+    chip.textContent = `${meal.name} · ${meal.count}x · ${formatFoodNumber(meal.totals.calories, "calories")} kcal · P ${formatFoodNumber(meal.totals.protein, "protein")}g`;
+    grid.append(chip);
+  });
+  section.append(heading, grid);
+  return section;
+}
+
+function createFoodRecentDaysSection(days) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Recent nutrition days";
+  const list = document.createElement("div");
+  list.className = "report-session-list food-report-list";
+  days.slice(0, 10).forEach((day) => {
+    const item = document.createElement("article");
+    const title = document.createElement("strong");
+    title.textContent = `${formatRecordDate(day.dateKey)} · ${getFoodStatusLabel(day.consumed, day.target)}`;
+    const details = document.createElement("p");
+    details.textContent = formatFoodReportMacroLine(day.consumed);
+    const meals = document.createElement("p");
+    meals.textContent = day.meals
+      .slice(0, 4)
+      .map((meal) => `${meal.name}: ${formatFoodNumber(meal.totals.calories, "calories")} kcal`)
+      .join(" · ");
+    item.append(title, details);
+    if (meals.textContent) item.append(meals);
+    list.append(item);
+  });
+  if (!days.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No nutrition records in this period.";
+    list.append(empty);
+  }
+  section.append(heading, list);
+  return section;
+}
+
+function formatFoodReportMacroLine(totals) {
+  return [
+    `${formatFoodNumber(totals.calories, "calories")} kcal`,
+    `Protein ${formatFoodNumber(totals.protein, "protein")}g`,
+    `Carbs ${formatFoodNumber(totals.carbs, "carbs")}g`,
+    `Fat ${formatFoodNumber(totals.fat, "fat")}g`,
+    `Fiber ${formatFoodNumber(totals.fiber, "fiber")}g`
+  ].join(" · ");
 }
 
 function renderDiaryReport(range) {

@@ -5953,28 +5953,46 @@ textarea:focus {
 
 .food-library-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr)) 28px;
-  align-items: end;
-  gap: 5px;
+  gap: 7px;
   min-width: 0;
-  padding: 6px;
+  padding: 8px;
   border: 1px solid rgba(17, 17, 17, 0.05);
   border-radius: 11px;
   background: rgba(255, 255, 255, 0.58);
 }
 
-.food-library-row .food-field:first-child {
-  grid-column: span 2;
+.food-library-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: end;
+  gap: 6px;
+}
+
+.food-library-serving-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.86fr) minmax(0, 1fr);
+  gap: 6px;
+}
+
+.food-library-macro-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .food-library-row small {
-  grid-column: 1 / -2;
   overflow: hidden;
   color: var(--card-muted);
-  font-size: 0.54rem;
+  font-size: 0.56rem;
   font-weight: 850;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.size-small .food-library-serving-grid,
+.size-small .food-library-macro-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .goal-tracker {
