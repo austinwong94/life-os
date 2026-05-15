@@ -5013,7 +5013,7 @@ function renderFoodItem(card, dateKey, meal, item) {
   });
   const macros = document.createElement("span");
   macros.className = "food-item-macros";
-  macros.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")} · C ${formatFoodNumber(totals.carbs, "carbs")} · F ${formatFoodNumber(totals.fat, "fat")} · Fi ${formatFoodNumber(totals.fiber, "fiber")}`;
+  macros.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")}g · C ${formatFoodNumber(totals.carbs, "carbs")}g · F ${formatFoodNumber(totals.fat, "fat")}g · Fi ${formatFoodNumber(totals.fiber, "fiber")}g`;
   const remove = document.createElement("button");
   remove.type = "button";
   remove.innerHTML = ICONS["trash-2"];
@@ -5036,6 +5036,12 @@ function renderFoodLibraryEditor(card) {
   });
   const summary = document.createElement("summary");
   summary.innerHTML = `<strong>Food library</strong><span>${card.foodLibrary.length} foods</span>`;
+  const guide = document.createElement("div");
+  guide.className = "food-library-guide";
+  guide.innerHTML = `
+    <strong>All nutrition values below are per serving.</strong>
+    <span>Use Serving label for the button/dropdown name, and g per serving so gram entries can scale accurately.</span>
+  `;
   const list = document.createElement("div");
   list.className = "food-library-list";
   card.foodLibrary.forEach((food) => list.append(renderFoodLibraryRow(card, food)));
@@ -5062,7 +5068,7 @@ function renderFoodLibraryEditor(card) {
   const note = document.createElement("p");
   note.className = "food-source-note";
   note.textContent = "Nutrition values are per serving. Serving label is what appears in the meal unit dropdown; grams per serving lets gram entries calculate correctly. Example: rice is 130 kcal per 100g, egg is 78 kcal per egg.";
-  details.append(summary, list, add, note);
+  details.append(summary, guide, list, add, note);
   return details;
 }
 
@@ -5185,9 +5191,10 @@ function removeFoodMeal(card, dateKey, mealId) {
 }
 
 function saveFoodCard(card, dateKey, options = {}) {
-  const entry = getFoodEntry(card, dateKey);
+  const normalizedDate = normalizeDateKey(dateKey) || getActiveFoodDate(card);
+  const entry = getFoodEntry(card, normalizedDate);
   entry.updatedAt = Date.now();
-  card.foodEntries[dateKey] = normalizeFoodEntry(entry);
+  card.foodEntries[normalizedDate] = normalizeFoodEntry(entry);
   saveState({ quiet: true });
   if (options.rerender) renderCardsOnly({ force: true });
 }
@@ -7526,12 +7533,12 @@ function renderFoodReport(range) {
   const averageCalories = days.length ? totals.consumed.calories / days.length : 0;
   const averageProtein = days.length ? totals.consumed.protein / days.length : 0;
   const averageFiber = days.length ? totals.consumed.fiber / days.length : 0;
-  const calorieTarget = days.length ? totals.targets.calories / days.length : DEFAULT_FOOD_TARGETS.calories;
+  const averageTarget = getFoodReportAverageTarget(days, totals);
   summary.append(
     createReportMetric("Logged days", days.length, "nutrition records"),
-    createReportMetric("Avg kcal", `${formatFoodNumber(averageCalories, "calories")}`, `/ ${formatFoodNumber(calorieTarget, "calories")} daily target`),
-    createReportMetric("Protein avg", `${formatFoodNumber(averageProtein, "protein")}g`, `${formatFoodNumber(totals.targets.protein / Math.max(1, days.length), "protein")}g target`),
-    createReportMetric("Fiber avg", `${formatFoodNumber(averageFiber, "fiber")}g`, `${formatFoodNumber(totals.targets.fiber / Math.max(1, days.length), "fiber")}g target`)
+    createReportMetric("Avg kcal", `${formatFoodNumber(averageCalories, "calories")}`, `/ ${formatFoodNumber(averageTarget.calories, "calories")} daily target`),
+    createReportMetric("Protein avg", `${formatFoodNumber(averageProtein, "protein")}g`, `${formatFoodNumber(averageTarget.protein, "protein")}g target`),
+    createReportMetric("Fiber avg", `${formatFoodNumber(averageFiber, "fiber")}g`, `${formatFoodNumber(averageTarget.fiber, "fiber")}g target`)
   );
   documentNode.append(summary);
   documentNode.append(createFoodTargetProgressSection(days, totals));
@@ -7586,6 +7593,14 @@ function getFoodReportTotals(days) {
     },
     { consumed: createEmptyFoodTotals(), targets: createEmptyFoodTotals() }
   );
+}
+
+function getFoodReportAverageTarget(days, totals) {
+  if (!days.length) return normalizeFoodTarget(DEFAULT_FOOD_TARGETS);
+  return FOOD_NUTRIENT_KEYS.reduce((target, key) => {
+    target[key] = (totals.targets[key] || 0) / days.length;
+    return target;
+  }, createEmptyFoodTotals());
 }
 
 function createFoodTargetProgressSection(days, totals) {
