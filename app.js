@@ -114,6 +114,8 @@ const ICONS = {
   "bar-chart": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>',
   dumbbell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 7v10"/><path d="M18 7v10"/><path d="M8 9v6"/><path d="M16 9v6"/><path d="M8 12h8"/><path d="M3 10v4"/><path d="M21 10v4"/></svg>',
   download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
+  "more-vertical": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>',
+  "move-right": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8l4 4-4 4"/><path d="M2 12h20"/><path d="M7 16l-4-4 4-4"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m20 6-11 11-5-5"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>',
@@ -1071,6 +1073,7 @@ let applyingExternalStorageUpdate = false;
 let localDevSourceSignature = "";
 let localDevReloadPending = false;
 let activeReportType = "fitness";
+let activeMoveCardId = "";
 
 const elements = {
   appShell: document.querySelector("#appShell"),
@@ -1261,6 +1264,13 @@ const elements = {
   reportPrintButton: document.querySelector("#reportPrintButton"),
   reportPreview: document.querySelector("#reportPreview"),
   reportPrintArea: document.querySelector("#reportPrintArea"),
+  moveCardModal: document.querySelector("#moveCardModal"),
+  moveCardModalCloseButton: document.querySelector("#moveCardModalCloseButton"),
+  moveCardSummary: document.querySelector("#moveCardSummary"),
+  moveBoardSelect: document.querySelector("#moveBoardSelect"),
+  moveCardNote: document.querySelector("#moveCardNote"),
+  moveCardCancelButton: document.querySelector("#moveCardCancelButton"),
+  moveCardConfirmButton: document.querySelector("#moveCardConfirmButton"),
   undoToast: document.querySelector("#undoToast"),
   undoToastText: document.querySelector("#undoToastText"),
   undoToastButton: document.querySelector("#undoToastButton"),
@@ -1681,6 +1691,9 @@ function bindEvents() {
   elements.historyModalCloseButton.addEventListener("click", closeHistoryModal);
   elements.recordsModalCloseButton.addEventListener("click", closeRecordsModal);
   elements.reportsModalCloseButton.addEventListener("click", closeReportsModal);
+  elements.moveCardModalCloseButton.addEventListener("click", closeMoveCardModal);
+  elements.moveCardCancelButton.addEventListener("click", closeMoveCardModal);
+  elements.moveCardConfirmButton.addEventListener("click", confirmMoveCardToBoard);
 
   elements.settingsModal.addEventListener("click", (event) => {
     if (event.target === elements.settingsModal) {
@@ -1722,6 +1735,12 @@ function bindEvents() {
   elements.reportsModal.addEventListener("click", (event) => {
     if (event.target === elements.reportsModal) {
       closeReportsModal();
+    }
+  });
+
+  elements.moveCardModal.addEventListener("click", (event) => {
+    if (event.target === elements.moveCardModal) {
+      closeMoveCardModal();
     }
   });
 
@@ -1787,7 +1806,15 @@ function bindEvents() {
     scheduleDeferredBoardRender(1250);
   });
 
+  document.addEventListener("click", (event) => {
+    if (event.target.closest(".card-menu-shell")) return;
+    closeCardActionMenus();
+  });
+
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeCardActionMenus();
+    }
     if (event.key === "Escape" && !elements.cardComposerPanel.hidden) {
       closeCardComposer({ reset: true });
       return;
@@ -1815,6 +1842,9 @@ function bindEvents() {
     }
     if (event.key === "Escape" && !elements.reportsModal.hidden) {
       closeReportsModal();
+    }
+    if (event.key === "Escape" && !elements.moveCardModal.hidden) {
+      closeMoveCardModal();
     }
   });
 
@@ -2200,7 +2230,73 @@ function closeOtherOverlays(activeSurface = "") {
   if (activeSurface !== "history") elements.historyModal.hidden = true;
   if (activeSurface !== "records") elements.recordsModal.hidden = true;
   if (activeSurface !== "reports") elements.reportsModal.hidden = true;
+  if (activeSurface !== "move") elements.moveCardModal.hidden = true;
   syncModalOpenState();
+}
+
+function closeCardActionMenus() {
+  document.querySelectorAll(".card-menu-shell.is-open").forEach((shell) => {
+    shell.classList.remove("is-open");
+    const menu = shell.querySelector(".card-menu");
+    const toggle = shell.querySelector(".card-menu-toggle");
+    if (menu) menu.hidden = true;
+    if (toggle) toggle.setAttribute("aria-expanded", "false");
+  });
+}
+
+function getMoveDestinationBoards() {
+  return Array.isArray(state.boards)
+    ? state.boards.filter((board) => board.id !== state.activeBoardId)
+    : [];
+}
+
+function openMoveCardModal(cardId) {
+  const card = state.cards.find((item) => item.id === cardId);
+  if (!card) return;
+  syncActiveBoard();
+  activeMoveCardId = cardId;
+  closeOtherOverlays("move");
+  renderMoveCardModal(card);
+  elements.moveCardModal.hidden = false;
+  syncModalOpenState();
+}
+
+function closeMoveCardModal() {
+  activeMoveCardId = "";
+  elements.moveCardModal.hidden = true;
+  syncModalOpenState();
+}
+
+function renderMoveCardModal(card) {
+  const destinations = getMoveDestinationBoards();
+  elements.moveCardSummary.textContent = `"${card.title || "Untitled card"}" will move out of ${state.board.name}.`;
+  elements.moveBoardSelect.innerHTML = "";
+  destinations.forEach((board) => {
+    const option = document.createElement("option");
+    option.value = board.id;
+    option.textContent = board.name || "Untitled board";
+    elements.moveBoardSelect.append(option);
+  });
+  const linkedWarning =
+    card.type === "planner"
+      ? "Planner-view cards on the old board will no longer read this planner card after it moves."
+      : card.type === "planlist"
+        ? "Planner-view cards read Planner data from the destination board after moving."
+        : "The card keeps its checklist, notes, diary pages, fitness logs and history.";
+  elements.moveCardNote.textContent = destinations.length ? linkedWarning : "Create another board before moving this card.";
+  elements.moveCardConfirmButton.disabled = destinations.length === 0;
+  hydrateIcons(elements.moveCardModal);
+}
+
+function confirmMoveCardToBoard() {
+  const card = state.cards.find((item) => item.id === activeMoveCardId);
+  const targetBoardId = elements.moveBoardSelect.value;
+  if (!card || !targetBoardId || targetBoardId === state.activeBoardId) return;
+  if (["planner", "planlist"].includes(card.type)) {
+    const confirmed = window.confirm("This card is connected to planner data on its board. Move it anyway?");
+    if (!confirmed) return;
+  }
+  moveActiveCardToBoard(card.id, targetBoardId);
 }
 
 function render() {
@@ -3003,27 +3099,40 @@ function renderCard(card, options = {}) {
 
   const cardActions = node.querySelector(".card-actions");
   const resetButton = node.querySelector(".timer-reset");
-  const editButton = node.querySelector(".edit-card");
-  const archiveButton = node.querySelector(".archive-card");
-  const deleteButton = node.querySelector(".delete-card");
+  const menuShell = node.querySelector(".card-menu-shell");
+  const menuToggle = node.querySelector(".card-menu-toggle");
+  const cardMenu = node.querySelector(".card-menu");
+  const moveButton = node.querySelector("[data-card-action='move']");
   resetButton.hidden = !hasTimer || (isAutoTimer && card.type !== "routine");
   resetButton.title = card.type === "routine" ? "Reset today" : "Reset timer";
   resetButton.setAttribute("aria-label", resetButton.title);
   resetButton.disabled = !interactive || !hasTimer;
-  editButton.disabled = !interactive;
-  archiveButton.disabled = !interactive;
-  deleteButton.disabled = !interactive;
-  archiveButton.title = "Move to Archive";
-  archiveButton.setAttribute("aria-label", "Move to Archive");
-  deleteButton.title = "Remove from board";
-  deleteButton.setAttribute("aria-label", "Remove from board");
+  menuToggle.disabled = !interactive;
+  moveButton.disabled = getMoveDestinationBoards().length === 0;
+  moveButton.title = moveButton.disabled ? "Create another board first" : "Move to another board";
   if (interactive) {
     if (hasTimer) {
       resetButton.addEventListener("click", () => resetTimer(card.id));
     }
-    editButton.addEventListener("click", () => startEditingCard(card.id));
-    archiveButton.addEventListener("click", () => archiveCard(card.id));
-    deleteButton.addEventListener("click", () => deleteCard(card.id));
+    menuToggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const isOpen = !cardMenu.hidden;
+      closeCardActionMenus();
+      cardMenu.hidden = isOpen;
+      menuShell.classList.toggle("is-open", !isOpen);
+      menuToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+    });
+    cardMenu.addEventListener("click", (event) => {
+      const actionButton = event.target.closest("button[data-card-action]");
+      if (!actionButton || actionButton.disabled) return;
+      event.stopPropagation();
+      closeCardActionMenus();
+      const action = actionButton.dataset.cardAction;
+      if (action === "edit") startEditingCard(card.id);
+      if (action === "move") openMoveCardModal(card.id);
+      if (action === "archive") archiveCard(card.id);
+      if (action === "delete") deleteCard(card.id);
+    });
   }
 
   if (!hasTimer) {
@@ -3811,6 +3920,7 @@ function renderVideoCard(card) {
 function normalizeFitnessCard(card) {
   card.fitnessEntries = card.fitnessEntries && typeof card.fitnessEntries === "object" ? card.fitnessEntries : {};
   card.activeFitnessDate = normalizeDateKey(card.activeFitnessDate) || getTodayKey();
+  card.activeFitnessPart = FITNESS_PARTS.some((part) => part.key === card.activeFitnessPart) ? card.activeFitnessPart : "";
   Object.entries(card.fitnessEntries).forEach(([dateKey, entry]) => {
     const normalizedDate = normalizeDateKey(dateKey);
     if (!normalizedDate) {
@@ -3820,6 +3930,11 @@ function normalizeFitnessCard(card) {
     card.fitnessEntries[normalizedDate] = normalizeFitnessEntry(entry);
     if (normalizedDate !== dateKey) delete card.fitnessEntries[dateKey];
   });
+  const activeEntry = card.fitnessEntries[card.activeFitnessDate];
+  const activeParts = activeEntry ? getActiveFitnessParts(activeEntry) : [];
+  if (!activeParts.some((part) => part.key === card.activeFitnessPart)) {
+    card.activeFitnessPart = activeParts[0]?.key || "";
+  }
 }
 
 function normalizeFitnessEntry(entry = {}) {
@@ -3942,6 +4057,7 @@ function renderFitnessLog(card) {
   normalizeFitnessCard(card);
   const dateKey = getActiveFitnessDate(card);
   const entry = getFitnessEntry(card, dateKey);
+  const activeParts = getActiveFitnessParts(entry);
   const wrapper = document.createElement("div");
   wrapper.className = "fitness-log";
 
@@ -3985,12 +4101,16 @@ function renderFitnessLog(card) {
     const button = document.createElement("button");
     button.type = "button";
     button.classList.toggle("is-active", part.active);
-    button.textContent = meta.label;
-    button.title = part.active ? `Remove ${meta.label}` : `Log ${meta.label}`;
+    button.classList.toggle("is-selected", card.activeFitnessPart === meta.key);
+    button.textContent = part.active ? `${meta.label}` : meta.label;
+    button.title = part.active ? `Edit ${meta.label}` : `Log ${meta.label}`;
     button.addEventListener("click", () => {
       updateFitnessEntry(card, dateKey, (nextEntry) => {
         const nextPart = nextEntry.parts[meta.key];
-        nextPart.active = !nextPart.active;
+        if (!nextPart.active) {
+          nextPart.active = true;
+        }
+        card.activeFitnessPart = meta.key;
         if (nextPart.active && meta.type === "strength") ensureFitnessStrengthExercise(nextPart, meta);
       }, { rerender: true });
     });
@@ -3999,18 +4119,52 @@ function renderFitnessLog(card) {
 
   const activeBody = document.createElement("div");
   activeBody.className = "fitness-active";
-  const activeParts = getActiveFitnessParts(entry);
   if (!activeParts.length) {
     const empty = document.createElement("p");
     empty.className = "fitness-empty";
     empty.textContent = "Select the workout parts completed for this date.";
     activeBody.append(empty);
   } else {
-    activeParts.forEach((meta) => activeBody.append(renderFitnessPartEditor(card, dateKey, meta, entry.parts[meta.key])));
+    activeBody.append(renderFitnessSummaryStrip(entry, activeParts));
+    const selectedMeta = activeParts.find((meta) => meta.key === card.activeFitnessPart) || activeParts[0];
+    activeBody.append(renderFitnessPartEditor(card, dateKey, selectedMeta, entry.parts[selectedMeta.key]));
   }
 
   wrapper.append(nav, parts, activeBody, renderFitnessMetrics(card, dateKey, entry));
   return wrapper;
+}
+
+function renderFitnessSummaryStrip(entry, activeParts) {
+  const strip = document.createElement("div");
+  strip.className = "fitness-summary-strip";
+  activeParts.forEach((meta) => {
+    const pill = document.createElement("span");
+    pill.className = "fitness-summary-pill";
+    pill.innerHTML = `<strong>${escapeHtml(meta.label)}</strong><small>${escapeHtml(getFitnessPartSummary(meta, entry.parts[meta.key]))}</small>`;
+    strip.append(pill);
+  });
+  return strip;
+}
+
+function getFitnessPartSummary(meta, part) {
+  if (!part) return "Logged";
+  if (meta.type === "cardio") {
+    const distance = Number(part.distanceKm) || 0;
+    const minutes = Number(part.durationMinutes) || 0;
+    if (distance && minutes) return `${formatReportNumber(distance)} km · ${formatReportNumber(minutes)} min`;
+    if (distance) return `${formatReportNumber(distance)} km`;
+    if (minutes) return `${formatReportNumber(minutes)} min`;
+    return "Cardio";
+  }
+  if (meta.type === "strength") {
+    const exercises = Array.isArray(part.exercises) ? part.exercises : [];
+    const sets = exercises.reduce((sum, exercise) => sum + (Number(exercise.sets) || 0), 0);
+    if (sets && exercises.length) return `${sets} sets · ${exercises.length} ex`;
+    if (exercises.length) return `${exercises.length} exercise${exercises.length === 1 ? "" : "s"}`;
+    return "Strength";
+  }
+  const minutes = Number(part.durationMinutes) || 0;
+  return minutes ? `${formatReportNumber(minutes)} min` : part.area || "Logged";
 }
 
 function renderFitnessPartEditor(card, dateKey, meta, part) {
@@ -4020,9 +4174,9 @@ function renderFitnessPartEditor(card, dateKey, meta, part) {
 }
 
 function renderFitnessCardioEditor(card, dateKey, meta, part) {
-  const section = createFitnessSection(meta.label);
+  const section = createFitnessSection(meta.label, () => removeFitnessPart(card, dateKey, meta.key));
   const grid = document.createElement("div");
-  grid.className = "fitness-field-grid";
+  grid.className = "fitness-field-grid fitness-cardio-grid";
   grid.append(
     createFitnessNumberField("Km", part.distanceKm, (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].distanceKm = value; });
@@ -4040,14 +4194,14 @@ function renderFitnessCardioEditor(card, dateKey, meta, part) {
   const minutes = Number(part.durationMinutes);
   pace.textContent = distance && minutes ? `${(minutes / distance).toFixed(1)} min/km` : "Pace";
   grid.append(pace);
-  section.append(grid, createFitnessTextArea("Running notes", part.notes, (value) => {
+  section.append(grid, createFitnessNotesDisclosure("Running notes", part.notes, (value) => {
     updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
   }));
   return section;
 }
 
 function renderFitnessStrengthEditor(card, dateKey, meta, part) {
-  const section = createFitnessSection(meta.label);
+  const section = createFitnessSection(meta.label, () => removeFitnessPart(card, dateKey, meta.key));
   const list = document.createElement("div");
   list.className = "fitness-exercises";
   part.exercises.forEach((exercise, index) => {
@@ -4084,14 +4238,14 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
       nextPart.exercises.push(normalizeFitnessExercise({ name: fallback, sets: 3, reps: "8-12", rpe: 7 }));
     }, { rerender: true });
   });
-  section.append(list, add, createFitnessTextArea(`${meta.label} notes`, part.notes, (value) => {
+  section.append(list, add, createFitnessNotesDisclosure(`${meta.label} notes`, part.notes, (value) => {
     updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
   }));
   return section;
 }
 
 function renderFitnessSimpleEditor(card, dateKey, meta, part) {
-  const section = createFitnessSection(meta.label);
+  const section = createFitnessSection(meta.label, () => removeFitnessPart(card, dateKey, meta.key));
   const grid = document.createElement("div");
   grid.className = "fitness-field-grid";
   grid.append(
@@ -4102,10 +4256,19 @@ function renderFitnessSimpleEditor(card, dateKey, meta, part) {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].area = value; });
     })
   );
-  section.append(grid, createFitnessTextArea(`${meta.label} notes`, part.notes, (value) => {
+  section.append(grid, createFitnessNotesDisclosure(`${meta.label} notes`, part.notes, (value) => {
     updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
   }));
   return section;
+}
+
+function removeFitnessPart(card, dateKey, partKey) {
+  updateFitnessEntry(card, dateKey, (entry) => {
+    if (!entry.parts[partKey]) return;
+    entry.parts[partKey].active = false;
+    const nextActive = getActiveFitnessParts(entry).find((meta) => meta.key !== partKey);
+    card.activeFitnessPart = nextActive?.key || "";
+  }, { rerender: true });
 }
 
 function updateFitnessExercise(card, dateKey, partKey, index, updates) {
@@ -4116,8 +4279,12 @@ function updateFitnessExercise(card, dateKey, partKey, index, updates) {
 }
 
 function renderFitnessMetrics(card, dateKey, entry) {
-  const section = createFitnessSection("Body metrics");
-  section.classList.add("fitness-metrics");
+  const section = document.createElement("details");
+  section.className = "fitness-section fitness-metrics fitness-disclosure";
+  section.open = FITNESS_METRIC_FIELDS.some((field) => entry.metrics[field.key] !== "");
+  const summary = document.createElement("summary");
+  const summaryText = getFitnessMetricsSummary(entry.metrics);
+  summary.innerHTML = `<strong>Body metrics</strong><span>${escapeHtml(summaryText)}</span>`;
   const grid = document.createElement("div");
   grid.className = "fitness-metric-grid";
   FITNESS_METRIC_FIELDS.forEach((field) => {
@@ -4127,18 +4294,37 @@ function renderFitnessMetrics(card, dateKey, entry) {
       }, { rerender: field.key === "weightKg" || field.key === "heightCm" });
     }));
   });
-  section.append(grid, createFitnessTextArea("Session notes", entry.notes, (value) => {
+  section.append(summary, grid, createFitnessNotesDisclosure("Session notes", entry.notes, (value) => {
     updateFitnessEntry(card, dateKey, (nextEntry) => { nextEntry.notes = value; });
   }));
   return section;
 }
 
-function createFitnessSection(title) {
+function getFitnessMetricsSummary(metrics) {
+  const summary = [];
+  if (metrics.weightKg !== "") summary.push(`${formatReportNumber(metrics.weightKg)} kg`);
+  if (metrics.bodyFatPercent !== "") summary.push(`${formatReportNumber(metrics.bodyFatPercent)}% fat`);
+  if (metrics.bmi !== "") summary.push(`BMI ${formatReportNumber(metrics.bmi)}`);
+  return summary.join(" · ") || "Optional";
+}
+
+function createFitnessSection(title, onRemove) {
   const section = document.createElement("section");
   section.className = "fitness-section";
+  const header = document.createElement("div");
+  header.className = "fitness-section-header";
   const heading = document.createElement("h4");
   heading.textContent = title;
-  section.append(heading);
+  header.append(heading);
+  if (typeof onRemove === "function") {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "fitness-remove-part";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", onRemove);
+    header.append(remove);
+  }
+  section.append(header);
   return section;
 }
 
@@ -4193,6 +4379,20 @@ function createFitnessTextArea(label, value, onInput) {
   field.append(span, textarea);
   requestAnimationFrame(() => autoGrowTextarea(textarea));
   return field;
+}
+
+function createFitnessNotesDisclosure(label, value, onInput) {
+  const details = document.createElement("details");
+  details.className = "fitness-notes-panel";
+  details.open = Boolean(value);
+  const summary = document.createElement("summary");
+  summary.textContent = value ? "Notes saved" : "Add notes";
+  const textarea = createFitnessTextArea(label, value, (nextValue) => {
+    onInput(nextValue);
+    summary.textContent = nextValue ? "Notes saved" : "Add notes";
+  });
+  details.append(summary, textarea);
+  return details;
 }
 
 function renderChecklist(card) {
@@ -6659,7 +6859,8 @@ function syncModalOpenState() {
     !elements.ideasModal.hidden ||
     !elements.historyModal.hidden ||
     !elements.recordsModal.hidden ||
-    !elements.reportsModal.hidden;
+    !elements.reportsModal.hidden ||
+    !elements.moveCardModal.hidden;
   document.body.classList.toggle("modal-open", hasOpenModal);
   syncRailActiveState();
 }
@@ -7027,6 +7228,86 @@ function archiveCard(id, options = {}) {
       onUndo: () => restoreArchivedCard(archivedCard.id, { fromUndo: true })
     });
   }
+}
+
+function moveActiveCardToBoard(cardId, targetBoardId) {
+  syncActiveBoard();
+  const sourceBoardId = state.activeBoardId;
+  const sourceBoard = state.boards.find((board) => board.id === sourceBoardId);
+  const targetBoard = state.boards.find((board) => board.id === targetBoardId);
+  if (!sourceBoard || !targetBoard || sourceBoardId === targetBoardId) return;
+
+  const cardIndex = state.cards.findIndex((card) => card.id === cardId);
+  if (cardIndex < 0) return;
+  const [card] = state.cards.splice(cardIndex, 1);
+  const now = Date.now();
+  const movedCard = normalizeCard({
+    ...card,
+    runningSince: null,
+    layoutColumn: 0,
+    order: getNextBoardOrder(targetBoard),
+    movedFromBoardId: sourceBoardId,
+    movedFromBoardName: sourceBoard.name,
+    movedToBoardId: targetBoardId,
+    movedToBoardName: targetBoard.name,
+    movedAt: now,
+    updatedAt: now
+  });
+
+  sourceBoard.cards = state.cards.map(normalizeCard);
+  sourceBoard.updatedAt = now;
+  targetBoard.cards = [...(Array.isArray(targetBoard.cards) ? targetBoard.cards : []), movedCard].map(normalizeCard);
+  targetBoard.updatedAt = now;
+
+  if (editingCardId === cardId) {
+    resetFormState();
+  }
+  closeMoveCardModal();
+  saveState();
+  render();
+  showUndoToast({
+    message: `"${card.title}" moved to ${targetBoard.name}.`,
+    onUndo: () => moveCardBackToBoard(movedCard.id, targetBoardId, sourceBoardId)
+  });
+}
+
+function moveCardBackToBoard(cardId, sourceBoardId, targetBoardId) {
+  syncActiveBoard();
+  const sourceBoard = state.boards.find((board) => board.id === sourceBoardId);
+  const targetBoard = state.boards.find((board) => board.id === targetBoardId);
+  if (!sourceBoard || !targetBoard) return;
+  const sourceCards = sourceBoardId === state.activeBoardId ? state.cards : Array.isArray(sourceBoard.cards) ? sourceBoard.cards : [];
+  const cardIndex = sourceCards.findIndex((card) => card.id === cardId);
+  if (cardIndex < 0) return;
+  const [card] = sourceCards.splice(cardIndex, 1);
+  const now = Date.now();
+  const restoredCard = normalizeCard({
+    ...card,
+    runningSince: null,
+    layoutColumn: 0,
+    order: getNextBoardOrder(targetBoard),
+    movedAt: now,
+    movedFromBoardId: sourceBoardId,
+    movedFromBoardName: sourceBoard.name,
+    movedToBoardId: targetBoardId,
+    movedToBoardName: targetBoard.name,
+    updatedAt: now
+  });
+  sourceBoard.cards = sourceCards.map(normalizeCard);
+  sourceBoard.updatedAt = now;
+  targetBoard.cards = [...(Array.isArray(targetBoard.cards) ? targetBoard.cards : []), restoredCard].map(normalizeCard);
+  targetBoard.updatedAt = now;
+  if (targetBoardId === state.activeBoardId) {
+    state.cards = targetBoard.cards.map(normalizeCard);
+  }
+  saveState();
+  render();
+  clearUndoToast();
+}
+
+function getNextBoardOrder(board) {
+  const cards = Array.isArray(board?.cards) ? board.cards : [];
+  return cards.length ? Math.max(...cards.map((card) => Number(card.order) || 0)) + 1 : 1;
 }
 
 function restoreArchivedCard(id, options = {}) {

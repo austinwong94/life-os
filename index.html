@@ -803,6 +803,32 @@
       </section>
     </div>
 
+    <div class="modal-backdrop" id="moveCardModal" hidden>
+      <section class="move-card-modal" role="dialog" aria-modal="true" aria-labelledby="moveCardModalTitle">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Card options</p>
+            <h2 id="moveCardModalTitle">Move to board</h2>
+          </div>
+          <button type="button" class="icon-button" id="moveCardModalCloseButton" title="Close move card" aria-label="Close move card">
+            <span data-icon="x"></span>
+          </button>
+        </header>
+        <div class="move-card-body">
+          <p id="moveCardSummary">Choose another board for this card.</p>
+          <label class="field">
+            <span>Destination board</span>
+            <select id="moveBoardSelect"></select>
+          </label>
+          <p class="data-note" id="moveCardNote">The card keeps its checklist, notes, diary pages, fitness logs and history.</p>
+          <div class="move-card-actions">
+            <button type="button" class="secondary-action" id="moveCardCancelButton">Cancel</button>
+            <button type="button" class="primary-action" id="moveCardConfirmButton">Move card</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
     <template id="cardTemplate">
       <article class="task-card" draggable="true">
         <div class="card-media" aria-hidden="true"></div>
@@ -832,15 +858,29 @@
               <button type="button" class="icon-button timer-reset" title="Reset timer" aria-label="Reset timer">
                 <span data-icon="rotate-ccw"></span>
               </button>
-              <button type="button" class="icon-button edit-card" title="Edit card" aria-label="Edit card">
-                <span data-icon="pencil"></span>
-              </button>
-              <button type="button" class="icon-button archive-card" title="Archive card" aria-label="Archive card">
-                <span data-icon="archive"></span>
-              </button>
-              <button type="button" class="icon-button delete-card" title="Remove from board" aria-label="Remove from board">
-                <span data-icon="trash-2"></span>
-              </button>
+              <div class="card-menu-shell">
+                <button type="button" class="icon-button card-menu-toggle" title="Card options" aria-label="Card options" aria-haspopup="menu" aria-expanded="false">
+                  <span data-icon="more-vertical"></span>
+                </button>
+                <div class="card-menu" role="menu" hidden>
+                  <button type="button" data-card-action="edit" role="menuitem">
+                    <span data-icon="pencil"></span>
+                    <span>Edit</span>
+                  </button>
+                  <button type="button" data-card-action="move" role="menuitem">
+                    <span data-icon="move-right"></span>
+                    <span>Move to board</span>
+                  </button>
+                  <button type="button" data-card-action="archive" role="menuitem">
+                    <span data-icon="archive"></span>
+                    <span>Archive</span>
+                  </button>
+                  <button type="button" data-card-action="delete" role="menuitem" class="is-danger">
+                    <span data-icon="trash-2"></span>
+                    <span>Remove</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

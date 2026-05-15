@@ -2737,7 +2737,8 @@ textarea:focus {
 .history-modal,
 .records-modal,
 .ideas-modal,
-.reports-modal {
+.reports-modal,
+.move-card-modal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(680px, 100%);
@@ -2764,7 +2765,8 @@ textarea:focus {
 .history-modal-body,
 .records-modal-body,
 .ideas-modal-body,
-.reports-modal-body {
+.reports-modal-body,
+.move-card-body {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
@@ -2778,6 +2780,28 @@ textarea:focus {
 
 .reports-modal-body {
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.move-card-modal {
+  width: min(480px, calc(100vw - 28px));
+}
+
+.move-card-body {
+  grid-template-rows: auto auto auto auto;
+}
+
+.move-card-body > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.move-card-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
 }
 
 .report-toolbar {
@@ -5184,15 +5208,15 @@ textarea:focus {
 
 .fitness-log {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .fitness-nav {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) 30px auto;
+  grid-template-columns: 28px minmax(0, 1fr) 28px auto;
   align-items: center;
-  gap: 7px;
-  padding: 7px;
+  gap: 6px;
+  padding: 6px;
   border: 1px solid rgba(17, 17, 17, 0.06);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.62);
@@ -5211,8 +5235,8 @@ textarea:focus {
 }
 
 .fitness-nav button {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
 }
 
@@ -5225,7 +5249,7 @@ textarea:focus {
 
 .fitness-nav input {
   min-width: 0;
-  height: 30px;
+  height: 28px;
   border: 1px solid rgba(17, 17, 17, 0.08);
   border-radius: 999px;
   padding: 0 10px;
@@ -5244,12 +5268,20 @@ textarea:focus {
 
 .fitness-parts {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+
+.fitness-parts::-webkit-scrollbar {
+  display: none;
 }
 
 .fitness-parts button {
-  min-height: 28px;
+  flex: 0 0 auto;
+  min-height: 26px;
   padding: 0 9px;
   border: 1px solid rgba(17, 17, 17, 0.08);
   border-radius: 999px;
@@ -5267,9 +5299,48 @@ textarea:focus {
   box-shadow: 0 8px 18px var(--card-shadow-color);
 }
 
+.fitness-parts button.is-selected {
+  outline: 2px solid rgba(17, 17, 17, 0.13);
+  outline-offset: 1px;
+}
+
 .fitness-active {
   display: grid;
   gap: 8px;
+}
+
+.fitness-summary-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.fitness-summary-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.fitness-summary-pill {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 2px;
+  min-width: 94px;
+  padding: 7px 9px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.fitness-summary-pill strong {
+  font-size: 0.66rem;
+  line-height: 1.1;
+}
+
+.fitness-summary-pill small {
+  color: var(--card-muted);
+  font-size: 0.58rem;
+  font-weight: 900;
+  line-height: 1.15;
 }
 
 .fitness-empty {
@@ -5285,18 +5356,38 @@ textarea:focus {
 
 .fitness-section {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 7px;
+  padding: 9px;
   border: 1px solid rgba(17, 17, 17, 0.06);
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.68);
 }
 
-.fitness-section h4 {
+.fitness-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.fitness-section h4,
+.fitness-disclosure summary strong {
   margin: 0;
   color: var(--card-ink);
   font-size: 0.78rem;
   line-height: 1.15;
+}
+
+.fitness-remove-part {
+  min-height: 24px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.74);
+  font-size: 0.58rem;
+  font-weight: 950;
+  cursor: pointer;
 }
 
 .fitness-field-grid,
@@ -5306,6 +5397,10 @@ textarea:focus {
   gap: 7px;
 }
 
+.fitness-cardio-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .fitness-exercises {
   display: grid;
   gap: 7px;
@@ -5313,9 +5408,13 @@ textarea:focus {
 
 .fitness-exercise-row {
   display: grid;
-  grid-template-columns: minmax(92px, 1.3fr) 48px 58px 54px 48px 30px;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) 30px;
   gap: 6px;
   align-items: end;
+}
+
+.fitness-exercise-row .fitness-field:first-child {
+  grid-column: 1 / -1;
 }
 
 .fitness-field {
@@ -5338,7 +5437,7 @@ textarea:focus {
   min-width: 0;
   border: 1px solid rgba(17, 17, 17, 0.08);
   border-radius: 9px;
-  padding: 7px 8px;
+  padding: 6px 8px;
   color: var(--card-ink);
   background: rgba(255, 255, 255, 0.84);
   font: inherit;
@@ -5347,6 +5446,7 @@ textarea:focus {
 }
 
 .fitness-field textarea {
+  min-height: 76px;
   resize: none;
   line-height: 1.3;
 }
@@ -5396,6 +5496,57 @@ textarea:focus {
   font-size: 0.74rem;
   font-weight: 800;
   line-height: 1.35;
+}
+
+.fitness-notes-panel,
+.fitness-disclosure {
+  min-width: 0;
+}
+
+.fitness-notes-panel summary,
+.fitness-disclosure summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  cursor: pointer;
+  color: var(--card-muted);
+  font-size: 0.64rem;
+  font-weight: 950;
+  list-style: none;
+}
+
+.fitness-notes-panel summary::-webkit-details-marker,
+.fitness-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.fitness-notes-panel summary::after,
+.fitness-disclosure summary::after {
+  content: "+";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.05);
+}
+
+.fitness-notes-panel[open] summary::after,
+.fitness-disclosure[open] summary::after {
+  content: "-";
+}
+
+.fitness-disclosure summary span {
+  color: var(--card-muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.fitness-disclosure[open] {
+  gap: 8px;
 }
 
 .goal-tracker {
@@ -5496,16 +5647,73 @@ textarea:focus {
   box-shadow: none;
 }
 
-.archive-card,
-.delete-card {
-  opacity: 0.52;
+.card-menu-shell {
+  position: relative;
+  display: inline-flex;
 }
 
-.task-card:hover .archive-card,
-.task-card:hover .delete-card,
-.task-card:focus-within .archive-card,
-.task-card:focus-within .delete-card {
+.card-menu-toggle {
+  opacity: 0.72;
+}
+
+.task-card:hover .card-menu-toggle,
+.task-card:focus-within .card-menu-toggle,
+.card-menu-shell.is-open .card-menu-toggle {
   opacity: 1;
+}
+
+.card-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  z-index: 24;
+  display: grid;
+  min-width: 176px;
+  padding: 6px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 50px rgba(17, 17, 17, 0.18);
+}
+
+.card-menu[hidden] {
+  display: none;
+}
+
+.card-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 9px;
+  color: var(--card-ink);
+  background: transparent;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-menu button:hover {
+  background: var(--card-soft);
+}
+
+.card-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.card-menu svg {
+  width: 16px;
+  height: 16px;
+}
+
+.card-menu .is-danger {
+  color: var(--danger);
 }
 
 .size-small .timer-toggle {
@@ -5535,14 +5743,6 @@ textarea:focus {
 .task-card.has-image.size-small .timer-toggle {
   color: #111111;
   background: #ffffff;
-}
-
-.delete-card {
-  margin-left: 0;
-}
-
-.delete-card:hover {
-  color: var(--danger);
 }
 
 .empty-state {
@@ -5727,10 +5927,17 @@ textarea:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .fitness-exercise-row,
   .fitness-field-grid,
   .fitness-metric-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fitness-exercise-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) 30px;
+  }
+
+  .fitness-exercise-row .fitness-field:first-child {
+    grid-column: 1 / -1;
   }
 
   .settings-dialog {
