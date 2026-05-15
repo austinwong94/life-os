@@ -9,8 +9,8 @@
     />
     <title>Life OS</title>
     <link rel="icon" href="data:," />
-    <script src="dev-redirect.js?v=20260516-fitness-metrics"></script>
-    <link rel="stylesheet" href="styles.css?v=20260516-fitness-metrics" />
+    <script src="dev-redirect.js?v=20260516-columns-controls"></script>
+    <link rel="stylesheet" href="styles.css?v=20260516-columns-controls" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -87,13 +87,6 @@
               <button type="button" data-value="smart">Auto</button>
               <button type="button" data-value="focus">Priority</button>
               <button type="button" data-value="custom">Manual</button>
-            </div>
-          </div>
-          <div class="field">
-            <span>Board columns</span>
-            <div class="segmented column-control" id="columnControl" role="group" aria-label="Board columns">
-              <button type="button" data-columns="2">2 columns</button>
-              <button type="button" data-columns="3">3 columns</button>
             </div>
           </div>
         </section>
@@ -514,6 +507,13 @@
             <details class="board-tools-menu">
               <summary>Board tools</summary>
               <div class="board-tools-popover">
+                <div class="board-tools-field">
+                  <span>Columns</span>
+                  <div class="segmented column-control" id="columnControl" role="group" aria-label="Board columns">
+                    <button type="button" data-columns="2">2 columns</button>
+                    <button type="button" data-columns="3">3 columns</button>
+                  </div>
+                </div>
                 <button type="button" class="toolbar-action" id="startAllTimersButton">Start focus timers</button>
                 <button type="button" class="toolbar-action" id="stopAllTimersButton">Pause focus timers</button>
                 <button type="button" class="toolbar-action" id="saveLayoutButton">Save layout</button>
@@ -911,6 +911,6 @@
       <button type="button" class="undo-toast-close" id="undoToastCloseButton" aria-label="Close undo message">x</button>
     </div>
 
-    <script src="app.js?v=20260516-fitness-metrics"></script>
+    <script src="app.js?v=20260516-columns-controls"></script>
   </body>
 </html>

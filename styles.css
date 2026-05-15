@@ -1962,6 +1962,29 @@ textarea:focus {
   flex: 1 1 112px;
 }
 
+.board-tools-field {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 14px;
+  background: rgba(244, 244, 242, 0.72);
+}
+
+.board-tools-field > span {
+  color: #555555;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.board-tools-field .segmented button {
+  min-height: 32px;
+  font-size: 0.74rem;
+}
+
 .quick-todo-panel {
   position: relative;
   display: grid;
