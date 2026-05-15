@@ -44,6 +44,10 @@
             <span data-icon="archive"></span>
             <small>Archive</small>
           </button>
+          <button type="button" class="rail-button" id="railReportsButton" title="Reports" aria-label="Reports" aria-pressed="false">
+            <span data-icon="bar-chart"></span>
+            <small>Reports</small>
+          </button>
           <button type="button" class="rail-button" id="railSettingsButton" title="Settings" aria-label="Settings" aria-pressed="false">
             <span data-icon="settings"></span>
             <small>Settings</small>
@@ -359,6 +363,12 @@
               <span>Video URL</span>
               <input id="videoUrl" type="url" maxlength="500" placeholder="YouTube, Instagram or Facebook link" autocomplete="off" />
             </label>
+            <div class="fitness-input" id="fitnessField">
+              <div class="fitness-form-note">
+                <strong>Advanced fitness log</strong>
+                <span>After adding the card, pick the day, select workout parts, record exercises, and add body metrics directly inside the card.</span>
+              </div>
+            </div>
             <label class="toggle-row">
               <input id="includeImage" type="checkbox" />
               <span>Include image</span>
@@ -749,6 +759,45 @@
             </div>
           </div>
           <div class="records-list" id="recordsModalList"></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="reportsModal" hidden>
+      <section class="reports-modal" role="dialog" aria-modal="true" aria-labelledby="reportsModalTitle">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Life OS reports</p>
+            <h2 id="reportsModalTitle">Reports</h2>
+          </div>
+          <button type="button" class="icon-button" id="reportsModalCloseButton" title="Close reports" aria-label="Close reports">
+            <span data-icon="x"></span>
+          </button>
+        </header>
+        <div class="reports-modal-body">
+          <div class="report-toolbar">
+            <div class="report-tabs" role="tablist" aria-label="Report type">
+              <button type="button" data-report-type="fitness" class="is-active">Fitness</button>
+              <button type="button" data-report-type="diary">Daily diary</button>
+            </div>
+            <label>
+              <span>Period</span>
+              <select id="reportRange">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="month">This month</option>
+                <option value="all">All records</option>
+              </select>
+            </label>
+            <button type="button" class="primary-action" id="reportPrintButton">
+              <span data-icon="download"></span>
+              <span>Download PDF</span>
+            </button>
+          </div>
+          <div class="report-preview" id="reportPreview">
+            <article class="report-document" id="reportPrintArea"></article>
+          </div>
         </div>
       </section>
     </div>

@@ -12,7 +12,7 @@ const LOCAL_DEV_RELOAD_POLL_MS = 1500;
 const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "app.js"];
 const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
-const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "quote", "video"];
+const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "quote", "video", "fitness"];
 const TRUSTED_VIDEO_DOMAINS = {
   youtube: ["youtube.com", "youtu.be"],
   instagram: ["instagram.com"],
@@ -111,6 +111,9 @@ const ICONS = {
   cloud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M17.5 19H8a5 5 0 1 1 1.2-9.86A6 6 0 0 1 20 12.5 3.5 3.5 0 0 1 17.5 19Z"/></svg>',
   timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 2h4"/><path d="M12 14l3-3"/><circle cx="12" cy="14" r="8"/></svg>',
   "layout-grid": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>',
+  "bar-chart": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>',
+  dumbbell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 7v10"/><path d="M18 7v10"/><path d="M8 9v6"/><path d="M16 9v6"/><path d="M8 12h8"/><path d="M3 10v4"/><path d="M21 10v4"/></svg>',
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m20 6-11 11-5-5"/></svg>',
   list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/></svg>',
@@ -139,6 +142,7 @@ const TYPE_META = {
   diary: { label: "Diary", icon: "calendar" },
   quote: { label: "Motivation", icon: "quote" },
   video: { label: "Video", icon: "video" },
+  fitness: { label: "Fitness log", icon: "dumbbell" },
   routine: { label: "Routine", icon: "timer" },
   scheduled: { label: "Schedule", icon: "calendar" },
   lab: { label: "AI Lab", icon: "list" },
@@ -158,6 +162,7 @@ const TYPE_HELP = {
   brief: "Use for strategy, rules, decisions, priorities, or a review prompt. It is a guidance card, not a task.",
   quote: "Use for motivational words, reminders, affirmations or principles you want visible on the board.",
   video: "Use for a YouTube, Instagram or Facebook video you want to keep beside the work it supports.",
+  fitness: "Use for detailed workout sessions, body metrics and report-ready fitness history.",
   single: "Use for one clear outcome that is either done or not done.",
   event: "Use for a trip, birthday, launch, renewal or important date. The countdown is automatic and cannot be paused.",
   routine: "Use for a daily routine that repeats every day, auto-counts down to midnight, and saves daily history.",
@@ -200,6 +205,10 @@ const TYPE_DETAILS = {
     best: "YouTube, Instagram or Facebook references",
     timing: "No timer. Pair it with a task card when action is needed."
   },
+  fitness: {
+    best: "Detailed workout logging, strength parts, running, missed areas and body metrics",
+    timing: "No timer. Use the date inside the card so reports can group sessions by week or month."
+  },
   single: {
     best: "One clear task or outcome",
     timing: "Timer is optional. Use hours for a focus sprint or date for a deadline."
@@ -238,7 +247,7 @@ const TYPE_DETAILS = {
   }
 };
 
-const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "brief", "quote", "video", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
+const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "brief", "quote", "video", "fitness", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
 const SCORECARD_TYPES = ["weekly", "monthly", "annual"];
 const TEMPLATE_ONLY_TYPES = ["lab", "workout"];
 const TYPE_PICKER_GROUPS = [
@@ -251,7 +260,8 @@ const TYPE_PICKER_GROUPS = [
       { type: "daily", label: "To-do", hint: "Plan ahead" },
       { type: "single", label: "Task", hint: "One outcome" },
       { type: "checklist", label: "Project", hint: "Multi-step" },
-      { type: "event", label: "Event", hint: "Fixed date" }
+      { type: "event", label: "Event", hint: "Fixed date" },
+      { type: "fitness", label: "Fitness log", hint: "Workout detail" }
     ]
   },
   {
@@ -340,6 +350,29 @@ const DIARY_FEELING_ALIASES = {
   Stressed: "Anxious",
   Low: "Sad"
 };
+
+const FITNESS_PARTS = [
+  { key: "running", label: "Running", type: "cardio" },
+  { key: "chest", label: "Chest", type: "strength", defaults: ["Bench press", "Incline dumbbell press", "Chest fly"] },
+  { key: "back", label: "Back", type: "strength", defaults: ["Lat pulldown", "Seated row", "Dumbbell row"] },
+  { key: "shoulders", label: "Shoulders", type: "strength", defaults: ["Overhead press", "Lateral raise", "Rear delt fly"] },
+  { key: "arms", label: "Arms", type: "strength", defaults: ["Biceps curl", "Triceps pressdown", "Hammer curl"] },
+  { key: "abs", label: "Abs", type: "strength", defaults: ["Plank", "Cable crunch", "Hanging knee raise"] },
+  { key: "legs", label: "Legs", type: "strength", defaults: ["Squat", "Leg press", "Romanian deadlift"] },
+  { key: "mobility", label: "Mobility", type: "mobility" },
+  { key: "other", label: "Other", type: "other" }
+];
+
+const FITNESS_METRIC_FIELDS = [
+  { key: "weightKg", label: "Weight", suffix: "kg" },
+  { key: "heightCm", label: "Height", suffix: "cm" },
+  { key: "bmi", label: "BMI", suffix: "" },
+  { key: "bodyFatPercent", label: "Fat", suffix: "%" },
+  { key: "waistCm", label: "Waist", suffix: "cm" },
+  { key: "restingHr", label: "Resting HR", suffix: "bpm" },
+  { key: "sleepHours", label: "Sleep", suffix: "h" },
+  { key: "energy", label: "Energy", suffix: "/5" }
+];
 
 const VISIBILITY_META = {
   private: { label: "Private", icon: "lock" },
@@ -1037,6 +1070,7 @@ let pendingBoardRenderOptions = null;
 let applyingExternalStorageUpdate = false;
 let localDevSourceSignature = "";
 let localDevReloadPending = false;
+let activeReportType = "fitness";
 
 const elements = {
   appShell: document.querySelector("#appShell"),
@@ -1045,6 +1079,7 @@ const elements = {
   railAddButton: document.querySelector("#railAddButton"),
   railTemplatesButton: document.querySelector("#railTemplatesButton"),
   railArchiveButton: document.querySelector("#railArchiveButton"),
+  railReportsButton: document.querySelector("#railReportsButton"),
   railSettingsButton: document.querySelector("#railSettingsButton"),
   settingsModal: document.querySelector("#settingsModal"),
   settingsModalTitle: document.querySelector("#settingsModalTitle"),
@@ -1129,6 +1164,7 @@ const elements = {
   quoteAuthor: document.querySelector("#quoteAuthor"),
   videoField: document.querySelector("#videoField"),
   videoUrl: document.querySelector("#videoUrl"),
+  fitnessField: document.querySelector("#fitnessField"),
   includeImage: document.querySelector("#includeImage"),
   imageUrlField: document.querySelector("#imageUrlField"),
   imageFile: document.querySelector("#imageFile"),
@@ -1219,6 +1255,12 @@ const elements = {
   recordsAreaFilter: document.querySelector("#recordsAreaFilter"),
   recordsReasonFilter: document.querySelector("#recordsReasonFilter"),
   recordsModalList: document.querySelector("#recordsModalList"),
+  reportsModal: document.querySelector("#reportsModal"),
+  reportsModalCloseButton: document.querySelector("#reportsModalCloseButton"),
+  reportRange: document.querySelector("#reportRange"),
+  reportPrintButton: document.querySelector("#reportPrintButton"),
+  reportPreview: document.querySelector("#reportPreview"),
+  reportPrintArea: document.querySelector("#reportPrintArea"),
   undoToast: document.querySelector("#undoToast"),
   undoToastText: document.querySelector("#undoToastText"),
   undoToastButton: document.querySelector("#undoToastButton"),
@@ -1314,6 +1356,8 @@ function bindEvents() {
   });
 
   elements.railArchiveButton.addEventListener("click", openRecordsModal);
+
+  elements.railReportsButton.addEventListener("click", openReportsModal);
 
   elements.railSettingsButton.addEventListener("click", () => {
     openSettingsModal();
@@ -1636,6 +1680,7 @@ function bindEvents() {
   elements.ideasModalCloseButton.addEventListener("click", closeIdeasModal);
   elements.historyModalCloseButton.addEventListener("click", closeHistoryModal);
   elements.recordsModalCloseButton.addEventListener("click", closeRecordsModal);
+  elements.reportsModalCloseButton.addEventListener("click", closeReportsModal);
 
   elements.settingsModal.addEventListener("click", (event) => {
     if (event.target === elements.settingsModal) {
@@ -1673,6 +1718,22 @@ function bindEvents() {
       closeRecordsModal();
     }
   });
+
+  elements.reportsModal.addEventListener("click", (event) => {
+    if (event.target === elements.reportsModal) {
+      closeReportsModal();
+    }
+  });
+
+  elements.reportsModal.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-report-type]");
+    if (!button) return;
+    activeReportType = button.dataset.reportType === "diary" ? "diary" : "fitness";
+    renderReportsModal();
+  });
+
+  elements.reportRange.addEventListener("change", renderReportsModal);
+  elements.reportPrintButton.addEventListener("click", printCurrentReport);
 
   elements.recordsModalList.addEventListener("click", (event) => {
     const archiveButton = event.target.closest("button[data-archive-ready-card]");
@@ -1751,6 +1812,9 @@ function bindEvents() {
     }
     if (event.key === "Escape" && !elements.recordsModal.hidden) {
       closeRecordsModal();
+    }
+    if (event.key === "Escape" && !elements.reportsModal.hidden) {
+      closeReportsModal();
     }
   });
 
@@ -1874,6 +1938,15 @@ function buildCardFromForm({ preview }) {
 
   if (type === "video") {
     card.videoUrl = normalizeVideoUrl(elements.videoUrl.value.trim());
+  }
+
+  if (type === "fitness") {
+    card.category = "Health";
+    card.metadata.category = "Health";
+    card.activeFitnessDate = getTodayKey();
+    card.fitnessEntries = {
+      [getTodayKey()]: normalizeFitnessEntry()
+    };
   }
 
   if (type === "daily") {
@@ -2124,6 +2197,7 @@ function closeOtherOverlays(activeSurface = "") {
   if (activeSurface !== "ideas") elements.ideasModal.hidden = true;
   if (activeSurface !== "history") elements.historyModal.hidden = true;
   if (activeSurface !== "records") elements.recordsModal.hidden = true;
+  if (activeSurface !== "reports") elements.reportsModal.hidden = true;
   syncModalOpenState();
 }
 
@@ -2447,6 +2521,7 @@ function getQuickCaptureFallbackTitle(type) {
   if (type === "diary") return "Daily diary";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
+  if (type === "fitness") return "Fitness workout log";
   if (type === "single") return "New task";
   if (type === "event") return "New event";
   if (type === "checklist") return "New project";
@@ -2731,6 +2806,7 @@ function estimateCardHeight(card) {
   if (card.type === "diary") height += 240;
   if (card.type === "quote") height += 96;
   if (card.type === "video") height += 190;
+  if (card.type === "fitness") height += 360;
   if (card.type === "single") height += 48;
   return height;
 }
@@ -2822,6 +2898,7 @@ function matchesFocus(card) {
 function isTodayFocusCard(card) {
   if (card.type === "daily") return getCardPlanDate(card) === getTodayKey();
   if (card.type === "planner" || card.type === "diary") return true;
+  if (card.type === "fitness") return true;
   if (card.type === "planlist") return normalizePlannerViewMode(card.plannerView) === "today";
   if (card.type === "routine") return true;
   if (card.runningSince) return true;
@@ -2971,6 +3048,9 @@ function renderCard(card, options = {}) {
   }
   if (card.type === "video") {
     body.append(renderVideoCard(card));
+  }
+  if (card.type === "fitness") {
+    body.append(renderFitnessLog(card));
   }
   if (card.type === "checklist") {
     body.append(renderChecklist(card));
@@ -3724,6 +3804,393 @@ function renderVideoCard(card) {
   }
 
   return wrapper;
+}
+
+function normalizeFitnessCard(card) {
+  card.fitnessEntries = card.fitnessEntries && typeof card.fitnessEntries === "object" ? card.fitnessEntries : {};
+  card.activeFitnessDate = normalizeDateKey(card.activeFitnessDate) || getTodayKey();
+  Object.entries(card.fitnessEntries).forEach(([dateKey, entry]) => {
+    const normalizedDate = normalizeDateKey(dateKey);
+    if (!normalizedDate) {
+      delete card.fitnessEntries[dateKey];
+      return;
+    }
+    card.fitnessEntries[normalizedDate] = normalizeFitnessEntry(entry);
+    if (normalizedDate !== dateKey) delete card.fitnessEntries[dateKey];
+  });
+}
+
+function normalizeFitnessEntry(entry = {}) {
+  const parts = entry.parts && typeof entry.parts === "object" ? entry.parts : {};
+  const normalizedParts = {};
+  FITNESS_PARTS.forEach((meta) => {
+    normalizedParts[meta.key] = normalizeFitnessPart(meta, parts[meta.key] || {});
+  });
+  return {
+    parts: normalizedParts,
+    metrics: normalizeFitnessMetrics(entry.metrics || {}),
+    notes: normalizeLabel(entry.notes || ""),
+    updatedAt: normalizeTimestamp(entry.updatedAt) || 0
+  };
+}
+
+function normalizeFitnessPart(meta, part = {}) {
+  const active = Boolean(part.active);
+  if (meta.type === "cardio") {
+    return {
+      active,
+      distanceKm: normalizeOptionalNumber(part.distanceKm),
+      durationMinutes: normalizeOptionalNumber(part.durationMinutes),
+      intensity: normalizeFitnessIntensity(part.intensity),
+      notes: normalizeLabel(part.notes || "")
+    };
+  }
+  if (meta.type === "strength") {
+    const exercises = Array.isArray(part.exercises) ? part.exercises.map(normalizeFitnessExercise).filter((item) => item.name) : [];
+    return { active, exercises, notes: normalizeLabel(part.notes || "") };
+  }
+  return {
+    active,
+    durationMinutes: normalizeOptionalNumber(part.durationMinutes),
+    area: normalizeLabel(part.area || meta.label),
+    notes: normalizeLabel(part.notes || "")
+  };
+}
+
+function normalizeFitnessExercise(exercise = {}) {
+  return {
+    id: exercise.id || createId(),
+    name: normalizeLabel(exercise.name || "Exercise"),
+    sets: normalizeOptionalNumber(exercise.sets),
+    reps: normalizeLabel(exercise.reps || ""),
+    weightKg: normalizeOptionalNumber(exercise.weightKg),
+    rpe: normalizeOptionalNumber(exercise.rpe),
+    notes: normalizeLabel(exercise.notes || "")
+  };
+}
+
+function normalizeFitnessMetrics(metrics = {}) {
+  const next = {};
+  FITNESS_METRIC_FIELDS.forEach((field) => {
+    next[field.key] = normalizeOptionalNumber(metrics[field.key]);
+  });
+  if (!next.bmi && next.weightKg && next.heightCm) {
+    next.bmi = calculateBMI(next.weightKg, next.heightCm);
+  }
+  return next;
+}
+
+function normalizeOptionalNumber(value) {
+  if (value === "" || value === null || typeof value === "undefined") return "";
+  const number = Number(value);
+  return Number.isFinite(number) ? number : "";
+}
+
+function normalizeFitnessIntensity(value) {
+  return ["Easy", "Moderate", "Hard", "Max"].includes(value) ? value : "Moderate";
+}
+
+function calculateBMI(weightKg, heightCm) {
+  const weight = Number(weightKg);
+  const height = Number(heightCm) / 100;
+  if (!weight || !height) return "";
+  return Number((weight / (height * height)).toFixed(1));
+}
+
+function getActiveFitnessDate(card) {
+  normalizeFitnessCard(card);
+  return normalizeDateKey(card.activeFitnessDate) || getTodayKey();
+}
+
+function getFitnessEntry(card, dateKey = getActiveFitnessDate(card)) {
+  normalizeFitnessCard(card);
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  if (!card.fitnessEntries[normalizedDate]) {
+    card.fitnessEntries[normalizedDate] = normalizeFitnessEntry();
+  }
+  return card.fitnessEntries[normalizedDate];
+}
+
+function getFitnessPartMeta(key) {
+  return FITNESS_PARTS.find((part) => part.key === key) || FITNESS_PARTS[0];
+}
+
+function getActiveFitnessParts(entry) {
+  return FITNESS_PARTS.filter((meta) => entry.parts?.[meta.key]?.active);
+}
+
+function updateFitnessEntry(card, dateKey, updater, options = {}) {
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  const entry = getFitnessEntry(card, normalizedDate);
+  updater(entry);
+  entry.metrics = normalizeFitnessMetrics(entry.metrics);
+  entry.updatedAt = Date.now();
+  card.fitnessEntries[normalizedDate] = normalizeFitnessEntry(entry);
+  saveState({ quiet: true });
+  if (options.rerender) renderCardsOnly({ force: true });
+}
+
+function ensureFitnessStrengthExercise(part, meta) {
+  if (!Array.isArray(part.exercises)) part.exercises = [];
+  if (part.exercises.length) return;
+  part.exercises.push(normalizeFitnessExercise({ name: meta.defaults?.[0] || "Exercise", sets: 3, reps: "8-12", weightKg: "", rpe: 7 }));
+}
+
+function renderFitnessLog(card) {
+  normalizeFitnessCard(card);
+  const dateKey = getActiveFitnessDate(card);
+  const entry = getFitnessEntry(card, dateKey);
+  const wrapper = document.createElement("div");
+  wrapper.className = "fitness-log";
+
+  const nav = document.createElement("div");
+  nav.className = "fitness-nav";
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.innerHTML = ICONS["chevron-left"];
+  previous.title = "Previous day";
+  previous.addEventListener("click", () => {
+    card.activeFitnessDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), -1));
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  const dateInput = document.createElement("input");
+  dateInput.type = "date";
+  dateInput.value = dateKey;
+  dateInput.addEventListener("change", () => {
+    card.activeFitnessDate = normalizeDateKey(dateInput.value) || getTodayKey();
+    getFitnessEntry(card, card.activeFitnessDate);
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  const next = document.createElement("button");
+  next.type = "button";
+  next.innerHTML = ICONS["chevron-right"];
+  next.title = "Next day";
+  next.addEventListener("click", () => {
+    card.activeFitnessDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), 1));
+    saveState();
+    renderCardsOnly({ force: true });
+  });
+  const status = document.createElement("span");
+  status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "No workout yet";
+  nav.append(previous, dateInput, next, status);
+
+  const parts = document.createElement("div");
+  parts.className = "fitness-parts";
+  FITNESS_PARTS.forEach((meta) => {
+    const part = entry.parts[meta.key];
+    const button = document.createElement("button");
+    button.type = "button";
+    button.classList.toggle("is-active", part.active);
+    button.textContent = meta.label;
+    button.title = part.active ? `Remove ${meta.label}` : `Log ${meta.label}`;
+    button.addEventListener("click", () => {
+      updateFitnessEntry(card, dateKey, (nextEntry) => {
+        const nextPart = nextEntry.parts[meta.key];
+        nextPart.active = !nextPart.active;
+        if (nextPart.active && meta.type === "strength") ensureFitnessStrengthExercise(nextPart, meta);
+      }, { rerender: true });
+    });
+    parts.append(button);
+  });
+
+  const activeBody = document.createElement("div");
+  activeBody.className = "fitness-active";
+  const activeParts = getActiveFitnessParts(entry);
+  if (!activeParts.length) {
+    const empty = document.createElement("p");
+    empty.className = "fitness-empty";
+    empty.textContent = "Select the workout parts completed for this date.";
+    activeBody.append(empty);
+  } else {
+    activeParts.forEach((meta) => activeBody.append(renderFitnessPartEditor(card, dateKey, meta, entry.parts[meta.key])));
+  }
+
+  wrapper.append(nav, parts, activeBody, renderFitnessMetrics(card, dateKey, entry));
+  return wrapper;
+}
+
+function renderFitnessPartEditor(card, dateKey, meta, part) {
+  if (meta.type === "cardio") return renderFitnessCardioEditor(card, dateKey, meta, part);
+  if (meta.type === "strength") return renderFitnessStrengthEditor(card, dateKey, meta, part);
+  return renderFitnessSimpleEditor(card, dateKey, meta, part);
+}
+
+function renderFitnessCardioEditor(card, dateKey, meta, part) {
+  const section = createFitnessSection(meta.label);
+  const grid = document.createElement("div");
+  grid.className = "fitness-field-grid";
+  grid.append(
+    createFitnessNumberField("Km", part.distanceKm, (value) => {
+      updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].distanceKm = value; });
+    }),
+    createFitnessNumberField("Minutes", part.durationMinutes, (value) => {
+      updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].durationMinutes = value; });
+    }),
+    createFitnessSelectField("Effort", part.intensity, ["Easy", "Moderate", "Hard", "Max"], (value) => {
+      updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].intensity = value; });
+    })
+  );
+  const pace = document.createElement("span");
+  pace.className = "fitness-pace";
+  const distance = Number(part.distanceKm);
+  const minutes = Number(part.durationMinutes);
+  pace.textContent = distance && minutes ? `${(minutes / distance).toFixed(1)} min/km` : "Pace";
+  grid.append(pace);
+  section.append(grid, createFitnessTextArea("Running notes", part.notes, (value) => {
+    updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
+  }));
+  return section;
+}
+
+function renderFitnessStrengthEditor(card, dateKey, meta, part) {
+  const section = createFitnessSection(meta.label);
+  const list = document.createElement("div");
+  list.className = "fitness-exercises";
+  part.exercises.forEach((exercise, index) => {
+    const row = document.createElement("div");
+    row.className = "fitness-exercise-row";
+    row.append(
+      createFitnessTextField("Exercise", exercise.name, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { name: value })),
+      createFitnessNumberField("Sets", exercise.sets, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { sets: value })),
+      createFitnessTextField("Reps", exercise.reps, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { reps: value })),
+      createFitnessNumberField("Kg", exercise.weightKg, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { weightKg: value })),
+      createFitnessNumberField("RPE", exercise.rpe, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { rpe: value }))
+    );
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "fitness-remove-exercise";
+    remove.innerHTML = ICONS["trash-2"];
+    remove.title = "Remove exercise";
+    remove.addEventListener("click", () => {
+      updateFitnessEntry(card, dateKey, (entry) => {
+        entry.parts[meta.key].exercises.splice(index, 1);
+      }, { rerender: true });
+    });
+    row.append(remove);
+    list.append(row);
+  });
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "fitness-add-exercise";
+  add.innerHTML = `${ICONS.plus}<span>Add exercise</span>`;
+  add.addEventListener("click", () => {
+    updateFitnessEntry(card, dateKey, (entry) => {
+      const nextPart = entry.parts[meta.key];
+      const fallback = meta.defaults?.[nextPart.exercises.length % (meta.defaults.length || 1)] || "Exercise";
+      nextPart.exercises.push(normalizeFitnessExercise({ name: fallback, sets: 3, reps: "8-12", rpe: 7 }));
+    }, { rerender: true });
+  });
+  section.append(list, add, createFitnessTextArea(`${meta.label} notes`, part.notes, (value) => {
+    updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
+  }));
+  return section;
+}
+
+function renderFitnessSimpleEditor(card, dateKey, meta, part) {
+  const section = createFitnessSection(meta.label);
+  const grid = document.createElement("div");
+  grid.className = "fitness-field-grid";
+  grid.append(
+    createFitnessNumberField("Minutes", part.durationMinutes, (value) => {
+      updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].durationMinutes = value; });
+    }),
+    createFitnessTextField("Area", part.area, (value) => {
+      updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].area = value; });
+    })
+  );
+  section.append(grid, createFitnessTextArea(`${meta.label} notes`, part.notes, (value) => {
+    updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
+  }));
+  return section;
+}
+
+function updateFitnessExercise(card, dateKey, partKey, index, updates) {
+  updateFitnessEntry(card, dateKey, (entry) => {
+    const part = entry.parts[partKey];
+    part.exercises[index] = normalizeFitnessExercise({ ...part.exercises[index], ...updates });
+  });
+}
+
+function renderFitnessMetrics(card, dateKey, entry) {
+  const section = createFitnessSection("Body metrics");
+  section.classList.add("fitness-metrics");
+  const grid = document.createElement("div");
+  grid.className = "fitness-metric-grid";
+  FITNESS_METRIC_FIELDS.forEach((field) => {
+    grid.append(createFitnessNumberField(`${field.label}${field.suffix ? ` (${field.suffix})` : ""}`, entry.metrics[field.key], (value) => {
+      updateFitnessEntry(card, dateKey, (nextEntry) => {
+        nextEntry.metrics[field.key] = value;
+      }, { rerender: field.key === "weightKg" || field.key === "heightCm" });
+    }));
+  });
+  section.append(grid, createFitnessTextArea("Session notes", entry.notes, (value) => {
+    updateFitnessEntry(card, dateKey, (nextEntry) => { nextEntry.notes = value; });
+  }));
+  return section;
+}
+
+function createFitnessSection(title) {
+  const section = document.createElement("section");
+  section.className = "fitness-section";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  section.append(heading);
+  return section;
+}
+
+function createFitnessNumberField(label, value, onInput) {
+  return createFitnessTextField(label, value, onInput, { type: "number", step: "0.1" });
+}
+
+function createFitnessTextField(label, value, onInput, options = {}) {
+  const field = document.createElement("label");
+  field.className = "fitness-field";
+  const span = document.createElement("span");
+  span.textContent = label;
+  const input = document.createElement("input");
+  input.type = options.type || "text";
+  if (options.step) input.step = options.step;
+  input.value = value || "";
+  input.addEventListener("input", () => onInput(input.value));
+  field.append(span, input);
+  return field;
+}
+
+function createFitnessSelectField(label, value, options, onChange) {
+  const field = document.createElement("label");
+  field.className = "fitness-field";
+  const span = document.createElement("span");
+  span.textContent = label;
+  const select = document.createElement("select");
+  options.forEach((optionValue) => {
+    const option = document.createElement("option");
+    option.value = optionValue;
+    option.textContent = optionValue;
+    select.append(option);
+  });
+  select.value = value || options[0];
+  select.addEventListener("change", () => onChange(select.value));
+  field.append(span, select);
+  return field;
+}
+
+function createFitnessTextArea(label, value, onInput) {
+  const field = document.createElement("label");
+  field.className = "fitness-field fitness-textarea";
+  const span = document.createElement("span");
+  span.textContent = label;
+  const textarea = document.createElement("textarea");
+  textarea.rows = 2;
+  textarea.value = value || "";
+  textarea.addEventListener("input", () => {
+    onInput(textarea.value);
+    autoGrowTextarea(textarea);
+  });
+  field.append(span, textarea);
+  requestAnimationFrame(() => autoGrowTextarea(textarea));
+  return field;
 }
 
 function renderChecklist(card) {
@@ -5443,6 +5910,7 @@ function renderConditionalFields() {
   elements.diaryField.classList.toggle("is-visible", type === "diary");
   elements.quoteField.classList.toggle("is-visible", type === "quote");
   elements.videoField.classList.toggle("is-visible", type === "video");
+  elements.fitnessField.classList.toggle("is-visible", type === "fitness");
   elements.scheduleField.classList.toggle("is-visible", isScheduled);
   elements.scorecardPeriodField.classList.toggle("is-visible", isScorecard);
   elements.dailyPlanDateField.classList.toggle("is-visible", type === "daily");
@@ -5793,13 +6261,393 @@ function closeRecordsModal() {
   syncModalOpenState();
 }
 
+function openReportsModal() {
+  closeOtherOverlays("reports");
+  renderReportsModal();
+  elements.reportsModal.hidden = false;
+  syncModalOpenState();
+}
+
+function closeReportsModal() {
+  elements.reportsModal.hidden = true;
+  syncModalOpenState();
+}
+
+function renderReportsModal() {
+  if (!elements.reportPrintArea) return;
+  elements.reportsModal.querySelectorAll("button[data-report-type]").forEach((button) => {
+    const isActive = button.dataset.reportType === activeReportType;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  elements.reportPrintArea.innerHTML = "";
+  const range = getReportRangeMeta();
+  const report = activeReportType === "diary" ? renderDiaryReport(range) : renderFitnessReport(range);
+  elements.reportPrintArea.append(report);
+  hydrateIcons(elements.reportsModal);
+}
+
+function getReportRangeMeta() {
+  const value = elements.reportRange?.value || "30";
+  const todayKey = getTodayKey();
+  const today = dateKeyToLocalDate(todayKey);
+  if (value === "all") return { value, startKey: "", endKey: todayKey, label: "All records", dayCount: 365 };
+  if (value === "month") {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { value, startKey: getTodayKey(start), endKey: todayKey, label: "This month", dayCount: Math.max(1, Math.round((today - start) / 86400000) + 1) };
+  }
+  const days = clampInt(value, 7, 365, 30);
+  return { value, startKey: getTodayKey(addDays(today, -(days - 1))), endKey: todayKey, label: `Last ${days} days`, dayCount: days };
+}
+
+function isDateInReportRange(dateKey, range) {
+  const normalizedDate = normalizeDateKey(dateKey);
+  if (!normalizedDate) return false;
+  if (range.startKey && normalizedDate < range.startKey) return false;
+  return normalizedDate <= range.endKey;
+}
+
+function getCurrentBoardReportCards() {
+  return [...state.cards, ...getArchivedCards()];
+}
+
+function renderFitnessReport(range) {
+  const sessions = collectFitnessSessions(range);
+  const totals = getFitnessReportTotals(sessions);
+  const documentNode = createReportDocument("Fitness progress report", `${state.board.name} · ${range.label}`);
+  const intro = document.createElement("p");
+  intro.className = "report-lede";
+  intro.textContent = "Built from Fitness log cards on this board. Benchmarks use adult aerobic and muscle-strengthening activity guidance as a practical reference, not medical advice.";
+  documentNode.append(intro);
+
+  const summary = document.createElement("div");
+  summary.className = "report-metric-grid";
+  summary.append(
+    createReportMetric("Sessions", sessions.length, "logged workout days"),
+    createReportMetric("Running", `${formatReportNumber(totals.runningKm)} km`, `${Math.round(totals.runningMinutes)} min`),
+    createReportMetric("Strength", `${totals.strengthSets} sets`, `${totals.strengthDays} training days`),
+    createReportMetric("Coverage", `${totals.partLabels.length}`, totals.partLabels.join(", ") || "no parts yet")
+  );
+  documentNode.append(summary);
+
+  const targetWeeks = Math.max(1, range.dayCount / 7);
+  const targetMinutes = Math.round(150 * targetWeeks);
+  const targetStrengthDays = Math.max(2, Math.round(2 * targetWeeks));
+  documentNode.append(createReportSection("Health reference", [
+    `Aerobic minutes: ${Math.round(totals.runningMinutes)} / ${targetMinutes} min reference`,
+    `Strength days: ${totals.strengthDays} / ${targetStrengthDays} day reference`,
+    `Best use: compare trend and consistency, then adjust training load gradually.`
+  ]));
+
+  documentNode.append(createFitnessSplitSection(totals.partCounts));
+  documentNode.append(createFitnessMetricsTrendSection(sessions));
+  documentNode.append(createFitnessRecentSessionsSection(sessions));
+  return documentNode;
+}
+
+function collectFitnessSessions(range) {
+  const sessions = [];
+  getCurrentBoardReportCards()
+    .filter((card) => card.type === "fitness")
+    .forEach((card) => {
+      normalizeFitnessCard(card);
+      Object.entries(card.fitnessEntries || {}).forEach(([dateKey, entry]) => {
+        if (!isDateInReportRange(dateKey, range)) return;
+        const normalizedEntry = normalizeFitnessEntry(entry);
+        const activeParts = getActiveFitnessParts(normalizedEntry);
+        const hasMetrics = FITNESS_METRIC_FIELDS.some((field) => normalizedEntry.metrics[field.key] !== "");
+        if (!activeParts.length && !hasMetrics && !normalizedEntry.notes) return;
+        sessions.push({ card, dateKey, entry: normalizedEntry, activeParts });
+      });
+    });
+  return sessions.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+}
+
+function getFitnessReportTotals(sessions) {
+  const partCounts = {};
+  const partLabels = new Set();
+  let runningKm = 0;
+  let runningMinutes = 0;
+  let strengthSets = 0;
+  const strengthDates = new Set();
+  sessions.forEach((session) => {
+    session.activeParts.forEach((meta) => {
+      partCounts[meta.label] = (partCounts[meta.label] || 0) + 1;
+      partLabels.add(meta.label);
+      const part = session.entry.parts[meta.key];
+      if (meta.type === "cardio") {
+        runningKm += Number(part.distanceKm) || 0;
+        runningMinutes += Number(part.durationMinutes) || 0;
+      }
+      if (meta.type === "strength") {
+        const sets = (part.exercises || []).reduce((sum, exercise) => sum + (Number(exercise.sets) || 0), 0);
+        strengthSets += sets;
+        if (sets > 0 || part.exercises?.length) strengthDates.add(session.dateKey);
+      }
+    });
+  });
+  return { runningKm, runningMinutes, strengthSets, strengthDays: strengthDates.size, partCounts, partLabels: [...partLabels] };
+}
+
+function createFitnessSplitSection(partCounts) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Workout split";
+  const grid = document.createElement("div");
+  grid.className = "report-chip-grid";
+  const entries = Object.entries(partCounts).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No workout parts logged in this period.";
+    section.append(heading, empty);
+    return section;
+  }
+  entries.forEach(([label, count]) => {
+    const chip = document.createElement("span");
+    chip.textContent = `${label} · ${count}`;
+    grid.append(chip);
+  });
+  section.append(heading, grid);
+  return section;
+}
+
+function createFitnessMetricsTrendSection(sessions) {
+  const metricSessions = sessions
+    .slice()
+    .reverse()
+    .filter((session) => FITNESS_METRIC_FIELDS.some((field) => session.entry.metrics[field.key] !== ""));
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Body metrics trend";
+  if (!metricSessions.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No body metrics recorded in this period.";
+    section.append(heading, empty);
+    return section;
+  }
+  const first = metricSessions[0];
+  const latest = metricSessions[metricSessions.length - 1];
+  const table = document.createElement("div");
+  table.className = "report-table";
+  ["weightKg", "bmi", "bodyFatPercent", "waistCm"].forEach((key) => {
+    const field = FITNESS_METRIC_FIELDS.find((item) => item.key === key);
+    const row = document.createElement("div");
+    row.innerHTML = `<strong>${escapeHtml(field.label)}</strong><span>${formatMetricValue(first.entry.metrics[key], field.suffix)}</span><span>${formatMetricValue(latest.entry.metrics[key], field.suffix)}</span>`;
+    table.append(row);
+  });
+  section.append(heading, createReportSubhead(`${formatRecordDate(first.dateKey)} to ${formatRecordDate(latest.dateKey)}`), table);
+  return section;
+}
+
+function createFitnessRecentSessionsSection(sessions) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Recent sessions";
+  const list = document.createElement("div");
+  list.className = "report-session-list";
+  sessions.slice(0, 8).forEach((session) => {
+    const item = document.createElement("article");
+    const title = document.createElement("strong");
+    title.textContent = `${formatRecordDate(session.dateKey)} · ${session.activeParts.map((part) => part.label).join(", ") || "Metrics"}`;
+    const details = document.createElement("p");
+    details.textContent = getFitnessSessionLine(session);
+    item.append(title, details);
+    list.append(item);
+  });
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No fitness sessions recorded in this period.";
+    list.append(empty);
+  }
+  section.append(heading, list);
+  return section;
+}
+
+function getFitnessSessionLine(session) {
+  const lines = [];
+  const running = session.entry.parts.running;
+  if (running?.active) lines.push(`Running ${formatReportNumber(running.distanceKm)} km, ${formatReportNumber(running.durationMinutes)} min`);
+  session.activeParts.forEach((meta) => {
+    if (meta.type !== "strength") return;
+    const part = session.entry.parts[meta.key];
+    const sets = (part.exercises || []).reduce((sum, exercise) => sum + (Number(exercise.sets) || 0), 0);
+    lines.push(`${meta.label} ${sets} sets`);
+  });
+  if (session.entry.notes) lines.push(session.entry.notes);
+  return lines.join(" · ") || "Metrics recorded";
+}
+
+function renderDiaryReport(range) {
+  const entries = collectDiaryReportEntries(range);
+  const documentNode = createReportDocument("Daily diary report", `${state.board.name} · ${range.label}`);
+  const feelings = entries.reduce((counts, item) => {
+    counts[item.entry.feeling] = (counts[item.entry.feeling] || 0) + 1;
+    return counts;
+  }, {});
+  const topFeeling = Object.entries(feelings).sort((a, b) => b[1] - a[1])[0]?.[0] || "No entries";
+  const summary = document.createElement("div");
+  summary.className = "report-metric-grid";
+  summary.append(
+    createReportMetric("Entries", entries.length, "diary pages"),
+    createReportMetric("Most common", topFeeling, "feeling"),
+    createReportMetric("First entry", entries.at(-1) ? formatRecordDate(entries.at(-1).dateKey) : "-", "in period"),
+    createReportMetric("Latest", entries[0] ? formatRecordDate(entries[0].dateKey) : "-", "saved page")
+  );
+  documentNode.append(summary, createDiaryFeelingSection(feelings), createDiaryEntrySection(entries));
+  return documentNode;
+}
+
+function collectDiaryReportEntries(range) {
+  const entries = [];
+  getCurrentBoardReportCards()
+    .filter((card) => card.type === "diary")
+    .forEach((card) => {
+      normalizeDiaryCard(card);
+      Object.entries(card.diaryEntries || {}).forEach(([dateKey, entry]) => {
+        if (!isDateInReportRange(dateKey, range)) return;
+        const normalizedEntry = normalizeDiaryEntry(entry);
+        if (!normalizedEntry.sentence && !normalizedEntry.thoughts) return;
+        entries.push({ card, dateKey, entry: normalizedEntry });
+      });
+    });
+  return entries.sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+}
+
+function createDiaryFeelingSection(feelings) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Feeling pattern";
+  const grid = document.createElement("div");
+  grid.className = "report-chip-grid diary-feeling-report";
+  Object.entries(feelings).sort((a, b) => b[1] - a[1]).forEach(([feeling, count]) => {
+    const mood = DIARY_MOOD_META[feeling] || { icon: "", label: feeling };
+    const chip = document.createElement("span");
+    chip.textContent = `${mood.icon} ${mood.label} · ${count}`;
+    grid.append(chip);
+  });
+  if (!grid.children.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No diary feelings recorded in this period.";
+    section.append(heading, empty);
+    return section;
+  }
+  section.append(heading, grid);
+  return section;
+}
+
+function createDiaryEntrySection(entries) {
+  const section = document.createElement("section");
+  section.className = "report-section diary-report-pages";
+  const heading = document.createElement("h3");
+  heading.textContent = "Diary pages";
+  const list = document.createElement("div");
+  list.className = "diary-report-list";
+  entries.forEach((item) => {
+    const mood = DIARY_MOOD_META[item.entry.feeling] || { icon: "", label: item.entry.feeling };
+    const page = document.createElement("article");
+    const header = document.createElement("div");
+    header.className = "diary-report-header";
+    const date = document.createElement("strong");
+    date.textContent = formatRecordDate(item.dateKey);
+    const feeling = document.createElement("span");
+    feeling.textContent = `${mood.icon} ${mood.label}`;
+    header.append(date, feeling);
+    const sentence = document.createElement("p");
+    sentence.className = "diary-report-sentence";
+    sentence.textContent = item.entry.sentence || "Untitled day";
+    const thoughts = document.createElement("p");
+    thoughts.textContent = item.entry.thoughts || "";
+    page.append(header, sentence);
+    if (thoughts.textContent) page.append(thoughts);
+    list.append(page);
+  });
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No diary entries recorded in this period.";
+    list.append(empty);
+  }
+  section.append(heading, list);
+  return section;
+}
+
+function createReportDocument(title, meta) {
+  const article = document.createElement("article");
+  article.className = `report-document report-${activeReportType}`;
+  const header = document.createElement("header");
+  header.className = "report-document-header";
+  const h2 = document.createElement("h2");
+  h2.textContent = title;
+  const p = document.createElement("p");
+  p.textContent = `${meta} · Generated ${formatRecordDateTime(Date.now())}`;
+  header.append(h2, p);
+  article.append(header);
+  return article;
+}
+
+function createReportMetric(label, value, detail) {
+  const card = document.createElement("div");
+  card.className = "report-metric";
+  const strong = document.createElement("strong");
+  strong.textContent = value;
+  const span = document.createElement("span");
+  span.textContent = label;
+  const small = document.createElement("small");
+  small.textContent = detail;
+  card.append(strong, span, small);
+  return card;
+}
+
+function createReportSection(title, lines) {
+  const section = document.createElement("section");
+  section.className = "report-section";
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  const list = document.createElement("ul");
+  lines.forEach((line) => {
+    const item = document.createElement("li");
+    item.textContent = line;
+    list.append(item);
+  });
+  section.append(heading, list);
+  return section;
+}
+
+function createReportSubhead(text) {
+  const p = document.createElement("p");
+  p.className = "report-subhead";
+  p.textContent = text;
+  return p;
+}
+
+function formatReportNumber(value) {
+  const number = Number(value) || 0;
+  return Number.isInteger(number) ? String(number) : number.toFixed(1);
+}
+
+function formatMetricValue(value, suffix) {
+  if (value === "" || value === null || typeof value === "undefined") return "-";
+  return `${value}${suffix ? ` ${suffix}` : ""}`;
+}
+
+function printCurrentReport() {
+  renderReportsModal();
+  document.body.classList.add("print-report");
+  window.print();
+  window.setTimeout(() => document.body.classList.remove("print-report"), 500);
+}
+
 function syncModalOpenState() {
   const hasOpenModal =
     !elements.settingsModal.hidden ||
     !elements.templateModal.hidden ||
     !elements.ideasModal.hidden ||
     !elements.historyModal.hidden ||
-    !elements.recordsModal.hidden;
+    !elements.recordsModal.hidden ||
+    !elements.reportsModal.hidden;
   document.body.classList.toggle("modal-open", hasOpenModal);
   syncRailActiveState();
 }
@@ -5810,6 +6658,7 @@ function syncRailActiveState() {
     add: elements.railAddButton,
     templates: elements.railTemplatesButton,
     archive: elements.railArchiveButton,
+    reports: elements.railReportsButton,
     settings: elements.railSettingsButton
   };
 
@@ -5829,6 +6678,7 @@ function getActiveRailSurface() {
   if (!elements.cardComposerPanel.hidden) return "add";
   if (!elements.templateModal.hidden || !elements.ideasModal.hidden) return "templates";
   if (!elements.recordsModal.hidden || !elements.historyModal.hidden) return "archive";
+  if (!elements.reportsModal.hidden) return "reports";
   if (!elements.settingsModal.hidden) return "settings";
   return "";
 }
@@ -6905,7 +7755,7 @@ function getOrderedCards() {
 }
 
 function getTypeWeight(type) {
-  const weights = { planner: 0, planlist: 1, diary: 2, brief: 3, routine: 4, scheduled: 5, daily: 6, event: 7, quote: 8, video: 9, lab: 10, workout: 11, minutes: 12, checklist: 13, weekly: 14, monthly: 15, annual: 16, single: 17 };
+  const weights = { planner: 0, planlist: 1, diary: 2, brief: 3, fitness: 4, routine: 5, scheduled: 6, daily: 7, event: 8, quote: 9, video: 10, lab: 11, workout: 12, minutes: 13, checklist: 14, weekly: 15, monthly: 16, annual: 17, single: 18 };
   return Number.isFinite(weights[type]) ? weights[type] : 9;
 }
 
@@ -6936,6 +7786,7 @@ function getCardSearchText(card) {
   const progress = getProgress(card);
   const plannerEntry = card.type === "planner" ? getPlannerEntry(card, getActivePlannerDate(card)) : null;
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, getActiveDiaryDate(card)) : null;
+  const fitnessEntry = card.type === "fitness" ? getFitnessEntry(card, getActiveFitnessDate(card)) : null;
   const parts = [
     card.title,
     card.description,
@@ -6948,6 +7799,8 @@ function getCardSearchText(card) {
     diaryEntry?.feeling,
     diaryEntry?.sentence,
     diaryEntry?.thoughts,
+    fitnessEntry?.notes,
+    fitnessEntry ? getActiveFitnessParts(fitnessEntry).map((part) => part.label).join(" ") : "",
     typeMeta.label,
     progress.label,
     getSelectedPriority(card.priority),
@@ -7016,6 +7869,12 @@ function getProgress(card) {
 
   if (card.type === "video") {
     return { percent: 0, label: "Media" };
+  }
+
+  if (card.type === "fitness") {
+    const entry = getFitnessEntry(card, getActiveFitnessDate(card));
+    const activeParts = getActiveFitnessParts(entry);
+    return { percent: activeParts.length ? 100 : 0, label: activeParts.length ? `${activeParts.length} parts` : "Fitness" };
   }
 
   if (card.type === "single") {
@@ -8510,6 +9369,15 @@ function buildTemplateCards(templateId) {
   if (templateId === "fitness") {
     return [
       makeCard({
+        title: "Workout session log",
+        description: "Record the workout parts, exercises, running and body metrics for each training day.",
+        category: "Health",
+        type: "fitness",
+        theme: "leaf",
+        background: "mint",
+        timerMode: "none"
+      }),
+      makeCard({
         title: "Today movement",
         description: "Small daily actions that keep the streak alive.",
         category: "Fitness",
@@ -8682,6 +9550,16 @@ function makeCard(options) {
 
   if (card.type === "video") {
     card.videoUrl = normalizeVideoUrl(options.videoUrl || "");
+  }
+
+  if (card.type === "fitness") {
+    const activeDate = normalizeDateKey(options.activeFitnessDate) || getTodayKey();
+    card.activeFitnessDate = activeDate;
+    card.fitnessEntries = options.fitnessEntries && typeof options.fitnessEntries === "object" ? options.fitnessEntries : {};
+    if (!card.fitnessEntries[activeDate]) {
+      card.fitnessEntries[activeDate] = normalizeFitnessEntry(options.fitnessEntry || {});
+    }
+    normalizeFitnessCard(card);
   }
 
   if (card.type === "daily") {
@@ -8958,6 +9836,9 @@ function normalizeCard(card) {
   }
   if (next.type === "video") {
     next.videoUrl = normalizeVideoUrl(next.videoUrl || "");
+  }
+  if (next.type === "fitness") {
+    normalizeFitnessCard(next);
   }
   if (next.type === "brief") {
     normalizeBriefSections(next);

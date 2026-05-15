@@ -538,6 +538,7 @@ textarea:focus {
 .planner-input,
 .planner-view-input,
 .diary-input,
+.fitness-input,
 .quote-input,
 .video-input,
 .schedule-input,
@@ -555,6 +556,7 @@ textarea:focus {
 .planner-input.is-visible,
 .planner-view-input.is-visible,
 .diary-input.is-visible,
+.fitness-input.is-visible,
 .quote-input.is-visible,
 .video-input.is-visible,
 .schedule-input.is-visible,
@@ -2734,7 +2736,8 @@ textarea:focus {
 
 .history-modal,
 .records-modal,
-.ideas-modal {
+.ideas-modal,
+.reports-modal {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(680px, 100%);
@@ -2754,9 +2757,14 @@ textarea:focus {
   width: min(1120px, calc(100vw - 28px));
 }
 
+.reports-modal {
+  width: min(1120px, calc(100vw - 28px));
+}
+
 .history-modal-body,
 .records-modal-body,
-.ideas-modal-body {
+.ideas-modal-body,
+.reports-modal-body {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
@@ -2766,6 +2774,244 @@ textarea:focus {
 
 .records-modal-body {
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.reports-modal-body {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.report-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #ececea;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.report-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  background: rgba(17, 17, 17, 0.04);
+}
+
+.report-tabs button {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.report-tabs button.is-active {
+  color: #ffffff;
+  background: #111111;
+  box-shadow: 0 12px 26px rgba(17, 17, 17, 0.16);
+}
+
+.report-toolbar label {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.report-toolbar select {
+  height: 38px;
+  border: 1px solid rgba(17, 17, 17, 0.1);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: #ffffff;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.report-preview {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(236, 236, 232, 0.75));
+}
+
+.report-document {
+  display: grid;
+  gap: 18px;
+  width: min(820px, 100%);
+  margin: 0 auto;
+  padding: 28px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 18px;
+  color: #1e2320;
+  background: #fffdfa;
+  box-shadow: 0 24px 70px rgba(17, 17, 17, 0.12);
+}
+
+.report-document-header {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.08);
+}
+
+.report-document-header h2 {
+  margin: 0;
+  font-size: 1.8rem;
+  line-height: 1.05;
+}
+
+.report-document-header p,
+.report-lede,
+.report-subhead,
+.report-section p,
+.report-section li {
+  color: #5d625d;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.report-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.report-metric {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid rgba(17, 17, 17, 0.07);
+  border-radius: 14px;
+  background: #f7f7f2;
+}
+
+.report-metric strong {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.report-metric span,
+.report-metric small {
+  color: #686d67;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1.22;
+  text-transform: uppercase;
+}
+
+.report-section {
+  display: grid;
+  gap: 10px;
+}
+
+.report-section h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.report-section ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.report-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.report-chip-grid span {
+  padding: 7px 10px;
+  border-radius: 999px;
+  color: #24584d;
+  background: #e5f2ec;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.report-table {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 12px;
+}
+
+.report-table div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 110px;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 11px;
+  border-bottom: 1px solid rgba(17, 17, 17, 0.06);
+  background: #ffffff;
+}
+
+.report-table div:last-child {
+  border-bottom: 0;
+}
+
+.report-table span {
+  color: #454a45;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.report-session-list,
+.diary-report-list {
+  display: grid;
+  gap: 9px;
+}
+
+.report-session-list article,
+.diary-report-list article {
+  display: grid;
+  gap: 6px;
+  padding: 13px;
+  border: 1px solid rgba(17, 17, 17, 0.07);
+  border-radius: 14px;
+  background: #ffffff;
+}
+
+.report-session-list strong,
+.diary-report-header strong {
+  font-size: 0.9rem;
+}
+
+.diary-report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diary-report-header span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #f0eee8;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.diary-report-sentence {
+  color: #222721;
+  font-size: 1rem;
+  font-weight: 900;
 }
 
 .ideas-overview {
@@ -4936,6 +5182,222 @@ textarea:focus {
   line-height: 1.24;
 }
 
+.fitness-log {
+  display: grid;
+  gap: 10px;
+}
+
+.fitness-nav {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px auto;
+  align-items: center;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.fitness-nav button,
+.fitness-add-exercise,
+.fitness-remove-exercise {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  color: var(--card-ink);
+  background: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+}
+
+.fitness-nav button {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+}
+
+.fitness-nav button svg,
+.fitness-add-exercise svg,
+.fitness-remove-exercise svg {
+  width: 14px;
+  height: 14px;
+}
+
+.fitness-nav input {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 850;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.fitness-nav span {
+  color: var(--card-muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.fitness-parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fitness-parts button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.63rem;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.fitness-parts button.is-active {
+  border-color: var(--card-accent);
+  color: #ffffff;
+  background: var(--card-accent);
+  box-shadow: 0 8px 18px var(--card-shadow-color);
+}
+
+.fitness-active {
+  display: grid;
+  gap: 8px;
+}
+
+.fitness-empty {
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed rgba(17, 17, 17, 0.12);
+  border-radius: 12px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.56);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.fitness-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.fitness-section h4 {
+  margin: 0;
+  color: var(--card-ink);
+  font-size: 0.78rem;
+  line-height: 1.15;
+}
+
+.fitness-field-grid,
+.fitness-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.fitness-exercises {
+  display: grid;
+  gap: 7px;
+}
+
+.fitness-exercise-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 1.3fr) 48px 58px 54px 48px 30px;
+  gap: 6px;
+  align-items: end;
+}
+
+.fitness-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.fitness-field span {
+  color: var(--card-muted);
+  font-size: 0.55rem;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.fitness-field input,
+.fitness-field select,
+.fitness-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 9px;
+  padding: 7px 8px;
+  color: var(--card-ink);
+  background: rgba(255, 255, 255, 0.84);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.fitness-field textarea {
+  resize: none;
+  line-height: 1.3;
+}
+
+.fitness-pace {
+  align-self: end;
+  min-height: 31px;
+  padding: 8px 9px;
+  border-radius: 9px;
+  color: var(--card-accent);
+  background: var(--card-soft);
+  font-size: 0.66rem;
+  font-weight: 950;
+}
+
+.fitness-add-exercise {
+  justify-self: start;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.fitness-remove-exercise {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+}
+
+.fitness-form-note {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 14px;
+  background: rgba(236, 244, 239, 0.8);
+}
+
+.fitness-form-note strong {
+  font-size: 0.88rem;
+}
+
+.fitness-form-note span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .goal-tracker {
   display: flex;
   align-items: center;
@@ -5227,7 +5689,7 @@ textarea:focus {
   }
 
   .rail-nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -5255,6 +5717,20 @@ textarea:focus {
   .modal-backdrop {
     align-items: stretch;
     padding: 10px 10px 90px;
+  }
+
+  .report-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .report-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fitness-exercise-row,
+  .fitness-field-grid,
+  .fitness-metric-grid {
+    grid-template-columns: 1fr;
   }
 
   .settings-dialog {
@@ -5675,5 +6151,31 @@ textarea:focus {
 
   .size-large .card-body {
     display: block;
+  }
+}
+
+@media print {
+  body.print-report * {
+    visibility: hidden;
+  }
+
+  body.print-report #reportPrintArea,
+  body.print-report #reportPrintArea * {
+    visibility: visible;
+  }
+
+  body.print-report #reportPrintArea {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    padding: 0;
+  }
+
+  body.print-report .report-document {
+    width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 }
