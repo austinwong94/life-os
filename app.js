@@ -1853,7 +1853,9 @@ async function saveCardFromForm() {
 
   resetFormState();
   closeCardComposer();
+  textEditGuardUntil = 0;
   render();
+  renderCardsOnly({ force: true });
   saveState();
 }
 
@@ -5846,7 +5848,7 @@ function getSelectedFormType() {
   if (elements.cardType.value === "weekly") {
     return SCORECARD_TYPES.includes(elements.scorecardPeriod.value) ? elements.scorecardPeriod.value : "weekly";
   }
-  return elements.cardType.value;
+  return TYPE_META[elements.cardType.value] ? elements.cardType.value : "daily";
 }
 
 function setFormType(type) {
@@ -5862,8 +5864,17 @@ function setFormType(type) {
   } else {
     removeTemplateOnlyTypeOptions();
   }
+  ensureFormTypeOption(normalizedType);
   elements.cardType.value = normalizedType;
   elements.scorecardPeriod.value = "weekly";
+}
+
+function ensureFormTypeOption(type) {
+  if (!TYPE_META[type] || elements.cardType.querySelector(`option[value="${type}"]`)) return;
+  const option = document.createElement("option");
+  option.value = type;
+  option.textContent = TYPE_META[type].label;
+  elements.cardType.append(option);
 }
 
 function ensureTemplateOnlyTypeOption(type) {
@@ -6069,7 +6080,8 @@ function renderFormPreview() {
     return;
   }
   const card = buildCardFromForm({ preview: true });
-  elements.previewMeta.textContent = `Board width · ${TYPE_META[card.type].label}`;
+  const typeMeta = TYPE_META[card.type] || TYPE_META.single;
+  elements.previewMeta.textContent = `Board width · ${typeMeta.label}`;
   elements.cardPreview.innerHTML = "";
   elements.cardPreview.append(renderCard(card, { interactive: false }));
   hydrateIcons(elements.cardPreview);
