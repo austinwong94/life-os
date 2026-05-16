@@ -351,7 +351,7 @@ const DIARY_MOOD_META = {
   Sad: { icon: "😔", label: "Sad" },
   Angry: { icon: "😡", label: "Angry" },
   Anxious: { icon: "😟", label: "Anxious" },
-  Tired: { icon: "😴", label: "Tired" }
+  Meh: { icon: "😐", label: "Meh" }
 };
 
 const DIARY_FEELING_ALIASES = {
@@ -360,7 +360,8 @@ const DIARY_FEELING_ALIASES = {
   Focused: "Okay",
   Energized: "Happy",
   Stressed: "Anxious",
-  Low: "Sad"
+  Low: "Sad",
+  Tired: "Meh"
 };
 
 const FITNESS_PARTS = [
