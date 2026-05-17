@@ -6007,14 +6007,35 @@ function isTimestampOnDate(timestamp, dateKey) {
   return getTodayKey(new Date(time)) === normalizedDate;
 }
 
-function getPlannerCompletionTimestamp(dateKey) {
-  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+function getPlannerCompletionTimestamp(dateKey, options = {}) {
+  const normalizedDate = normalizeDateKey(options.completionDate || dateKey) || getTodayKey();
   const todayKey = getTodayKey();
   const completionKey = dateKeyToLocalDate(normalizedDate).getTime() > dateKeyToLocalDate(todayKey).getTime() ? todayKey : normalizedDate;
   const now = new Date();
   const completionDate = dateKeyToLocalDate(completionKey);
   completionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
   return completionDate.getTime();
+}
+
+function getPlannerCompletionTimestampForItem(item, entry, itemKey) {
+  const plannedDate = normalizeDateKey(item?.dateKey) || getTodayKey();
+  const todayKey = getTodayKey();
+  const plannedTime = dateKeyToLocalDate(plannedDate).getTime();
+  const todayTime = dateKeyToLocalDate(todayKey).getTime();
+  let completionDate = plannedDate;
+
+  if (item?.isCarryover || plannedTime >= todayTime) {
+    completionDate = todayKey;
+  } else {
+    const createdAt = getPlannerItemCreatedAt(entry, itemKey);
+    const hasCarryoverCopy = plannerEntryHasCarryoverFromSource(item.card, itemKey, plannedDate);
+    const createdToday = isTimestampOnDate(createdAt, todayKey);
+    if (hasCarryoverCopy || (createdAt && !createdToday)) {
+      completionDate = todayKey;
+    }
+  }
+
+  return getPlannerCompletionTimestamp(plannedDate, { completionDate });
 }
 
 function ensureCompletedTodayCopyForSourceTask(card, sourceDate, title, completedAt = Date.now()) {
@@ -6502,7 +6523,7 @@ function togglePlannerTaskDone(item) {
   const checkedItems = { ...(entry.checkedItems || {}) };
   const key = getPlannerItemKey(item.title);
   const nextDone = !checkedItems[key];
-  const completedAt = nextDone ? getPlannerCompletionTimestamp(item.dateKey) : 0;
+  const completedAt = nextDone ? getPlannerCompletionTimestampForItem(item, entry, key) : 0;
   if (checkedItems[key]) {
     delete checkedItems[key];
   } else {
@@ -6520,7 +6541,11 @@ function togglePlannerTaskDone(item) {
   syncCarryoverSourceTask(item, nextDone, completedAt);
   if (nextDone) {
     const sourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : normalizeDateKey(item.dateKey);
-    removeLinkedCarryoverCopiesAfterDate(item.card, sourceDate, item.title, item.dateKey);
+    const completedDate = normalizeDateKey(getTodayKey(new Date(completedAt)));
+    const removeAfterDate = sourceDate && completedDate && dateKeyToLocalDate(completedDate).getTime() > dateKeyToLocalDate(sourceDate).getTime()
+      ? completedDate
+      : item.dateKey;
+    removeLinkedCarryoverCopiesAfterDate(item.card, sourceDate, item.title, removeAfterDate);
   }
   updatePlannerEntry(item.card, item.dateKey, { checkedItems }, { rerender: true });
 }
