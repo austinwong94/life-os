@@ -3627,7 +3627,10 @@ function renderPlannerLinkedItem(item) {
   edit.title = "Edit task";
   edit.setAttribute("aria-label", `Edit planner task: ${item.title}`);
   edit.innerHTML = ICONS.pencil;
-  edit.addEventListener("click", () => startPlannerTaskEdit(item));
+  edit.addEventListener("click", (event) => {
+    event.stopPropagation();
+    startPlannerTaskEdit(item);
+  });
 
   const remove = document.createElement("button");
   remove.type = "button";
@@ -3635,7 +3638,10 @@ function renderPlannerLinkedItem(item) {
   remove.title = "Delete planner task";
   remove.setAttribute("aria-label", `Delete planner task: ${item.title}`);
   remove.innerHTML = ICONS["trash-2"];
-  remove.addEventListener("click", () => deletePlannerTask(item));
+  remove.addEventListener("click", (event) => {
+    event.stopPropagation();
+    deletePlannerTask(item);
+  });
 
   const actions = document.createElement("div");
   actions.className = "planner-linked-actions";
@@ -6469,24 +6475,58 @@ function togglePlannerTaskDone(item) {
 
 function deletePlannerTask(item) {
   if (!item?.card || !item.dateKey) return;
-  const entry = getPlannerEntry(item.card, item.dateKey);
+  if (!confirmPlannerTaskDelete(item)) return;
+  const sourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : normalizeDateKey(item.dateKey);
+  const removedCurrent = removePlannerTaskFromEntry(item.card, item.dateKey, item);
+  const removedSource = item.isCarryover && sourceDate && sourceDate !== normalizeDateKey(item.dateKey)
+    ? removePlannerTaskFromEntry(item.card, sourceDate, { title: item.title })
+    : "";
+  const removedTitle = removedSource || removedCurrent || item.title;
+  if (!removedCurrent && !removedSource) return;
+  if (sourceDate) {
+    removeLinkedCarryoverCopiesAfterDate(item.card, sourceDate, removedTitle, sourceDate);
+  } else {
+    removeCarryoverCopyForSourceTask(item.card, item.dateKey, removedTitle);
+  }
+  saveState();
+  renderCardsOnly({ force: true });
+}
+
+function confirmPlannerTaskDelete(item) {
+  const title = normalizeLabel(item?.title || "") || "this task";
+  const currentDate = normalizeDateKey(item?.dateKey);
+  const sourceDate = item?.isCarryover ? normalizeDateKey(item.carryoverFrom) : currentDate;
+  const sourceLabel = sourceDate ? formatPlannerOriginDate(sourceDate) : "its planner date";
+  const extra = item?.isCarryover && sourceDate && sourceDate !== currentDate
+    ? `This also removes its carried-over copies from ${sourceLabel}.`
+    : `This removes it from ${sourceLabel}.`;
+  return window.confirm(`Delete "${title}"?\n\n${extra}\n\nIt will not be marked as complete.`);
+}
+
+function removePlannerTaskFromEntry(card, dateKey, item) {
+  const normalizedDate = normalizeDateKey(dateKey);
+  if (!card || !normalizedDate) return "";
+  const entry = getPlannerEntry(card, normalizedDate);
   const lines = getPlannerNoteLines(entry.note);
   const lineIndex = getPlannerLineIndex(lines, item);
-  if (lineIndex < 0) return;
+  if (lineIndex < 0) return "";
   const [removed] = lines.splice(lineIndex, 1);
+  const itemKey = getPlannerItemKey(removed);
   const checkedItems = { ...(entry.checkedItems || {}) };
-  delete checkedItems[getPlannerItemKey(removed)];
-  removeCarryoverCopyForSourceTask(item.card, item.dateKey, removed);
-  syncCarryoverSourceTask(item, true, Date.now());
-  updatePlannerEntry(
-    item.card,
-    item.dateKey,
-    {
-      note: lines.map((line) => `- ${line}`).join("\n"),
-      checkedItems
-    },
-    { rerender: true }
-  );
+  const carryoverItems = { ...(entry.carryoverItems || {}) };
+  const itemRecords = { ...(entry.itemRecords || {}) };
+  delete checkedItems[itemKey];
+  delete carryoverItems[itemKey];
+  delete itemRecords[itemKey];
+  card.plannerEntries[normalizedDate] = normalizePlannerEntry({
+    ...entry,
+    note: buildPlannerNote(lines),
+    checkedItems,
+    carryoverItems,
+    itemRecords,
+    updatedAt: Date.now()
+  });
+  return removed;
 }
 
 function syncCarryoverSourceTask(item, done, completedAt = Date.now()) {
