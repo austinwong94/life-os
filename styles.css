@@ -4707,7 +4707,7 @@ textarea:focus {
 
 .planner-linked-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 52px;
+  grid-template-columns: 18px minmax(0, 1fr) 30px;
   align-items: center;
   gap: 6px;
   min-height: 46px;
@@ -4839,37 +4839,45 @@ textarea:focus {
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
+  position: relative;
 }
 
-.planner-linked-edit-button,
-.planner-linked-delete {
+.planner-task-menu-shell {
+  position: relative;
+}
+
+.planner-task-menu-toggle {
   display: inline-flex;
   align-items: center;
-  align-self: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  margin-top: 0;
   border: 1px solid rgba(17, 17, 17, 0.06);
   border-radius: 999px;
   color: var(--card-muted);
   background: rgba(255, 255, 255, 0.68);
 }
 
-.planner-linked-edit-button:hover {
+.planner-task-menu-shell.is-open .planner-task-menu-toggle,
+.planner-task-menu-toggle:hover {
   color: var(--card-accent);
   background: #ffffff;
 }
 
-.planner-linked-delete:hover {
-  color: var(--danger);
-  background: #ffffff;
+.planner-task-menu-toggle svg {
+  width: 13px;
+  height: 13px;
 }
 
-.planner-linked-edit-button svg,
-.planner-linked-delete svg {
-  width: 12px;
-  height: 12px;
+.planner-task-menu {
+  top: calc(100% + 5px);
+  right: 0;
+  min-width: 142px;
+}
+
+.planner-task-menu button {
+  min-height: 32px;
+  font-size: 0.7rem;
 }
 
 .planner-linked-item.is-editing {
@@ -6937,7 +6945,7 @@ textarea:focus {
   }
 
   .planner-linked-item {
-    grid-template-columns: 18px minmax(0, 1fr) 48px;
+    grid-template-columns: 18px minmax(0, 1fr) 30px;
     gap: 6px;
     padding: 6px;
   }

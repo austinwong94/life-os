@@ -3603,8 +3603,9 @@ function renderPlannerLinkedItem(item) {
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "planner-linked-copy";
-  copy.title = "Edit task name or date";
-  copy.addEventListener("click", () => startPlannerTaskEdit(item));
+  copy.title = item.done ? "Mark as open" : "Mark as done";
+  copy.setAttribute("aria-label", `${item.done ? "Mark open" : "Mark done"}: ${item.title}`);
+  copy.addEventListener("click", () => togglePlannerTaskDone(item));
   if (item.isCarryover && !item.done) {
     const badge = document.createElement("span");
     badge.className = "planner-linked-carryover";
@@ -3632,20 +3633,54 @@ function renderPlannerLinkedItem(item) {
     startPlannerTaskEdit(item);
   });
 
+  const archive = document.createElement("button");
+  archive.type = "button";
+  archive.innerHTML = `${ICONS.archive}<span>Archive</span>`;
+  archive.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeCardActionMenus();
+    archivePlannerTask(item);
+  });
+
   const remove = document.createElement("button");
   remove.type = "button";
-  remove.className = "planner-linked-delete";
-  remove.title = "Delete planner task";
-  remove.setAttribute("aria-label", `Delete planner task: ${item.title}`);
-  remove.innerHTML = ICONS["trash-2"];
+  remove.className = "is-danger";
+  remove.innerHTML = `${ICONS["trash-2"]}<span>Delete</span>`;
   remove.addEventListener("click", (event) => {
     event.stopPropagation();
+    closeCardActionMenus();
     deletePlannerTask(item);
   });
 
+  const menuShell = document.createElement("div");
+  menuShell.className = "card-menu-shell planner-task-menu-shell";
+  const menuToggle = document.createElement("button");
+  menuToggle.type = "button";
+  menuToggle.className = "card-menu-toggle planner-task-menu-toggle";
+  menuToggle.title = "Task options";
+  menuToggle.setAttribute("aria-label", `Task options: ${item.title}`);
+  menuToggle.setAttribute("aria-expanded", "false");
+  menuToggle.innerHTML = ICONS["more-vertical"];
+  const menu = document.createElement("div");
+  menu.className = "card-menu planner-task-menu";
+  menu.hidden = true;
+  edit.innerHTML = `${ICONS.pencil}<span>Edit</span>`;
+  edit.classList.remove("planner-linked-edit-button");
+  edit.addEventListener("click", () => closeCardActionMenus());
+  menu.append(edit, archive, remove);
+  menuToggle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const willOpen = !menuShell.classList.contains("is-open");
+    closeCardActionMenus();
+    menuShell.classList.toggle("is-open", willOpen);
+    menu.hidden = !willOpen;
+    menuToggle.setAttribute("aria-expanded", String(willOpen));
+  });
+  menuShell.append(menuToggle, menu);
+
   const actions = document.createElement("div");
   actions.className = "planner-linked-actions";
-  actions.append(edit, remove);
+  actions.append(menuShell);
 
   main.append(meta, copy);
   row.append(check, main, actions);
@@ -5864,6 +5899,9 @@ function normalizePlannerCard(card) {
   const today = getTodayKey();
   card.plannerGroup = getPlannerGroup(card);
   card.plannerEntries = card.plannerEntries && typeof card.plannerEntries === "object" ? card.plannerEntries : {};
+  card.plannerArchivedTasks = Array.isArray(card.plannerArchivedTasks)
+    ? card.plannerArchivedTasks.map(normalizePlannerArchivedTask).filter((task) => task.title)
+    : [];
   card.activePlannerDate = normalizeDateKey(card.activePlannerDate) || today;
   Object.keys(card.plannerEntries).forEach((dateKey) => {
     const normalizedDate = normalizeDateKey(dateKey);
@@ -5878,6 +5916,20 @@ function normalizePlannerCard(card) {
     card.plannerEntries[card.activePlannerDate] = normalizePlannerEntry();
   }
   return card;
+}
+
+function normalizePlannerArchivedTask(task = {}) {
+  const dateKey = normalizeDateKey(task.dateKey) || normalizeDateKey(task.sourceDate) || getTodayKey();
+  return {
+    id: task.id || createId(),
+    title: normalizeLabel(task.title || ""),
+    dateKey,
+    sourceDate: normalizeDateKey(task.sourceDate) || dateKey,
+    archivedAt: normalizeTimestamp(task.archivedAt) || Date.now(),
+    completedAt: normalizeTimestamp(task.completedAt),
+    wasDone: Boolean(task.wasDone),
+    wasCarryover: Boolean(task.wasCarryover)
+  };
 }
 
 function normalizePlannerEntry(entry = {}) {
@@ -5957,8 +6009,10 @@ function isTimestampOnDate(timestamp, dateKey) {
 
 function getPlannerCompletionTimestamp(dateKey) {
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  const todayKey = getTodayKey();
+  const completionKey = dateKeyToLocalDate(normalizedDate).getTime() > dateKeyToLocalDate(todayKey).getTime() ? todayKey : normalizedDate;
   const now = new Date();
-  const completionDate = dateKeyToLocalDate(normalizedDate);
+  const completionDate = dateKeyToLocalDate(completionKey);
   completionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
   return completionDate.getTime();
 }
@@ -5967,7 +6021,6 @@ function ensureCompletedTodayCopyForSourceTask(card, sourceDate, title, complete
   const todayKey = getTodayKey();
   const normalizedSourceDate = normalizeDateKey(sourceDate);
   if (!card || !normalizedSourceDate || normalizedSourceDate === todayKey) return false;
-  if (dateKeyToLocalDate(normalizedSourceDate).getTime() >= dateKeyToLocalDate(todayKey).getTime()) return false;
   if (!isTimestampOnDate(completedAt, todayKey)) return false;
 
   const itemKey = getPlannerItemKey(title);
@@ -6002,7 +6055,6 @@ function removeCarryoverCopyForSourceTask(card, sourceDate, title) {
   const todayKey = getTodayKey();
   const normalizedSourceDate = normalizeDateKey(sourceDate);
   if (!card || !normalizedSourceDate || normalizedSourceDate === todayKey) return false;
-  if (dateKeyToLocalDate(normalizedSourceDate).getTime() >= dateKeyToLocalDate(todayKey).getTime()) return false;
 
   const todayEntry = getPlannerEntry(card, todayKey);
   const itemKey = getPlannerItemKey(title);
@@ -6476,6 +6528,46 @@ function togglePlannerTaskDone(item) {
 function deletePlannerTask(item) {
   if (!item?.card || !item.dateKey) return;
   if (!confirmPlannerTaskDelete(item)) return;
+  const result = removePlannerTaskAcrossEntries(item);
+  if (!result) return;
+  saveState();
+  renderCardsOnly({ force: true });
+}
+
+function archivePlannerTask(item) {
+  if (!item?.card || !item.dateKey) return;
+  normalizePlannerCard(item.card);
+  const beforeEntries = JSON.parse(JSON.stringify(item.card.plannerEntries || {}));
+  const beforeArchive = JSON.parse(JSON.stringify(item.card.plannerArchivedTasks || []));
+  const result = removePlannerTaskAcrossEntries(item);
+  if (!result) return;
+  const archivedTask = normalizePlannerArchivedTask({
+    title: result.removedTitle,
+    dateKey: normalizeDateKey(item.dateKey),
+    sourceDate: result.sourceDate || normalizeDateKey(item.dateKey),
+    archivedAt: Date.now(),
+    completedAt: item.completedAt || 0,
+    wasDone: Boolean(item.done),
+    wasCarryover: Boolean(item.isCarryover)
+  });
+  item.card.plannerArchivedTasks = [archivedTask, ...(item.card.plannerArchivedTasks || [])];
+  saveState();
+  renderCardsOnly({ force: true });
+  showUndoToast({
+    message: `"${archivedTask.title}" archived.`,
+    onUndo: () => {
+      item.card.plannerEntries = beforeEntries;
+      item.card.plannerArchivedTasks = beforeArchive;
+      normalizePlannerCard(item.card);
+      saveState();
+      renderCardsOnly({ force: true });
+      clearUndoToast();
+    }
+  });
+}
+
+function removePlannerTaskAcrossEntries(item) {
+  if (!item?.card || !item.dateKey) return null;
   const sourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : normalizeDateKey(item.dateKey);
   const removedCurrent = removePlannerTaskFromEntry(item.card, item.dateKey, item);
   const removedSource = item.isCarryover && sourceDate && sourceDate !== normalizeDateKey(item.dateKey)
@@ -6488,8 +6580,12 @@ function deletePlannerTask(item) {
   } else {
     removeCarryoverCopyForSourceTask(item.card, item.dateKey, removedTitle);
   }
-  saveState();
-  renderCardsOnly({ force: true });
+  return {
+    removedTitle,
+    sourceDate,
+    removedCurrent,
+    removedSource
+  };
 }
 
 function confirmPlannerTaskDelete(item) {
@@ -6798,7 +6894,7 @@ function getPlannerViewData(view, group, options = {}, dayKey = getTodayKey()) {
   const timeline = getPlannerTimelineMeta();
   const selectedDayKey = normalizeDateKey(dayKey) || timeline.todayKey;
   const allItems = getPlannerSourceItems(group, viewOptions);
-  const futureItems = allItems.filter((item) => getPlannerItemTime(item) >= timeline.todayTime);
+  const futureItems = allItems.filter((item) => getPlannerItemTime(item) >= timeline.todayTime && !shouldHidePlannerCompletionCopyOutsideToday(item, allItems, timeline));
   const upcomingItems = futureItems.filter((item) => {
     const time = getPlannerItemTime(item);
     if (viewOptions.excludeMonth && time <= timeline.monthEndTime) return false;
@@ -6851,6 +6947,18 @@ function getPlannerViewData(view, group, options = {}, dayKey = getTodayKey()) {
     ...(range[mode] || range.today),
     sourceLabel: viewOptions.sourceMode === "area" ? `${getPlannerGroup({ category: group })} Planner source` : "Board Planner source"
   };
+}
+
+function shouldHidePlannerCompletionCopyOutsideToday(item, allItems, timeline = getPlannerTimelineMeta()) {
+  if (!item?.done || !item.isCarryover) return false;
+  if (normalizeDateKey(item.dateKey) !== timeline.todayKey) return false;
+  const sourceDate = normalizeDateKey(item.carryoverFrom);
+  if (!sourceDate || dateKeyToLocalDate(sourceDate).getTime() <= timeline.todayTime) return false;
+  const itemKey = getPlannerItemKey(item.title);
+  return allItems.some((candidate) =>
+    normalizeDateKey(candidate.dateKey) === sourceDate &&
+    getPlannerItemKey(candidate.title) === itemKey
+  );
 }
 
 function getPlannerViewLabel(view) {
