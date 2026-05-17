@@ -4870,9 +4870,12 @@ textarea:focus {
 }
 
 .planner-task-menu {
-  top: calc(100% + 5px);
-  right: 0;
-  min-width: 142px;
+  position: fixed;
+  top: auto;
+  right: auto;
+  z-index: 240;
+  min-width: 146px;
+  max-width: min(210px, calc(100vw - 16px));
 }
 
 .planner-task-menu button {

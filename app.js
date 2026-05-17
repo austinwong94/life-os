@@ -1864,7 +1864,7 @@ function bindEvents() {
   });
 
   document.addEventListener("click", (event) => {
-    if (event.target.closest(".card-menu-shell")) return;
+    if (event.target.closest(".card-menu-shell") || event.target.closest(".planner-task-menu")) return;
     closeCardActionMenus();
   });
 
@@ -2321,11 +2321,68 @@ function closeCardActionMenus() {
   document.querySelectorAll(".card-menu-shell.is-open").forEach((shell) => {
     shell.classList.remove("is-open");
     shell.closest(".task-card")?.classList.remove("is-menu-open");
-    const menu = shell.querySelector(".card-menu");
+    const menu = shell.floatingMenu || shell.querySelector(".card-menu");
     const toggle = shell.querySelector(".card-menu-toggle");
-    if (menu) menu.hidden = true;
+    if (menu) {
+      menu.hidden = true;
+      resetFloatingPlannerTaskMenu(menu);
+      if (menu.classList.contains("planner-task-menu") && menu.parentElement !== shell && shell.isConnected) {
+        shell.append(menu);
+      }
+    }
+    shell.floatingMenu = null;
     if (toggle) toggle.setAttribute("aria-expanded", "false");
   });
+}
+
+function resetFloatingPlannerTaskMenu(menu) {
+  if (!menu?.classList?.contains("planner-task-menu")) return;
+  menu.style.removeProperty("left");
+  menu.style.removeProperty("top");
+  menu.style.removeProperty("right");
+  menu.style.removeProperty("visibility");
+  menu.classList.remove("is-above");
+}
+
+function positionPlannerTaskMenu(menu, toggle) {
+  if (!menu || !toggle) return;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const gap = 6;
+  const edge = 8;
+
+  menu.style.visibility = "hidden";
+  menu.style.left = "0px";
+  menu.style.top = "0px";
+  menu.style.right = "auto";
+
+  const toggleRect = toggle.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const menuWidth = Math.max(menuRect.width || 146, 146);
+  const menuHeight = Math.max(menuRect.height || 104, 96);
+  const left = Math.max(edge, Math.min(toggleRect.right - menuWidth, viewportWidth - menuWidth - edge));
+  const belowTop = toggleRect.bottom + gap;
+  const aboveTop = toggleRect.top - menuHeight - gap;
+  const openAbove = belowTop + menuHeight > viewportHeight - edge && aboveTop >= edge;
+  const top = openAbove
+    ? aboveTop
+    : Math.max(edge, Math.min(belowTop, viewportHeight - menuHeight - edge));
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  menu.style.right = "auto";
+  menu.style.visibility = "";
+  menu.classList.toggle("is-above", openAbove);
+}
+
+function openFloatingPlannerTaskMenu(shell, menu, toggle) {
+  if (!shell || !menu || !toggle) return;
+  shell.floatingMenu = menu;
+  if (menu.parentElement !== document.body) {
+    document.body.append(menu);
+  }
+  menu.hidden = false;
+  positionPlannerTaskMenu(menu, toggle);
 }
 
 function getMoveDestinationBoards() {
@@ -2753,6 +2810,7 @@ function renderCardsOnly(options = {}) {
     queueDeferredBoardRender(options);
     return;
   }
+  closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
   resetDailyRepeatingCards();
@@ -3673,7 +3731,12 @@ function renderPlannerLinkedItem(item) {
     const willOpen = !menuShell.classList.contains("is-open");
     closeCardActionMenus();
     menuShell.classList.toggle("is-open", willOpen);
-    menu.hidden = !willOpen;
+    if (willOpen) {
+      openFloatingPlannerTaskMenu(menuShell, menu, menuToggle);
+    } else {
+      menu.hidden = true;
+      resetFloatingPlannerTaskMenu(menu);
+    }
     menuToggle.setAttribute("aria-expanded", String(willOpen));
   });
   menuShell.append(menuToggle, menu);
