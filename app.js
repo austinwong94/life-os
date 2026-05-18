@@ -2866,7 +2866,7 @@ function isProtectedTextEditActive() {
 }
 
 function hasUnsubmittedDraftText() {
-  return state.cards.some((card) => normalizeLabel(card.dailyDraftText || card.plannerDraftText || ""));
+  return state.cards.some((card) => normalizeLabel(card.dailyDraftText || card.plannerDraftText || card.checklistDraftText || ""));
 }
 
 function isBackgroundBoardRender(options = {}) {
@@ -5646,7 +5646,39 @@ function renderChecklist(card) {
     more.textContent = `+${items.length - limit} more`;
     wrapper.append(more);
   }
+  if (card.type === "checklist") {
+    wrapper.append(renderProjectAddForm(card));
+  }
   return wrapper;
+}
+
+function renderProjectAddForm(card) {
+  const form = document.createElement("form");
+  form.className = "daily-add-row project-add-row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = 160;
+  input.value = card.checklistDraftText || "";
+  input.placeholder = "Add project task";
+  input.setAttribute("aria-label", "Add project task");
+  input.addEventListener("input", () => {
+    card.checklistDraftText = input.value;
+    persistLocalDraftState();
+  });
+  const button = document.createElement("button");
+  button.type = "submit";
+  button.title = "Add project task";
+  button.setAttribute("aria-label", "Add project task");
+  button.innerHTML = ICONS.plus;
+  form.append(input, button);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!addChecklistItemToCard(card, input.value)) return;
+    card.checklistDraftText = "";
+    input.value = "";
+    persistLocalDraftState();
+  });
+  return form;
 }
 
 function renderBrief(card) {
@@ -6834,7 +6866,22 @@ function addDailyItemToCard(card, value) {
     done: false
   });
   saveState();
-  renderCardsOnly();
+  renderCardsOnly({ force: true });
+  return true;
+}
+
+function addChecklistItemToCard(card, value) {
+  const text = normalizeLabel(String(value || ""));
+  if (!text || !card || card.type !== "checklist") return false;
+  card.items = Array.isArray(card.items) ? card.items : [];
+  card.items.push({
+    id: createId(),
+    text,
+    done: false
+  });
+  card.checklistDraftText = "";
+  saveState();
+  renderCardsOnly({ force: true });
   return true;
 }
 
