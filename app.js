@@ -2861,6 +2861,10 @@ function isProtectedDraftElement(element) {
   );
 }
 
+function isProtectedTextEditActive() {
+  return Boolean(isProtectedDraftElement(document.activeElement) || Date.now() < textEditGuardUntil);
+}
+
 function hasUnsubmittedDraftText() {
   return state.cards.some((card) => normalizeLabel(card.dailyDraftText || card.plannerDraftText || ""));
 }
@@ -3407,6 +3411,21 @@ function renderCard(card, options = {}) {
   return node;
 }
 
+function clearPlannerDraft(card, inputSelector = "") {
+  if (!card) return;
+  card.plannerDraftText = "";
+  const current = state.cards.find((item) => item.id === card.id);
+  if (current) current.plannerDraftText = "";
+  if (!inputSelector) return;
+  const clearVisibleInput = () => {
+    const node = Array.from(elements.boardGrid?.querySelectorAll(".task-card") || []).find((item) => item.dataset.id === card.id);
+    const input = node?.querySelector(inputSelector);
+    if (input) input.value = "";
+  };
+  clearVisibleInput();
+  requestAnimationFrame(clearVisibleInput);
+}
+
 function renderPlanner(card) {
   normalizePlannerCard(card);
   const activeDate = getActivePlannerDate(card);
@@ -3458,9 +3477,9 @@ function renderPlanner(card) {
     event.preventDefault();
     const submittedText = stripPlannerBullet(taskInput.value);
     if (!submittedText) return;
-    card.plannerDraftText = "";
-    taskInput.value = "";
+    clearPlannerDraft(card, ".planner-task-input");
     if (!addPlannerTaskToDate(card, activeDate, submittedText)) return;
+    clearPlannerDraft(card, ".planner-task-input");
     persistLocalDraftState();
   });
 
@@ -3616,9 +3635,9 @@ function renderPlannerLinkedAddForm(card, view, options, dayKey = getTodayKey())
     const submittedText = stripPlannerBullet(input.value);
     if (!submittedText) return;
     card.plannerQuickDate = targetDate;
-    card.plannerDraftText = "";
-    input.value = "";
+    clearPlannerDraft(card, ".planner-linked-add-input");
     if (!addPlannerTaskFromPlannerView(card, targetDate, submittedText)) return;
+    clearPlannerDraft(card, ".planner-linked-add-input");
     persistLocalDraftState();
   });
   return form;
@@ -4054,7 +4073,7 @@ function renderDiary(card) {
     updateDiaryEntry(card, activeDate, { sentence: sentence.value }, { rerender: false });
     autoGrowTextarea(sentence);
   });
-  sentence.addEventListener("change", renderCardsOnly);
+  sentence.addEventListener("change", () => scheduleDeferredBoardRender(600));
 
   const thoughts = document.createElement("textarea");
   thoughts.className = "diary-thoughts";
@@ -4065,7 +4084,7 @@ function renderDiary(card) {
     updateDiaryEntry(card, activeDate, { thoughts: thoughts.value }, { rerender: false });
     autoGrowTextarea(thoughts);
   });
-  thoughts.addEventListener("change", renderCardsOnly);
+  thoughts.addEventListener("change", () => scheduleDeferredBoardRender(600));
 
   wrapper.append(nav, moodPicker, sentence, thoughts);
   requestAnimationFrame(() => {
@@ -7228,7 +7247,9 @@ function persistDiaryEntryImmediately(card, dateKey, entry) {
   try {
     touchState();
     syncActiveBoard();
-    mergeStoredBoardsIntoState();
+    if (!isProtectedTextEditActive()) {
+      mergeStoredBoardsIntoState();
+    }
     const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
       message: "Diary save failed locally. Try removing large images."
     });
@@ -11896,7 +11917,8 @@ function mergeStoredBoardsIntoState() {
 
 function isUserEditingCriticalDraft() {
   return Boolean(
-    editingCardId ||
+    isProtectedTextEditActive() ||
+      editingCardId ||
       editingPlannerTaskKey ||
       plannerTaskEditDraft ||
       (!elements.cardComposerPanel?.hidden && draftTouched)
@@ -11908,6 +11930,9 @@ function applyExternalStorageState(rawValue) {
   try {
     applyingExternalStorageUpdate = true;
     const incomingState = rehydrateState(JSON.parse(rawValue));
+    const incomingUpdatedAt = getStateUpdatedAt(incomingState);
+    const currentUpdatedAt = getStateUpdatedAt(state);
+    if (incomingUpdatedAt && currentUpdatedAt && incomingUpdatedAt < currentUpdatedAt) return;
     const activeBoardId = state.activeBoardId;
     const activeFilter = state.activeFilter || "all";
     const activeCategories = Array.isArray(state.activeCategories) ? [...state.activeCategories] : [];
@@ -12629,7 +12654,9 @@ function saveState(options = {}) {
     touchState();
   }
   syncActiveBoard();
-  mergeStoredBoardsIntoState();
+  if (!isProtectedTextEditActive()) {
+    mergeStoredBoardsIntoState();
+  }
   const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
     silent: options.quiet,
     message: "Local save failed. Remove large images or export a backup."
@@ -12652,7 +12679,9 @@ function persistLocalDraftState() {
   try {
     if (applyingExternalStorageUpdate) return;
     syncActiveBoard();
-    mergeStoredBoardsIntoState();
+    if (!isProtectedTextEditActive()) {
+      mergeStoredBoardsIntoState();
+    }
     if (writeLocalJson(STORAGE_KEY, getStateForStorage(), { silent: true })) {
       localStateSource = "stored";
     }
