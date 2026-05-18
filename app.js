@@ -7246,10 +7246,8 @@ function updateDiaryEntry(card, dateKey, updates, options = {}) {
 function persistDiaryEntryImmediately(card, dateKey, entry) {
   try {
     touchState();
-    syncActiveBoard();
-    if (!isProtectedTextEditActive()) {
-      mergeStoredBoardsIntoState();
-    }
+    syncActiveBoard({ touchBoard: true, updatedAt: state.updatedAt });
+    mergeStoredBoardsIntoState({ preserveActiveBoard: true });
     const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
       message: "Diary save failed locally. Try removing large images."
     });
@@ -10287,7 +10285,7 @@ function applyBoardToState(nextState, boardId) {
   nextState.archivedCards = Array.isArray(board.archivedCards) ? board.archivedCards.map(normalizeArchivedCard) : [];
 }
 
-function syncActiveBoard() {
+function syncActiveBoard(options = {}) {
   if (!Array.isArray(state.boards) || !state.boards.length) {
     state.boards = [
       createBoardRecord({
@@ -10304,8 +10302,12 @@ function syncActiveBoard() {
   }
   const index = state.boards.findIndex((board) => board.id === state.activeBoardId);
   if (index < 0) return;
+  const previousBoard = state.boards[index];
+  const nextUpdatedAt = options.touchBoard === false
+    ? normalizeTimestamp(previousBoard?.updatedAt) || getBoardUpdatedAt(previousBoard) || Date.now()
+    : normalizeTimestamp(options.updatedAt) || Date.now();
   state.boards[index] = {
-    ...state.boards[index],
+    ...previousBoard,
     name: state.board.name,
     visibility: state.board.visibility,
     layout: state.board.layout,
@@ -10313,7 +10315,7 @@ function syncActiveBoard() {
     savedLayout: Array.isArray(state.board.savedLayout) ? state.board.savedLayout : [],
     cards: state.cards.map(normalizeCard),
     archivedCards: getArchivedCards().map(normalizeArchivedCard),
-    updatedAt: getStateUpdatedAt(state) || Date.now()
+    updatedAt: nextUpdatedAt
   };
 }
 
@@ -11890,28 +11892,42 @@ function readStoredStateSnapshot() {
   }
 }
 
-function mergeStoredBoardsIntoState() {
+function mergeBoardRecords(localBoards, incomingBoards, options = {}) {
+  const activeBoardId = options.activeBoardId || state.activeBoardId;
+  const preserveActiveBoard = options.preserveActiveBoard !== false;
+  const incomingById = new Map((incomingBoards || []).map((board) => [board.id, board]));
+  const mergedBoards = [];
+  const seen = new Set();
+
+  (localBoards || []).forEach((localBoard) => {
+    const incomingBoard = incomingById.get(localBoard.id);
+    const keepLocal =
+      (preserveActiveBoard && localBoard.id === activeBoardId) ||
+      !incomingBoard ||
+      getBoardUpdatedAt(localBoard) >= getBoardUpdatedAt(incomingBoard);
+    mergedBoards.push(createBoardRecord(keepLocal ? localBoard : incomingBoard));
+    seen.add(localBoard.id);
+  });
+
+  (incomingBoards || []).forEach((incomingBoard) => {
+    if (seen.has(incomingBoard.id)) return;
+    mergedBoards.push(createBoardRecord(incomingBoard));
+  });
+
+  return mergedBoards;
+}
+
+function mergeStoredBoardsIntoState(options = {}) {
   const storedState = readStoredStateSnapshot();
   if (!storedState?.boards?.length) return false;
   if (!Array.isArray(state.boards) || !state.boards.length) return false;
 
-  const storedBoards = new Map(storedState.boards.map((board) => [board.id, board]));
-  const mergedBoards = [];
-  const seen = new Set();
-
-  state.boards.forEach((localBoard) => {
-    const storedBoard = storedBoards.get(localBoard.id);
-    const keepLocal = localBoard.id === state.activeBoardId || !storedBoard || getBoardUpdatedAt(localBoard) >= getBoardUpdatedAt(storedBoard);
-    mergedBoards.push(createBoardRecord(keepLocal ? localBoard : storedBoard));
-    seen.add(localBoard.id);
+  state.boards = mergeBoardRecords(state.boards, storedState.boards, {
+    activeBoardId: state.activeBoardId,
+    preserveActiveBoard: options.preserveActiveBoard !== false
   });
-
-  storedState.boards.forEach((storedBoard) => {
-    if (seen.has(storedBoard.id)) return;
-    mergedBoards.push(createBoardRecord(storedBoard));
-  });
-
-  state.boards = mergedBoards;
+  state.updatedAt = Math.max(getStateUpdatedAt(state), getStateUpdatedAt(storedState), Date.now());
+  state.updatedBy = getClientId();
   return true;
 }
 
@@ -11926,34 +11942,54 @@ function isUserEditingCriticalDraft() {
 }
 
 function applyExternalStorageState(rawValue) {
-  if (applyingExternalStorageUpdate || !rawValue || isUserEditingCriticalDraft()) return;
+  if (applyingExternalStorageUpdate || !rawValue) return;
   try {
     applyingExternalStorageUpdate = true;
     const incomingState = rehydrateState(JSON.parse(rawValue));
-    const incomingUpdatedAt = getStateUpdatedAt(incomingState);
-    const currentUpdatedAt = getStateUpdatedAt(state);
-    if (incomingUpdatedAt && currentUpdatedAt && incomingUpdatedAt < currentUpdatedAt) return;
     const activeBoardId = state.activeBoardId;
     const activeFilter = state.activeFilter || "all";
     const activeCategories = Array.isArray(state.activeCategories) ? [...state.activeCategories] : [];
     const focusFilter = state.focusFilter || "all";
     const searchQuery = state.searchQuery || "";
+    const editingCriticalDraft = isUserEditingCriticalDraft();
+    syncActiveBoard({ touchBoard: false });
 
-    if (incomingState.boards?.some((board) => board.id === activeBoardId)) {
-      incomingState.activeBoardId = activeBoardId;
-      applyBoardToState(incomingState, activeBoardId);
+    const localActiveBoard = state.boards.find((board) => board.id === activeBoardId);
+    const incomingActiveBoard = incomingState.boards?.find((board) => board.id === activeBoardId);
+    const incomingActiveIsNewer =
+      incomingActiveBoard &&
+      getBoardUpdatedAt(incomingActiveBoard) > getBoardUpdatedAt(localActiveBoard) + CLOUD_CONFLICT_TOLERANCE_MS;
+    const preserveActiveBoard = editingCriticalDraft || !incomingActiveIsNewer;
+
+    state.boards = mergeBoardRecords(state.boards, incomingState.boards || [], {
+      activeBoardId,
+      preserveActiveBoard
+    });
+    state.updatedAt = Math.max(getStateUpdatedAt(state), getStateUpdatedAt(incomingState), Date.now());
+    state.updatedBy = incomingState.updatedBy || getClientId();
+    if (!state.boards.some((board) => board.id === activeBoardId)) {
+      state.activeBoardId = state.boards[0]?.id || activeBoardId;
+    } else {
+      state.activeBoardId = activeBoardId;
     }
-
-    state = resetBoardViewState(incomingState);
+    if (!preserveActiveBoard) {
+      applyBoardToState(state, activeBoardId);
+    }
+    state = resetBoardViewState(state);
     state.activeFilter = activeFilter;
     state.activeCategories = activeCategories;
     state.focusFilter = focusFilter;
     state.searchQuery = searchQuery;
-    resetFormState();
-    render();
+    if (!editingCriticalDraft && !preserveActiveBoard) {
+      resetFormState();
+      render();
+    } else {
+      renderBoardMeta();
+      renderBoardSwitcher();
+    }
     localStateSource = "stored";
     if (elements.savedState) {
-      elements.savedState.textContent = "Synced here";
+      elements.savedState.textContent = preserveActiveBoard ? "Synced other boards" : "Synced here";
       elements.savedState.classList.remove("is-saving");
     }
   } catch {
@@ -12653,10 +12689,8 @@ function saveState(options = {}) {
   if (touched) {
     touchState();
   }
-  syncActiveBoard();
-  if (!isProtectedTextEditActive()) {
-    mergeStoredBoardsIntoState();
-  }
+  syncActiveBoard({ touchBoard: touched, updatedAt: state.updatedAt });
+  mergeStoredBoardsIntoState({ preserveActiveBoard: true });
   const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
     silent: options.quiet,
     message: "Local save failed. Remove large images or export a backup."
@@ -12678,10 +12712,9 @@ function saveState(options = {}) {
 function persistLocalDraftState() {
   try {
     if (applyingExternalStorageUpdate) return;
-    syncActiveBoard();
-    if (!isProtectedTextEditActive()) {
-      mergeStoredBoardsIntoState();
-    }
+    syncActiveBoard({ touchBoard: true, updatedAt: Date.now() });
+    touchState();
+    mergeStoredBoardsIntoState({ preserveActiveBoard: true });
     if (writeLocalJson(STORAGE_KEY, getStateForStorage(), { silent: true })) {
       localStateSource = "stored";
     }
