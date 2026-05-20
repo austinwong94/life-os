@@ -6138,8 +6138,10 @@ function getPlannerCompletionTimestampForItem(item, entry, itemKey) {
   const todayTime = dateKeyToLocalDate(todayKey).getTime();
   let completionDate = plannedDate;
 
-  if (item?.isCarryover || plannedTime >= todayTime) {
+  if (item?.isCarryover || plannedTime > todayTime) {
     completionDate = todayKey;
+  } else if (plannedTime < todayTime) {
+    completionDate = plannedDate;
   } else {
     const createdAt = getPlannerItemCreatedAt(entry, itemKey);
     const hasCarryoverCopy = plannerEntryHasCarryoverFromSource(item.card, itemKey, plannedDate);
