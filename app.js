@@ -7022,6 +7022,7 @@ function getPlannerItemsForSelectedDay(allItems, selectedDayKey) {
     if (sourceTime >= selectedTime) return;
 
     const completedAt = normalizeTimestamp(item.completedAt);
+    if (item.done && !completedAt) return;
     const completedDate = completedAt ? getTodayKey(new Date(completedAt)) : "";
     const completedTime = completedDate ? dateKeyToLocalDate(completedDate).getTime() : 0;
     if (completedTime && completedTime < selectedTime) return;
