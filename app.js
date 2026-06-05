@@ -2794,7 +2794,7 @@ function getDefaultCardTitle(type) {
 function getQuickCaptureDescription(type, notes) {
   if (type === "planner") return "A dated planner note saved inside the planner card.";
   if (type === "diary") return "A quick dated diary page.";
-  if (type === "quote") return normalizeLabel(notes) || "A useful reminder for the day.";
+  if (type === "quote") return String(notes || "").trim() || "A useful reminder for the day.";
   if (type === "video") return "Saved video to watch or reference from the board.";
   if (type === "food") return "Track meals, macros, fiber and monthly nutrition targets.";
   return "Quick capture added from the board.";
@@ -6138,10 +6138,12 @@ function getPlannerCompletionTimestampForItem(item, entry, itemKey) {
   const todayTime = dateKeyToLocalDate(todayKey).getTime();
   let completionDate = plannedDate;
 
-  if (item?.isCarryover || plannedTime > todayTime) {
+  if (plannedTime > todayTime) {
     completionDate = todayKey;
   } else if (plannedTime < todayTime) {
     completionDate = plannedDate;
+  } else if (item?.isCarryover) {
+    completionDate = todayKey;
   } else {
     const createdAt = getPlannerItemCreatedAt(entry, itemKey);
     const hasCarryoverCopy = plannerEntryHasCarryoverFromSource(item.card, itemKey, plannedDate);
@@ -6638,12 +6640,12 @@ function togglePlannerTaskDone(item) {
   const entry = getPlannerEntry(item.card, item.dateKey);
   const checkedItems = { ...(entry.checkedItems || {}) };
   const key = getPlannerItemKey(item.title);
-  const nextDone = !checkedItems[key];
+  const nextDone = !Boolean(item.done);
   const completedAt = nextDone ? getPlannerCompletionTimestampForItem(item, entry, key) : 0;
-  if (checkedItems[key]) {
-    delete checkedItems[key];
-  } else {
+  if (nextDone) {
     checkedItems[key] = { completedAt };
+  } else {
+    delete checkedItems[key];
   }
   if (nextDone && !item.isCarryover) {
     const copiedToToday = ensureCompletedTodayCopyForSourceTask(item.card, item.dateKey, item.title, completedAt);
@@ -6997,6 +6999,50 @@ function getPlannerSourceItems(group = "", options = {}) {
     .sort(sortPlannerScheduleItems);
 }
 
+function getPlannerTaskInstanceKey(item) {
+  const sourceDate = normalizeDateKey(item?.carryoverFrom) || normalizeDateKey(item?.dateKey) || "";
+  return `${sourceDate}::${getPlannerItemKey(item?.title)}`;
+}
+
+function getPlannerItemsForSelectedDay(allItems, selectedDayKey) {
+  const normalizedDay = normalizeDateKey(selectedDayKey) || getTodayKey();
+  const selectedTime = dateKeyToLocalDate(normalizedDay).getTime();
+  const byInstance = new Map();
+  allItems
+    .filter((item) => normalizeDateKey(item.dateKey) === normalizedDay)
+    .forEach((item) => {
+      byInstance.set(getPlannerTaskInstanceKey(item), item);
+    });
+
+  allItems.forEach((item) => {
+    if (item.isCarryover) return;
+    const sourceDate = normalizeDateKey(item.dateKey);
+    if (!sourceDate) return;
+    const sourceTime = dateKeyToLocalDate(sourceDate).getTime();
+    if (sourceTime >= selectedTime) return;
+
+    const completedAt = normalizeTimestamp(item.completedAt);
+    const completedDate = completedAt ? getTodayKey(new Date(completedAt)) : "";
+    const completedTime = completedDate ? dateKeyToLocalDate(completedDate).getTime() : 0;
+    if (completedTime && completedTime < selectedTime) return;
+
+    const carriedItem = {
+      ...item,
+      dateKey: normalizedDay,
+      done: Boolean(completedTime && completedTime === selectedTime),
+      completedAt: completedTime === selectedTime ? completedAt : 0,
+      isCarryover: true,
+      carryoverFrom: sourceDate
+    };
+    const key = getPlannerTaskInstanceKey(carriedItem);
+    if (!byInstance.has(key)) {
+      byInstance.set(key, carriedItem);
+    }
+  });
+
+  return [...byInstance.values()].sort(sortPlannerScheduleItems);
+}
+
 function getPlannerTimelineMeta() {
   const todayKey = getTodayKey();
   const today = dateKeyToLocalDate(todayKey);
@@ -7069,7 +7115,7 @@ function getPlannerViewData(view, group, options = {}, dayKey = getTodayKey()) {
     today: {
       limit: Number.POSITIVE_INFINITY,
       empty: "Planner items for this day will appear here.",
-      items: allItems.filter((item) => item.dateKey === selectedDayKey),
+      items: getPlannerItemsForSelectedDay(allItems, selectedDayKey),
       dateLabel: formatPlannerDate(selectedDayKey),
       dayKey: selectedDayKey
     },
@@ -7497,6 +7543,7 @@ function removeTemplateOnlyTypeOptions() {
 function renderConditionalFields() {
   elements.categoryCustomField.classList.toggle("is-visible", elements.cardCategory.value === "Custom");
   const type = getSelectedFormType();
+  const isQuote = type === "quote";
   renderPriorityButtons();
   renderTypeButtons(type);
   const isRoutine = type === "routine";
@@ -7527,6 +7574,11 @@ function renderConditionalFields() {
   elements.fitnessField.classList.toggle("is-visible", type === "fitness");
   elements.scheduleField.classList.toggle("is-visible", isScheduled);
   elements.scorecardPeriodField.classList.toggle("is-visible", isScorecard);
+  elements.cardDescription.maxLength = isQuote ? 360 : 180;
+  elements.cardDescription.rows = isQuote ? 5 : 3;
+  elements.cardDescription.placeholder = isQuote
+    ? "Write each motivation on its own line"
+    : "";
   elements.dailyPlanDateField.classList.toggle("is-visible", type === "daily");
   if (type === "daily" && !normalizeDateKey(elements.cardPlanDate.value)) {
     elements.cardPlanDate.value = getTodayKey();
@@ -9762,7 +9814,7 @@ function getProgress(card) {
   }
 
   if (card.type === "planlist") {
-    const data = getPlannerViewData(card.plannerView, getPlannerGroup(card), card.plannerViewOptions);
+    const data = getPlannerViewData(card.plannerView, getPlannerGroup(card), card.plannerViewOptions, getPlannerViewDate(card));
     const done = data.items.filter((item) => item.done).length;
     return { percent: data.items.length ? Math.round((done / data.items.length) * 100) : 0, label: data.items.length ? `${done}/${data.items.length} done` : "0 linked" };
   }
