@@ -1139,6 +1139,7 @@ const elements = {
   settingsModalCloseButton: document.querySelector("#settingsModalCloseButton"),
   settingsPanelMount: document.querySelector("#settingsPanelMount"),
   boardPanel: document.querySelector(".board-panel"),
+  safetyPanel: document.querySelector(".safety-panel"),
   templatePanel: document.querySelector(".template-panel"),
   cloudPanel: document.querySelector(".cloud-panel"),
   boardName: document.querySelector("#boardName"),
@@ -1263,6 +1264,10 @@ const elements = {
   stopAllTimersButton: document.querySelector("#stopAllTimersButton"),
   openRecordsButton: document.querySelector("#openRecordsButton"),
   downloadAllDataButton: document.querySelector("#downloadAllDataButton"),
+  dataSafetyStatus: document.querySelector("#dataSafetyStatus"),
+  dataSafetySummary: document.querySelector("#dataSafetySummary"),
+  dataSafetyReadableButton: document.querySelector("#dataSafetyReadableButton"),
+  dataSafetyDownloadButton: document.querySelector("#dataSafetyDownloadButton"),
   exportDataButton: document.querySelector("#exportDataButton"),
   importDataButton: document.querySelector("#importDataButton"),
   importDataFile: document.querySelector("#importDataFile"),
@@ -1393,13 +1398,14 @@ document.addEventListener("visibilitychange", () => {
 
 function mountSettingsPanels() {
   if (!elements.settingsPanelMount) return;
-  [elements.boardPanel, elements.cloudPanel, elements.recentPanel]
+  [elements.boardPanel, elements.safetyPanel, elements.cloudPanel, elements.recentPanel]
     .filter(Boolean)
     .forEach((panel) => elements.settingsPanelMount.append(panel));
 }
 
 function setSettingsPanelMode() {
   elements.boardPanel.hidden = false;
+  elements.safetyPanel.hidden = false;
   elements.cloudPanel.hidden = false;
   elements.recentPanel.hidden = false;
 }
@@ -1696,7 +1702,9 @@ function bindEvents() {
 
   elements.openRecordsButton.addEventListener("click", openRecordsModal);
 
-  elements.downloadAllDataButton.addEventListener("click", exportBoardBackup);
+  elements.downloadAllDataButton.addEventListener("click", exportReadableDataArchive);
+  elements.dataSafetyReadableButton.addEventListener("click", exportReadableDataArchive);
+  elements.dataSafetyDownloadButton.addEventListener("click", exportBoardBackup);
   elements.exportDataButton.addEventListener("click", exportBoardBackup);
 
   elements.importDataButton.addEventListener("click", () => {
@@ -2503,6 +2511,7 @@ function toggleBoardControls() {
 
 function renderBoardMeta() {
   renderBoardSwitcher();
+  renderDataSafetyPanel();
   const controlsOpen = state.ui.controlsOpen !== false;
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
   const controlsLabel = controlsOpen ? "Hide controls" : "Show controls";
@@ -2569,6 +2578,40 @@ function renderBoardSwitcher() {
   elements.deleteBoardButton.disabled = state.boards.length < 2;
   elements.deleteBoardButton.title =
     state.boards.length < 2 ? "Create another board before deleting this one" : `Delete ${state.board.name}`;
+}
+
+function renderDataSafetyPanel() {
+  if (!elements.dataSafetySummary) return;
+  const snapshot = getStateForStorage();
+  const counts = getBackupDataCounts(snapshot);
+  const diaryBackups = Object.keys(readDiaryBackups()).length;
+  const cloudRecoveryPoints = readLocalJsonValue(CLOUD_RECOVERY_KEY, []).length;
+  const rows = [
+    ["Boards", counts.boards],
+    ["Active cards", counts.activeCards],
+    ["Archived", counts.archivedCards],
+    ["Diary pages", counts.diaryPages],
+    ["Planner dates", counts.plannerDates],
+    ["Side notes", counts.sideNotes],
+    ["Fitness days", counts.fitnessDays],
+    ["Food days", counts.foodDays],
+    ["Diary recovery", diaryBackups],
+    ["Cloud recovery", cloudRecoveryPoints]
+  ];
+  elements.dataSafetySummary.replaceChildren(
+    ...rows.map(([label, value]) => {
+      const item = document.createElement("div");
+      const strong = document.createElement("strong");
+      strong.textContent = value;
+      const span = document.createElement("span");
+      span.textContent = label;
+      item.append(strong, span);
+      return item;
+    })
+  );
+  if (elements.dataSafetyStatus) {
+    elements.dataSafetyStatus.textContent = `${counts.boards} board${counts.boards === 1 ? "" : "s"}`;
+  }
 }
 
 function renderCategoryPills(cards) {
@@ -12605,10 +12648,26 @@ function touchState() {
   state.hasUserChanges = true;
 }
 
-function exportBoardBackup() {
+function getExportSnapshot() {
   syncActiveBoard({ touchBoard: false });
   mergeStoredBoardsIntoState({ preserveActiveBoard: true });
-  const snapshot = getStateForStorage();
+  return getStateForStorage();
+}
+
+function downloadTextFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportBoardBackup() {
+  const snapshot = getExportSnapshot();
   const backup = {
     app: "Life OS",
     format: "life-os-full-backup-v2",
@@ -12622,16 +12681,470 @@ function exportBoardBackup() {
       cloudRecoveryPoints: readLocalJsonValue(CLOUD_RECOVERY_KEY, [])
     }
   };
-  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `life-os-backup-${getTodayKey()}.json`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  downloadTextFile(`life-os-restore-backup-${getTodayKey()}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
   elements.savedState.textContent = "Backup ready";
+  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = "Backup ready";
+}
+
+function exportReadableDataArchive() {
+  const snapshot = getExportSnapshot();
+  const html = buildReadableDataArchive(snapshot);
+  downloadTextFile(`life-os-readable-archive-${getTodayKey()}.html`, html, "text/html;charset=utf-8");
+  elements.savedState.textContent = "Archive ready";
+  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = "Archive ready";
+}
+
+function buildReadableDataArchive(snapshot) {
+  const boards = Array.isArray(snapshot.boards) ? snapshot.boards : [];
+  const counts = getBackupDataCounts(snapshot);
+  const generatedAt = formatRecordDateTime(Date.now());
+  const boardSections = boards.length
+    ? boards.map((board, index) => renderReadableBoard(board, index)).join("")
+    : `<section class="empty"><h2>No boards found</h2><p>No board data was saved in this browser at export time.</p></section>`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Life OS readable archive - ${escapeHtml(getTodayKey())}</title>
+  <style>
+    :root { color-scheme: light; --ink:#17211d; --muted:#65716b; --line:#e6e8e4; --soft:#f5f6f2; --accent:#2f7d44; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f7f8f4; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.5; }
+    main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 60px; }
+    header.export-head { padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: #fff; box-shadow: 0 18px 45px rgba(30, 40, 34, .08); }
+    h1, h2, h3, h4, p { margin: 0; }
+    h1 { font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1; letter-spacing: 0; }
+    .subtitle { margin-top: 10px; color: var(--muted); font-weight: 650; }
+    .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 22px; }
+    .count { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--soft); }
+    .count strong { display: block; font-size: 1.4rem; line-height: 1; }
+    .count span { display: block; margin-top: 5px; color: var(--muted); font-size: .75rem; font-weight: 850; text-transform: uppercase; letter-spacing: .04em; }
+    .board { margin-top: 26px; }
+    .board-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 0 2px 10px; border-bottom: 1px solid var(--line); }
+    .board-head h2 { font-size: 1.55rem; line-height: 1.1; }
+    .board-head p { color: var(--muted); font-weight: 760; }
+    .card-group { display: grid; gap: 14px; margin-top: 18px; }
+    .card-group h3 { color: var(--muted); font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; }
+    article.card { padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 12px 28px rgba(30, 40, 34, .05); break-inside: avoid; }
+    .card-top { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+    .card-title { display: grid; gap: 6px; }
+    .card-title h4 { font-size: 1.16rem; line-height: 1.15; }
+    .meta { display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { display: inline-flex; align-items: center; min-height: 24px; padding: 4px 9px; border-radius: 999px; background: var(--soft); color: #33413a; font-size: .72rem; font-weight: 850; }
+    .archived { color: #8a523f; background: #f8ede8; }
+    .content { display: grid; gap: 14px; margin-top: 16px; }
+    .block { display: grid; gap: 7px; }
+    .block h5 { margin: 0; color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .055em; }
+    .text { white-space: pre-wrap; color: #26332d; font-weight: 600; }
+    .entry { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcf9; }
+    .entry + .entry { margin-top: 9px; }
+    .entry-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+    .entry-head strong { font-size: .92rem; }
+    .entry-head span { color: var(--muted); font-size: .76rem; font-weight: 800; }
+    ul.clean { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+    .item { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 9px; align-items: start; padding: 8px 0; border-top: 1px solid rgba(0,0,0,.06); }
+    .item:first-child { border-top: 0; padding-top: 0; }
+    .box { display: inline-grid; place-items: center; width: 18px; height: 18px; border: 1.5px solid #b9c0b8; border-radius: 5px; color: #fff; font-size: .74rem; font-weight: 900; }
+    .done .box { background: var(--accent); border-color: var(--accent); }
+    .done .item-title { text-decoration: line-through; color: #66756c; }
+    .item-title { display: block; font-weight: 780; overflow-wrap: anywhere; }
+    .item-note { display: block; margin-top: 2px; color: var(--muted); font-size: .78rem; font-weight: 700; }
+    .kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+    .kv div { padding: 10px; border: 1px solid var(--line); border-radius: 11px; background: #fff; }
+    .kv span { display: block; color: var(--muted); font-size: .72rem; font-weight: 850; text-transform: uppercase; }
+    .kv strong { display: block; margin-top: 3px; overflow-wrap: anywhere; }
+    .empty { margin-top: 20px; padding: 18px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); background: #fff; }
+    a { color: #237a8c; font-weight: 800; overflow-wrap: anywhere; }
+    @media print { body { background:#fff; } main { width: 100%; padding: 0; } header.export-head, article.card { box-shadow: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="export-head">
+      <h1>Life OS readable archive</h1>
+      <p class="subtitle">Exported ${escapeHtml(generatedAt)} from ${escapeHtml(window.location.href)}. This file is for reading your saved information. Keep the JSON restore backup separately for app recovery.</p>
+      <div class="counts">
+        ${renderReadableCount("Boards", counts.boards)}
+        ${renderReadableCount("Active cards", counts.activeCards)}
+        ${renderReadableCount("Archived cards", counts.archivedCards)}
+        ${renderReadableCount("Diary pages", counts.diaryPages)}
+        ${renderReadableCount("Side notes", counts.sideNotes)}
+        ${renderReadableCount("Planner dates", counts.plannerDates)}
+        ${renderReadableCount("Fitness days", counts.fitnessDays)}
+        ${renderReadableCount("Food days", counts.foodDays)}
+      </div>
+    </header>
+    ${boardSections}
+    ${renderReadableDiaryBackups(readDiaryBackups())}
+  </main>
+</body>
+</html>`;
+}
+
+function renderReadableCount(label, value) {
+  return `<div class="count"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></div>`;
+}
+
+function renderReadableBoard(board, index) {
+  const activeCards = Array.isArray(board.cards) ? board.cards : [];
+  const archivedCards = Array.isArray(board.archivedCards) ? board.archivedCards : [];
+  const visibility = normalizeLabel(board.visibility || "private");
+  return `<section class="board">
+    <div class="board-head">
+      <div>
+        <h2>${escapeHtml(board.name || `Board ${index + 1}`)}</h2>
+        <p>${escapeHtml(visibility)} board · ${activeCards.length} active · ${archivedCards.length} archived</p>
+      </div>
+      <p>Updated ${escapeHtml(formatRecordDate(getBoardUpdatedAt(board)))}</p>
+    </div>
+    ${renderReadableCardGroup("Active cards", activeCards, "active")}
+    ${renderReadableCardGroup("Archived cards", archivedCards, "archived")}
+  </section>`;
+}
+
+function renderReadableCardGroup(title, cards, status) {
+  if (!cards.length) return `<div class="empty">${escapeHtml(title)}: no cards saved.</div>`;
+  const sortedCards = [...cards].sort((left, right) => {
+    const leftOrder = Number(left.order) || 0;
+    const rightOrder = Number(right.order) || 0;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return getCardUpdatedAt(right) - getCardUpdatedAt(left);
+  });
+  return `<section class="card-group">
+    <h3>${escapeHtml(title)}</h3>
+    ${sortedCards.map((card) => renderReadableCard(card, status)).join("")}
+  </section>`;
+}
+
+function renderReadableCard(card, status) {
+  const typeMeta = TYPE_META[card.type] || TYPE_META.single;
+  const progress = getReadableProgress(card);
+  const tags = [
+    typeMeta.label,
+    getReadableCardCategory(card),
+    progress.percent !== "" ? `${progress.percent}%` : "",
+    progress.label,
+    status === "archived" ? "Archived" : ""
+  ].filter(Boolean);
+  const dates = [
+    card.createdAt ? `Created ${formatRecordDate(card.createdAt)}` : "",
+    getCardUpdatedAt(card) ? `Updated ${formatRecordDate(getCardUpdatedAt(card))}` : "",
+    card.archivedAt ? `Archived ${formatRecordDate(card.archivedAt)}` : ""
+  ].filter(Boolean);
+  return `<article class="card">
+    <div class="card-top">
+      <div class="card-title">
+        <div class="meta">${tags.map((tag) => `<span class="tag ${tag === "Archived" ? "archived" : ""}">${escapeHtml(tag)}</span>`).join("")}</div>
+        <h4>${escapeHtml(card.title || typeMeta.label)}</h4>
+      </div>
+      <div class="meta">${dates.map((date) => `<span class="tag">${escapeHtml(date)}</span>`).join("")}</div>
+    </div>
+    <div class="content">${renderReadableCardContent(card)}</div>
+  </article>`;
+}
+
+function getReadableCardCategory(card) {
+  return normalizeLabel(card.category || card.metadata?.category || "General");
+}
+
+function getReadableProgress(card) {
+  try {
+    const progress = getProgress(card);
+    return {
+      percent: Number.isFinite(Number(progress.percent)) ? Number(progress.percent) : "",
+      label: normalizeLabel(progress.label || "")
+    };
+  } catch {
+    return { percent: "", label: "" };
+  }
+}
+
+function renderReadableCardContent(card) {
+  const blocks = [];
+  if (card.description && card.type !== "quote") blocks.push(renderReadableTextBlock("Description", card.description));
+  if (card.targetAt) blocks.push(renderReadableKeyValues("Timing", [["Date", formatRecordDateTime(card.targetAt)]]));
+  if (card.plannedDate) blocks.push(renderReadableKeyValues("Plan date", [["Date", formatReadableDateKey(card.plannedDate)]]));
+  if (card.type === "diary") blocks.push(renderReadableDiary(card));
+  if (card.type === "sidenote") blocks.push(renderReadableSideNotes(card));
+  if (card.type === "planner") blocks.push(renderReadablePlanner(card));
+  if (card.type === "planlist") blocks.push(renderReadablePlannerView(card));
+  if (card.type === "quote") blocks.push(renderReadableQuote(card));
+  if (card.type === "video") blocks.push(renderReadableVideo(card));
+  if (card.type === "brief") blocks.push(renderReadableBrief(card));
+  if (card.type === "fitness") blocks.push(renderReadableFitness(card));
+  if (card.type === "food") blocks.push(renderReadableFood(card));
+  if (card.type === "minutes") blocks.push(renderReadableKeyValues("Goal", [["Current", `${card.currentValue || 0} ${card.unit || ""}`], ["Target", `${card.targetValue || 0} ${card.unit || ""}`]]));
+  if (card.type === "scheduled") blocks.push(renderReadableSchedule(card));
+  if (card.type === "checklist" || card.type === "daily" || card.type === "routine") blocks.push(renderReadableChecklist(card.items || [], "Tasks"));
+  if (card.type === "workout") blocks.push(renderReadableWorkout(card));
+  if (card.type === "lab") blocks.push(renderReadableLab(card));
+  if (card.type === "weekly" || card.type === "monthly" || card.type === "annual") blocks.push(renderReadableChecks(card));
+  if (card.type === "single") blocks.push(renderReadableKeyValues("Status", [["Done", card.done ? "Yes" : "No"]]));
+  return blocks.filter(Boolean).join("") || `<p class="text">No extra saved content.</p>`;
+}
+
+function renderReadableTextBlock(label, value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return `<section class="block"><h5>${escapeHtml(label)}</h5><div class="text">${escapeHtml(text)}</div></section>`;
+}
+
+function renderReadableKeyValues(label, rows) {
+  const safeRows = rows.filter(([, value]) => String(value || "").trim());
+  if (!safeRows.length) return "";
+  return `<section class="block"><h5>${escapeHtml(label)}</h5><div class="kv">${safeRows
+    .map(([key, value]) => `<div><span>${escapeHtml(key)}</span><strong>${escapeHtml(value)}</strong></div>`)
+    .join("")}</div></section>`;
+}
+
+function renderReadableChecklist(items, label) {
+  const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => getReadableItemTitle(item));
+  if (!normalizedItems.length) return "";
+  return `<section class="block"><h5>${escapeHtml(label)}</h5><ul class="clean">${normalizedItems.map((item) => renderReadableItem(getReadableItemTitle(item), Boolean(item.done), item.note || item.prescription || item.deliverable || "")).join("")}</ul></section>`;
+}
+
+function renderReadableItem(title, done = false, note = "") {
+  return `<li class="item ${done ? "done" : ""}"><span class="box">${done ? "✓" : ""}</span><span><span class="item-title">${escapeHtml(title)}</span>${note ? `<span class="item-note">${escapeHtml(note)}</span>` : ""}</span></li>`;
+}
+
+function getReadableItemTitle(item) {
+  return normalizeLabel(item?.text || item?.title || item?.name || item?.label || "");
+}
+
+function formatReadableDateKey(dateKey) {
+  const normalizedDate = normalizeDateKey(dateKey);
+  if (!normalizedDate) return "Undated";
+  const date = dateKeyToLocalDate(normalizedDate);
+  if (!Number.isFinite(date.getTime())) return normalizedDate;
+  return date.toLocaleDateString(undefined, { weekday: "short", year: "numeric", month: "short", day: "numeric" });
+}
+
+function sortDateEntries(entries) {
+  return entries
+    .map(([dateKey, value]) => [normalizeDateKey(dateKey), value])
+    .filter(([dateKey]) => dateKey)
+    .sort(([left], [right]) => dateKeyToLocalDate(left).getTime() - dateKeyToLocalDate(right).getTime());
+}
+
+function renderReadableDiary(card) {
+  const entries = sortDateEntries(Object.entries(card.diaryEntries || {}))
+    .map(([dateKey, rawEntry]) => [dateKey, normalizeDiaryEntry(rawEntry)])
+    .filter(([, entry]) => entry.sentence || entry.thoughts || entry.updatedAt);
+  if (!entries.length) return `<section class="block"><h5>Diary pages</h5><p class="text">No diary pages saved.</p></section>`;
+  return `<section class="block"><h5>Diary pages</h5>${entries.map(([dateKey, entry]) => {
+    const mood = DIARY_MOOD_META[entry.feeling] || {};
+    return `<div class="entry">
+      <div class="entry-head"><strong>${escapeHtml(formatReadableDateKey(dateKey))}</strong><span>${escapeHtml(mood.icon || "")} ${escapeHtml(entry.feeling || "")}${entry.updatedAt ? ` · Saved ${escapeHtml(formatRecordDateTime(entry.updatedAt))}` : ""}</span></div>
+      ${entry.sentence ? `<p class="text"><strong>One sentence:</strong> ${escapeHtml(entry.sentence)}</p>` : ""}
+      ${entry.thoughts ? `<div class="text">${escapeHtml(entry.thoughts)}</div>` : ""}
+    </div>`;
+  }).join("")}</section>`;
+}
+
+function renderReadableDiaryBackups(backups) {
+  const rows = Object.values(backups || {})
+    .filter((backup) => backup?.entry?.sentence || backup?.entry?.thoughts)
+    .sort((left, right) => (normalizeTimestamp(left.savedAt) || 0) - (normalizeTimestamp(right.savedAt) || 0));
+  if (!rows.length) return "";
+  return `<section class="board">
+    <div class="board-head"><div><h2>Diary recovery copies</h2><p>Extra local copies kept for diary safety.</p></div><p>${rows.length} copies</p></div>
+    <section class="card-group">${rows.map((backup) => `<article class="card">
+      <div class="card-title"><div class="meta"><span class="tag">Recovery</span><span class="tag">${escapeHtml(backup.cardTitle || "Diary")}</span></div><h4>${escapeHtml(formatReadableDateKey(backup.dateKey))}</h4></div>
+      <div class="content">${renderReadableTextBlock("One sentence", backup.entry.sentence)}${renderReadableTextBlock("Thoughts", backup.entry.thoughts)}${renderReadableKeyValues("Saved", [["Saved at", formatRecordDateTime(backup.savedAt)]])}</div>
+    </article>`).join("")}</section>
+  </section>`;
+}
+
+function renderReadableSideNotes(card) {
+  const entries = sortDateEntries(Object.entries(card.sideNoteEntries || {}))
+    .map(([dateKey, rawEntry]) => [dateKey, normalizeSideNoteEntry(rawEntry)])
+    .filter(([, entry]) => entry.notes.length);
+  if (!entries.length) return `<section class="block"><h5>Side notes</h5><p class="text">No side notes saved.</p></section>`;
+  return `<section class="block"><h5>Side notes</h5>${entries.map(([dateKey, entry]) => `<div class="entry">
+    <div class="entry-head"><strong>${escapeHtml(formatReadableDateKey(dateKey))}</strong><span>${entry.notes.length} notes</span></div>
+    <ul class="clean">${entry.notes
+      .sort((left, right) => normalizeTimestamp(left.createdAt) - normalizeTimestamp(right.createdAt))
+      .map((note) => `<li class="item"><span class="box"></span><span><span class="item-title">${escapeHtml(note.text)}</span><span class="item-note">Saved ${escapeHtml(formatRecordDateTime(note.updatedAt || note.createdAt))}</span></span></li>`)
+      .join("")}</ul>
+  </div>`).join("")}</section>`;
+}
+
+function renderReadablePlanner(card) {
+  const entries = sortDateEntries(Object.entries(card.plannerEntries || {}))
+    .map(([dateKey, rawEntry]) => [dateKey, normalizePlannerEntry(rawEntry)])
+    .filter(([, entry]) => getPlannerNoteLines(entry.note).length);
+  const archived = Array.isArray(card.plannerArchivedTasks) ? card.plannerArchivedTasks.map(normalizePlannerArchivedTask).filter((task) => task.title) : [];
+  if (!entries.length && !archived.length) return `<section class="block"><h5>Planner</h5><p class="text">No planner items saved.</p></section>`;
+  const entryHtml = entries.map(([dateKey, entry]) => `<div class="entry">
+    <div class="entry-head"><strong>${escapeHtml(formatReadableDateKey(dateKey))}</strong><span>${getPlannerNoteLines(entry.note).length} items</span></div>
+    <ul class="clean">${getPlannerNoteLines(entry.note).map((line) => {
+      const itemKey = getPlannerItemKey(line);
+      const doneRecord = normalizePlannerDoneRecord(entry.checkedItems[itemKey]);
+      const originDate = getPlannerEntryCarryoverDate(entry, itemKey, "");
+      const details = [
+        originDate && originDate !== dateKey ? `Original date ${formatReadableDateKey(originDate)}` : "",
+        doneRecord?.completedAt ? `Completed ${formatReadableDateKey(getTodayKey(new Date(doneRecord.completedAt)))}` : ""
+      ].filter(Boolean).join(" · ");
+      return renderReadableItem(line, Boolean(doneRecord), details);
+    }).join("")}</ul>
+  </div>`).join("");
+  const archivedHtml = archived.length ? `<div class="entry"><div class="entry-head"><strong>Archived planner tasks</strong><span>${archived.length} tasks</span></div><ul class="clean">${archived.map((task) => renderReadableItem(task.title, task.wasDone, `${formatReadableDateKey(task.dateKey)} · Archived ${formatRecordDate(task.archivedAt)}`)).join("")}</ul></div>` : "";
+  return `<section class="block"><h5>Planner</h5>${entryHtml}${archivedHtml}</section>`;
+}
+
+function renderReadablePlannerView(card) {
+  const view = normalizePlannerViewMode(card.plannerView);
+  const options = normalizePlannerViewOptions(card.plannerViewOptions);
+  return renderReadableKeyValues("Planner-view settings", [
+    ["View", view],
+    ["Date", formatReadableDateKey(card.plannerViewDate || getTodayKey())],
+    ["Include today", options.includeToday ? "Yes" : "No"],
+    ["Include week", options.includeWeek ? "Yes" : "No"],
+    ["Include month", options.includeMonth ? "Yes" : "No"]
+  ]);
+}
+
+function renderReadableQuote(card) {
+  return `${renderReadableTextBlock("Motivation", card.description || card.title)}${card.quoteAuthor ? renderReadableKeyValues("Source", [["Author", card.quoteAuthor]]) : ""}`;
+}
+
+function renderReadableVideo(card) {
+  if (!card.videoUrl) return "";
+  return `<section class="block"><h5>Video link</h5><p><a href="${escapeAttribute(card.videoUrl)}">${escapeHtml(card.videoUrl)}</a></p></section>`;
+}
+
+function renderReadableBrief(card) {
+  const sections = Array.isArray(card.sections) ? card.sections : [];
+  if (!sections.length) return "";
+  return `<section class="block"><h5>Brief sections</h5>${sections.map((section) => `<div class="entry"><div class="entry-head"><strong>${escapeHtml(section.label || "Section")}</strong></div><div class="text">${escapeHtml(section.text || "")}</div></div>`).join("")}</section>`;
+}
+
+function renderReadableFitness(card) {
+  normalizeFitnessCard(card);
+  const entries = sortDateEntries(Object.entries(card.fitnessEntries || {}))
+    .map(([dateKey, rawEntry]) => [dateKey, normalizeFitnessEntry(rawEntry)])
+    .filter(([, entry]) => getActiveFitnessParts(entry).length || hasReadableFitnessMetrics(entry.metrics) || entry.notes);
+  if (!entries.length) return `<section class="block"><h5>Fitness log</h5><p class="text">No workout logs saved.</p></section>`;
+  return `<section class="block"><h5>Fitness log</h5>${entries.map(([dateKey, entry]) => {
+    const activeParts = getActiveFitnessParts(entry);
+    return `<div class="entry">
+      <div class="entry-head"><strong>${escapeHtml(formatReadableDateKey(dateKey))}</strong><span>${activeParts.map((part) => part.label).join(", ") || "Metrics"}</span></div>
+      ${renderReadableFitnessMetrics(entry.metrics)}
+      ${activeParts.map((meta) => renderReadableFitnessPart(meta, entry.parts[meta.key])).join("")}
+      ${entry.notes ? renderReadableTextBlock("Session notes", entry.notes) : ""}
+    </div>`;
+  }).join("")}</section>`;
+}
+
+function hasReadableFitnessMetrics(metrics = {}) {
+  return FITNESS_METRIC_FIELDS.some((field) => metrics[field.key] !== "" && metrics[field.key] !== null && typeof metrics[field.key] !== "undefined");
+}
+
+function renderReadableFitnessMetrics(metrics = {}) {
+  const rows = FITNESS_METRIC_FIELDS
+    .filter((field) => metrics[field.key] !== "" && metrics[field.key] !== null && typeof metrics[field.key] !== "undefined")
+    .map((field) => [field.label, `${formatFitnessMetricNumber(field.key, metrics[field.key])}${field.suffix ? ` ${field.suffix}` : ""}`]);
+  return renderReadableKeyValues("Body metrics", rows);
+}
+
+function renderReadableFitnessPart(meta, part = {}) {
+  if (meta.type === "cardio") {
+    return `<div class="entry"><div class="entry-head"><strong>${escapeHtml(meta.label)}</strong><span>${escapeHtml(part.intensity || "")}</span></div>
+      ${renderReadableKeyValues("Cardio", [["Distance", part.distanceKm !== "" ? `${part.distanceKm} km` : ""], ["Minutes", part.durationMinutes !== "" ? `${part.durationMinutes} min` : ""]])}
+      ${part.notes ? renderReadableTextBlock("Notes", part.notes) : ""}
+    </div>`;
+  }
+  if (meta.type === "strength") {
+    const exercises = Array.isArray(part.exercises) ? part.exercises : [];
+    return `<div class="entry"><div class="entry-head"><strong>${escapeHtml(meta.label)}</strong><span>${exercises.length} exercises</span></div>
+      <ul class="clean">${exercises.map((exercise) => renderReadableItem(exercise.name, false, [
+        exercise.sets !== "" ? `${exercise.sets} sets` : "",
+        exercise.reps ? `${exercise.reps} reps` : "",
+        exercise.weightKg !== "" ? `${exercise.weightKg} kg` : "",
+        exercise.rpe !== "" ? `RPE ${exercise.rpe}` : ""
+      ].filter(Boolean).join(" · "))).join("")}</ul>
+      ${part.notes ? renderReadableTextBlock("Notes", part.notes) : ""}
+    </div>`;
+  }
+  return `<div class="entry"><div class="entry-head"><strong>${escapeHtml(meta.label)}</strong></div>
+    ${renderReadableKeyValues("Details", [["Area", part.area || meta.label], ["Minutes", part.durationMinutes !== "" ? `${part.durationMinutes} min` : ""]])}
+    ${part.notes ? renderReadableTextBlock("Notes", part.notes) : ""}
+  </div>`;
+}
+
+function renderReadableFood(card) {
+  normalizeFoodCard(card);
+  const entries = sortDateEntries(Object.entries(card.foodEntries || {}))
+    .map(([dateKey, rawEntry]) => [dateKey, normalizeFoodEntry(rawEntry)])
+    .filter(([, entry]) => entry.meals.some((meal) => meal.items.length) || entry.updatedAt);
+  if (!entries.length) return `<section class="block"><h5>Food tracker</h5><p class="text">No meals saved.</p></section>`;
+  return `<section class="block"><h5>Food tracker</h5>${entries.map(([dateKey, entry]) => {
+    const totals = getFoodEntryTotals(card, entry);
+    const target = getFoodTarget(card, dateKey);
+    return `<div class="entry">
+      <div class="entry-head"><strong>${escapeHtml(formatReadableDateKey(dateKey))}</strong><span>${escapeHtml(getFoodStatusLabel(totals, target))}</span></div>
+      ${renderReadableFoodTotals("Daily total", totals)}
+      ${entry.meals.map((meal) => renderReadableFoodMeal(card, meal)).join("")}
+    </div>`;
+  }).join("")}
+  ${renderReadableFoodTargets(card)}
+  ${renderReadableFoodLibrary(card)}
+  </section>`;
+}
+
+function renderReadableFoodTotals(label, totals) {
+  return renderReadableKeyValues(label, FOOD_NUTRIENT_KEYS.map((key) => [
+    FOOD_NUTRIENT_META[key].label,
+    `${formatFoodNumber(totals[key], key)} ${FOOD_NUTRIENT_META[key].unit}`
+  ]));
+}
+
+function renderReadableFoodMeal(card, meal) {
+  const totals = getFoodMealTotals(card, meal);
+  return `<div class="entry"><div class="entry-head"><strong>${escapeHtml(meal.name || "Meal")}</strong><span>${escapeHtml(formatFoodNumber(totals.calories, "calories"))} kcal</span></div>
+    <ul class="clean">${(meal.items || []).map((item) => {
+      const food = getFoodForLoggedItem(card, item);
+      const itemTotals = calculateFoodItem(card, item);
+      const servingLabel = item.unit === "g" ? `${item.amount} g` : `${item.amount} x ${food?.servingUnit || "serving"}`;
+      return renderReadableItem(food?.name || item.name || item.foodId || "Food", false, `${servingLabel} · ${formatFoodNumber(itemTotals.calories, "calories")} kcal · P ${formatFoodNumber(itemTotals.protein, "protein")}g · C ${formatFoodNumber(itemTotals.carbs, "carbs")}g · F ${formatFoodNumber(itemTotals.fat, "fat")}g · Fi ${formatFoodNumber(itemTotals.fiber, "fiber")}g`);
+    }).join("")}</ul>
+  </div>`;
+}
+
+function renderReadableFoodTargets(card) {
+  const targets = Object.entries(card.foodTargets || {}).filter(([monthKey]) => monthKey !== "default");
+  if (!targets.length) return "";
+  return `<div class="entry"><div class="entry-head"><strong>Monthly nutrition targets</strong><span>${targets.length} months</span></div>${targets.map(([monthKey, target]) => renderReadableFoodTotals(monthKey, normalizeFoodTarget(target))).join("")}</div>`;
+}
+
+function renderReadableFoodLibrary(card) {
+  const library = normalizeFoodLibrary(card.foodLibrary);
+  if (!library.length) return "";
+  return `<div class="entry"><div class="entry-head"><strong>Food library</strong><span>${library.length} foods</span></div><ul class="clean">${library.map((food) => renderReadableItem(food.name, false, `${food.servingUnit} · ${food.calories} kcal · P ${food.protein}g · C ${food.carbs}g · F ${food.fat}g · Fi ${food.fiber}g`)).join("")}</ul></div>`;
+}
+
+function renderReadableSchedule(card) {
+  const days = normalizeScheduleDays(card.scheduleDays).map((dayIndex) => WEEKDAY_LABELS[dayIndex]).join(", ");
+  return `${renderReadableKeyValues("Schedule", [["Days", days]])}${renderReadableChecks(card)}`;
+}
+
+function renderReadableChecks(card) {
+  const checks = Array.isArray(card.checks) ? card.checks : [];
+  if (!checks.length) return "";
+  return renderReadableChecklist(checks.map((check, index) => ({
+    ...check,
+    name: check.name || check.text || check.label || `Check ${index + 1}`
+  })), "Checks");
+}
+
+function renderReadableWorkout(card) {
+  return renderReadableChecklist(card.exercises || [], "Exercises");
+}
+
+function renderReadableLab(card) {
+  return renderReadableChecklist(card.steps || [], "Lab steps");
 }
 
 function readLocalJsonValue(key, fallback) {

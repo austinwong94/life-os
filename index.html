@@ -9,8 +9,8 @@
     />
     <title>Life OS</title>
     <link rel="icon" href="data:," />
-    <script src="dev-redirect.js?v=20260609-audit-side-note-report"></script>
-    <link rel="stylesheet" href="styles.css?v=20260609-audit-side-note-report" />
+    <script src="dev-redirect.js?v=20260609-readable-export"></script>
+    <link rel="stylesheet" href="styles.css?v=20260609-readable-export" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -70,9 +70,9 @@
           </div>
           <button type="button" class="template-open-button data-download-button" id="downloadAllDataButton">
             <span data-icon="download"></span>
-            <span>Download all data</span>
+            <span>Download my information</span>
           </button>
-          <p class="data-note">Downloads every board, archive, diary, planner, side note, fitness log and food log currently saved in this browser. This does not delete or change your data.</p>
+          <p class="data-note">Creates a readable archive of your boards, diary, motivation notes, planner, projects, fitness logs and food logs. This does not delete or change your data.</p>
           <label class="field">
             <span>Name</span>
             <input id="boardName" type="text" maxlength="36" autocomplete="off" />
@@ -92,6 +92,25 @@
               <button type="button" data-value="focus">Priority</button>
               <button type="button" data-value="custom">Manual</button>
             </div>
+          </div>
+        </section>
+
+        <section class="panel safety-panel">
+          <div class="panel-heading">
+            <h2>Data safety</h2>
+            <span class="tag" id="dataSafetyStatus">Ready</span>
+          </div>
+          <p class="data-note">Use the readable archive when you want to review your saved information. Use the JSON backup only when you need to restore the app later.</p>
+          <div class="safety-summary" id="dataSafetySummary" aria-live="polite"></div>
+          <div class="safety-download-actions">
+            <button type="button" class="template-open-button data-download-button" id="dataSafetyReadableButton">
+              <span data-icon="download"></span>
+              <span>Readable archive</span>
+            </button>
+            <button type="button" class="template-open-button data-download-button backup-download-button" id="dataSafetyDownloadButton">
+              <span data-icon="download"></span>
+              <span>Restore backup JSON</span>
+            </button>
           </div>
         </section>
 
@@ -918,6 +937,6 @@
       <button type="button" class="undo-toast-close" id="undoToastCloseButton" aria-label="Close undo message">x</button>
     </div>
 
-    <script src="app.js?v=20260609-audit-side-note-report"></script>
+    <script src="app.js?v=20260609-readable-export"></script>
   </body>
 </html>
