@@ -12,7 +12,7 @@ const LOCAL_DEV_RELOAD_POLL_MS = 1500;
 const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "app.js"];
 const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
-const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "quote", "video", "fitness", "food"];
+const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food"];
 const TRUSTED_VIDEO_DOMAINS = {
   youtube: ["youtube.com", "youtu.be"],
   instagram: ["instagram.com"],
@@ -143,6 +143,7 @@ const TYPE_META = {
   planner: { label: "Planner", icon: "calendar" },
   planlist: { label: "Planner-view", icon: "list" },
   diary: { label: "Diary", icon: "calendar" },
+  sidenote: { label: "Side notes", icon: "list" },
   quote: { label: "Motivation", icon: "quote" },
   video: { label: "Video", icon: "video" },
   fitness: { label: "Fitness log", icon: "dumbbell" },
@@ -163,6 +164,7 @@ const TYPE_HELP = {
   planner: "Use like a physical planner book. Pick a date and write future plans inside one card without splitting the board.",
   planlist: "Use for Today, This week, This month, or Upcoming lists connected to Planner cards on this board.",
   diary: "Use for a dated daily diary with feeling, one sentence and thoughts. Each date is saved as its own page.",
+  sidenote: "Use for quick random thoughts, reminders and ideas that do not need a topic. Notes are grouped by day.",
   brief: "Use for strategy, rules, decisions, priorities, or a review prompt. It is a guidance card, not a task.",
   quote: "Use for motivational words, reminders, affirmations or principles you want visible on the board.",
   video: "Use for a YouTube, Instagram or Facebook video you want to keep beside the work it supports.",
@@ -189,6 +191,10 @@ const TYPE_DETAILS = {
   diary: {
     best: "Daily reflection and mood history",
     timing: "No timer. The date arrows handle past and future pages."
+  },
+  sidenote: {
+    best: "Fast capture for random thoughts, ideas and things to remember",
+    timing: "No timer. Pick the day with arrows, type the note, then add it to that date."
   },
   planner: {
     best: "Future plans, reminders and dated notes",
@@ -256,7 +262,7 @@ const TYPE_DETAILS = {
   }
 };
 
-const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "brief", "quote", "video", "fitness", "food", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
+const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "sidenote", "brief", "quote", "video", "fitness", "food", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
 const SCORECARD_TYPES = ["weekly", "monthly", "annual"];
 const TEMPLATE_ONLY_TYPES = ["lab", "workout"];
 const TYPE_PICKER_GROUPS = [
@@ -296,6 +302,7 @@ const TYPE_PICKER_GROUPS = [
     options: [
       { type: "brief", label: "Brief", hint: "Decision guide" },
       { type: "diary", label: "Diary", hint: "Daily log" },
+      { type: "sidenote", label: "Side notes", hint: "Random capture" },
       { type: "quote", label: "Motivation", hint: "Visible words" },
       { type: "video", label: "Video", hint: "Saved reference" }
     ]
@@ -1255,6 +1262,7 @@ const elements = {
   startAllTimersButton: document.querySelector("#startAllTimersButton"),
   stopAllTimersButton: document.querySelector("#stopAllTimersButton"),
   openRecordsButton: document.querySelector("#openRecordsButton"),
+  downloadAllDataButton: document.querySelector("#downloadAllDataButton"),
   exportDataButton: document.querySelector("#exportDataButton"),
   importDataButton: document.querySelector("#importDataButton"),
   importDataFile: document.querySelector("#importDataFile"),
@@ -1688,6 +1696,7 @@ function bindEvents() {
 
   elements.openRecordsButton.addEventListener("click", openRecordsModal);
 
+  elements.downloadAllDataButton.addEventListener("click", exportBoardBackup);
   elements.exportDataButton.addEventListener("click", exportBoardBackup);
 
   elements.importDataButton.addEventListener("click", () => {
@@ -1802,7 +1811,7 @@ function bindEvents() {
   elements.reportsModal.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-report-type]");
     if (!button) return;
-    activeReportType = ["fitness", "food", "diary"].includes(button.dataset.reportType)
+    activeReportType = ["fitness", "food", "diary", "sidenote"].includes(button.dataset.reportType)
       ? button.dataset.reportType
       : "fitness";
     renderReportsModal();
@@ -2021,6 +2030,16 @@ function buildCardFromForm({ preview }) {
     };
   }
 
+  if (type === "sidenote") {
+    const dateKey = getTodayKey();
+    card.activeSideNoteDate = dateKey;
+    card.lastSideNoteDate = getTodayKey();
+    card.sideNoteEntries = {
+      [dateKey]: normalizeSideNoteEntry()
+    };
+    card.sideNoteDrafts = {};
+  }
+
   if (type === "quote") {
     card.quoteAuthor = normalizeLabel(elements.quoteAuthor.value.trim());
   }
@@ -2139,6 +2158,14 @@ function updateExistingCard(nextCard) {
     current.type === "diary" && nextCard.type === "diary"
       ? { ...(current.diaryEntries || {}), ...(nextCard.diaryEntries || {}) }
       : nextCard.diaryEntries;
+  const mergedSideNoteEntries =
+    current.type === "sidenote" && nextCard.type === "sidenote"
+      ? { ...(current.sideNoteEntries || {}), ...(nextCard.sideNoteEntries || {}) }
+      : nextCard.sideNoteEntries;
+  const mergedSideNoteDrafts =
+    current.type === "sidenote" && nextCard.type === "sidenote"
+      ? { ...(current.sideNoteDrafts || {}), ...(nextCard.sideNoteDrafts || {}) }
+      : nextCard.sideNoteDrafts;
   const mergedPlannerEntries =
     current.type === "planner" && nextCard.type === "planner"
       ? { ...(current.plannerEntries || {}), ...(nextCard.plannerEntries || {}) }
@@ -2154,6 +2181,8 @@ function updateExistingCard(nextCard) {
   state.cards[index] = {
     ...nextCard,
     diaryEntries: mergedDiaryEntries,
+    sideNoteEntries: mergedSideNoteEntries,
+    sideNoteDrafts: mergedSideNoteDrafts,
     plannerEntries: mergedPlannerEntries,
     foodEntries: mergedFoodEntries,
     foodTargets: mergedFoodTargets,
@@ -2710,6 +2739,23 @@ function addQuickTodoCard() {
             })
           }
         : undefined,
+    activeSideNoteDate: type === "sidenote" ? getTodayKey() : undefined,
+    sideNoteEntries:
+      type === "sidenote"
+        ? {
+            [getTodayKey()]: normalizeSideNoteEntry({
+              notes: notes
+                ? [
+                    {
+                      text: notes,
+                      createdAt: Date.now(),
+                      updatedAt: Date.now()
+                    }
+                  ]
+                : []
+            })
+          }
+        : undefined,
     plannerEntries:
       type === "planner"
         ? {
@@ -2763,6 +2809,7 @@ function getQuickCaptureFallbackTitle(type) {
   if (type === "planner") return "Future planner";
   if (type === "planlist") return "Planner-view";
   if (type === "diary") return "Daily diary";
+  if (type === "sidenote") return "Side notes";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
   if (type === "fitness") return "Fitness workout log";
@@ -2778,6 +2825,7 @@ function getDefaultCardTitle(type) {
   if (type === "planner") return "Future planner";
   if (type === "planlist") return "Planner-view";
   if (type === "diary") return "Daily diary";
+  if (type === "sidenote") return "Side notes";
   if (type === "quote") return "Motivation";
   if (type === "video") return "Video card";
   if (type === "food") return "Daily food tracker";
@@ -2794,6 +2842,7 @@ function getDefaultCardTitle(type) {
 function getQuickCaptureDescription(type, notes) {
   if (type === "planner") return "A dated planner note saved inside the planner card.";
   if (type === "diary") return "A quick dated diary page.";
+  if (type === "sidenote") return "Quick random notes saved by day.";
   if (type === "quote") return String(notes || "").trim() || "A useful reminder for the day.";
   if (type === "video") return "Saved video to watch or reference from the board.";
   if (type === "food") return "Track meals, macros, fiber and monthly nutrition targets.";
@@ -2815,6 +2864,7 @@ function renderCardsOnly(options = {}) {
   settleExpiredTimers();
   resetDailyRepeatingCards();
   resetDiaryCardsToToday();
+  resetSideNoteCardsToToday();
   repairPlannerRenamedCompletedCarryovers();
   carryPlannerIncompleteTasksToToday();
   const orderedCards = getOrderedCards();
@@ -3324,6 +3374,9 @@ function renderCard(card, options = {}) {
   }
   if (card.type === "diary") {
     body.append(renderDiary(card));
+  }
+  if (card.type === "sidenote") {
+    body.append(renderSideNotes(card));
   }
   if (card.type === "quote") {
     body.append(renderQuote(card));
@@ -4091,6 +4144,95 @@ function renderDiary(card) {
     autoGrowTextarea(sentence);
     autoGrowTextarea(thoughts);
   });
+  return wrapper;
+}
+
+function renderSideNotes(card) {
+  normalizeSideNoteCard(card);
+  const activeDate = getActiveSideNoteDate(card);
+  const entry = getSideNoteEntry(card, activeDate);
+  const draftText = getSideNoteDraft(card, activeDate);
+  const wrapper = document.createElement("div");
+  wrapper.className = "side-notes-card";
+
+  const nav = document.createElement("div");
+  nav.className = "diary-nav side-note-nav";
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.title = "Previous day";
+  previous.setAttribute("aria-label", "Previous day");
+  previous.innerHTML = ICONS["chevron-left"];
+  previous.addEventListener("click", () => moveSideNoteDate(card, -1));
+  const next = document.createElement("button");
+  next.type = "button";
+  next.title = "Next day";
+  next.setAttribute("aria-label", "Next day");
+  next.innerHTML = ICONS["chevron-right"];
+  next.addEventListener("click", () => moveSideNoteDate(card, 1));
+  const dateCopy = document.createElement("div");
+  const dateLabel = document.createElement("strong");
+  dateLabel.textContent = formatDiaryDate(activeDate);
+  const status = document.createElement("span");
+  status.textContent = entry.notes.length ? `${entry.notes.length} notes` : "No notes yet";
+  dateCopy.append(dateLabel, status);
+  nav.append(previous, dateCopy, next);
+
+  const composer = document.createElement("div");
+  composer.className = "side-note-compose";
+  const input = document.createElement("textarea");
+  input.className = "side-note-input";
+  input.rows = 2;
+  input.placeholder = "Capture a random thought, reminder or idea";
+  input.value = draftText;
+  input.addEventListener("input", () => {
+    updateSideNoteDraft(card, activeDate, input.value);
+    autoGrowTextarea(input);
+  });
+  input.addEventListener("change", () => {
+    updateSideNoteDraft(card, activeDate, input.value);
+  });
+  const addButton = document.createElement("button");
+  addButton.type = "button";
+  addButton.className = "side-note-add";
+  addButton.innerHTML = `${ICONS.plus}<span>Add note</span>`;
+  addButton.addEventListener("click", () => {
+    addSideNote(card, activeDate, input.value);
+  });
+  composer.append(input, addButton);
+
+  const list = document.createElement("div");
+  list.className = "side-note-list";
+  const notes = [...entry.notes].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+  if (!notes.length) {
+    const empty = document.createElement("p");
+    empty.className = "side-note-empty";
+    empty.textContent = "No side notes for this day.";
+    list.append(empty);
+  } else {
+    notes.forEach((note) => {
+      const row = document.createElement("article");
+      row.className = "side-note-item";
+      const time = document.createElement("time");
+      time.className = "side-note-time";
+      time.dateTime = new Date(Number(note.createdAt) || Date.now()).toISOString();
+      time.textContent = formatSideNoteTime(note.createdAt);
+      const text = document.createElement("p");
+      text.className = "side-note-text";
+      text.textContent = note.text;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "side-note-delete";
+      remove.title = "Delete note";
+      remove.setAttribute("aria-label", "Delete side note");
+      remove.innerHTML = ICONS["trash-2"];
+      remove.addEventListener("click", () => deleteSideNote(card, activeDate, note.id));
+      row.append(time, text, remove);
+      list.append(row);
+    });
+  }
+
+  wrapper.append(nav, composer, list);
+  requestAnimationFrame(() => autoGrowTextarea(input));
   return wrapper;
 }
 
@@ -7413,6 +7555,148 @@ function formatDiaryDate(dateKey) {
   return relative ? `${relative} · ${label}` : label;
 }
 
+function normalizeSideNoteCard(card) {
+  if (!card || card.type !== "sidenote") return card;
+  const today = getTodayKey();
+  card.sideNoteEntries = card.sideNoteEntries && typeof card.sideNoteEntries === "object" ? card.sideNoteEntries : {};
+  card.sideNoteDrafts = card.sideNoteDrafts && typeof card.sideNoteDrafts === "object" ? card.sideNoteDrafts : {};
+  card.activeSideNoteDate = normalizeDateKey(card.activeSideNoteDate) || today;
+  card.lastSideNoteDate = normalizeDateKey(card.lastSideNoteDate) || today;
+  Object.keys(card.sideNoteEntries).forEach((dateKey) => {
+    const normalizedDate = normalizeDateKey(dateKey);
+    if (!normalizedDate) {
+      delete card.sideNoteEntries[dateKey];
+      return;
+    }
+    card.sideNoteEntries[normalizedDate] = normalizeSideNoteEntry(card.sideNoteEntries[dateKey]);
+    if (normalizedDate !== dateKey) delete card.sideNoteEntries[dateKey];
+  });
+  Object.keys(card.sideNoteDrafts).forEach((dateKey) => {
+    const normalizedDate = normalizeDateKey(dateKey);
+    const text = String(card.sideNoteDrafts[dateKey] || "");
+    if (!normalizedDate) {
+      delete card.sideNoteDrafts[dateKey];
+      return;
+    }
+    card.sideNoteDrafts[normalizedDate] = text;
+    if (normalizedDate !== dateKey) delete card.sideNoteDrafts[dateKey];
+  });
+  if (!card.sideNoteEntries[card.activeSideNoteDate]) {
+    card.sideNoteEntries[card.activeSideNoteDate] = normalizeSideNoteEntry();
+  }
+  return card;
+}
+
+function normalizeSideNoteEntry(entry = {}) {
+  const rawNotes = Array.isArray(entry.notes) ? entry.notes : entry.note || entry.text ? [{ text: entry.note || entry.text, createdAt: entry.createdAt, updatedAt: entry.updatedAt }] : [];
+  const notes = rawNotes
+    .map(normalizeSideNoteItem)
+    .filter((note) => note.text);
+  return {
+    notes,
+    updatedAt: normalizeTimestamp(entry.updatedAt) || notes.reduce((max, note) => Math.max(max, normalizeTimestamp(note.updatedAt)), 0)
+  };
+}
+
+function normalizeSideNoteItem(item = {}) {
+  const createdAt = normalizeTimestamp(item.createdAt) || Date.now();
+  return {
+    id: item.id || createId(),
+    text: String(item.text || item.note || "").trim(),
+    createdAt,
+    updatedAt: normalizeTimestamp(item.updatedAt) || createdAt
+  };
+}
+
+function getActiveSideNoteDate(card) {
+  if (!card || card.type !== "sidenote") return getTodayKey();
+  normalizeSideNoteCard(card);
+  return normalizeDateKey(card.activeSideNoteDate) || getTodayKey();
+}
+
+function getSideNoteEntry(card, dateKey = getActiveSideNoteDate(card)) {
+  normalizeSideNoteCard(card);
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  if (!card.sideNoteEntries[normalizedDate]) {
+    card.sideNoteEntries[normalizedDate] = normalizeSideNoteEntry();
+  }
+  return card.sideNoteEntries[normalizedDate];
+}
+
+function getSideNoteDraft(card, dateKey = getActiveSideNoteDate(card)) {
+  normalizeSideNoteCard(card);
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  return String(card.sideNoteDrafts?.[normalizedDate] || "");
+}
+
+function updateSideNoteDraft(card, dateKey, text) {
+  normalizeSideNoteCard(card);
+  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
+  card.sideNoteDrafts[normalizedDate] = String(text || "");
+  persistSideNoteCardImmediately();
+}
+
+function addSideNote(card, dateKey, text) {
+  const noteText = String(text || "").trim();
+  if (!noteText) return;
+  const normalizedDate = normalizeDateKey(dateKey) || getActiveSideNoteDate(card);
+  const entry = getSideNoteEntry(card, normalizedDate);
+  const now = Date.now();
+  entry.notes.push(normalizeSideNoteItem({ text: noteText, createdAt: now, updatedAt: now }));
+  entry.updatedAt = now;
+  card.sideNoteDrafts[normalizedDate] = "";
+  persistSideNoteCardImmediately();
+  renderCardsOnly({ force: true });
+}
+
+function deleteSideNote(card, dateKey, noteId) {
+  if (!window.confirm("Delete this side note?")) return;
+  const normalizedDate = normalizeDateKey(dateKey) || getActiveSideNoteDate(card);
+  const entry = getSideNoteEntry(card, normalizedDate);
+  const before = entry.notes.length;
+  entry.notes = entry.notes.filter((note) => note.id !== noteId);
+  if (entry.notes.length === before) return;
+  entry.updatedAt = Date.now();
+  persistSideNoteCardImmediately();
+  renderCardsOnly({ force: true });
+}
+
+function moveSideNoteDate(card, direction) {
+  const activeDate = dateKeyToLocalDate(getActiveSideNoteDate(card));
+  card.activeSideNoteDate = getTodayKey(addDays(activeDate, direction));
+  getSideNoteEntry(card, card.activeSideNoteDate);
+  saveState();
+  renderCardsOnly();
+}
+
+function persistSideNoteCardImmediately() {
+  try {
+    touchState();
+    syncActiveBoard({ touchBoard: true, updatedAt: state.updatedAt });
+    mergeStoredBoardsIntoState({ preserveActiveBoard: true });
+    const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
+      message: "Side notes save failed locally. Try exporting a backup."
+    });
+    if (localSaved) localStateSource = "stored";
+    if (elements.savedState) {
+      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      elements.savedState.textContent = localSaved ? `Side notes saved ${time}` : "Side notes save failed";
+      elements.savedState.classList.remove("is-saving");
+    }
+    queueCloudSave({ silent: true });
+  } catch {
+    if (elements.savedState) {
+      elements.savedState.textContent = "Side notes save failed";
+    }
+  }
+}
+
+function formatSideNoteTime(timestamp) {
+  const date = new Date(Number(timestamp) || Date.now());
+  if (!Number.isFinite(date.getTime())) return "";
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 function getVideoEmbed(url) {
   const parsed = parseSupportedVideoUrl(url);
   if (!parsed) return null;
@@ -7579,6 +7863,8 @@ function renderConditionalFields() {
   elements.cardDescription.rows = isQuote ? 5 : 3;
   elements.cardDescription.placeholder = isQuote
     ? "Write each motivation on its own line"
+    : type === "sidenote"
+      ? "Optional: describe what this side note card is for"
     : "";
   elements.dailyPlanDateField.classList.toggle("is-visible", type === "daily");
   if (type === "daily" && !normalizeDateKey(elements.cardPlanDate.value)) {
@@ -7952,9 +8238,11 @@ function renderReportsModal() {
   const range = getReportRangeMeta();
   const report = activeReportType === "diary"
     ? renderDiaryReport(range)
-    : activeReportType === "food"
-      ? renderFoodReport(range)
-      : renderFitnessReport(range);
+    : activeReportType === "sidenote"
+      ? renderSideNoteReport(range)
+      : activeReportType === "food"
+        ? renderFoodReport(range)
+        : renderFitnessReport(range);
   elements.reportPrintArea.append(report);
   hydrateIcons(elements.reportsModal);
 }
@@ -8434,6 +8722,85 @@ function createDiaryEntrySection(entries) {
   return section;
 }
 
+function renderSideNoteReport(range) {
+  const notes = collectSideNoteReportEntries(range);
+  const days = new Set(notes.map((item) => item.dateKey));
+  const cards = new Set(notes.map((item) => item.card.id));
+  const words = notes.reduce((sum, item) => {
+    return sum + String(item.note.text || "").split(/\s+/).filter(Boolean).length;
+  }, 0);
+  const documentNode = createReportDocument("Side notes report", `${state.board.name} · ${range.label}`);
+  const intro = document.createElement("p");
+  intro.className = "report-lede";
+  intro.textContent = "Built from Side notes cards on this board. Use this to review random thoughts, reminders and ideas captured during the period.";
+  const summary = document.createElement("div");
+  summary.className = "report-metric-grid";
+  summary.append(
+    createReportMetric("Notes", notes.length, "captured thoughts"),
+    createReportMetric("Days", days.size, "with notes"),
+    createReportMetric("Cards", cards.size, "side note cards"),
+    createReportMetric("Words", words, "approximate total")
+  );
+  documentNode.append(intro, summary, createSideNoteReportSection(notes));
+  return documentNode;
+}
+
+function collectSideNoteReportEntries(range) {
+  const notes = [];
+  getCurrentBoardReportCards()
+    .filter((card) => card.type === "sidenote")
+    .forEach((card) => {
+      normalizeSideNoteCard(card);
+      Object.entries(card.sideNoteEntries || {}).forEach(([dateKey, entry]) => {
+        if (!isDateInReportRange(dateKey, range)) return;
+        const normalizedEntry = normalizeSideNoteEntry(entry);
+        normalizedEntry.notes.forEach((note) => {
+          if (!note.text) return;
+          notes.push({ card, dateKey, note });
+        });
+      });
+    });
+  return notes.sort((a, b) => {
+    const dateSort = b.dateKey.localeCompare(a.dateKey);
+    if (dateSort) return dateSort;
+    return normalizeTimestamp(b.note.createdAt) - normalizeTimestamp(a.note.createdAt);
+  });
+}
+
+function createSideNoteReportSection(notes) {
+  const section = document.createElement("section");
+  section.className = "report-section side-note-report-pages";
+  const heading = document.createElement("h3");
+  heading.textContent = "Captured notes";
+  const list = document.createElement("div");
+  list.className = "diary-report-list side-note-report-list";
+  notes.forEach((item) => {
+    const page = document.createElement("article");
+    const header = document.createElement("div");
+    header.className = "diary-report-header";
+    const date = document.createElement("strong");
+    date.textContent = formatRecordDate(item.dateKey);
+    const cardName = document.createElement("span");
+    cardName.textContent = item.card.title || "Side notes";
+    header.append(date, cardName);
+    const text = document.createElement("p");
+    text.className = "side-note-report-text";
+    text.textContent = item.note.text;
+    const saved = document.createElement("small");
+    saved.className = "side-note-report-saved";
+    saved.textContent = `Saved ${formatRecordDateTime(item.note.createdAt || item.note.updatedAt)}`;
+    page.append(header, text, saved);
+    list.append(page);
+  });
+  if (!notes.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No side notes recorded in this period.";
+    list.append(empty);
+  }
+  section.append(heading, list);
+  return section;
+}
+
 function createReportDocument(title, meta) {
   const article = document.createElement("article");
   article.className = `report-document report-${activeReportType}`;
@@ -8848,6 +9215,9 @@ function getCardRecordContext(card) {
   }
   if (card.type === "diary") {
     parts.push(formatDiaryDate(getActiveDiaryDate(card)));
+  }
+  if (card.type === "sidenote") {
+    parts.push(formatDiaryDate(getActiveSideNoteDate(card)));
   }
   const priority = getSelectedPriority(card.priority);
   if (priority !== "normal") {
@@ -9310,17 +9680,19 @@ function getPlannedDateChip(card) {
 }
 
 function getPlannedDateTitle(card) {
-  if (!card || !["daily", "planner", "diary", "food"].includes(card.type)) return "";
+  if (!card || !["daily", "planner", "diary", "sidenote", "food"].includes(card.type)) return "";
   const dateKey =
     card.type === "planner"
       ? getActivePlannerDate(card)
       : card.type === "diary"
         ? getActiveDiaryDate(card)
-        : card.type === "food"
-          ? getActiveFoodDate(card)
-          : getCardPlanDate(card);
+        : card.type === "sidenote"
+          ? getActiveSideNoteDate(card)
+          : card.type === "food"
+            ? getActiveFoodDate(card)
+            : getCardPlanDate(card);
   const date = dateKeyToLocalDate(dateKey);
-  const prefix = card.type === "diary" ? "Diary page for" : card.type === "planner" ? "Planner date for" : card.type === "food" ? "Food log for" : "Planned for";
+  const prefix = card.type === "diary" ? "Diary page for" : card.type === "sidenote" ? "Side notes for" : card.type === "planner" ? "Planner date for" : card.type === "food" ? "Food log for" : "Planned for";
   return `${prefix} ${date.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}`;
 }
 
@@ -9709,7 +10081,7 @@ function getOrderedCards() {
 }
 
 function getTypeWeight(type) {
-  const weights = { planner: 0, planlist: 1, diary: 2, brief: 3, fitness: 4, food: 5, routine: 6, scheduled: 7, daily: 8, event: 9, quote: 10, video: 11, lab: 12, workout: 13, minutes: 14, checklist: 15, weekly: 16, monthly: 17, annual: 18, single: 19 };
+  const weights = { planner: 0, planlist: 1, diary: 2, sidenote: 3, brief: 4, fitness: 5, food: 6, routine: 7, scheduled: 8, daily: 9, event: 10, quote: 11, video: 12, lab: 13, workout: 14, minutes: 15, checklist: 16, weekly: 17, monthly: 18, annual: 19, single: 20 };
   return Number.isFinite(weights[type]) ? weights[type] : 9;
 }
 
@@ -9740,6 +10112,7 @@ function getCardSearchText(card) {
   const progress = getProgress(card);
   const plannerEntry = card.type === "planner" ? getPlannerEntry(card, getActivePlannerDate(card)) : null;
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, getActiveDiaryDate(card)) : null;
+  const sideNoteEntry = card.type === "sidenote" ? getSideNoteEntry(card, getActiveSideNoteDate(card)) : null;
   const fitnessEntry = card.type === "fitness" ? getFitnessEntry(card, getActiveFitnessDate(card)) : null;
   const foodEntry = card.type === "food" ? getFoodEntry(card, getActiveFoodDate(card)) : null;
   const foodText = foodEntry
@@ -9760,6 +10133,8 @@ function getCardSearchText(card) {
     diaryEntry?.feeling,
     diaryEntry?.sentence,
     diaryEntry?.thoughts,
+    sideNoteEntry ? sideNoteEntry.notes.map((note) => note.text).join(" ") : "",
+    card.type === "sidenote" ? getSideNoteDraft(card, getActiveSideNoteDate(card)) : "",
     fitnessEntry?.notes,
     fitnessEntry ? getActiveFitnessParts(fitnessEntry).map((part) => part.label).join(" ") : "",
     foodText,
@@ -9767,7 +10142,7 @@ function getCardSearchText(card) {
     typeMeta.label,
     progress.label,
     getSelectedPriority(card.priority),
-    ["daily", "planner", "diary", "food"].includes(card.type) ? getPlannedDateTitle(card) : ""
+    ["daily", "planner", "diary", "sidenote", "food"].includes(card.type) ? getPlannedDateTitle(card) : ""
   ];
   return parts.map((part) => normalizeLabel(part || "").toLowerCase()).join(" ");
 }
@@ -9824,6 +10199,11 @@ function getProgress(card) {
     const entry = getDiaryEntry(card, getActiveDiaryDate(card));
     const hasEntry = Boolean(entry.sentence || entry.thoughts);
     return { percent: hasEntry ? 100 : 0, label: hasEntry ? "Saved" : "Diary" };
+  }
+
+  if (card.type === "sidenote") {
+    const entry = getSideNoteEntry(card, getActiveSideNoteDate(card));
+    return { percent: entry.notes.length ? 100 : 0, label: entry.notes.length ? `${entry.notes.length} notes` : "Notes" };
   }
 
   if (card.type === "quote") {
@@ -10064,6 +10444,24 @@ function resetDiaryCardsToToday() {
     }
     card.lastDiaryDate = today;
     getDiaryEntry(card, today);
+    changed = true;
+  });
+
+  if (changed) saveState();
+}
+
+function resetSideNoteCardsToToday() {
+  const today = getTodayKey();
+  let changed = false;
+  state.cards.forEach((card) => {
+    if (card.type !== "sidenote") return;
+    normalizeSideNoteCard(card);
+    if (card.lastSideNoteDate === today) return;
+    if (card.activeSideNoteDate === card.lastSideNoteDate) {
+      card.activeSideNoteDate = today;
+    }
+    card.lastSideNoteDate = today;
+    getSideNoteEntry(card, today);
     changed = true;
   });
 
@@ -11512,6 +11910,18 @@ function makeCard(options) {
     normalizeDiaryCard(card);
   }
 
+  if (card.type === "sidenote") {
+    const activeDate = normalizeDateKey(options.activeSideNoteDate) || getTodayKey();
+    card.activeSideNoteDate = activeDate;
+    card.lastSideNoteDate = getTodayKey();
+    card.sideNoteEntries = options.sideNoteEntries && typeof options.sideNoteEntries === "object" ? options.sideNoteEntries : {};
+    card.sideNoteDrafts = options.sideNoteDrafts && typeof options.sideNoteDrafts === "object" ? options.sideNoteDrafts : {};
+    if (!card.sideNoteEntries[activeDate]) {
+      card.sideNoteEntries[activeDate] = normalizeSideNoteEntry();
+    }
+    normalizeSideNoteCard(card);
+  }
+
   if (card.type === "planner") {
     const activeDate = normalizeDateKey(options.activePlannerDate || options.plannedDate) || getTodayKey();
     card.plannerGroup = getPlannerGroup(card);
@@ -11834,6 +12244,9 @@ function normalizeCard(card) {
   if (next.type === "diary") {
     normalizeDiaryCard(next);
   }
+  if (next.type === "sidenote") {
+    normalizeSideNoteCard(next);
+  }
   if (next.type === "quote") {
     next.quoteAuthor = normalizeLabel(next.quoteAuthor || "");
   }
@@ -11951,6 +12364,10 @@ function getCardUpdatedAt(card) {
   const times = [normalizeTimestamp(card?.updatedAt), normalizeTimestamp(card?.createdAt), normalizeTimestamp(card?.archivedAt)];
   Object.values(card?.diaryEntries || {}).forEach((entry) => {
     times.push(normalizeTimestamp(entry?.updatedAt));
+  });
+  Object.values(card?.sideNoteEntries || {}).forEach((entry) => {
+    times.push(normalizeTimestamp(entry?.updatedAt));
+    (entry?.notes || []).forEach((note) => times.push(normalizeTimestamp(note?.updatedAt), normalizeTimestamp(note?.createdAt)));
   });
   Object.values(card?.plannerEntries || {}).forEach((entry) => {
     times.push(normalizeTimestamp(entry?.updatedAt));
@@ -12189,11 +12606,21 @@ function touchState() {
 }
 
 function exportBoardBackup() {
-  syncActiveBoard();
+  syncActiveBoard({ touchBoard: false });
+  mergeStoredBoardsIntoState({ preserveActiveBoard: true });
+  const snapshot = getStateForStorage();
   const backup = {
     app: "Life OS",
+    format: "life-os-full-backup-v2",
     exportedAt: new Date().toISOString(),
-    state: getStateForStorage()
+    exportedFrom: window.location.href,
+    includesAuthSession: false,
+    counts: getBackupDataCounts(snapshot),
+    state: snapshot,
+    localRecovery: {
+      diaryEntryBackups: readDiaryBackups(),
+      cloudRecoveryPoints: readLocalJsonValue(CLOUD_RECOVERY_KEY, [])
+    }
   };
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -12205,6 +12632,39 @@ function exportBoardBackup() {
   link.remove();
   URL.revokeObjectURL(url);
   elements.savedState.textContent = "Backup ready";
+}
+
+function readLocalJsonValue(key, fallback) {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getBackupDataCounts(snapshot) {
+  const boards = Array.isArray(snapshot.boards) ? snapshot.boards : [];
+  const allCards = boards.flatMap((board) => Array.isArray(board.cards) ? board.cards : []);
+  const archivedCards = boards.flatMap((board) => Array.isArray(board.archivedCards) ? board.archivedCards : []);
+  const cardsForRecords = [...allCards, ...archivedCards];
+  const diaryPages = cardsForRecords.reduce((sum, card) => sum + Object.keys(card.diaryEntries || {}).length, 0);
+  const sideNotes = cardsForRecords.reduce((sum, card) => {
+    return sum + Object.values(card.sideNoteEntries || {}).reduce((noteSum, entry) => noteSum + (Array.isArray(entry?.notes) ? entry.notes.length : 0), 0);
+  }, 0);
+  const plannerDates = cardsForRecords.reduce((sum, card) => sum + Object.keys(card.plannerEntries || {}).length, 0);
+  const fitnessDays = cardsForRecords.reduce((sum, card) => sum + Object.keys(card.fitnessEntries || {}).length, 0);
+  const foodDays = cardsForRecords.reduce((sum, card) => sum + Object.keys(card.foodEntries || {}).length, 0);
+  return {
+    boards: boards.length,
+    activeCards: allCards.length,
+    archivedCards: archivedCards.length,
+    diaryPages,
+    sideNotes,
+    plannerDates,
+    fitnessDays,
+    foodDays
+  };
 }
 
 function loadCloudSession() {
@@ -12756,7 +13216,7 @@ async function pullCloudState(options = {}) {
 function queueCloudSave(options = {}) {
   if (!cloudSaveEnabled || !cloudSession?.access_token) return;
   window.clearTimeout(cloudSaveTimer);
-  if (elements.savedState && !elements.savedState.textContent.startsWith("Diary saved")) {
+  if (elements.savedState && !elements.savedState.textContent.startsWith("Diary saved") && !elements.savedState.textContent.startsWith("Side notes saved")) {
     elements.savedState.textContent = "Saved here, syncing";
   }
   if (options.immediate) {

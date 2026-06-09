@@ -9,8 +9,8 @@
     />
     <title>Life OS</title>
     <link rel="icon" href="data:," />
-    <script src="dev-redirect.js?v=20260606-planner-legacy-done-fix"></script>
-    <link rel="stylesheet" href="styles.css?v=20260606-planner-legacy-done-fix" />
+    <script src="dev-redirect.js?v=20260609-audit-side-note-report"></script>
+    <link rel="stylesheet" href="styles.css?v=20260609-audit-side-note-report" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -68,7 +68,11 @@
             <button type="button" class="secondary-action board-new" id="newBoardButton">New board</button>
             <button type="button" class="secondary-action board-delete" id="deleteBoardButton">Delete board</button>
           </div>
-          <p class="data-note">Each board is saved separately in this browser. Backup exports all boards for another browser.</p>
+          <button type="button" class="template-open-button data-download-button" id="downloadAllDataButton">
+            <span data-icon="download"></span>
+            <span>Download all data</span>
+          </button>
+          <p class="data-note">Downloads every board, archive, diary, planner, side note, fitness log and food log currently saved in this browser. This does not delete or change your data.</p>
           <label class="field">
             <span>Name</span>
             <input id="boardName" type="text" maxlength="36" autocomplete="off" />
@@ -173,6 +177,7 @@
                   <option value="planlist">Planner-view</option>
                   <option value="daily" selected>To-do list</option>
                   <option value="diary">Daily diary</option>
+                  <option value="sidenote">Side notes</option>
                   <option value="brief">Strategy brief</option>
                   <option value="quote">Motivation</option>
                   <option value="video">Video embed</option>
@@ -551,6 +556,7 @@
                   <option value="planner">Planner</option>
                   <option value="daily" selected>To-do list</option>
                   <option value="diary">Daily diary</option>
+                  <option value="sidenote">Side notes</option>
                   <option value="single">Task</option>
                   <option value="event">Event countdown</option>
                   <option value="checklist">Project checklist</option>
@@ -791,6 +797,7 @@
               <button type="button" data-report-type="fitness" class="is-active">Fitness</button>
               <button type="button" data-report-type="food">Nutrition</button>
               <button type="button" data-report-type="diary">Daily diary</button>
+              <button type="button" data-report-type="sidenote">Side notes</button>
             </div>
             <label>
               <span>Period</span>
@@ -911,6 +918,6 @@
       <button type="button" class="undo-toast-close" id="undoToastCloseButton" aria-label="Close undo message">x</button>
     </div>
 
-    <script src="app.js?v=20260606-planner-legacy-done-fix"></script>
+    <script src="app.js?v=20260609-audit-side-note-report"></script>
   </body>
 </html>

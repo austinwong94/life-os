@@ -985,6 +985,19 @@ textarea:focus {
   margin-bottom: 8px;
 }
 
+.data-download-button {
+  min-height: 40px;
+  margin: 0 0 10px;
+  color: #113a33;
+  background: #e8f3ee;
+  border-color: rgba(28, 115, 87, 0.16);
+}
+
+.data-download-button svg {
+  width: 17px;
+  height: 17px;
+}
+
 .board-new {
   width: 100%;
   min-height: 38px;
@@ -2704,18 +2717,19 @@ textarea:focus {
 .template-preview-grid .brief-list,
 .template-preview-grid .daily-list,
 .template-preview-grid .workout-list,
-.template-preview-grid .lab-list,
-.template-preview-grid .checklist,
-.template-preview-grid .diary-card,
-.template-preview-grid .video-card {
+  .template-preview-grid .lab-list,
+  .template-preview-grid .checklist,
+  .template-preview-grid .diary-card,
+  .template-preview-grid .side-notes-card,
+  .template-preview-grid .video-card {
   gap: 5px;
 }
 
 .template-preview-grid .brief-item,
 .template-preview-grid .daily-list label,
-.template-preview-grid .workout-list label,
-.template-preview-grid .lab-list label,
-.template-preview-grid .diary-nav {
+  .template-preview-grid .workout-list label,
+  .template-preview-grid .lab-list label,
+  .template-preview-grid .diary-nav {
   padding: 5px 6px;
   min-height: 26px;
 }
@@ -2746,9 +2760,10 @@ textarea:focus {
   display: none;
 }
 
-.template-preview-grid .mood-picker button:nth-of-type(n + 4),
-.template-preview-grid .diary-thoughts,
-.template-preview-grid .video-link {
+  .template-preview-grid .mood-picker button:nth-of-type(n + 4),
+  .template-preview-grid .diary-thoughts,
+  .template-preview-grid .side-note-list,
+  .template-preview-grid .video-link {
   display: none;
 }
 
@@ -3080,6 +3095,21 @@ textarea:focus {
   color: #222721;
   font-size: 1rem;
   font-weight: 900;
+}
+
+.side-note-report-text {
+  margin: 0;
+  color: #26322e;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.side-note-report-saved {
+  color: #7a817b;
+  font-size: 0.74rem;
+  font-weight: 850;
 }
 
 .ideas-overview {
@@ -4245,7 +4275,8 @@ textarea:focus {
 }
 
 .planner-card,
-.diary-card {
+.diary-card,
+.side-notes-card {
   display: grid;
   gap: 8px;
 }
@@ -5017,6 +5048,126 @@ textarea:focus {
   font-size: 0.78rem;
   font-weight: 760;
   line-height: 1.35;
+}
+
+.side-note-compose {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 12px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.46)),
+    var(--card-soft);
+}
+
+.side-note-input {
+  width: 100%;
+  min-height: 44px;
+  max-height: 150px;
+  padding: 9px 10px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 10px;
+  color: var(--card-ink);
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: none;
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1.35;
+  resize: none;
+}
+
+.side-note-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  color: #ffffff;
+  background: var(--card-accent);
+  box-shadow: 0 8px 20px var(--card-shadow-color);
+  font-size: 0.72rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.side-note-add svg {
+  width: 14px;
+  height: 14px;
+}
+
+.side-note-list {
+  display: grid;
+  gap: 7px;
+}
+
+.side-note-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 30px;
+  align-items: start;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.side-note-time {
+  min-width: 48px;
+  padding-top: 2px;
+  color: var(--card-accent);
+  font-size: 0.64rem;
+  font-weight: 950;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.side-note-text {
+  min-width: 0;
+  margin: 0;
+  color: var(--card-ink);
+  font-size: 0.74rem;
+  font-weight: 820;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+.side-note-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(17, 17, 17, 0.06);
+  border-radius: 999px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.side-note-delete:hover {
+  color: var(--danger);
+}
+
+.side-note-delete svg {
+  width: 13px;
+  height: 13px;
+}
+
+.side-note-empty {
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed rgba(17, 17, 17, 0.12);
+  border-radius: 10px;
+  color: var(--card-muted);
+  background: rgba(255, 255, 255, 0.48);
+  font-size: 0.72rem;
+  font-weight: 850;
 }
 
 .quote-block {
@@ -7017,6 +7168,14 @@ textarea:focus {
 
   .undo-toast span {
     white-space: normal;
+  }
+
+  .side-note-compose {
+    grid-template-columns: 1fr;
+  }
+
+  .side-note-add {
+    width: 100%;
   }
 
   .card-composer-panel {
