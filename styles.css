@@ -400,6 +400,33 @@ h1 {
   font-weight: 700;
 }
 
+.save-state.is-sync-error {
+  color: #7a1f1f;
+  background: #fbe6e6;
+  border-color: rgba(122, 31, 31, 0.35);
+}
+
+/* Accessibility: one clear keyboard-focus ring for every interactive control.
+   :where() keeps specificity 0 so component styles still win, but nothing is
+   left without a visible focus indicator (WCAG 2.4.7). */
+:where(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Accessibility: honor the OS "reduce motion" preference (WCAG 2.3.3).
+   Cuts the sidebar/composer slides and hover lifts for motion-sensitive users. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .field {
   display: grid;
   gap: 7px;

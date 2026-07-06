@@ -32,6 +32,10 @@ let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token);
 let cloudStatusMessage = "";
 let localStateSource = "default";
+// Set when the stored board JSON was present but unreadable (corrupt/truncated).
+// While true, automatic cloud pushes are blocked so a bad local load can never
+// overwrite the good cloud copy with sample defaults.
+let corruptLocalStateDetected = false;
 let lastDailyMaintenanceDate = getTodayKey();
 
 const THEMES = {
@@ -1348,6 +1352,18 @@ clearStartupBoardSearch();
 [100, 400, 900].forEach((delay) => window.setTimeout(clearStartupBoardSearch, delay));
 startLocalDevAutoReload();
 
+if (corruptLocalStateDetected) {
+  const warning = "Saved data on this device was unreadable, so a safe copy is shown. Your entries were NOT overwritten. If you use cloud sync, press “Load cloud” to restore, then continue.";
+  if (elements.savedState) {
+    elements.savedState.textContent = "Local data unreadable — Load cloud to restore";
+    elements.savedState.classList.remove("is-saving");
+    elements.savedState.classList.add("is-sync-error");
+  }
+  cloudStatusMessage = warning;
+  renderCloudStatus();
+  window.setTimeout(() => window.alert(warning), 300);
+}
+
 window.addEventListener("storage", (event) => {
   if (event.key === STORAGE_KEY) {
     applyExternalStorageState(event.newValue);
@@ -2533,11 +2549,11 @@ function renderBoardMeta() {
       ? `Archive ${recordCount}`
       : "Archive";
 
-  const visibility = VISIBILITY_META[state.board.visibility];
+  const visibility = VISIBILITY_META[state.board.visibility] || VISIBILITY_META.private;
   elements.visibilityLabel.textContent = `${visibility.label} board`;
 
   elements.visibilityControl.querySelectorAll("button").forEach((button) => {
-    const meta = VISIBILITY_META[button.dataset.value];
+    const meta = VISIBILITY_META[button.dataset.value] || VISIBILITY_META.private;
     button.classList.toggle("is-active", state.board.visibility === button.dataset.value);
     button.innerHTML = `${ICONS[meta.icon]}<span>${meta.label}</span>`;
   });
@@ -3293,7 +3309,8 @@ function renderCard(card, options = {}) {
   const interactive = options.interactive !== false;
   const template = document.querySelector("#cardTemplate");
   const node = template.content.firstElementChild.cloneNode(true);
-  const theme = THEMES[card.theme] || THEMES.leaf;
+  const themeKey = THEMES[card.theme] ? card.theme : "leaf";
+  const theme = THEMES[themeKey];
   const progress = getProgress(card);
   const remaining = getRemaining(card);
   const hasTimer = hasCountdown(card);
@@ -3302,7 +3319,7 @@ function renderCard(card, options = {}) {
   node.draggable = interactive;
   node.classList.toggle("is-preview", !interactive);
   node.classList.toggle("is-featured", Boolean(options.featured));
-  node.classList.add("size-standard", `theme-${card.theme}`, `type-${card.type}`, `background-${card.background || "clean"}`);
+  node.classList.add("size-standard", `theme-${themeKey}`, `type-${card.type}`, `background-${card.background || "clean"}`);
   node.classList.toggle("has-image", card.includeImage);
   node.classList.toggle("no-timer", !hasTimer);
   node.classList.toggle("is-content-card", isProgresslessCard(card));
@@ -7533,11 +7550,16 @@ function persistDiaryEntryImmediately(card, dateKey, entry) {
       message: "Diary save failed locally. Try removing large images."
     });
     if (localSaved) localStateSource = "stored";
-    upsertDiaryBackup(card, dateKey, entry);
+    const backupSaved = upsertDiaryBackup(card, dateKey, entry);
     if (elements.savedState) {
       const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      elements.savedState.textContent = localSaved ? `Diary saved ${time}` : "Diary saved to backup only";
+      elements.savedState.textContent = localSaved
+        ? `Diary saved ${time}`
+        : backupSaved
+          ? "Diary saved to backup only"
+          : "Diary NOT saved — free up space or sign in to cloud";
       elements.savedState.classList.remove("is-saving");
+      elements.savedState.classList.toggle("is-sync-error", !localSaved && !backupSaved);
     }
     queueCloudSave({ silent: true });
   } catch {
@@ -7571,7 +7593,18 @@ function upsertDiaryBackup(card, dateKey, entry) {
     entry,
     savedAt: Date.now()
   };
-  writeLocalJson(DIARY_BACKUP_KEY, backups, { silent: true });
+  // Bound the safety net so it can't grow unbounded and eventually exhaust the
+  // localStorage quota (which would silently break both the main save and this
+  // backup). Keep the most recent entries by savedAt.
+  const MAX_DIARY_BACKUPS = 400;
+  const keys = Object.keys(backups);
+  if (keys.length > MAX_DIARY_BACKUPS) {
+    keys
+      .sort((a, b) => (backups[a].savedAt || 0) - (backups[b].savedAt || 0))
+      .slice(0, keys.length - MAX_DIARY_BACKUPS)
+      .forEach((key) => delete backups[key]);
+  }
+  return writeLocalJson(DIARY_BACKUP_KEY, backups, { silent: true });
 }
 
 function readDiaryBackups() {
@@ -10333,11 +10366,14 @@ function getProgress(card) {
 }
 
 function normalizeChecks(card) {
+  // Pure: resize the checks array in memory only. Never call saveState() here —
+  // getProgress()/sort comparators/render call this, and persisting from a read
+  // path caused spurious cloud writes (and re-entrant mutation mid-sort). The
+  // resized array is persisted by the next real user action instead.
   const targetLength = getTrackerLength(card.type);
   if (!Array.isArray(card.checks)) card.checks = [];
   if (card.checks.length !== targetLength) {
     card.checks = Array.from({ length: targetLength }, (_, index) => Boolean(card.checks[index]));
-    saveState();
   }
   return card.checks;
 }
@@ -10757,7 +10793,7 @@ function createBoardRecord({ id = createId(), name, visibility = "private", layo
   return {
     id,
     name: normalizeLabel(name || "New board"),
-    visibility,
+    visibility: VISIBILITY_META[visibility] ? visibility : "private",
     layout,
     columnCount: normalizeBoardColumnCount(columnCount),
     savedLayout: Array.isArray(savedLayout) ? savedLayout : [],
@@ -12082,6 +12118,15 @@ function loadState() {
     localStateSource = "stored";
     return resetBoardViewState(restoreDiaryBackups(rehydrateState(JSON.parse(stored))));
   } catch {
+    // Stored data exists but is unreadable. Do NOT silently drop to sample
+    // defaults and let autosave overwrite the cloud copy — quarantine the raw
+    // blob and flag the corrupt load so automatic cloud pushes are blocked.
+    corruptLocalStateDetected = true;
+    try {
+      localStorage.setItem(`${STORAGE_KEY}:corrupt-${Date.now()}`, stored);
+    } catch {
+      // Best effort — if storage is full we still avoid overwriting the cloud below.
+    }
     localStateSource = "default";
     return resetBoardViewState(restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())))));
   }
@@ -12266,6 +12311,7 @@ function normalizeCard(card) {
   } else {
     delete next.layoutColumn;
   }
+  next.theme = THEMES[next.theme] ? next.theme : "leaf";
   next.background = BACKGROUNDS[next.background] ? next.background : "clean";
   next.imageUrl = normalizeRemoteAssetUrl(next.imageUrl || "");
   next.imageData = next.imageData || "";
@@ -13327,20 +13373,39 @@ async function handleCloudAuthRedirect() {
   const accessToken = hash.get("access_token");
   if (!accessToken) return;
 
+  // Capture the tokens, then strip them from the URL/history immediately so they
+  // never linger during the async validation below or on failure.
+  const refreshToken = hash.get("refresh_token") || "";
+  const expiresIn = Number(hash.get("expires_in") || 3600);
+  clearCloudAuthUrl();
+
   try {
     renderCloudStatus("Confirming cloud login...");
     const user = await fetchCloudUser(accessToken);
-    const expiresIn = Number(hash.get("expires_in") || 3600);
+    // Defeat silent session fixation. A token in the URL fragment (whether from a
+    // real confirmation email or a crafted #access_token=... link an attacker
+    // sent) is NEVER adopted silently. Require the user to explicitly confirm,
+    // showing which account the token belongs to — a stranger's account won't be
+    // recognised, so the victim cancels and their diary is never synced away.
+    const account = user?.email || user?.id || "an unknown account";
+    const proceed = window.confirm(
+      `Confirm cloud sign-in as:\n${account}\n\nOnly continue if you just requested this sign-in link. If you do not recognise this account, press Cancel.`
+    );
+    if (!proceed) {
+      renderCloudStatus("Cloud sign-in cancelled. Local browser storage is active.");
+      openSettingsModal();
+      return;
+    }
     saveCloudSession({
       access_token: accessToken,
-      refresh_token: hash.get("refresh_token") || "",
+      refresh_token: refreshToken,
       expires_at: Date.now() + Math.max(60, expiresIn - 30) * 1000,
       user
     });
-    clearCloudAuthUrl();
     openSettingsModal();
     await syncCloudAfterSignIn();
   } catch (error) {
+    clearCloudAuthUrl();
     renderCloudStatus(normalizeCloudError(error.message || "Email confirmed, but cloud sign-in could not finish."));
     openSettingsModal();
   }
@@ -13657,15 +13722,25 @@ async function writeCloudState(session, payload, savePlan) {
 
 async function pushCloudState(options = {}) {
   if (!cloudSaveEnabled && !options.manual) return;
+  // Never auto-overwrite the cloud from a corrupt/safe-mode local load. Only an
+  // explicit manual Save cloud (options.manual) is allowed to proceed.
+  if (corruptLocalStateDetected && !options.manual) return;
   try {
     const session = await ensureCloudSession();
     syncActiveBoard();
     const savePlan = await getCloudSavePlan(session, options);
-    if (!savePlan.allowed) return;
+    if (!savePlan.allowed) {
+      if (savePlan.conflict && elements.savedState) {
+        elements.savedState.textContent = "Saved here — cloud has newer changes";
+        elements.savedState.classList.remove("is-saving");
+        elements.savedState.classList.add("is-sync-error");
+      }
+      return;
+    }
     if (savePlan.noop) {
       if (elements.savedState) {
         elements.savedState.textContent = "Saved here + cloud";
-        elements.savedState.classList.remove("is-saving");
+        elements.savedState.classList.remove("is-saving", "is-sync-error");
       }
       if (!options.silent) {
         renderCloudStatus(`Supabase is already current ${formatRecordDateTime(savePlan.expectedUpdatedAt)}.`);
@@ -13680,7 +13755,7 @@ async function pushCloudState(options = {}) {
     setKnownCloudUpdatedAt(cloudUpdatedAt);
     if (elements.savedState) {
       elements.savedState.textContent = "Saved here + cloud";
-      elements.savedState.classList.remove("is-saving");
+      elements.savedState.classList.remove("is-saving", "is-sync-error");
     }
     const savedMessage = `Saved to Supabase ${formatRecordDateTime(cloudUpdatedAt)}.`;
     if (!options.silent) {
@@ -13690,6 +13765,14 @@ async function pushCloudState(options = {}) {
       renderCloudStatus();
     }
   } catch (error) {
+    // Surface cloud failures on the main indicator, not only inside Settings —
+    // otherwise the label stays "syncing" forever and the user trusts a sync
+    // that never happened (then loses data on a device switch).
+    if (elements.savedState) {
+      elements.savedState.textContent = "Saved here — cloud sync failed";
+      elements.savedState.classList.remove("is-saving");
+      elements.savedState.classList.add("is-sync-error");
+    }
     renderCloudStatus(normalizeCloudError(error.message || "Cloud save failed."));
   }
 }
@@ -13718,7 +13801,7 @@ async function pullCloudState(options = {}) {
     setKnownCloudUpdatedAt(cloudRow.updated_at);
     resetFormState();
     render();
-    saveState({ skipCloud: true, touch: false });
+    saveState({ skipCloud: true, touch: false, skipMerge: true });
     localStateSource = "stored";
     renderCloudStatus(`Loaded from Supabase ${formatRecordDate(cloudRow.updated_at)}.`);
   } catch (error) {
@@ -13746,6 +13829,19 @@ async function importBoardBackup(file) {
   try {
     const text = await file.text();
     const parsed = JSON.parse(text);
+    const payload = parsed && parsed.state && typeof parsed.state === "object" ? parsed.state : parsed;
+    const looksLikeBoard =
+      payload && typeof payload === "object" &&
+      (Array.isArray(payload.cards) || Array.isArray(payload.boards));
+    if (!looksLikeBoard) {
+      window.alert("This file does not look like a Life OS backup, so nothing was changed.");
+      return;
+    }
+    const proceed = window.confirm(
+      "Import this backup?\n\nIt replaces everything in this browser and, once synced, the cloud copy. This cannot be undone."
+    );
+    if (!proceed) return;
+    saveCloudRecoveryPoint("before-import");
     state = rehydrateState(parsed);
     resetFormState();
     render();
@@ -13765,7 +13861,10 @@ function saveState(options = {}) {
     touchState();
   }
   syncActiveBoard({ touchBoard: touched, updatedAt: state.updatedAt });
-  mergeStoredBoardsIntoState({ preserveActiveBoard: true });
+  // skipMerge: persist the current state verbatim without re-merging the stale
+  // pre-existing local boards back in. Used by "Load cloud" so a full cloud
+  // replace isn't silently contaminated by locally-newer non-active boards.
+  if (!options.skipMerge) mergeStoredBoardsIntoState({ preserveActiveBoard: true });
   const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
     silent: options.quiet,
     message: "Local save failed. Remove large images or export a backup."
