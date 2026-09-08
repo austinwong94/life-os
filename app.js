@@ -1,15 +1,20 @@
+if (window.top !== window.self) {
+  document.documentElement.hidden = true;
+  throw new Error("Life OS must be opened directly, not inside another website.");
+}
 const STORAGE_KEY = "progress-board-v1";
+const PRE_UPGRADE_KEY = "life-os-before-storage-v3";
+const PREVIEW_MODE = new URLSearchParams(window.location.search).has("preview");
 const SAMPLE_VERSION = 15;
 const COURSE_BOARD_VERSION = 1;
 const AI_COURSE_BOARD_VERSION = 1;
 const LIFE_OS_BOARD_VERSION = 5;
-const HISTORY_LIMIT = 370;
 const WEEKDAY_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
 const AUTO_SAVE_INTERVAL_MS = 30000;
 const CLOUD_SAVE_DEBOUNCE_MS = 1400;
 const CLOUD_CONFLICT_TOLERANCE_MS = 1000;
 const LOCAL_DEV_RELOAD_POLL_MS = 1500;
-const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "app.js"];
+const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "app.js", "experience.js", "planner-store.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
 const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
 const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food"];
@@ -25,11 +30,11 @@ const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
 };
 const CLOUD_SESSION_KEY = "life-os-cloud-session";
 const CLOUD_RECOVERY_KEY = "life-os-cloud-recovery";
-const CLOUD_TABLE_MISSING_MESSAGE = "Supabase table missing. Run supabase/cloud_sync_patch.sql in the Supabase SQL Editor.";
+const CLOUD_TABLE_MISSING_MESSAGE = "Cloud storage is unavailable. Check that the selected Supabase project exposes the user_states table and allows your account to access its own row. Your local data has not been deleted.";
 const LOCAL_CLIENT_KEY = "life-os-client-id";
-let cloudSession = loadCloudSession();
+let cloudSession = PREVIEW_MODE ? null : loadCloudSession();
 let cloudSaveTimer = null;
-let cloudSaveEnabled = Boolean(cloudSession?.access_token);
+let cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
 let cloudStatusMessage = "";
 let localStateSource = "default";
 // Set when the stored board JSON was present but unreadable (corrupt/truncated).
@@ -274,9 +279,9 @@ const TYPE_PICKER_GROUPS = [
     label: "Plan",
     description: "Tasks, projects, dates",
     options: [
-      { type: "planner", label: "Planner", hint: "Future dates" },
-      { type: "planlist", label: "Planner-view", hint: "Linked list" },
-      { type: "daily", label: "To-do", hint: "Plan ahead" },
+      { type: "planner", label: "Planner", hint: "Date entry only" },
+      { type: "planlist", label: "Planner-view", hint: "Shared dated tasks" },
+      { type: "daily", label: "To-do", hint: "Separate checklist" },
       { type: "single", label: "Task", hint: "One outcome" },
       { type: "checklist", label: "Project", hint: "Multi-step" },
       { type: "event", label: "Event", hint: "Fixed date" },
@@ -313,6 +318,7 @@ const TYPE_PICKER_GROUPS = [
   }
 ];
 const TYPE_PICKER_OPTIONS = TYPE_PICKER_GROUPS.flatMap((group) => group.options);
+const FEATURED_TYPE_OPTIONS = ["planlist", "diary", "sidenote", "checklist", "quote", "fitness", "food"];
 
 const CATEGORY_ALIASES = {
   general: "General",
@@ -531,6 +537,7 @@ const lifeOsIdeas = [
 ];
 
 const defaultState = {
+  storageSchemaVersion: 3,
   sampleVersion: SAMPLE_VERSION,
   courseBoardVersion: 0,
   aiCourseBoardVersion: 0,
@@ -1107,6 +1114,12 @@ const defaultState = {
 };
 
 let state = loadState();
+let localMergeBase = JSON.parse(JSON.stringify(state));
+let cloudMergeBase = null;
+let cloudPushInFlight = false;
+let cloudPushAgain = false;
+let lastLocalSaveOk = !corruptLocalStateDetected;
+let cloudConflictPending = false;
 let draggedCardId = null;
 let editingCardId = null;
 let editingPlannerTaskKey = "";
@@ -1172,12 +1185,19 @@ const elements = {
   cardCategoryCustom: document.querySelector("#cardCategoryCustom"),
   cardPriority: document.querySelector("#cardPriority"),
   priorityButtons: document.querySelector("#priorityButtons"),
+  prioritySelection: document.querySelector("#prioritySelection"),
   dailyPlanDateField: document.querySelector("#dailyPlanDateField"),
   cardPlanDate: document.querySelector("#cardPlanDate"),
   cardType: document.querySelector("#cardType"),
   cardTypeButtons: document.querySelector("#cardTypeButtons"),
+  cardTypeFeatured: document.querySelector("#cardTypeFeatured"),
+  cardTypeMore: document.querySelector("#cardTypeMore"),
+  cardTypeMoreOptions: document.querySelector("#cardTypeMoreOptions"),
+  cardTypeSearch: document.querySelector("#cardTypeSearch"),
+  cardTypeSelection: document.querySelector("#cardTypeSelection"),
+  cardTypeMoreCount: document.querySelector("#cardTypeMoreCount"),
+  cardTypeEmpty: document.querySelector("#cardTypeEmpty"),
   cardTypeHelp: document.querySelector("#cardTypeHelp"),
-  typeInsight: document.querySelector("#typeInsight"),
   scorecardPeriodField: document.querySelector("#scorecardPeriodField"),
   scorecardPeriod: document.querySelector("#scorecardPeriod"),
   cardSize: document.querySelector("#cardSize"),
@@ -1347,6 +1367,7 @@ renderTemplateList();
 bindEvents();
 resetFormState();
 render();
+initializeExperience();
 handleCloudAuthRedirect();
 clearStartupBoardSearch();
 [100, 400, 900].forEach((delay) => window.setTimeout(clearStartupBoardSearch, delay));
@@ -1355,18 +1376,33 @@ startLocalDevAutoReload();
 if (corruptLocalStateDetected) {
   const warning = "Saved data on this device was unreadable, so a safe copy is shown. Your entries were NOT overwritten. If you use cloud sync, press “Load cloud” to restore, then continue.";
   if (elements.savedState) {
-    elements.savedState.textContent = "Local data unreadable — Load cloud to restore";
+    elements.savedState.textContent = "Recovery needed - original protected";
     elements.savedState.classList.remove("is-saving");
     elements.savedState.classList.add("is-sync-error");
   }
   cloudStatusMessage = warning;
   renderCloudStatus();
-  window.setTimeout(() => window.alert(warning), 300);
 }
 
 window.addEventListener("storage", (event) => {
+  if (event.key === RESTORE_GUARD_KEY) {
+    window.clearTimeout(cloudSaveTimer);
+    cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
+    if (isRestoreSyncPaused()) {setSaveStatus('Restored on device - cloud paused', 'local'); renderCloudStatus();}
+  }
+  if (event.key?.startsWith(LifeDeviceStore.prefix) && event.newValue && !corruptLocalStateDetected) flushDeviceWrites();
   if (event.key === STORAGE_KEY) {
     applyExternalStorageState(event.newValue);
+  }
+  if (event.key === CLOUD_SESSION_KEY) {
+    const session = loadCloudSession();
+    if (!session || session.user?.id !== cloudSession?.user?.id) {
+      window.clearTimeout(cloudSaveTimer);
+      cloudSaveEnabled = false;
+      cloudSession = null;
+      setSaveStatus("Account changed - sign in again", "error");
+      renderCloudStatus("The account changed in another tab. Your local work is kept. Sign in again before syncing.");
+    } else { cloudSession = session; }
   }
 });
 
@@ -1507,6 +1543,7 @@ function bindEvents() {
     elements.cardPriority.value = getSelectedPriority(button.dataset.priority);
     renderPriorityButtons();
     renderFormPreview();
+    elements.priorityButtons.querySelector(`[data-priority="${elements.cardPriority.value}"]`)?.focus({ preventScroll: true });
   });
   elements.plannerViewModeButtons.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-planner-view]");
@@ -1519,7 +1556,11 @@ function bindEvents() {
     if (!button) return;
     setFormType(button.dataset.type);
     renderConditionalFields();
+    elements.cardTypeButtons.querySelector(`[data-type="${button.dataset.type}"]`)?.focus({ preventScroll: true });
   });
+  elements.cardTypeSearch.addEventListener("input", () => renderTypeButtons());
+  bindChoiceKeyboard(elements.cardTypeButtons, "button[data-type]");
+  bindChoiceKeyboard(elements.priorityButtons, "button[data-priority]");
   elements.scorecardPeriod.addEventListener("change", renderConditionalFields);
   elements.includeImage.addEventListener("change", renderConditionalFields);
 
@@ -1835,7 +1876,7 @@ function bindEvents() {
   elements.reportsModal.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-report-type]");
     if (!button) return;
-    activeReportType = ["fitness", "food", "diary", "sidenote"].includes(button.dataset.reportType)
+    activeReportType = ["progress", "fitness", "food", "diary", "sidenote"].includes(button.dataset.reportType)
       ? button.dataset.reportType
       : "fitness";
     renderReportsModal();
@@ -1897,7 +1938,7 @@ function bindEvents() {
   });
 
   document.addEventListener("click", (event) => {
-    if (event.target.closest(".card-menu-shell") || event.target.closest(".planner-task-menu")) return;
+    if (event.target.closest(".card-menu-shell") || event.target.closest(".card-menu, .note-action-menu")) return;
     closeCardActionMenus();
   });
 
@@ -1981,13 +2022,14 @@ async function saveCardFromForm() {
 
 function buildCardFromForm({ preview }) {
   const type = getSelectedFormType();
+  const editingSameType = state.cards.some((card) => card.id === editingCardId && card.type === type);
   const timer = type === "routine" ? getDailyAutoTimer() : isUntimedContentType(type) ? getEmptyTimer() : getFormTimer();
   const includeImage = elements.includeImage.checked;
   const title = elements.cardTitle.value.trim() || getDefaultCardTitle(type);
   const card = {
     id: preview ? "preview-card" : createId(),
     title,
-    description: elements.cardDescription.value.trim(),
+    description: type === "quote" ? elements.cardDescription.value : elements.cardDescription.value.trim(),
     category: getSelectedCategory(),
     reward: "",
     priority: getSelectedPriority(elements.cardPriority.value),
@@ -2106,7 +2148,7 @@ function buildCardFromForm({ preview }) {
 
   if (type === "brief") {
     const sections = parseBriefSections();
-    card.sections = (sections.length ? sections : getDefaultBriefSections()).map((section) => ({
+    card.sections = (sections.length || editingSameType ? sections : getDefaultBriefSections()).map((section) => ({
       label: section.label,
       text: section.text
     }));
@@ -2117,7 +2159,7 @@ function buildCardFromForm({ preview }) {
     const items = parseChecklistItems();
     const fallbackItems =
       type === "checklist" ? ["First step", "Second step", "Final check"] : ["Plan the day", "Do the main task", "Tidy up", "Close the day"];
-    card.items = (items.length ? items : fallbackItems).map((text) => ({
+    card.items = (items.length || editingSameType ? items : fallbackItems).map((text) => ({
       id: preview ? `preview-${text}` : createId(),
       text,
       done: false
@@ -2126,7 +2168,7 @@ function buildCardFromForm({ preview }) {
 
   if (type === "workout") {
     const exercises = parseWorkoutExercises();
-    card.exercises = (exercises.length ? exercises : getDefaultWorkoutExercises()).map((exercise) => ({
+    card.exercises = (exercises.length || editingSameType ? exercises : getDefaultWorkoutExercises()).map((exercise) => ({
       id: preview ? `preview-${exercise.name}` : createId(),
       name: exercise.name,
       prescription: exercise.prescription,
@@ -2136,7 +2178,7 @@ function buildCardFromForm({ preview }) {
 
   if (type === "lab") {
     const steps = parseLabSteps();
-    card.steps = (steps.length ? steps : getDefaultLabSteps()).map((step) => ({
+    card.steps = (steps.length || editingSameType ? steps : getDefaultLabSteps()).map((step) => ({
       id: preview ? `preview-${step.name}` : createId(),
       name: step.name,
       deliverable: step.deliverable,
@@ -2178,6 +2220,48 @@ function updateExistingCard(nextCard) {
   }
 
   const current = state.cards[index];
+  const sameType = current.type === nextCard.type;
+  if (sameType && ["checklist", "daily", "routine"].includes(current.type)) {
+    const used = new Set();
+    nextCard.items = nextCard.items.map(item => {
+      const previous = (current.items || []).find(old => !used.has(old.id) && old.text === item.text);
+      if (previous) { used.add(previous.id); return {...previous, text: item.text}; }
+      return item;
+    });
+  }
+  if (sameType && ["workout", "lab"].includes(current.type)) {
+    const listKey = current.type === "workout" ? "exercises" : "steps";
+    const detailKey = current.type === "workout" ? "prescription" : "deliverable";
+    const used = new Set();
+    nextCard[listKey] = nextCard[listKey].map((item) => {
+      const previousIndex = (current[listKey] || []).findIndex((old, index) => !used.has(index) && old.name === item.name && String(old[detailKey] || "") === item[detailKey]);
+      if (previousIndex < 0) return item;
+      used.add(previousIndex);
+      return { ...current[listKey][previousIndex] };
+    });
+  }
+  if (sameType && current.type === "brief" && JSON.stringify(current.sections || []) === JSON.stringify(nextCard.sections)) {
+    nextCard.reviewed = current.reviewed;
+  }
+  // Side-note content is edited in the card, not in this metadata form.
+  if (sameType && current.type === "sidenote") {
+    nextCard.sideNoteEntries = current.sideNoteEntries;
+    nextCard.sideNoteDrafts = current.sideNoteDrafts;
+  }
+  if (sameType && current.type === "planner") {
+    LifePlanner.replaceDay(current, nextCard.activePlannerDate, nextCard.plannerEntries?.[nextCard.activePlannerDate]?.note || "", createId);
+    LifePlanner.project(current);
+    nextCard.plannerTasks = current.plannerTasks;
+    nextCard.plannerSchemaVersion = 2;
+    nextCard.plannerLegacyEntries = current.plannerLegacyEntries;
+    nextCard.plannerEntries = current.plannerEntries;
+  }
+  if (sameType && current.type === "fitness") nextCard.fitnessEntries = current.fitnessEntries;
+  if (sameType && current.type === "food") nextCard.foodEntries = current.foodEntries;
+  if (sameType && current.type === "routine") { nextCard.history = current.history; nextCard.lastResetDate = current.lastResetDate; }
+  if (sameType && ["scheduled", "weekly", "monthly", "annual"].includes(current.type)) nextCard.checks = current.checks;
+  if (sameType && current.type === "minutes") nextCard.currentValue = current.currentValue;
+  if (sameType && current.type === "single") nextCard.done = current.done;
   const mergedDiaryEntries =
     current.type === "diary" && nextCard.type === "diary"
       ? { ...(current.diaryEntries || {}), ...(nextCard.diaryEntries || {}) }
@@ -2203,6 +2287,7 @@ function updateExistingCard(nextCard) {
       ? { ...(current.foodTargets || {}), ...(nextCard.foodTargets || {}) }
       : nextCard.foodTargets;
   state.cards[index] = {
+    ...current,
     ...nextCard,
     diaryEntries: mergedDiaryEntries,
     sideNoteEntries: mergedSideNoteEntries,
@@ -2215,7 +2300,8 @@ function updateExistingCard(nextCard) {
     order: current.order,
     layoutColumn: current.layoutColumn,
     createdAt: current.createdAt,
-    runningSince: null
+    runningSince: null,
+    updatedAt: Date.now()
   };
 }
 
@@ -2230,11 +2316,13 @@ function startEditingCard(id) {
   elements.cancelEditButton.hidden = false;
 
   elements.cardTitle.value = getCardDisplayTitle(card);
-  elements.cardDescription.value = getCardDisplayDescription(card);
+  elements.cardDescription.value = card.type === "quote" ? card.description || "" : getCardDisplayDescription(card);
   setCategoryField(card.category || "General");
   elements.cardPriority.value = getSelectedPriority(card.priority);
   elements.cardPlanDate.value = getCardPlanDate(card);
   setFormType(card.type || "daily");
+  elements.cardTypeSearch.value = "";
+  elements.cardTypeMore.open = !FEATURED_TYPE_OPTIONS.includes(card.type);
   selectedScheduleDays = normalizeScheduleDays(card.scheduleDays || selectedScheduleDays);
   elements.checklistItems.value = getEditableListValue(card);
   const plannerDate = getActivePlannerDate(card);
@@ -2250,7 +2338,7 @@ function startEditingCard(id) {
   const diaryDate = getActiveDiaryDate(card);
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, diaryDate) : normalizeDiaryEntry();
   elements.diaryDate.value = diaryDate;
-  elements.diaryFeeling.value = diaryEntry.feeling || "Calm";
+  elements.diaryFeeling.value = diaryEntry.feeling || "";
   elements.diarySentence.value = diaryEntry.sentence || "";
   elements.diaryThoughts.value = diaryEntry.thoughts || "";
   elements.quoteAuthor.value = card.quoteAuthor || "";
@@ -2285,7 +2373,9 @@ function resetFormState() {
   elements.submitCardButton.querySelector("[data-icon]").dataset.icon = "plus";
   elements.cancelEditButton.hidden = true;
   removeTemplateOnlyTypeOptions();
-  elements.cardType.value = "daily";
+  elements.cardType.value = "sidenote";
+  elements.cardTypeSearch.value = "";
+  elements.cardTypeMore.open = false;
   elements.scorecardPeriod.value = "weekly";
   elements.cardTheme.value = "leaf";
   elements.cardBackground.value = "clean";
@@ -2301,7 +2391,7 @@ function resetFormState() {
   elements.plannerViewExcludeMonth.checked = false;
   elements.plannerViewShowGuide.checked = false;
   elements.diaryDate.value = getTodayKey();
-  elements.diaryFeeling.value = "Calm";
+  elements.diaryFeeling.value = "";
   elements.diarySentence.value = "";
   elements.diaryThoughts.value = "";
   elements.quoteAuthor.value = "";
@@ -2337,7 +2427,9 @@ function openCardComposer(options = {}) {
   hydrateIcons(elements.cardComposerPanel);
   syncRailActiveState();
   if (options.focus !== false) {
-    requestAnimationFrame(() => elements.cardTitle.focus());
+    requestAnimationFrame(() => {
+      if (!elements.cardComposerPanel.hidden && !elements.cardComposerPanel.contains(document.activeElement)) elements.cardTitle.focus();
+    });
   }
 }
 
@@ -2357,6 +2449,7 @@ function closeCardComposer(options = {}) {
 }
 
 function closeOtherOverlays(activeSurface = "") {
+  if (activeSurface !== "recovery") document.getElementById("recoveryModal")?.remove();
   if (activeSurface !== "composer" && !elements.cardComposerPanel.hidden) {
     closeCardComposer({ dismissPreview: true });
   }
@@ -2379,7 +2472,7 @@ function closeCardActionMenus() {
     if (menu) {
       menu.hidden = true;
       resetFloatingPlannerTaskMenu(menu);
-      if (menu.classList.contains("planner-task-menu") && menu.parentElement !== shell && shell.isConnected) {
+      if (menu.matches(".card-menu, .note-action-menu") && menu.parentElement !== shell && shell.isConnected) {
         shell.append(menu);
       }
     }
@@ -2389,7 +2482,7 @@ function closeCardActionMenus() {
 }
 
 function resetFloatingPlannerTaskMenu(menu) {
-  if (!menu?.classList?.contains("planner-task-menu")) return;
+  if (!menu?.matches(".card-menu, .note-action-menu")) return;
   menu.style.removeProperty("left");
   menu.style.removeProperty("top");
   menu.style.removeProperty("right");
@@ -2400,7 +2493,8 @@ function resetFloatingPlannerTaskMenu(menu) {
 function positionPlannerTaskMenu(menu, toggle) {
   if (!menu || !toggle) return;
   const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
-  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const bottomNavigation = window.matchMedia('(max-width: 980px)').matches ? (document.querySelector('.sidebar')?.getBoundingClientRect().height || 0) : 0;
+  const viewportHeight = (window.innerHeight || document.documentElement.clientHeight || 0) - bottomNavigation;
   const gap = 6;
   const edge = 8;
 
@@ -2505,6 +2599,7 @@ function render() {
 }
 
 function queueBoardRender() {
+  closeCardActionMenus();
   if (boardResizeFrame) {
     cancelAnimationFrame(boardResizeFrame);
   }
@@ -2520,21 +2615,31 @@ function renderShell() {
 }
 
 function toggleBoardControls() {
+  if (state.ui.workspaceMode === "today") return;
   state.ui.controlsOpen = state.ui.controlsOpen === false;
   renderBoardMeta();
   saveState();
 }
 
-function renderBoardMeta() {
-  renderBoardSwitcher();
-  renderDataSafetyPanel();
+function renderBoardControls() {
   const controlsOpen = state.ui.controlsOpen !== false;
+  const todayMode = state.ui.workspaceMode === "today";
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
-  const controlsLabel = controlsOpen ? "Hide controls" : "Show controls";
+  elements.topControlsToggleButton.hidden = todayMode;
+  const controlsLabel = controlsOpen ? "Hide filters" : "Show filters";
   elements.topControlsToggleButton.title = controlsLabel;
   elements.topControlsToggleButton.setAttribute("aria-label", controlsLabel);
-  elements.topControlsToggleButton.setAttribute("aria-pressed", String(!controlsOpen));
-  elements.topControlsToggleButton.classList.toggle("is-active", !controlsOpen);
+  elements.topControlsToggleButton.setAttribute("aria-expanded", String(controlsOpen && !todayMode));
+  elements.topControlsToggleButton.classList.toggle("is-active", controlsOpen);
+}
+
+function renderBoardMeta() {
+  elements.boardGrid.inert = corruptLocalStateDetected;
+  elements.boardPanel.inert = corruptLocalStateDetected;
+  elements.railAddButton.disabled = corruptLocalStateDetected;
+  renderBoardSwitcher();
+  renderDataSafetyPanel();
+  renderBoardControls();
   elements.boardName.value = state.board.name;
   elements.boardTitle.textContent = state.board.name;
   elements.todayLine.textContent = formatTodayLine();
@@ -2550,7 +2655,7 @@ function renderBoardMeta() {
       : "Archive";
 
   const visibility = VISIBILITY_META[state.board.visibility] || VISIBILITY_META.private;
-  elements.visibilityLabel.textContent = `${visibility.label} board`;
+  elements.visibilityLabel.textContent = "Personal board";
 
   elements.visibilityControl.querySelectorAll("button").forEach((button) => {
     const meta = VISIBILITY_META[button.dataset.value] || VISIBILITY_META.private;
@@ -2591,6 +2696,7 @@ function renderBoardSwitcher() {
   elements.boardQuickSelect.innerHTML = boardOptions;
   elements.boardSelect.value = state.activeBoardId;
   elements.boardQuickSelect.value = state.activeBoardId;
+  renderQuickBoardPicker();
   elements.deleteBoardButton.disabled = state.boards.length < 2;
   elements.deleteBoardButton.title =
     state.boards.length < 2 ? "Create another board before deleting this one" : `Delete ${state.board.name}`;
@@ -2924,8 +3030,7 @@ function renderCardsOnly(options = {}) {
   resetDailyRepeatingCards();
   resetDiaryCardsToToday();
   resetSideNoteCardsToToday();
-  repairPlannerRenamedCompletedCarryovers();
-  carryPlannerIncompleteTasksToToday();
+  // Planner views derive carryover by task identity; rendering must never rename records.
   const orderedCards = getOrderedCards();
   const filteredByStatus = orderedCards.filter((card) => matchesFilter(card));
   const filteredBySearch = filteredByStatus.filter((card) => matchesSearch(card));
@@ -2939,7 +3044,14 @@ function renderCardsOnly(options = {}) {
   elements.clearSearchButton.hidden = !normalizeLabel(state.searchQuery || "");
 
   const visibleCards = filteredByFocus.filter((card) => matchesCategory(card));
-  if (!visibleCards.length) {
+  const todayMode = state.ui.workspaceMode === "today";
+  elements.workspace.classList.toggle("is-today-view", todayMode);
+  renderBoardControls();
+  document.getElementById("todayModeButton").setAttribute("aria-pressed", String(todayMode));
+  document.getElementById("boardModeButton").setAttribute("aria-pressed", String(!todayMode));
+  if (todayMode) {
+    renderTodaySpace();
+  } else if (!visibleCards.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
     empty.innerHTML = getEmptyStateMarkup(filteredByStatus.length);
@@ -2966,6 +3078,7 @@ function isProtectedDraftElement(element) {
   return Boolean(
     elements.boardGrid?.contains(element) ||
       elements.cardComposerPanel?.contains(element) ||
+      document.getElementById('recoveryModal')?.contains(element) ||
       elements.quickTodoPanel?.contains(element)
   );
 }
@@ -3115,7 +3228,7 @@ function getPreferredBoardColumnCount() {
 function getMaximumBoardColumnsForWidth(width) {
   const availableWidth = Number(width) || window.innerWidth || 0;
   if (availableWidth < 680) return 1;
-  if (availableWidth < 900) return 2;
+  if (availableWidth < 984) return 2;
   return 3;
 }
 
@@ -3382,6 +3495,11 @@ function renderCard(card, options = {}) {
   const menuShell = node.querySelector(".card-menu-shell");
   const menuToggle = node.querySelector(".card-menu-toggle");
   const cardMenu = node.querySelector(".card-menu");
+  cardMenu.classList.add('card-options-menu');
+  cardMenu.setAttribute('role','menu');
+  cardMenu.setAttribute('aria-label','Card options');
+  menuToggle.setAttribute('aria-haspopup','menu');
+  cardMenu.querySelectorAll('button').forEach(button=>{button.setAttribute('role','menuitem');button.tabIndex=-1;});
   const moveButton = node.querySelector("[data-card-action='move']");
   resetButton.hidden = !hasTimer || (isAutoTimer && card.type !== "routine");
   resetButton.title = card.type === "routine" ? "Reset today" : "Reset timer";
@@ -3402,6 +3520,19 @@ function renderCard(card, options = {}) {
       menuShell.classList.toggle("is-open", !isOpen);
       node.classList.toggle("is-menu-open", !isOpen);
       menuToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
+      if (!isOpen) {
+        openFloatingPlannerTaskMenu(menuShell,cardMenu,menuToggle);
+        cardMenu.querySelector('button:not(:disabled)')?.focus({preventScroll:true});
+      }
+    });
+    cardMenu.addEventListener('keydown',event=>{
+      if(event.key==='Escape' || event.key==='Tab'){
+        if(event.key==='Escape'){event.preventDefault();event.stopPropagation();}
+        closeCardActionMenus();menuToggle.focus({preventScroll:true});return;
+      }
+      const options=[...cardMenu.querySelectorAll('button:not(:disabled)')],index=options.indexOf(document.activeElement);
+      const next=event.key==='ArrowDown'?(index+1)%options.length:event.key==='ArrowUp'?(index-1+options.length)%options.length:event.key==='Home'?0:event.key==='End'?options.length-1:-1;
+      if(next>=0){event.preventDefault();options[next].focus({preventScroll:true});}
     });
     cardMenu.addEventListener("click", (event) => {
       const actionButton = event.target.closest("button[data-card-action]");
@@ -3664,6 +3795,16 @@ function renderPlannerLinkedList(card) {
     empty.className = "planner-linked-empty";
     empty.textContent = viewData.empty;
     list.append(empty);
+  } else if (view === "today" && state.ui.workspaceMode === "today") {
+    const earlier = viewData.items.filter(item=>item.isCarryover && !item.done);
+    viewData.items.filter(item=>!earlier.includes(item)).forEach(item=>list.append(renderPlannerLinkedItem(item)));
+    if (earlier.length) {
+      const details=document.createElement("details"); details.className="earlier-plans";
+      details.open=Boolean(card.earlierPlansOpen);
+      const summary=document.createElement("summary"); summary.textContent="Earlier plans ("+earlier.length+")";
+      details.append(summary); earlier.forEach(item=>details.append(renderPlannerLinkedItem(item)));
+      details.addEventListener("toggle",()=>{card.earlierPlansOpen=details.open;}); list.append(details);
+    }
   } else if (viewData.sections?.length) {
     let renderedCount = 0;
     viewData.sections.forEach((section) => {
@@ -3883,7 +4024,7 @@ function renderPlannerLinkedItem(item) {
 }
 
 function getPlannerTaskRowKey(item) {
-  return [item?.card?.id || "", normalizeDateKey(item?.dateKey), Number.isInteger(item?.lineIndex) ? item.lineIndex : "", getPlannerItemKey(item?.title)].join("|");
+  return `${item?.card?.id || ""}:${item?.taskId || ""}`;
 }
 
 function startPlannerTaskEdit(item) {
@@ -3891,7 +4032,7 @@ function startPlannerTaskEdit(item) {
   plannerTaskEditDraft = {
     key: editingPlannerTaskKey,
     title: item.title || "",
-    dateKey: normalizeDateKey(item.dateKey) || getTodayKey()
+    dateKey: normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey()
   };
   renderCardsOnly({ force: true });
 }
@@ -3908,7 +4049,7 @@ function getPlannerTaskEditDraft(item) {
     plannerTaskEditDraft = {
       key,
       title: item.title || "",
-      dateKey: normalizeDateKey(item.dateKey) || getTodayKey()
+      dateKey: normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey()
     };
   }
   return plannerTaskEditDraft;
@@ -3974,157 +4115,21 @@ function buildPlannerNote(lines) {
 }
 
 function updatePlannerTask(item, nextTitle, nextDateKey) {
-  if (!item?.card || !item.dateKey) return false;
   const title = stripPlannerBullet(nextTitle);
-  const oldDate = normalizeDateKey(item.dateKey);
-  const newDate = normalizeDateKey(nextDateKey) || oldDate;
-  if (!title || !oldDate || !newDate) return false;
-
-  const oldEntry = getPlannerEntry(item.card, oldDate);
-  const oldLines = getPlannerNoteLines(oldEntry.note);
-  const lineIndex = getPlannerLineIndex(oldLines, item);
-  if (lineIndex < 0) return false;
-
-  const oldLine = oldLines[lineIndex];
-  const oldKey = getPlannerItemKey(oldLine);
-  const newKey = getPlannerItemKey(title);
-  const linkedSourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : oldDate;
-  const nextLinkedSourceDate = item.isCarryover ? linkedSourceDate : newDate;
-  const oldCheckedItems = { ...(oldEntry.checkedItems || {}) };
-  const oldCarryoverItems = { ...(oldEntry.carryoverItems || {}) };
-  const oldItemRecords = { ...(oldEntry.itemRecords || {}) };
-  const preservedCheck = oldCheckedItems[oldKey];
-  const preservedCarryover = oldCarryoverItems[oldKey];
-  const preservedRecord = oldItemRecords[oldKey] || { createdAt: Date.now() };
-
-  oldLines.splice(lineIndex, 1);
-  delete oldCheckedItems[oldKey];
-  delete oldCarryoverItems[oldKey];
-  delete oldItemRecords[oldKey];
-  removeCarryoverCopyForSourceTask(item.card, oldDate, oldLine);
-  item.card.plannerEntries[oldDate] = normalizePlannerEntry({
-    note: buildPlannerNote(oldLines),
-    checkedItems: oldCheckedItems,
-    carryoverItems: oldCarryoverItems,
-    itemRecords: oldItemRecords,
-    updatedAt: Date.now()
-  });
-
-  const targetEntry = oldDate === newDate ? item.card.plannerEntries[oldDate] : getPlannerEntry(item.card, newDate);
-  const targetLines = oldDate === newDate ? oldLines : getPlannerNoteLines(targetEntry.note);
-  const targetCheckedItems = { ...(targetEntry.checkedItems || {}) };
-  const targetCarryoverItems = { ...(targetEntry.carryoverItems || {}) };
-  const targetItemRecords = { ...(targetEntry.itemRecords || {}) };
-  const insertIndex = oldDate === newDate ? Math.min(lineIndex, targetLines.length) : targetLines.length;
-
-  targetLines.splice(insertIndex, 0, title);
-  if (preservedCheck) targetCheckedItems[newKey] = normalizePlannerDoneRecord(preservedCheck);
-  if (preservedCarryover) targetCarryoverItems[newKey] = preservedCarryover;
-  targetItemRecords[newKey] = preservedRecord;
-
-  item.card.plannerEntries[newDate] = normalizePlannerEntry({
-    note: buildPlannerNote(targetLines),
-    checkedItems: targetCheckedItems,
-    carryoverItems: targetCarryoverItems,
-    itemRecords: targetItemRecords,
-    updatedAt: Date.now()
-  });
-  updatePlannerLinkedTaskReferences(item.card, oldLine, title, linkedSourceDate, nextLinkedSourceDate);
-  const preservedCompletedAt = Number(normalizePlannerDoneRecord(preservedCheck)?.completedAt) || 0;
-  if (isTimestampOnDate(preservedCompletedAt, getTodayKey())) {
-    ensureCompletedTodayCopyForSourceTask(item.card, newDate, title, preservedCompletedAt);
-  }
-  item.card.activePlannerDate = newDate;
+  const day = normalizeDateKey(nextDateKey);
+  if (!item?.card || !item.taskId || !title || !day) return false;
+  const card = resolveLiveCard(item.card);
+  if (!LifePlanner.change(card, item.taskId, {title, dateKey: day})) return false;
+  LifePlanner.project(card);
+  card.updatedAt = Date.now();
   editingPlannerTaskKey = "";
   plannerTaskEditDraft = null;
   saveState();
-  renderCardsOnly({ force: true });
+  renderCardsOnly({force: true});
   return true;
 }
 
-function mergePlannerItemRecord(currentRecord, incomingRecord) {
-  const currentCreatedAt = normalizeTimestamp(currentRecord?.createdAt || currentRecord);
-  const incomingCreatedAt = normalizeTimestamp(incomingRecord?.createdAt || incomingRecord);
-  const createdAt = [currentCreatedAt, incomingCreatedAt].filter(Boolean).sort((a, b) => a - b)[0] || Date.now();
-  return { createdAt };
-}
 
-function updatePlannerLinkedTaskReferences(card, oldTitle, newTitle, sourceDate, nextSourceDate = sourceDate) {
-  const oldKey = getPlannerItemKey(oldTitle);
-  const newKey = getPlannerItemKey(newTitle);
-  const normalizedSourceDate = normalizeDateKey(sourceDate);
-  const normalizedNextSourceDate = normalizeDateKey(nextSourceDate) || normalizedSourceDate;
-  if (!card || !oldKey || !newKey || !normalizedSourceDate) return false;
-
-  let changed = false;
-  Object.entries(card.plannerEntries || {}).forEach(([dateKey, entry]) => {
-    const plannerDate = normalizeDateKey(dateKey);
-    if (!plannerDate) return;
-    const normalizedEntry = normalizePlannerEntry(entry);
-    const lines = getPlannerNoteLines(normalizedEntry.note);
-    const isLinkedSource = plannerDate === normalizedSourceDate;
-    const isLinkedCarryover = getPlannerEntryCarryoverDate(normalizedEntry, oldKey, "") === normalizedSourceDate;
-    if (!isLinkedSource && !isLinkedCarryover) return;
-    if (!lines.some((line) => getPlannerItemKey(line) === oldKey)) return;
-
-    let entryChanged = false;
-    const checkedItems = { ...(normalizedEntry.checkedItems || {}) };
-    const carryoverItems = { ...(normalizedEntry.carryoverItems || {}) };
-    const itemRecords = { ...(normalizedEntry.itemRecords || {}) };
-
-    if (oldKey !== newKey) {
-      if (checkedItems[oldKey] && !checkedItems[newKey]) checkedItems[newKey] = checkedItems[oldKey];
-      delete checkedItems[oldKey];
-
-      if (carryoverItems[oldKey]) {
-        carryoverItems[newKey] = {
-          ...(carryoverItems[newKey] || carryoverItems[oldKey]),
-          fromDate: normalizedNextSourceDate
-        };
-      }
-      delete carryoverItems[oldKey];
-
-      if (itemRecords[oldKey]) itemRecords[newKey] = mergePlannerItemRecord(itemRecords[newKey], itemRecords[oldKey]);
-      delete itemRecords[oldKey];
-      entryChanged = true;
-    } else if (carryoverItems[oldKey] && getPlannerEntryCarryoverDate(normalizedEntry, oldKey, "") !== normalizedNextSourceDate) {
-      carryoverItems[oldKey] = {
-        ...carryoverItems[oldKey],
-        fromDate: normalizedNextSourceDate
-      };
-      entryChanged = true;
-    }
-
-    const alreadyHasNewLine = oldKey !== newKey && lines.some((line) => getPlannerItemKey(line) === newKey);
-    let insertedNewLine = alreadyHasNewLine;
-    const nextLines = [];
-    lines.forEach((line) => {
-      if (getPlannerItemKey(line) !== oldKey) {
-        nextLines.push(line);
-        return;
-      }
-      if (insertedNewLine) {
-        entryChanged = true;
-        return;
-      }
-      nextLines.push(newTitle);
-      insertedNewLine = true;
-      if (line !== newTitle) entryChanged = true;
-    });
-
-    if (!entryChanged) return;
-    card.plannerEntries[plannerDate] = normalizePlannerEntry({
-      ...normalizedEntry,
-      note: buildPlannerNote(nextLines),
-      checkedItems,
-      carryoverItems,
-      itemRecords,
-      updatedAt: Date.now()
-    });
-    changed = true;
-  });
-  return changed;
-}
 
 
 function renderDiary(card) {
@@ -4162,6 +4167,17 @@ function renderDiary(card) {
 
   const moodPicker = document.createElement("div");
   moodPicker.className = "mood-picker";
+  moodPicker.setAttribute("role", "group");
+  moodPicker.setAttribute("aria-label", "Feeling");
+  const moodLabel = document.createElement("div");
+  moodLabel.className = "diary-feeling-label";
+  const moodTitle = document.createElement("span");
+  moodTitle.textContent = "Feeling";
+  const moodSelection = document.createElement("output");
+  moodSelection.className = "diary-feeling-selection";
+  moodSelection.setAttribute("aria-live", "polite");
+  moodSelection.textContent = DIARY_MOOD_META[entry.feeling]?.label || "Not set";
+  moodLabel.append(moodTitle, moodSelection);
   getDiaryFeelings().forEach((feeling) => {
     const mood = DIARY_MOOD_META[feeling] || { icon: feeling, label: feeling };
     const button = document.createElement("button");
@@ -4170,9 +4186,17 @@ function renderDiary(card) {
     button.textContent = mood.icon;
     button.title = mood.label;
     button.setAttribute("aria-label", mood.label);
+    button.setAttribute("aria-pressed", String(entry.feeling === feeling));
     button.addEventListener("click", () => {
-      updateDiaryEntry(card, activeDate, { feeling });
-      renderCardsOnly();
+      const current = getDiaryEntry(resolveLiveCard(card), activeDate);
+      const nextFeeling = current.feeling === feeling ? "" : feeling;
+      updateDiaryEntry(card, activeDate, { feeling: nextFeeling });
+      moodSelection.textContent = DIARY_MOOD_META[nextFeeling]?.label || "Not set";
+      moodPicker.querySelectorAll("button").forEach((option) => {
+        const selected = option.getAttribute("aria-label") === nextFeeling;
+        option.classList.toggle("is-active", selected);
+        option.setAttribute("aria-pressed", String(selected));
+      });
     });
     moodPicker.append(button);
   });
@@ -4181,6 +4205,7 @@ function renderDiary(card) {
   sentence.className = "diary-sentence";
   sentence.rows = 2;
   sentence.placeholder = "One sentence for this day";
+  sentence.setAttribute("aria-label", "One sentence for this day (optional)");
   sentence.value = entry.sentence || "";
   sentence.addEventListener("input", () => {
     updateDiaryEntry(card, activeDate, { sentence: sentence.value }, { rerender: false });
@@ -4192,6 +4217,7 @@ function renderDiary(card) {
   thoughts.className = "diary-thoughts";
   thoughts.rows = 4;
   thoughts.placeholder = "Thoughts, lessons, wins, worries or reminders";
+  thoughts.setAttribute("aria-label", "Diary thoughts");
   thoughts.value = entry.thoughts || "";
   thoughts.addEventListener("input", () => {
     updateDiaryEntry(card, activeDate, { thoughts: thoughts.value }, { rerender: false });
@@ -4199,7 +4225,7 @@ function renderDiary(card) {
   });
   thoughts.addEventListener("change", () => scheduleDeferredBoardRender(600));
 
-  wrapper.append(nav, moodPicker, sentence, thoughts);
+  wrapper.append(nav, moodLabel, moodPicker, sentence, thoughts);
   requestAnimationFrame(() => {
     autoGrowTextarea(sentence);
     autoGrowTextarea(thoughts);
@@ -4233,7 +4259,7 @@ function renderSideNotes(card) {
   const dateLabel = document.createElement("strong");
   dateLabel.textContent = formatDiaryDate(activeDate);
   const status = document.createElement("span");
-  status.textContent = entry.notes.length ? `${entry.notes.length} notes` : "No notes yet";
+  status.textContent = entry.notes.length ? `${entry.notes.length} ${entry.notes.length===1?'note':'notes'}` : "No notes yet";
   dateCopy.append(dateLabel, status);
   nav.append(previous, dateCopy, next);
 
@@ -4241,6 +4267,7 @@ function renderSideNotes(card) {
   composer.className = "side-note-compose";
   const input = document.createElement("textarea");
   input.className = "side-note-input";
+  input.setAttribute("aria-label", "Quick note");
   input.rows = 2;
   input.placeholder = "Capture a random thought, reminder or idea";
   input.value = draftText;
@@ -4279,14 +4306,8 @@ function renderSideNotes(card) {
       const text = document.createElement("p");
       text.className = "side-note-text";
       text.textContent = note.text;
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "side-note-delete";
-      remove.title = "Delete note";
-      remove.setAttribute("aria-label", "Delete side note");
-      remove.innerHTML = ICONS["trash-2"];
-      remove.addEventListener("click", () => deleteSideNote(card, activeDate, note.id));
-      row.append(time, text, remove);
+      const actions = renderSideNoteActions(card, activeDate, note);
+      row.append(time, text, actions);
       list.append(row);
     });
   }
@@ -4449,7 +4470,7 @@ function normalizeFitnessIntensity(value) {
 function calculateBMI(weightKg, heightCm) {
   const weight = Number(weightKg);
   const height = Number(heightCm) / 100;
-  if (!weight || !height) return "";
+  if (!Number.isFinite(weight) || !Number.isFinite(height) || weight <= 0 || height <= 0) return "";
   return Number((weight / (height * height)).toFixed(1));
 }
 
@@ -4476,6 +4497,7 @@ function getActiveFitnessParts(entry) {
 }
 
 function updateFitnessEntry(card, dateKey, updater, options = {}) {
+  card = resolveLiveCard(card);
   if (options.rerender) {
     syncFitnessUiStateFromDom(card);
   }
@@ -4525,6 +4547,7 @@ function renderFitnessLog(card) {
   const dateInput = document.createElement("input");
   dateInput.type = "date";
   dateInput.value = dateKey;
+  dateInput.setAttribute("aria-label", "Workout date");
   dateInput.addEventListener("change", () => {
     card.activeFitnessDate = normalizeDateKey(dateInput.value) || getTodayKey();
     getFitnessEntry(card, card.activeFitnessDate);
@@ -4546,13 +4569,18 @@ function renderFitnessLog(card) {
 
   const parts = document.createElement("div");
   parts.className = "fitness-parts";
+  parts.setAttribute("role", "group");
+  parts.setAttribute("aria-label", "Workout parts");
+  const selectedMeta = activeParts.find((meta) => meta.key === card.activeFitnessPart) || activeParts[0];
   FITNESS_PARTS.forEach((meta) => {
     const part = entry.parts[meta.key];
     const button = document.createElement("button");
     button.type = "button";
     button.classList.toggle("is-active", part.active);
-    button.classList.toggle("is-selected", card.activeFitnessPart === meta.key);
-    button.textContent = part.active ? `${meta.label}` : meta.label;
+    button.classList.toggle("is-selected", selectedMeta?.key === meta.key);
+    button.setAttribute("aria-pressed", String(selectedMeta?.key === meta.key));
+    button.setAttribute("aria-label", meta.label);
+    button.innerHTML = `<span class="fitness-part-mark" aria-hidden="true">${part.active ? ICONS.check : ""}</span><span>${escapeHtml(meta.label)}</span>`;
     button.title = part.active ? `Edit ${meta.label}` : `Log ${meta.label}`;
     button.addEventListener("click", () => {
       updateFitnessEntry(card, dateKey, (nextEntry) => {
@@ -4576,7 +4604,6 @@ function renderFitnessLog(card) {
     activeBody.append(empty);
   } else {
     activeBody.append(renderFitnessSummaryStrip(entry, activeParts));
-    const selectedMeta = activeParts.find((meta) => meta.key === card.activeFitnessPart) || activeParts[0];
     activeBody.append(renderFitnessPartEditor(card, dateKey, selectedMeta, entry.parts[selectedMeta.key]));
   }
 
@@ -4627,22 +4654,27 @@ function renderFitnessCardioEditor(card, dateKey, meta, part) {
   const section = createFitnessSection(meta.label, () => removeFitnessPart(card, dateKey, meta.key));
   const grid = document.createElement("div");
   grid.className = "fitness-field-grid fitness-cardio-grid";
+  const pace = document.createElement("span");
+  pace.className = "fitness-pace";
+  const updatePace = (current = part) => {
+    const distance = Number(current.distanceKm);
+    const minutes = Number(current.durationMinutes);
+    pace.textContent = distance > 0 && minutes > 0 ? `${(minutes / distance).toFixed(1)} min/km` : "Pace";
+  };
   grid.append(
     createFitnessNumberField("Km", part.distanceKm, (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].distanceKm = value; });
+      updatePace(getFitnessEntry(resolveLiveCard(card), dateKey).parts[meta.key]);
     }, { step: "0.01", decimals: 2, min: 0 }),
     createFitnessNumberField("Minutes", part.durationMinutes, (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].durationMinutes = value; });
+      updatePace(getFitnessEntry(resolveLiveCard(card), dateKey).parts[meta.key]);
     }, { step: "0.1", decimals: 1, min: 0 }),
     createFitnessSelectField("Effort", part.intensity, ["Easy", "Moderate", "Hard", "Max"], (value) => {
       updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].intensity = value; });
     })
   );
-  const pace = document.createElement("span");
-  pace.className = "fitness-pace";
-  const distance = Number(part.distanceKm);
-  const minutes = Number(part.durationMinutes);
-  pace.textContent = distance && minutes ? `${(minutes / distance).toFixed(1)} min/km` : "Pace";
+  updatePace();
   grid.append(pace);
   section.append(grid, createFitnessNotesDisclosure("Running notes", part.notes, (value) => {
     updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
@@ -4736,8 +4768,9 @@ function renderFitnessMetrics(card, dateKey, entry) {
   const summaryText = getFitnessMetricsSummary(entry.metrics);
   summary.innerHTML = `<strong>Body metrics</strong><span>${escapeHtml(summaryText)}</span>`;
   section.addEventListener("toggle", () => {
+    if (Boolean(card.fitnessMetricsOpen) === section.open) return;
     card.fitnessMetricsOpen = section.open;
-    saveState({ quiet: true });
+    saveState({ quiet: true, touch: false });
   });
   const grid = document.createElement("div");
   grid.className = "fitness-metric-grid";
@@ -5070,6 +5103,7 @@ function getActiveFoodDate(card) {
 }
 
 function getFoodEntry(card, dateKey = getActiveFoodDate(card)) {
+  // Loading and previewing a snapshot must use that snapshot, not the live board.
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
   if (!card.foodEntries || typeof card.foodEntries !== "object") card.foodEntries = {};
   if (!card.foodEntries[normalizedDate]) {
@@ -5197,6 +5231,7 @@ function renderFoodDateNav(card, dateKey, entry) {
   const dateInput = document.createElement("input");
   dateInput.type = "date";
   dateInput.value = dateKey;
+  dateInput.setAttribute("aria-label", "Food log date");
   dateInput.addEventListener("change", () => {
     card.activeFoodDate = normalizeDateKey(dateInput.value) || getTodayKey();
     getFoodEntry(card, card.activeFoodDate);
@@ -5232,15 +5267,16 @@ function renderFoodTotalSummary(card, totals, target, dateKey) {
 
   const grid = document.createElement("div");
   grid.className = "food-macro-grid";
-  FOOD_NUTRIENT_KEYS.forEach((key) => {
+  FOOD_NUTRIENT_KEYS.filter((key) => key !== "calories").forEach((key) => {
     const item = document.createElement("div");
     item.className = "food-macro";
+    item.dataset.nutrient = key;
     const percent = target[key] ? Math.min(140, (totals[key] / target[key]) * 100) : 0;
     item.innerHTML = `
-      <span>${escapeHtml(FOOD_NUTRIENT_META[key].short)}</span>
-      <strong>${formatFoodNumber(totals[key], key)}${key === "calories" ? "" : "g"}</strong>
-      <small>${formatFoodNumber(target[key], key)}${key === "calories" ? " kcal" : "g"}</small>
-      <i style="--food-progress:${percent}%"></i>
+      <span>${escapeHtml(FOOD_NUTRIENT_META[key].label)}</span>
+      <strong>${formatFoodNumber(totals[key], key)} g</strong>
+      <small>of ${formatFoodNumber(target[key], key)} g</small>
+      <i aria-hidden="true" style="--food-progress:${percent}%"></i>
     `;
     grid.append(item);
   });
@@ -5253,8 +5289,9 @@ function renderFoodTargetEditor(card, dateKey, target) {
   details.className = "food-target-panel";
   details.open = Boolean(card.foodTargetsOpen);
   details.addEventListener("toggle", () => {
+    if (Boolean(card.foodTargetsOpen) === details.open) return;
     card.foodTargetsOpen = details.open;
-    saveState({ quiet: true });
+    saveState({ quiet: true, touch: false });
   });
   const monthLabel = dateKeyToLocalDate(dateKey).toLocaleDateString(undefined, { month: "long", year: "numeric" });
   const summary = document.createElement("summary");
@@ -5287,7 +5324,7 @@ function renderFoodAddPanel(card, dateKey, entry) {
   const mealHead = document.createElement("div");
   mealHead.className = "food-add-head";
   const mealLabel = document.createElement("div");
-  mealLabel.innerHTML = `<strong>Active meal</strong><span>${escapeHtml(activeMeal?.name || "Meal 1")} receives the food you tap below</span>`;
+  mealLabel.innerHTML = `<strong>Meals</strong><span>${entry.meals.length} total</span>`;
   const addMeal = document.createElement("button");
   addMeal.type = "button";
   addMeal.className = "food-add-meal";
@@ -5342,7 +5379,8 @@ function renderFoodAddPanel(card, dateKey, entry) {
     mealTabs.append(button);
   });
   requestAnimationFrame(() => {
-    mealTabs.querySelector(".is-active")?.scrollIntoView({ block: "nearest", inline: "center" });
+    const active = mealTabs.querySelector(".is-active");
+    if (active) mealTabs.scrollLeft = active.offsetLeft - mealTabs.offsetLeft - (mealTabs.clientWidth - active.clientWidth) / 2;
   });
 
   const nextMeal = document.createElement("button");
@@ -5365,6 +5403,7 @@ function renderFoodAddPanel(card, dateKey, entry) {
   addFoodDetails.className = "food-add-food-panel";
   addFoodDetails.open = card.foodAddOpen !== false;
   addFoodDetails.addEventListener("toggle", () => {
+    if ((card.foodAddOpen !== false) === addFoodDetails.open) return;
     card.foodAddOpen = addFoodDetails.open;
     saveState({ quiet: true, touch: false });
   });
@@ -5491,7 +5530,8 @@ function renderFoodMeal(card, dateKey, meal) {
   FOOD_NUTRIENT_KEYS.forEach((key) => {
     const item = document.createElement("span");
     const unit = key === "calories" ? "kcal" : "g";
-    item.innerHTML = `<strong>${escapeHtml(FOOD_NUTRIENT_META[key].short)}</strong><small>${formatFoodNumber(totals[key], key)}${unit}</small>`;
+    item.dataset.nutrient = key;
+    item.innerHTML = `<strong>${escapeHtml(FOOD_NUTRIENT_META[key].label)}</strong><small>${formatFoodNumber(totals[key], key)} ${unit}</small>`;
     summary.append(item);
   });
   const remove = document.createElement("button");
@@ -5510,6 +5550,7 @@ function renderFoodMeal(card, dateKey, meal) {
   mealDetails.className = "food-meal-details";
   mealDetails.open = card.foodMealOpen !== false || !meal.items.length;
   mealDetails.addEventListener("toggle", () => {
+    if ((card.foodMealOpen !== false || !meal.items.length) === mealDetails.open) return;
     card.foodMealOpen = mealDetails.open;
     saveState({ quiet: true, touch: false });
   });
@@ -5545,7 +5586,7 @@ function renderFoodItem(card, dateKey, meal, item) {
   name.textContent = food?.name || "Unknown food";
   const macros = document.createElement("span");
   macros.className = "food-item-macros";
-  macros.textContent = `${formatFoodNumber(totals.calories, "calories")} kcal · P ${formatFoodNumber(totals.protein, "protein")}g · C ${formatFoodNumber(totals.carbs, "carbs")}g · F ${formatFoodNumber(totals.fat, "fat")}g · Fi ${formatFoodNumber(totals.fiber, "fiber")}g`;
+  macros.textContent = FOOD_NUTRIENT_KEYS.map((key) => `${key === "calories" ? "" : FOOD_NUTRIENT_META[key].label + " "}${formatFoodNumber(totals[key], key)} ${FOOD_NUTRIENT_META[key].unit}`).join(" · ");
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "food-item-remove";
@@ -5595,7 +5636,12 @@ function renderFoodItem(card, dateKey, meal, item) {
   unit.addEventListener("change", () => {
     const currentItem = getFoodItemById(card, dateKey, meal.id, item.id);
     if (!currentItem) return;
-    currentItem.unit = unit.value === "g" ? "g" : "serving";
+    const nextUnit = unit.value === "g" ? "g" : "serving";
+    if (currentItem.unit !== nextUnit) {
+      const servingGrams = Math.max(1, Number(food?.servingGrams) || 100);
+      currentItem.amount = nextUnit === "g" ? Number(currentItem.amount) * servingGrams : Number(currentItem.amount) / servingGrams;
+      currentItem.unit = nextUnit;
+    }
     saveFoodCard(card, dateKey, { rerender: true });
   });
   unitField.append(unit);
@@ -5609,8 +5655,9 @@ function renderFoodLibraryEditor(card) {
   details.className = "food-library-panel";
   details.open = Boolean(card.foodLibraryOpen);
   details.addEventListener("toggle", () => {
+    if (Boolean(card.foodLibraryOpen) === details.open) return;
     card.foodLibraryOpen = details.open;
-    saveState({ quiet: true });
+    saveState({ quiet: true, touch: false });
   });
   const summary = document.createElement("summary");
   summary.innerHTML = `<strong>Food library</strong><span>${card.foodLibrary.length} foods</span>`;
@@ -5734,6 +5781,7 @@ function createFoodNumberField(label, value, onInput, options = {}) {
 }
 
 function updateFoodDefinition(card, foodId, updates) {
+  card = resolveLiveCard(card);
   const index = card.foodLibrary.findIndex((food) => food.id === foodId);
   if (index < 0) return;
   card.foodLibrary[index] = normalizeFoodDefinition({
@@ -5755,6 +5803,7 @@ function getNextFoodMealName(entry, preferredName = "") {
 }
 
 function addFoodMeal(card, dateKey, preferredName = "") {
+  card = resolveLiveCard(card);
   const currentEntry = getFoodEntry(card, dateKey);
   const meal = {
     id: createId(),
@@ -5768,6 +5817,7 @@ function addFoodMeal(card, dateKey, preferredName = "") {
 }
 
 function addFoodItemToMeal(card, dateKey, mealId, foodId) {
+  card = resolveLiveCard(card);
   const entry = getFoodEntry(card, dateKey);
   const meal = entry.meals.find((item) => item.id === mealId) || entry.meals[0];
   const food = getFoodById(card, foodId);
@@ -5784,6 +5834,7 @@ function addFoodItemToMeal(card, dateKey, mealId, foodId) {
 }
 
 function removeFoodMeal(card, dateKey, mealId) {
+  card = resolveLiveCard(card);
   const entry = getFoodEntry(card, dateKey);
   if (entry.meals.length <= 1) return;
   entry.meals = entry.meals.filter((meal) => meal.id !== mealId);
@@ -5792,6 +5843,7 @@ function removeFoodMeal(card, dateKey, mealId) {
 }
 
 function saveFoodCard(card, dateKey, options = {}) {
+  card = resolveLiveCard(card);
   const normalizedDate = normalizeDateKey(dateKey) || getActiveFoodDate(card);
   const entry = getFoodEntry(card, normalizedDate);
   entry.updatedAt = Date.now();
@@ -6212,6 +6264,8 @@ function getTrackerItemTitle(type, index) {
 
 function normalizePlannerCard(card) {
   if (!card || card.type !== "planner") return card;
+  LifePlanner.ensure(card);
+  LifePlanner.project(card);
   const today = getTodayKey();
   card.plannerGroup = getPlannerGroup(card);
   card.plannerEntries = card.plannerEntries && typeof card.plannerEntries === "object" ? card.plannerEntries : {};
@@ -6296,25 +6350,13 @@ function normalizePlannerDoneRecord(value) {
   return { completedAt: 0 };
 }
 
-function getPlannerCompletedAt(entry, itemKey) {
-  const doneRecord = normalizePlannerDoneRecord(entry?.checkedItems?.[itemKey]);
-  return Number(doneRecord?.completedAt) || 0;
-}
 
 function getPlannerEntryCarryoverDate(entry, itemKey, fallbackDate) {
   const carryover = entry?.carryoverItems?.[itemKey];
   return normalizeDateKey(carryover?.fromDate || carryover) || normalizeDateKey(fallbackDate);
 }
 
-function getPlannerItemCreatedAt(entry, itemKey) {
-  return normalizeTimestamp(entry?.itemRecords?.[itemKey]?.createdAt) || normalizeTimestamp(entry?.updatedAt);
-}
 
-function wasPlannerItemCreatedOnOrAfter(entry, itemKey, dateKey) {
-  const createdAt = getPlannerItemCreatedAt(entry, itemKey);
-  if (!createdAt) return false;
-  return createdAt >= dateKeyToLocalDate(dateKey).getTime();
-}
 
 function isTimestampOnDate(timestamp, dateKey) {
   const time = normalizeTimestamp(timestamp);
@@ -6323,40 +6365,7 @@ function isTimestampOnDate(timestamp, dateKey) {
   return getTodayKey(new Date(time)) === normalizedDate;
 }
 
-function getPlannerCompletionTimestamp(dateKey, options = {}) {
-  const normalizedDate = normalizeDateKey(options.completionDate || dateKey) || getTodayKey();
-  const todayKey = getTodayKey();
-  const completionKey = dateKeyToLocalDate(normalizedDate).getTime() > dateKeyToLocalDate(todayKey).getTime() ? todayKey : normalizedDate;
-  const now = new Date();
-  const completionDate = dateKeyToLocalDate(completionKey);
-  completionDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds());
-  return completionDate.getTime();
-}
 
-function getPlannerCompletionTimestampForItem(item, entry, itemKey) {
-  const plannedDate = normalizeDateKey(item?.dateKey) || getTodayKey();
-  const todayKey = getTodayKey();
-  const plannedTime = dateKeyToLocalDate(plannedDate).getTime();
-  const todayTime = dateKeyToLocalDate(todayKey).getTime();
-  let completionDate = plannedDate;
-
-  if (plannedTime > todayTime) {
-    completionDate = todayKey;
-  } else if (plannedTime < todayTime) {
-    completionDate = plannedDate;
-  } else if (item?.isCarryover) {
-    completionDate = todayKey;
-  } else {
-    const createdAt = getPlannerItemCreatedAt(entry, itemKey);
-    const hasCarryoverCopy = plannerEntryHasCarryoverFromSource(item.card, itemKey, plannedDate);
-    const createdToday = isTimestampOnDate(createdAt, todayKey);
-    if (hasCarryoverCopy || (createdAt && !createdToday)) {
-      completionDate = todayKey;
-    }
-  }
-
-  return getPlannerCompletionTimestamp(plannedDate, { completionDate });
-}
 
 function ensureCompletedTodayCopyForSourceTask(card, sourceDate, title, completedAt = Date.now()) {
   const todayKey = getTodayKey();
@@ -6460,265 +6469,14 @@ function removeLinkedCarryoverCopiesAfterDate(card, sourceDate, title, afterDate
   return changed;
 }
 
-function getPlannerCardsForMaintenance() {
-  const cards = [...state.cards, ...getArchivedCards()];
-  (state.boards || []).forEach((board) => {
-    if (board.id === state.activeBoardId) return;
-    cards.push(...(Array.isArray(board.cards) ? board.cards : []));
-    cards.push(...(Array.isArray(board.archivedCards) ? board.archivedCards : []));
-  });
-  return cards.filter((card) => card?.type === "planner");
-}
 
 function plannerEntryHasCarryoverFromSource(card, itemKey, sourceDate) {
   return Object.values(card.plannerEntries || {}).some((entry) => getPlannerEntryCarryoverDate(normalizePlannerEntry(entry), itemKey, "") === sourceDate);
 }
 
-function getPlannerStaleRenameCandidate(card, sourceDate, newKey) {
-  const sourceEntry = normalizePlannerEntry(card.plannerEntries?.[sourceDate] || {});
-  const candidates = new Map();
-  const rememberCandidate = (line, entry = sourceEntry) => {
-    const itemKey = getPlannerItemKey(line);
-    if (!itemKey || itemKey === newKey) return;
-    if (entry.checkedItems?.[itemKey]) return;
-    if (!plannerEntryHasCarryoverFromSource(card, itemKey, sourceDate)) return;
-    candidates.set(itemKey, { title: line, key: itemKey });
-  };
 
-  getPlannerNoteLines(sourceEntry.note).forEach((line) => rememberCandidate(line, sourceEntry));
-  Object.values(card.plannerEntries || {}).forEach((entry) => {
-    const normalizedEntry = normalizePlannerEntry(entry);
-    getPlannerNoteLines(normalizedEntry.note).forEach((line) => {
-      const itemKey = getPlannerItemKey(line);
-      if (getPlannerEntryCarryoverDate(normalizedEntry, itemKey, "") === sourceDate) {
-        rememberCandidate(line, normalizedEntry);
-      }
-    });
-  });
 
-  const uniqueCandidates = [...candidates.values()];
-  return uniqueCandidates.length === 1 ? uniqueCandidates[0] : null;
-}
 
-function rewritePlannerLinkedEntries(card, { sourceDate, completedDate, oldTitle, newTitle, completedAt }) {
-  const oldKey = getPlannerItemKey(oldTitle);
-  const newKey = getPlannerItemKey(newTitle);
-  const sourceTime = dateKeyToLocalDate(sourceDate).getTime();
-  const completedTime = dateKeyToLocalDate(completedDate).getTime();
-  let changed = false;
-
-  Object.entries(card.plannerEntries || {}).forEach(([dateKey, entry]) => {
-    const plannerDate = normalizeDateKey(dateKey);
-    if (!plannerDate) return;
-    const plannerTime = dateKeyToLocalDate(plannerDate).getTime();
-    if (plannerTime < sourceTime) return;
-
-    const normalizedEntry = normalizePlannerEntry(entry);
-    const lines = getPlannerNoteLines(normalizedEntry.note);
-    const isSourceEntry = plannerDate === sourceDate;
-    const isOldCarryover = getPlannerEntryCarryoverDate(normalizedEntry, oldKey, "") === sourceDate;
-    const isNewCarryover = getPlannerEntryCarryoverDate(normalizedEntry, newKey, "") === sourceDate;
-    const hasOldLine = lines.some((line) => getPlannerItemKey(line) === oldKey);
-    const hasNewLine = lines.some((line) => getPlannerItemKey(line) === newKey);
-    if (!isSourceEntry && !isOldCarryover && !isNewCarryover && !hasOldLine) return;
-
-    const checkedItems = { ...(normalizedEntry.checkedItems || {}) };
-    const carryoverItems = { ...(normalizedEntry.carryoverItems || {}) };
-    const itemRecords = { ...(normalizedEntry.itemRecords || {}) };
-    let entryChanged = false;
-    let insertedNewLine = hasNewLine;
-    const nextLines = [];
-
-    lines.forEach((line) => {
-      const itemKey = getPlannerItemKey(line);
-      if (itemKey === oldKey) {
-        if (plannerTime > completedTime) {
-          entryChanged = true;
-          return;
-        }
-        if (!insertedNewLine) {
-          nextLines.push(newTitle);
-          insertedNewLine = true;
-        }
-        entryChanged = true;
-        return;
-      }
-      if (itemKey === newKey && plannerTime > completedTime && (isNewCarryover || isOldCarryover)) {
-        entryChanged = true;
-        return;
-      }
-      nextLines.push(line);
-    });
-
-    if (plannerTime <= completedTime && (isSourceEntry || isOldCarryover || isNewCarryover || hasOldLine || hasNewLine)) {
-      if (checkedItems[oldKey] && !checkedItems[newKey]) checkedItems[newKey] = checkedItems[oldKey];
-      checkedItems[newKey] = { completedAt };
-      if (carryoverItems[oldKey] || isOldCarryover) {
-        carryoverItems[newKey] = {
-          ...(carryoverItems[newKey] || carryoverItems[oldKey] || {}),
-          fromDate: sourceDate,
-          carriedAt: carryoverItems[newKey]?.carriedAt || carryoverItems[oldKey]?.carriedAt || Date.now()
-        };
-      }
-      if (isSourceEntry) delete carryoverItems[newKey];
-      if (itemRecords[oldKey]) itemRecords[newKey] = mergePlannerItemRecord(itemRecords[newKey], itemRecords[oldKey]);
-      itemRecords[newKey] = itemRecords[newKey] || { createdAt: completedAt };
-      entryChanged = true;
-    }
-
-    delete checkedItems[oldKey];
-    delete carryoverItems[oldKey];
-    delete itemRecords[oldKey];
-
-    if (plannerTime > completedTime && (isOldCarryover || isNewCarryover)) {
-      delete checkedItems[newKey];
-      delete carryoverItems[newKey];
-      delete itemRecords[newKey];
-      entryChanged = true;
-    }
-
-    if (!entryChanged) return;
-    card.plannerEntries[plannerDate] = normalizePlannerEntry({
-      ...normalizedEntry,
-      note: buildPlannerNote(nextLines),
-      checkedItems,
-      carryoverItems,
-      itemRecords,
-      updatedAt: Date.now()
-    });
-    changed = true;
-  });
-
-  return changed;
-}
-
-function repairPlannerRenamedCompletedCarryovers() {
-  let changed = false;
-  getPlannerCardsForMaintenance().forEach((card) => {
-    normalizePlannerCard(card);
-    Object.entries(card.plannerEntries || {}).forEach(([dateKey, entry]) => {
-      const completedDate = normalizeDateKey(dateKey);
-      if (!completedDate) return;
-      const normalizedEntry = normalizePlannerEntry(entry);
-      getPlannerNoteLines(normalizedEntry.note).forEach((line) => {
-        const newKey = getPlannerItemKey(line);
-        const sourceDate = getPlannerEntryCarryoverDate(normalizedEntry, newKey, "");
-        const completedAt = getPlannerCompletedAt(normalizedEntry, newKey);
-        if (!sourceDate || !completedAt || sourceDate === completedDate) return;
-        if (dateKeyToLocalDate(sourceDate).getTime() > dateKeyToLocalDate(completedDate).getTime()) return;
-        const staleCandidate = getPlannerStaleRenameCandidate(card, sourceDate, newKey);
-        if (staleCandidate && rewritePlannerLinkedEntries(card, { sourceDate, completedDate, oldTitle: staleCandidate.title, newTitle: line, completedAt })) {
-          changed = true;
-          return;
-        }
-        if (removeLinkedCarryoverCopiesAfterDate(card, sourceDate, line, completedDate)) {
-          changed = true;
-        }
-      });
-    });
-  });
-  if (changed) saveState({ quiet: true });
-}
-
-function carryPlannerIncompleteTasksToToday() {
-  const todayKey = getTodayKey();
-  const todayTime = dateKeyToLocalDate(todayKey).getTime();
-  const plannerCards = getPlannerCardsForMaintenance();
-  let changed = false;
-
-  plannerCards.forEach((card) => {
-    normalizePlannerCard(card);
-    const todayEntry = getPlannerEntry(card, todayKey);
-    const todayLines = getPlannerNoteLines(todayEntry.note);
-    const checkedItems = { ...(todayEntry.checkedItems || {}) };
-    const carryoverItems = { ...(todayEntry.carryoverItems || {}) };
-    const itemRecords = { ...(todayEntry.itemRecords || {}) };
-    let cardChanged = false;
-    const nextLines = todayLines.filter((line) => {
-      const itemKey = getPlannerItemKey(line);
-      const sourceDate = getPlannerEntryCarryoverDate(todayEntry, itemKey, "");
-      if (!sourceDate) return true;
-      const sourceEntry = normalizePlannerEntry(card.plannerEntries?.[sourceDate] || {});
-      const sourceLines = getPlannerNoteLines(sourceEntry.note);
-      const sourceExists = sourceLines.some((sourceLine) => getPlannerItemKey(sourceLine) === itemKey);
-      const sourceCompletedAt = getPlannerCompletedAt(sourceEntry, itemKey);
-      const sourceCompletedToday = sourceExists && isTimestampOnDate(sourceCompletedAt, todayKey);
-      if (sourceCompletedToday) {
-        if (!checkedItems[itemKey] || Number(checkedItems[itemKey].completedAt || 0) !== sourceCompletedAt) cardChanged = true;
-        checkedItems[itemKey] = { completedAt: sourceCompletedAt };
-        carryoverItems[itemKey] = carryoverItems[itemKey] || {
-          fromDate: getPlannerEntryCarryoverDate(sourceEntry, itemKey, sourceDate),
-          carriedAt: Date.now()
-        };
-        itemRecords[itemKey] = itemRecords[itemKey] || { createdAt: sourceCompletedAt };
-        return true;
-      }
-      const sourceStillOpen = sourceExists && !sourceEntry.checkedItems[itemKey];
-      if (sourceStillOpen) return true;
-      delete checkedItems[itemKey];
-      delete carryoverItems[itemKey];
-      delete itemRecords[itemKey];
-      cardChanged = true;
-      return false;
-    });
-    const todayKeys = new Set(nextLines.map(getPlannerItemKey));
-
-    Object.entries(card.plannerEntries || {})
-      .sort(([leftDate], [rightDate]) => {
-        const leftKey = normalizeDateKey(leftDate);
-        const rightKey = normalizeDateKey(rightDate);
-        const leftTime = leftKey ? dateKeyToLocalDate(leftKey).getTime() : 0;
-        const rightTime = rightKey ? dateKeyToLocalDate(rightKey).getTime() : 0;
-        return leftTime - rightTime;
-      })
-      .forEach(([dateKey, entry]) => {
-        const sourceDate = normalizeDateKey(dateKey);
-        if (!sourceDate || sourceDate === todayKey) return;
-        if (dateKeyToLocalDate(sourceDate).getTime() >= todayTime) return;
-        const sourceEntry = normalizePlannerEntry(entry);
-        getPlannerNoteLines(sourceEntry.note).forEach((line) => {
-          const itemKey = getPlannerItemKey(line);
-          if (!itemKey || todayKeys.has(itemKey)) return;
-          const sourceCompletedAt = getPlannerCompletedAt(sourceEntry, itemKey);
-          if (isTimestampOnDate(sourceCompletedAt, todayKey)) {
-            nextLines.push(line);
-            todayKeys.add(itemKey);
-            checkedItems[itemKey] = { completedAt: sourceCompletedAt };
-            carryoverItems[itemKey] = {
-              fromDate: getPlannerEntryCarryoverDate(sourceEntry, itemKey, sourceDate),
-              carriedAt: Date.now()
-            };
-            itemRecords[itemKey] = itemRecords[itemKey] || { createdAt: sourceCompletedAt };
-            cardChanged = true;
-            return;
-          }
-          if (sourceEntry.checkedItems[itemKey]) return;
-          nextLines.push(line);
-          todayKeys.add(itemKey);
-          carryoverItems[itemKey] = {
-            fromDate: getPlannerEntryCarryoverDate(sourceEntry, itemKey, sourceDate),
-            carriedAt: Date.now()
-          };
-          cardChanged = true;
-        });
-      });
-
-    if (!cardChanged) return;
-    card.plannerEntries[todayKey] = normalizePlannerEntry({
-      ...todayEntry,
-      note: buildPlannerNote(nextLines),
-      checkedItems,
-      carryoverItems,
-      itemRecords,
-      updatedAt: Date.now()
-    });
-    changed = true;
-  });
-
-  if (changed) {
-    saveState({ quiet: true });
-  }
-}
 
 function getPlannerItemKey(value) {
   return normalizeLabel(value).toLowerCase();
@@ -6810,64 +6568,39 @@ function getActivePlannerDate(card) {
 function getPlannerEntry(card, dateKey = getActivePlannerDate(card)) {
   normalizePlannerCard(card);
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
-  if (!card.plannerEntries[normalizedDate]) {
-    card.plannerEntries[normalizedDate] = normalizePlannerEntry();
-  }
-  return card.plannerEntries[normalizedDate];
+  return LifePlanner.entry(card, normalizedDate);
 }
 
 function updatePlannerEntry(card, dateKey, updates, options = {}) {
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
-  const current = getPlannerEntry(card, normalizedDate);
-  card.plannerEntries[normalizedDate] = normalizePlannerEntry({
-    ...current,
-    ...updates,
-    updatedAt: Date.now()
-  });
+  if (typeof updates.note === "string") LifePlanner.replaceDay(card, normalizedDate, updates.note, createId);
+  LifePlanner.project(card);
+  card.updatedAt = Date.now();
   saveState();
   if (options.rerender) {
     renderCardsOnly(options.forceRender ? { force: true } : {});
   }
 }
 
-function getPlannerLineIndex(lines, item) {
-  if (Number.isInteger(item?.lineIndex) && getPlannerItemKey(lines[item.lineIndex]) === getPlannerItemKey(item.title)) {
-    return item.lineIndex;
-  }
-  return lines.findIndex((line) => getPlannerItemKey(line) === getPlannerItemKey(item?.title));
-}
 
 function togglePlannerTaskDone(item) {
-  if (!item?.card || !item.dateKey) return;
-  const entry = getPlannerEntry(item.card, item.dateKey);
-  const checkedItems = { ...(entry.checkedItems || {}) };
-  const key = getPlannerItemKey(item.title);
-  const nextDone = !Boolean(item.done);
-  const completedAt = nextDone ? getPlannerCompletionTimestampForItem(item, entry, key) : 0;
-  if (nextDone) {
-    checkedItems[key] = { completedAt };
-  } else {
-    delete checkedItems[key];
-  }
-  if (nextDone && !item.isCarryover) {
-    const copiedToToday = ensureCompletedTodayCopyForSourceTask(item.card, item.dateKey, item.title, completedAt);
-    if (!copiedToToday) {
-      removeCarryoverCopyForSourceTask(item.card, item.dateKey, item.title);
-    }
-  }
-  if (!nextDone && !item.isCarryover) {
-    removeCarryoverCopyForSourceTask(item.card, item.dateKey, item.title);
-  }
-  syncCarryoverSourceTask(item, nextDone, completedAt);
-  if (nextDone) {
-    const sourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : normalizeDateKey(item.dateKey);
-    const completedDate = normalizeDateKey(getTodayKey(new Date(completedAt)));
-    const removeAfterDate = sourceDate && completedDate && dateKeyToLocalDate(completedDate).getTime() > dateKeyToLocalDate(sourceDate).getTime()
-      ? completedDate
-      : item.dateKey;
-    removeLinkedCarryoverCopiesAfterDate(item.card, sourceDate, item.title, removeAfterDate);
-  }
-  updatePlannerEntry(item.card, item.dateKey, { checkedItems }, { rerender: true });
+  if (!item?.card || !item.taskId) return;
+  const card = resolveLiveCard(item.card);
+  const task = LifePlanner.ensure(card).find(task => task.id === item.taskId);
+  if (!task) return;
+  const before = {...task};
+  LifePlanner.complete(card, item.taskId, item.dateKey);
+  LifePlanner.project(card);
+  card.updatedAt = Date.now();
+  saveState();
+  renderCardsOnly({force: true});
+  showUndoToast({message: task.done ? "Task completed." : "Task reopened.", onUndo: () => {
+    const live = resolveLiveCard(card);
+    LifePlanner.change(live, task.id, before);
+    LifePlanner.project(live);
+    saveState();
+    renderCardsOnly({force: true});
+  }});
 }
 
 function deletePlannerTask(item) {
@@ -6880,57 +6613,25 @@ function deletePlannerTask(item) {
 }
 
 function archivePlannerTask(item) {
-  if (!item?.card || !item.dateKey) return;
-  normalizePlannerCard(item.card);
-  const beforeEntries = JSON.parse(JSON.stringify(item.card.plannerEntries || {}));
-  const beforeArchive = JSON.parse(JSON.stringify(item.card.plannerArchivedTasks || []));
-  const result = removePlannerTaskAcrossEntries(item);
-  if (!result) return;
-  const archivedTask = normalizePlannerArchivedTask({
-    title: result.removedTitle,
-    dateKey: normalizeDateKey(item.dateKey),
-    sourceDate: result.sourceDate || normalizeDateKey(item.dateKey),
-    archivedAt: Date.now(),
-    completedAt: item.completedAt || 0,
-    wasDone: Boolean(item.done),
-    wasCarryover: Boolean(item.isCarryover)
-  });
-  item.card.plannerArchivedTasks = [archivedTask, ...(item.card.plannerArchivedTasks || [])];
+  if (!item?.card || !item.taskId) return;
+  const card = resolveLiveCard(item.card);
+  const task = LifePlanner.change(card, item.taskId, {archivedAt: Date.now()});
+  if (!task) return;
+  LifePlanner.project(card);
   saveState();
-  renderCardsOnly({ force: true });
-  showUndoToast({
-    message: `"${archivedTask.title}" archived.`,
-    onUndo: () => {
-      item.card.plannerEntries = beforeEntries;
-      item.card.plannerArchivedTasks = beforeArchive;
-      normalizePlannerCard(item.card);
-      saveState();
-      renderCardsOnly({ force: true });
-      clearUndoToast();
-    }
-  });
+  renderCardsOnly({force: true});
+  showUndoToast({message: "Task archived. Find it in Archive.", onUndo: () => {
+    restorePlannerTask(card.id, task.id);
+  }});
 }
 
 function removePlannerTaskAcrossEntries(item) {
-  if (!item?.card || !item.dateKey) return null;
-  const sourceDate = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : normalizeDateKey(item.dateKey);
-  const removedCurrent = removePlannerTaskFromEntry(item.card, item.dateKey, item);
-  const removedSource = item.isCarryover && sourceDate && sourceDate !== normalizeDateKey(item.dateKey)
-    ? removePlannerTaskFromEntry(item.card, sourceDate, { title: item.title })
-    : "";
-  const removedTitle = removedSource || removedCurrent || item.title;
-  if (!removedCurrent && !removedSource) return;
-  if (sourceDate) {
-    removeLinkedCarryoverCopiesAfterDate(item.card, sourceDate, removedTitle, sourceDate);
-  } else {
-    removeCarryoverCopyForSourceTask(item.card, item.dateKey, removedTitle);
-  }
-  return {
-    removedTitle,
-    sourceDate,
-    removedCurrent,
-    removedSource
-  };
+  if (!item?.card || !item.taskId) return null;
+  const card = resolveLiveCard(item.card);
+  const task = LifePlanner.change(card, item.taskId, {deletedAt: Date.now()});
+  if (!task) return null;
+  LifePlanner.project(card);
+  return {removedTitle: task.title, sourceDate: task.dateKey};
 }
 
 function confirmPlannerTaskDelete(item) {
@@ -6944,31 +6645,6 @@ function confirmPlannerTaskDelete(item) {
   return window.confirm(`Delete "${title}"?\n\n${extra}\n\nIt will not be marked as complete.`);
 }
 
-function removePlannerTaskFromEntry(card, dateKey, item) {
-  const normalizedDate = normalizeDateKey(dateKey);
-  if (!card || !normalizedDate) return "";
-  const entry = getPlannerEntry(card, normalizedDate);
-  const lines = getPlannerNoteLines(entry.note);
-  const lineIndex = getPlannerLineIndex(lines, item);
-  if (lineIndex < 0) return "";
-  const [removed] = lines.splice(lineIndex, 1);
-  const itemKey = getPlannerItemKey(removed);
-  const checkedItems = { ...(entry.checkedItems || {}) };
-  const carryoverItems = { ...(entry.carryoverItems || {}) };
-  const itemRecords = { ...(entry.itemRecords || {}) };
-  delete checkedItems[itemKey];
-  delete carryoverItems[itemKey];
-  delete itemRecords[itemKey];
-  card.plannerEntries[normalizedDate] = normalizePlannerEntry({
-    ...entry,
-    note: buildPlannerNote(lines),
-    checkedItems,
-    carryoverItems,
-    itemRecords,
-    updatedAt: Date.now()
-  });
-  return removed;
-}
 
 function syncCarryoverSourceTask(item, done, completedAt = Date.now()) {
   const sourceDate = normalizeDateKey(item?.carryoverFrom);
@@ -7028,7 +6704,9 @@ function getPlannerWriteSourceCard(planlistCard, dateKey) {
     plannerEntries: {}
   });
   source.order = nextOrder();
-  state.cards.push(source);
+  source.plannerSourceOnly = true;
+  source.archivedAt = Date.now();
+  state.archivedCards = [...getArchivedCards(), source];
   return source;
 }
 
@@ -7044,21 +6722,9 @@ function addPlannerTaskToDate(card, dateKey, value) {
   const text = stripPlannerBullet(value);
   if (!text) return false;
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
-  const current = getPlannerEntry(card, normalizedDate);
-  const lines = getPlannerNoteLines(current.note);
-  const itemRecords = { ...(current.itemRecords || {}) };
-  lines.push(text);
-  itemRecords[getPlannerItemKey(text)] = { createdAt: Date.now() };
+  LifePlanner.add(card, normalizedDate, text, createId());
   card.activePlannerDate = normalizedDate;
-  updatePlannerEntry(
-    card,
-    normalizedDate,
-    {
-      note: buildPlannerNote(lines),
-      itemRecords
-    },
-    { rerender: true, forceRender: true }
-  );
+  updatePlannerEntry(card, normalizedDate, {}, { rerender: true, forceRender: true });
   return true;
 }
 
@@ -7099,14 +6765,13 @@ function setPlannerDate(card, dateKey) {
 }
 
 function getPlannerViewDate(card) {
-  return normalizeDateKey(card?.plannerViewDate) || getTodayKey();
+  return normalizeDateKey(state.ui.plannerDates?.[card.id]) || getTodayKey();
 }
 
 function setPlannerViewDate(card, dateKey) {
-  if (!card || card.type !== "planlist") return;
-  card.plannerViewDate = normalizeDateKey(dateKey) || getTodayKey();
-  saveState();
-  renderCardsOnly();
+  state.ui.plannerDates = state.ui.plannerDates || {};
+  state.ui.plannerDates[card.id] = normalizeDateKey(dateKey) || getTodayKey();
+  renderCardsOnly({force:true});
 }
 
 function shiftPlannerViewDate(card, dayDelta) {
@@ -7138,33 +6803,11 @@ function formatPlannerDate(dateKey) {
 }
 
 function getPlannerScheduleItems(plannerCard) {
-  const items = [];
   normalizePlannerCard(plannerCard);
-  const group = getPlannerGroup(plannerCard);
-
-  Object.entries(plannerCard.plannerEntries || {}).forEach(([dateKey, entry]) => {
-    const normalizedDate = normalizeDateKey(dateKey);
-    const normalizedEntry = normalizePlannerEntry(entry);
-    if (!normalizedDate || !normalizedEntry.note) return;
-    getPlannerNoteLines(normalizedEntry.note).forEach((line, index) => {
-      const itemKey = getPlannerItemKey(line);
-      const carryoverFrom = getPlannerEntryCarryoverDate(normalizedEntry, itemKey, "");
-      items.push({
-        dateKey: normalizedDate,
-        title: line,
-        source: "Planner",
-        group,
-        done: Boolean(normalizedEntry.checkedItems[itemKey]),
-        completedAt: getPlannerCompletedAt(normalizedEntry, itemKey),
-        isCarryover: Boolean(carryoverFrom),
-        carryoverFrom,
-        priority: 0,
-        lineIndex: index
-      });
-    });
-  });
-
-  return items.sort(sortPlannerScheduleItems);
+  return LifePlanner.ensure(plannerCard).filter(LifePlanner.active).map(task => ({
+    ...task, taskId: task.id, source: "Planner", group: getPlannerGroup(plannerCard),
+    isCarryover: false, carryoverFrom: "", priority: 0
+  })).sort(sortPlannerScheduleItems);
 }
 
 function getPlannerItemsForDate(dateKey, group = "") {
@@ -7201,49 +6844,16 @@ function getPlannerSourceItems(group = "", options = {}) {
     .sort(sortPlannerScheduleItems);
 }
 
-function getPlannerTaskInstanceKey(item) {
-  const sourceDate = normalizeDateKey(item?.carryoverFrom) || normalizeDateKey(item?.dateKey) || "";
-  return `${sourceDate}::${getPlannerItemKey(item?.title)}`;
-}
 
 function getPlannerItemsForSelectedDay(allItems, selectedDayKey) {
-  const normalizedDay = normalizeDateKey(selectedDayKey) || getTodayKey();
-  const selectedTime = dateKeyToLocalDate(normalizedDay).getTime();
-  const byInstance = new Map();
-  allItems
-    .filter((item) => normalizeDateKey(item.dateKey) === normalizedDay)
-    .forEach((item) => {
-      byInstance.set(getPlannerTaskInstanceKey(item), item);
-    });
-
-  allItems.forEach((item) => {
-    if (item.isCarryover) return;
-    const sourceDate = normalizeDateKey(item.dateKey);
-    if (!sourceDate) return;
-    const sourceTime = dateKeyToLocalDate(sourceDate).getTime();
-    if (sourceTime >= selectedTime) return;
-
-    const completedAt = normalizeTimestamp(item.completedAt);
-    if (item.done && !completedAt) return;
-    const completedDate = completedAt ? getTodayKey(new Date(completedAt)) : "";
-    const completedTime = completedDate ? dateKeyToLocalDate(completedDate).getTime() : 0;
-    if (completedTime && completedTime < selectedTime) return;
-
-    const carriedItem = {
-      ...item,
-      dateKey: normalizedDay,
-      done: Boolean(completedTime && completedTime === selectedTime),
-      completedAt: completedTime === selectedTime ? completedAt : 0,
-      isCarryover: true,
-      carryoverFrom: sourceDate
-    };
-    const key = getPlannerTaskInstanceKey(carriedItem);
-    if (!byInstance.has(key)) {
-      byInstance.set(key, carriedItem);
-    }
-  });
-
-  return [...byInstance.values()].sort(sortPlannerScheduleItems);
+  const day = normalizeDateKey(selectedDayKey) || getTodayKey();
+  return allItems.filter(item => {
+    if (item.dateKey === day || (item.done && item.completedOn === day)) return true;
+    return item.dateKey < day && (!item.done || (item.completedOn && item.completedOn >= day));
+  }).map(item => ({
+    ...item, scheduledDate: item.dateKey, dateKey: day,
+    isCarryover: item.dateKey < day, carryoverFrom: item.dateKey < day ? item.dateKey : ""
+  })).sort(sortPlannerScheduleItems);
 }
 
 function getPlannerTimelineMeta() {
@@ -7323,7 +6933,7 @@ function getPlannerViewData(view, group, options = {}, dayKey = getTodayKey()) {
       dayKey: selectedDayKey
     },
     week: {
-      limit: 8,
+      limit: Number.POSITIVE_INFINITY,
       empty: "Planner items for the rest of this week will appear here.",
       items: futureItems.filter((item) => {
         const time = getPlannerItemTime(item);
@@ -7332,7 +6942,7 @@ function getPlannerViewData(view, group, options = {}, dayKey = getTodayKey()) {
       })
     },
     month: {
-      limit: 10,
+      limit: Number.POSITIVE_INFINITY,
       empty: "Planner items later this month will appear here.",
       items: futureItems.filter((item) => {
         const time = getPlannerItemTime(item);
@@ -7342,7 +6952,7 @@ function getPlannerViewData(view, group, options = {}, dayKey = getTodayKey()) {
       })
     },
     upcoming: {
-      limit: 12,
+      limit: Number.POSITIVE_INFINITY,
       empty: "Planner tasks will appear under This week, Later this month, or Future.",
       items: upcomingItems,
       sections: upcomingSections
@@ -7502,8 +7112,9 @@ function normalizeDiaryCard(card) {
 function normalizeDiaryEntry(entry = {}) {
   const feeling = DIARY_FEELING_ALIASES[entry.feeling] || entry.feeling;
   return {
-    feeling: getDiaryFeelings().includes(feeling) ? feeling : "Calm",
-    sentence: String(entry.sentence || "").trim(),
+    ...entry,
+    feeling: getDiaryFeelings().includes(feeling) ? feeling : "",
+    sentence: String(entry.sentence || ""),
     thoughts: String(entry.thoughts || ""),
     updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : 0
   };
@@ -7529,6 +7140,7 @@ function getDiaryEntry(card, dateKey = getActiveDiaryDate(card)) {
 }
 
 function updateDiaryEntry(card, dateKey, updates, options = {}) {
+  card = resolveLiveCard(card);
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
   const current = getDiaryEntry(card, normalizedDate);
   const nextEntry = normalizeDiaryEntry({
@@ -7542,31 +7154,9 @@ function updateDiaryEntry(card, dateKey, updates, options = {}) {
 }
 
 function persistDiaryEntryImmediately(card, dateKey, entry) {
-  try {
-    touchState();
-    syncActiveBoard({ touchBoard: true, updatedAt: state.updatedAt });
-    mergeStoredBoardsIntoState({ preserveActiveBoard: true });
-    const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
-      message: "Diary save failed locally. Try removing large images."
-    });
-    if (localSaved) localStateSource = "stored";
-    const backupSaved = upsertDiaryBackup(card, dateKey, entry);
-    if (elements.savedState) {
-      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      elements.savedState.textContent = localSaved
-        ? `Diary saved ${time}`
-        : backupSaved
-          ? "Diary saved to backup only"
-          : "Diary NOT saved — free up space or sign in to cloud";
-      elements.savedState.classList.remove("is-saving");
-      elements.savedState.classList.toggle("is-sync-error", !localSaved && !backupSaved);
-    }
-    queueCloudSave({ silent: true });
-  } catch {
-    if (elements.savedState) {
-      elements.savedState.textContent = "Diary save failed";
-    }
-  }
+  const backupSaved = !corruptLocalStateDetected && upsertDiaryBackup(card, dateKey, entry);
+  const localSaved = saveState({quiet: true});
+  if (!localSaved) setSaveStatus(backupSaved ? "Diary saved to recovery copy only" : "Diary NOT saved - download your writing", "error");
 }
 
 function autosaveEditingDiaryFromForm() {
@@ -7591,6 +7181,7 @@ function upsertDiaryBackup(card, dateKey, entry) {
     cardTitle: card.title || "Diary",
     dateKey,
     entry,
+    restoreId: readRestoreGuard().id || '',
     savedAt: Date.now()
   };
   // Bound the safety net so it can't grow unbounded and eventually exhaust the
@@ -7706,6 +7297,7 @@ function getSideNoteDraft(card, dateKey = getActiveSideNoteDate(card)) {
 }
 
 function updateSideNoteDraft(card, dateKey, text) {
+  card = resolveLiveCard(card);
   normalizeSideNoteCard(card);
   const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
   card.sideNoteDrafts[normalizedDate] = String(text || "");
@@ -7713,6 +7305,7 @@ function updateSideNoteDraft(card, dateKey, text) {
 }
 
 function addSideNote(card, dateKey, text) {
+  card = resolveLiveCard(card);
   const noteText = String(text || "").trim();
   if (!noteText) return;
   const normalizedDate = normalizeDateKey(dateKey) || getActiveSideNoteDate(card);
@@ -7746,25 +7339,7 @@ function moveSideNoteDate(card, direction) {
 }
 
 function persistSideNoteCardImmediately() {
-  try {
-    touchState();
-    syncActiveBoard({ touchBoard: true, updatedAt: state.updatedAt });
-    mergeStoredBoardsIntoState({ preserveActiveBoard: true });
-    const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
-      message: "Side notes save failed locally. Try exporting a backup."
-    });
-    if (localSaved) localStateSource = "stored";
-    if (elements.savedState) {
-      const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      elements.savedState.textContent = localSaved ? `Side notes saved ${time}` : "Side notes save failed";
-      elements.savedState.classList.remove("is-saving");
-    }
-    queueCloudSave({ silent: true });
-  } catch {
-    if (elements.savedState) {
-      elements.savedState.textContent = "Side notes save failed";
-    }
-  }
+  return saveState({quiet:true});
 }
 
 function formatSideNoteTime(timestamp) {
@@ -7966,8 +7541,7 @@ function renderConditionalFields() {
   }
   elements.countdownField.hidden = isRoutine || isContent;
   elements.timerDetailField.classList.toggle("is-visible", !isRoutine && !isContent && ["date", "days"].includes(selectedTimerMode));
-  elements.cardTypeHelp.textContent = TYPE_HELP[type] || TYPE_HELP.daily;
-  renderTypeInsight(type);
+  elements.cardTypeHelp.textContent = (TYPE_DETAILS[type] || TYPE_DETAILS.daily).best;
   if (type === "workout") {
     elements.checklistLabel.textContent = "Workout exercises";
     elements.checklistItems.placeholder =
@@ -8000,45 +7574,69 @@ function renderConditionalFields() {
 
 function renderTypeButtons(activeType = getSelectedFormType()) {
   if (!elements.cardTypeButtons) return;
+  const focusedType = elements.cardTypeButtons.contains(document.activeElement) ? document.activeElement.dataset.type : null;
   const normalizedActiveType = SCORECARD_TYPES.includes(activeType) ? "weekly" : activeType;
-  elements.cardTypeButtons.innerHTML = TYPE_PICKER_GROUPS.map((group) => {
-    const options = group.options.map((option) => {
-      const meta = TYPE_META[option.type] || TYPE_META.single;
-      const isActive = option.type === normalizedActiveType;
-      return `
-        <button type="button" class="type-button ${isActive ? "is-active" : ""}" data-type="${escapeAttribute(option.type)}" role="radio" aria-checked="${isActive ? "true" : "false"}">
-          <span class="type-button-icon">${ICONS[meta.icon] || ICONS.check}</span>
-          <span class="type-button-copy">
-            <strong>${escapeHtml(option.label)}</strong>
-            <small>${escapeHtml(option.hint)}</small>
-          </span>
-        </button>
-      `;
-    }).join("");
-    return `
-      <div class="type-group-label">
-        <strong>${escapeHtml(group.label)}</strong>
-        <small>${escapeHtml(group.description)}</small>
-      </div>
-      ${options}
-    `;
-  }).join("");
+  const featured = FEATURED_TYPE_OPTIONS.map((type) => TYPE_PICKER_OPTIONS.find((option) => option.type === type));
+  const other = TYPE_PICKER_OPTIONS.filter((option) => !FEATURED_TYPE_OPTIONS.includes(option.type));
+  const originalType = state.cards.find((card) => card.id === editingCardId)?.type;
+  const templateType = TEMPLATE_ONLY_TYPES.includes(normalizedActiveType) ? normalizedActiveType : originalType;
+  if (TEMPLATE_ONLY_TYPES.includes(templateType)) {
+    other.unshift({ type: templateType, label: TYPE_META[templateType].label, hint: "Existing template card" });
+  }
+  const query = elements.cardTypeSearch.value.trim().toLocaleLowerCase();
+  const matches = other.filter((option) => `${option.label} ${option.hint} ${TYPE_HELP[option.type] || ""}`.toLocaleLowerCase().includes(query));
+  const markup = (option) => {
+    const meta = TYPE_META[option.type] || TYPE_META.single;
+    const isActive = option.type === normalizedActiveType;
+    return `<button type="button" class="type-button ${isActive ? "is-active" : ""}" data-type="${escapeAttribute(option.type)}" aria-label="${escapeAttribute(option.label)}" role="radio" aria-checked="${isActive}" tabindex="${isActive ? "0" : "-1"}">
+      <span class="type-button-icon" aria-hidden="true">${ICONS[meta.icon] || ICONS.check}</span>
+      <span class="type-button-copy"><strong>${escapeHtml(option.label)}</strong><small>${escapeHtml(option.hint)}</small></span>
+    </button>`;
+  };
+  elements.cardTypeFeatured.innerHTML = featured.map(markup).join("");
+  elements.cardTypeMoreOptions.innerHTML = matches.map(markup).join("");
+  elements.cardTypeMoreCount.textContent = query ? `${matches.length} of ${other.length}` : String(other.length);
+  elements.cardTypeEmpty.hidden = matches.length > 0;
+  const selected = TYPE_PICKER_OPTIONS.find((option) => option.type === normalizedActiveType);
+  elements.cardTypeSelection.textContent = SCORECARD_TYPES.includes(activeType) ? `Scorecard: ${TYPE_META[activeType].label}` : selected?.label || TYPE_META[activeType]?.label || "";
+  // Keep both sections keyboard-reachable even when the selected type is elsewhere.
+  [elements.cardTypeFeatured, elements.cardTypeMoreOptions].forEach((section) => {
+    if (!section.querySelector('[aria-checked="true"]')) section.querySelector("button")?.setAttribute("tabindex", "0");
+  });
   hydrateIcons(elements.cardTypeButtons);
+  if (focusedType) elements.cardTypeButtons.querySelector(`[data-type="${focusedType}"]`)?.focus({ preventScroll: true });
+}
+
+function bindChoiceKeyboard(container, selector) {
+  container.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+    const current = event.target.closest(selector);
+    if (!current) return;
+    const options = [...container.querySelectorAll(selector)].filter((button) => !button.disabled && button.offsetWidth && button.offsetHeight && !button.closest("details:not([open])"));
+    const index = options.indexOf(current);
+    if (index < 0) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : (index + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1) + options.length) % options.length;
+    options[next].click();
+  });
 }
 
 function renderPriorityButtons() {
   if (!elements.priorityButtons) return;
+  const focusedPriority = elements.priorityButtons.contains(document.activeElement) ? document.activeElement.dataset.priority : null;
   const activePriority = getSelectedPriority(elements.cardPriority.value);
+  elements.prioritySelection.textContent = PRIORITY_META[activePriority].label;
   elements.priorityButtons.innerHTML = ["normal", "high", "low"].map((priority) => {
     const meta = PRIORITY_META[priority];
     const isActive = priority === activePriority;
     return `
-      <button type="button" class="${isActive ? "is-active" : ""}" data-priority="${priority}" data-label="${escapeAttribute(meta.label)}" title="${escapeAttribute(meta.label)}" aria-label="${escapeAttribute(meta.label)}" role="radio" aria-checked="${isActive ? "true" : "false"}" style="--priority-swatch:${meta.color}">
+      <button type="button" class="${isActive ? "is-active" : ""}" data-priority="${priority}" data-label="${escapeAttribute(meta.label)}" title="${escapeAttribute(meta.label)}" aria-label="${escapeAttribute(meta.label)}" role="radio" aria-checked="${isActive ? "true" : "false"}" tabindex="${isActive ? "0" : "-1"}" style="--priority-swatch:${meta.color}">
         <span class="priority-dot"></span>
         <span class="sr-only">${escapeHtml(meta.label)}</span>
       </button>
     `;
   }).join("");
+  if (focusedPriority) elements.priorityButtons.querySelector(`[data-priority="${focusedPriority}"]`)?.focus({ preventScroll: true });
 }
 
 function renderPlannerViewModeButtons(activeMode = normalizePlannerViewMode(elements.plannerViewMode.value)) {
@@ -8057,21 +7655,6 @@ function renderPlannerViewModeButtons(activeMode = normalizePlannerViewMode(elem
       </button>
     `;
   }).join("");
-}
-
-function renderTypeInsight(type) {
-  if (!elements.typeInsight) return;
-  const detail = TYPE_DETAILS[type] || TYPE_DETAILS.daily;
-  elements.typeInsight.innerHTML = `
-    <div>
-      <span>Best for</span>
-      <strong>${escapeHtml(detail.best)}</strong>
-    </div>
-    <div>
-      <span>Time logic</span>
-      <strong>${escapeHtml(detail.timing)}</strong>
-    </div>
-  `;
 }
 
 function renderTemplateList() {
@@ -8312,7 +7895,7 @@ function renderReportsModal() {
   });
   elements.reportPrintArea.innerHTML = "";
   const range = getReportRangeMeta();
-  const report = activeReportType === "diary"
+  const report = activeReportType === "progress" ? renderProgressReport(range) : activeReportType === "diary"
     ? renderDiaryReport(range)
     : activeReportType === "sidenote"
       ? renderSideNoteReport(range)
@@ -8951,6 +8534,9 @@ function printCurrentReport() {
 
 function syncModalOpenState() {
   const hasOpenModal =
+    Boolean(document.getElementById("recoveryModal")) ||
+    Boolean(document.getElementById("restoreReviewModal")) ||
+    Boolean(document.getElementById("noteTaskDialog")) ||
     !elements.settingsModal.hidden ||
     !elements.templateModal.hidden ||
     !elements.ideasModal.hidden ||
@@ -8994,12 +8580,12 @@ function getActiveRailSurface() {
 }
 
 function renderRecordsModal() {
-  const records = getArchivedCards().slice().sort((a, b) => Number(b.archivedAt || 0) - Number(a.archivedAt || 0));
+  const records = getArchivedCards().filter(card => !card.plannerSourceOnly).sort((a, b) => Number(b.archivedAt || 0) - Number(a.archivedAt || 0));
   const readyCards = getReadyToArchiveCards();
   populateArchiveFilterControls(records);
   const filteredRecords = getFilteredArchivedCards(records);
   const completed = records.filter((card) => getProgress(card).percent >= 100).length;
-  elements.recordsModalTitle.textContent = "Archived cards";
+  elements.recordsModalTitle.textContent = "Archive";
   elements.recordsModalSummary.textContent =
     readyCards.length || records.length
       ? `${readyCards.length} ready to archive · ${filteredRecords.length}/${records.length} archived shown · ${completed} completed in archive`
@@ -9011,7 +8597,9 @@ function renderRecordsModal() {
   if (filteredRecords.length) {
     elements.recordsModalList.append(renderArchivedSection(filteredRecords, records.length));
   }
-  if (!readyCards.length && !filteredRecords.length) {
+  const archivedTasks = renderArchivedPlannerTasks();
+  if (archivedTasks) elements.recordsModalList.append(archivedTasks);
+  if (!readyCards.length && !filteredRecords.length && !archivedTasks) {
     const empty = document.createElement("div");
     empty.className = "records-empty";
     empty.textContent = records.length ? "No archived cards match these filters." : "No archived cards yet.";
@@ -9444,7 +9032,9 @@ function permanentlyDeleteArchivedCard(id) {
   if (!firstConfirm) return;
   const secondConfirm = window.confirm(`Final confirmation: permanently delete "${title}" from Archive?`);
   if (!secondConfirm) return;
-  records.splice(index, 1);
+  if (!saveCloudRecoveryPoint("before-card-delete")) return;
+  if (card.type === "planner") card.plannerSourceOnly = true;
+  else records.splice(index, 1);
   state.archivedCards = records;
   saveState();
   renderBoardMeta();
@@ -9667,7 +9257,7 @@ function hasDraftInput() {
       elements.plannerViewExcludeMonth.checked ||
       elements.plannerViewShowGuide.checked ||
       normalizeDateKey(elements.diaryDate.value) !== getTodayKey() ||
-      elements.diaryFeeling.value !== "Calm" ||
+      elements.diaryFeeling.value !== "" ||
       normalizeDateKey(elements.cardPlanDate.value) !== getTodayKey() ||
       elements.cardCategory.value !== "General" ||
       elements.cardCategoryCustom.value.trim()
@@ -10620,9 +10210,6 @@ function normalizeRoutineHistory(card) {
 
 function trimRoutineHistory(card) {
   card.history.sort((a, b) => a.date.localeCompare(b.date));
-  if (card.history.length > HISTORY_LIMIT) {
-    card.history = card.history.slice(card.history.length - HISTORY_LIMIT);
-  }
 }
 
 function getMissedRoutineItems(card) {
@@ -10882,7 +10469,7 @@ function syncActiveBoard(options = {}) {
   const index = state.boards.findIndex((board) => board.id === state.activeBoardId);
   if (index < 0) return;
   const previousBoard = state.boards[index];
-  const nextUpdatedAt = options.touchBoard === false
+  const nextUpdatedAt = options.touchBoard !== true
     ? normalizeTimestamp(previousBoard?.updatedAt) || getBoardUpdatedAt(previousBoard) || Date.now()
     : normalizeTimestamp(options.updatedAt) || Date.now();
   state.boards[index] = {
@@ -10899,6 +10486,7 @@ function syncActiveBoard(options = {}) {
 }
 
 function switchBoard(boardId) {
+  try {sessionStorage.setItem("life-os-active-board",boardId);} catch {}
   syncActiveBoard();
   applyBoardToState(state, boardId);
   state.activeFilter = "all";
@@ -10936,6 +10524,8 @@ function deleteCurrentBoard() {
   if (!currentBoard) return;
   const confirmed = window.confirm(`Delete "${currentBoard.name}" and its cards from this browser?`);
   if (!confirmed) return;
+  if (!saveCloudRecoveryPoint("before-board-delete")) return;
+  state.deletedBoardIds = {...(state.deletedBoardIds || {}), [currentBoard.id]: Date.now()};
 
   const currentIndex = state.boards.findIndex((board) => board.id === currentBoard.id);
   state.boards = state.boards.filter((board) => board.id !== currentBoard.id);
@@ -11980,7 +11570,7 @@ function makeCard(options) {
     card.diaryEntries = options.diaryEntries && typeof options.diaryEntries === "object" ? options.diaryEntries : {};
     if (!card.diaryEntries[activeDate]) {
       card.diaryEntries[activeDate] = normalizeDiaryEntry({
-        feeling: options.feeling || "Calm",
+        feeling: options.feeling || "",
         sentence: options.sentence || "",
         thoughts: options.thoughts || "",
         updatedAt: options.sentence || options.thoughts ? Date.now() : 0
@@ -12109,26 +11699,32 @@ function makeCard(options) {
 }
 
 function loadState() {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) {
-    localStateSource = "default";
-    return resetBoardViewState(restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())))));
-  }
+  let stored = "";
   try {
-    localStateSource = "stored";
-    return resetBoardViewState(restoreDiaryBackups(rehydrateState(JSON.parse(stored))));
-  } catch {
-    // Stored data exists but is unreadable. Do NOT silently drop to sample
-    // defaults and let autosave overwrite the cloud copy — quarantine the raw
-    // blob and flag the corrupt load so automatic cloud pushes are blocked.
-    corruptLocalStateDetected = true;
-    try {
-      localStorage.setItem(`${STORAGE_KEY}:corrupt-${Date.now()}`, stored);
-    } catch {
-      // Best effort — if storage is full we still avoid overwriting the cloud below.
+    stored = localStorage.getItem(STORAGE_KEY);
+    const pending = LifeDeviceStore.pending();
+    if (pending.length) {
+      const recovered = LifeDeviceStore.replay(stored ? JSON.parse(stored) : pending[0].entry.base);
+      localStateSource = "stored";
+      if (recovered.conflicts.length) recovered.state.syncConflicts = recovered.conflicts;
+      return resetBoardViewState(restoreDiaryBackups(rehydrateState(recovered.state)));
     }
-    localStateSource = "default";
-    return resetBoardViewState(restoreDiaryBackups(ensureCourseBoard(ensureSampleCards(ensureBoards(cloneDefaultState())))));
+    if (!stored) {
+      localStateSource = "default";
+      return resetBoardViewState(ensureBoards(cloneDefaultState()));
+    }
+    localStateSource = "stored";
+    const parsed = JSON.parse(stored);
+    if (Number(parsed.storageSchemaVersion || 0) < 3 && !localStorage.getItem(PRE_UPGRADE_KEY)) {
+      // If this backup cannot be written, stop before replacing the old format.
+      localStorage.setItem(PRE_UPGRADE_KEY, stored);
+    }
+    return resetBoardViewState(restoreDiaryBackups(rehydrateState(parsed)));
+  } catch {
+    corruptLocalStateDetected = true;
+    if (stored) { try { localStorage.setItem(STORAGE_KEY + ":corrupt-" + Date.now(), stored); } catch {} }
+    localStateSource = "recovery";
+    return resetBoardViewState(ensureBoards(cloneDefaultState()));
   }
 }
 
@@ -12141,7 +11737,8 @@ function resetBoardViewState(nextState) {
   nextState.ui = {
     ...defaultState.ui,
     ...(nextState.ui || {}),
-    categoriesOpen: false
+    categoriesOpen: false,
+    plannerDates: {}
   };
   return nextState;
 }
@@ -12181,12 +11778,15 @@ function rehydrateState(parsed) {
     )
   );
   nextState.updatedAt = backupUpdatedAt || nextState.updatedAt || Date.now();
+  nextState.storageSchemaVersion = 3;
   nextState.updatedBy = nextState.updatedBy || getClientId();
   return nextState;
 }
 
 function restoreDiaryBackups(nextState) {
-  const backups = Object.values(readDiaryBackups());
+  const guard = readRestoreGuard();
+  if (guard.unavailable) return nextState;
+  const backups = Object.values(readDiaryBackups()).filter(backup => !guard.id || backup?.restoreId === guard.id);
   if (!backups.length) return nextState;
   let changed = false;
 
@@ -12229,42 +11829,7 @@ function ensureSampleCards(nextState) {
 }
 
 function ensureCourseBoard(nextState) {
-  if (!Array.isArray(nextState.boards)) return nextState;
-  const lifeOsId = "life-work-operating-board";
-  const removedActiveBoard = nextState.activeBoardId === "ai-starter-course";
-  nextState.boards = nextState.boards.filter((board) => board.id !== "ai-starter-course");
-  const hasLifeOs = nextState.boards.some((board) => board.id === lifeOsId);
-  const needsLifeOs = (Number(nextState.lifeOsBoardVersion) || 0) < LIFE_OS_BOARD_VERSION;
-
-  if (!hasLifeOs) {
-    nextState.boards.push(
-      createBoardRecord({
-        id: lifeOsId,
-        name: "Life & Work Operating Board",
-        visibility: "private",
-        layout: "smart",
-        cards: buildTemplateCards("life-os"),
-        createdAt: Date.now()
-      })
-    );
-  } else if (needsLifeOs) {
-    const lifeOsBoard = nextState.boards.find((board) => board.id === lifeOsId);
-    addMissingTemplateCards(lifeOsBoard, "life-os");
-  }
-
-  const activeBoardExists = nextState.boards.some((board) => board.id === nextState.activeBoardId);
-  if (removedActiveBoard || !activeBoardExists) {
-    applyBoardToState(nextState, nextState.boards.some((board) => board.id === lifeOsId) ? lifeOsId : nextState.boards[0]?.id);
-    nextState.activeFilter = "all";
-    nextState.activeCategory = "all";
-    nextState.activeCategories = [];
-  } else if (nextState.activeBoardId === lifeOsId && (needsLifeOs || !hasLifeOs)) {
-    applyBoardToState(nextState, lifeOsId);
-  }
-
-  nextState.courseBoardVersion = COURSE_BOARD_VERSION;
-  nextState.aiCourseBoardVersion = AI_COURSE_BOARD_VERSION;
-  nextState.lifeOsBoardVersion = LIFE_OS_BOARD_VERSION;
+  // Templates are added only by an explicit user action, never during recovery.
   return nextState;
 }
 
@@ -12416,7 +11981,15 @@ function normalizeBriefSections(card) {
 }
 
 function cloneDefaultState() {
-  return JSON.parse(JSON.stringify(defaultState));
+  const fresh = JSON.parse(JSON.stringify(defaultState));
+  fresh.ui.controlsOpen = false;
+  fresh.ui.recentOpen = false;
+  fresh.cards = [
+    makeCard({type: "planlist", title: "Today's plans", category: "Personal", plannerView: "today", theme: "leaf"}),
+    makeCard({type: "diary", title: "My diary", category: "Personal", theme: "coral"}),
+    makeCard({type: "sidenote", title: "Quick notes", category: "Personal", theme: "tide"})
+  ].map((card, index) => ({...card, order: index}));
+  return fresh;
 }
 
 function getDefaultRecentOpen() {
@@ -12500,111 +12073,24 @@ function readStoredStateSnapshot() {
   }
 }
 
-function mergeBoardRecords(localBoards, incomingBoards, options = {}) {
-  const activeBoardId = options.activeBoardId || state.activeBoardId;
-  const preserveActiveBoard = options.preserveActiveBoard !== false;
-  const incomingById = new Map((incomingBoards || []).map((board) => [board.id, board]));
-  const mergedBoards = [];
-  const seen = new Set();
-
-  (localBoards || []).forEach((localBoard) => {
-    const incomingBoard = incomingById.get(localBoard.id);
-    const keepLocal =
-      (preserveActiveBoard && localBoard.id === activeBoardId) ||
-      !incomingBoard ||
-      getBoardUpdatedAt(localBoard) >= getBoardUpdatedAt(incomingBoard);
-    mergedBoards.push(createBoardRecord(keepLocal ? localBoard : incomingBoard));
-    seen.add(localBoard.id);
-  });
-
-  (incomingBoards || []).forEach((incomingBoard) => {
-    if (seen.has(incomingBoard.id)) return;
-    mergedBoards.push(createBoardRecord(incomingBoard));
-  });
-
-  return mergedBoards;
-}
-
-function mergeStoredBoardsIntoState(options = {}) {
-  const storedState = readStoredStateSnapshot();
-  if (!storedState?.boards?.length) return false;
-  if (!Array.isArray(state.boards) || !state.boards.length) return false;
-
-  state.boards = mergeBoardRecords(state.boards, storedState.boards, {
-    activeBoardId: state.activeBoardId,
-    preserveActiveBoard: options.preserveActiveBoard !== false
-  });
-  state.updatedAt = Math.max(getStateUpdatedAt(state), getStateUpdatedAt(storedState), Date.now());
-  state.updatedBy = getClientId();
-  return true;
-}
-
 function isUserEditingCriticalDraft() {
   return Boolean(
     isProtectedTextEditActive() ||
       editingCardId ||
       editingPlannerTaskKey ||
       plannerTaskEditDraft ||
+      document.querySelector('.conflict-custom:not([hidden])') ||
+      document.getElementById('restoreReviewModal') ||
+      document.getElementById('noteTaskDialog') ||
       (!elements.cardComposerPanel?.hidden && draftTouched)
   );
 }
 
 function applyExternalStorageState(rawValue) {
-  if (applyingExternalStorageUpdate || !rawValue) return;
-  try {
-    applyingExternalStorageUpdate = true;
-    const incomingState = rehydrateState(JSON.parse(rawValue));
-    const activeBoardId = state.activeBoardId;
-    const activeFilter = state.activeFilter || "all";
-    const activeCategories = Array.isArray(state.activeCategories) ? [...state.activeCategories] : [];
-    const focusFilter = state.focusFilter || "all";
-    const searchQuery = state.searchQuery || "";
-    const editingCriticalDraft = isUserEditingCriticalDraft();
-    syncActiveBoard({ touchBoard: false });
-
-    const localActiveBoard = state.boards.find((board) => board.id === activeBoardId);
-    const incomingActiveBoard = incomingState.boards?.find((board) => board.id === activeBoardId);
-    const incomingActiveIsNewer =
-      incomingActiveBoard &&
-      getBoardUpdatedAt(incomingActiveBoard) > getBoardUpdatedAt(localActiveBoard) + CLOUD_CONFLICT_TOLERANCE_MS;
-    const preserveActiveBoard = editingCriticalDraft || !incomingActiveIsNewer;
-
-    state.boards = mergeBoardRecords(state.boards, incomingState.boards || [], {
-      activeBoardId,
-      preserveActiveBoard
-    });
-    state.updatedAt = Math.max(getStateUpdatedAt(state), getStateUpdatedAt(incomingState), Date.now());
-    state.updatedBy = incomingState.updatedBy || getClientId();
-    if (!state.boards.some((board) => board.id === activeBoardId)) {
-      state.activeBoardId = state.boards[0]?.id || activeBoardId;
-    } else {
-      state.activeBoardId = activeBoardId;
-    }
-    if (!preserveActiveBoard) {
-      applyBoardToState(state, activeBoardId);
-    }
-    state = resetBoardViewState(state);
-    state.activeFilter = activeFilter;
-    state.activeCategories = activeCategories;
-    state.focusFilter = focusFilter;
-    state.searchQuery = searchQuery;
-    if (!editingCriticalDraft && !preserveActiveBoard) {
-      resetFormState();
-      render();
-    } else {
-      renderBoardMeta();
-      renderBoardSwitcher();
-    }
-    localStateSource = "stored";
-    if (elements.savedState) {
-      elements.savedState.textContent = preserveActiveBoard ? "Synced other boards" : "Synced here";
-      elements.savedState.classList.remove("is-saving");
-    }
-  } catch {
-    // Ignore malformed storage events so another tab cannot break this tab.
-  } finally {
-    applyingExternalStorageUpdate = false;
-  }
+  if (applyingExternalStorageUpdate || !rawValue || corruptLocalStateDetected) return;
+  // Read the latest shared snapshot and pending edits together under the lock.
+  // A delayed event is a notification, not a snapshot to roll back to.
+  return flushDeviceWrites();
 }
 
 function isLocalDevPage() {
@@ -12636,15 +12122,12 @@ async function getLocalDevSourceSignature() {
 }
 
 function canReloadLocalDevPage() {
-  return !isUserEditingCriticalDraft();
+  return lastLocalSaveOk && !corruptLocalStateDetected && !cloudConflictPending &&
+    !isUserEditingCriticalDraft() && !hasUnsubmittedDraftText();
 }
 
 function markLocalDevReloadPending() {
   localDevReloadPending = true;
-  if (elements.savedState) {
-    elements.savedState.textContent = "Update ready";
-    elements.savedState.classList.remove("is-saving");
-  }
 }
 
 async function checkLocalDevSourceChanges() {
@@ -12696,7 +12179,6 @@ function touchState() {
 
 function getExportSnapshot() {
   syncActiveBoard({ touchBoard: false });
-  mergeStoredBoardsIntoState({ preserveActiveBoard: true });
   return getStateForStorage();
 }
 
@@ -12712,7 +12194,9 @@ function downloadTextFile(filename, content, mimeType) {
   URL.revokeObjectURL(url);
 }
 
-function exportBoardBackup() {
+async function exportBoardBackup() {
+  if (corruptLocalStateDetected) {openRecovery(); return;}
+  await flushDeviceWrites();
   const snapshot = getExportSnapshot();
   const backup = {
     app: "Life OS",
@@ -12724,19 +12208,21 @@ function exportBoardBackup() {
     state: snapshot,
     localRecovery: {
       diaryEntryBackups: readDiaryBackups(),
-      cloudRecoveryPoints: readLocalJsonValue(CLOUD_RECOVERY_KEY, [])
+      cloudRecoveryPoints: readLocalJsonValue(CLOUD_RECOVERY_KEY, []),
+      pendingDeviceWrites: (()=>{try{return LifeDeviceStore.pending().map(item=>item.entry);}catch{return [];}})(),
+      preUpgradeCopy: readLocalJsonValue(PRE_UPGRADE_KEY, null)
     }
   };
   downloadTextFile(`life-os-restore-backup-${getTodayKey()}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
-  elements.savedState.textContent = "Backup ready";
   if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = "Backup ready";
 }
 
-function exportReadableDataArchive() {
+async function exportReadableDataArchive() {
+  if (corruptLocalStateDetected) {openRecovery(); return;}
+  await flushDeviceWrites();
   const snapshot = getExportSnapshot();
   const html = buildReadableDataArchive(snapshot);
   downloadTextFile(`life-os-readable-archive-${getTodayKey()}.html`, html, "text/html;charset=utf-8");
-  elements.savedState.textContent = "Archive ready";
   if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = "Archive ready";
 }
 
@@ -13018,26 +12504,20 @@ function renderReadableSideNotes(card) {
 }
 
 function renderReadablePlanner(card) {
-  const entries = sortDateEntries(Object.entries(card.plannerEntries || {}))
-    .map(([dateKey, rawEntry]) => [dateKey, normalizePlannerEntry(rawEntry)])
-    .filter(([, entry]) => getPlannerNoteLines(entry.note).length);
-  const archived = Array.isArray(card.plannerArchivedTasks) ? card.plannerArchivedTasks.map(normalizePlannerArchivedTask).filter((task) => task.title) : [];
-  if (!entries.length && !archived.length) return `<section class="block"><h5>Planner</h5><p class="text">No planner items saved.</p></section>`;
-  const entryHtml = entries.map(([dateKey, entry]) => `<div class="entry">
-    <div class="entry-head"><strong>${escapeHtml(formatReadableDateKey(dateKey))}</strong><span>${getPlannerNoteLines(entry.note).length} items</span></div>
-    <ul class="clean">${getPlannerNoteLines(entry.note).map((line) => {
-      const itemKey = getPlannerItemKey(line);
-      const doneRecord = normalizePlannerDoneRecord(entry.checkedItems[itemKey]);
-      const originDate = getPlannerEntryCarryoverDate(entry, itemKey, "");
-      const details = [
-        originDate && originDate !== dateKey ? `Original date ${formatReadableDateKey(originDate)}` : "",
-        doneRecord?.completedAt ? `Completed ${formatReadableDateKey(getTodayKey(new Date(doneRecord.completedAt)))}` : ""
-      ].filter(Boolean).join(" · ");
-      return renderReadableItem(line, Boolean(doneRecord), details);
-    }).join("")}</ul>
-  </div>`).join("");
-  const archivedHtml = archived.length ? `<div class="entry"><div class="entry-head"><strong>Archived planner tasks</strong><span>${archived.length} tasks</span></div><ul class="clean">${archived.map((task) => renderReadableItem(task.title, task.wasDone, `${formatReadableDateKey(task.dateKey)} · Archived ${formatRecordDate(task.archivedAt)}`)).join("")}</ul></div>` : "";
-  return `<section class="block"><h5>Planner</h5>${entryHtml}${archivedHtml}</section>`;
+  const tasks = LifePlanner.ensure(card).slice().sort((a,b)=>a.dateKey.localeCompare(b.dateKey) || a.title.localeCompare(b.title));
+  if (!tasks.length) return '<section class="block"><h5>Planner</h5><p>No planner items saved.</p></section>';
+  const dates=[...new Set(tasks.map(task=>task.dateKey))];
+  return '<section class="block"><h5>Planner</h5>'+dates.map(date=>{
+    return '<div class="entry"><div class="entry-head"><strong>'+escapeHtml(formatReadableDateKey(date))+'</strong></div><ul class="clean">'+tasks.filter(task=>task.dateKey===date).map(task=>{
+      const details=[
+        task.done ? (task.completedOn ? 'Completed '+formatReadableDateKey(task.completedOn) : 'Completed (date not recorded)') : 'Unfinished',
+        task.completedAt ? 'Completion time '+formatRecordDateTime(task.completedAt) : '',
+        task.completionRecordedAt ? 'Recorded '+formatRecordDateTime(task.completionRecordedAt) : '',
+        task.deletedAt ? 'Removed (recoverable)' : task.archivedAt ? 'Archived' : ''
+      ].filter(Boolean).join(' · ');
+      return renderReadableItem(task.title,task.done,details);
+    }).join('')+'</ul></div>';
+  }).join('')+'</section>';
 }
 
 function renderReadablePlannerView(card) {
@@ -13046,9 +12526,9 @@ function renderReadablePlannerView(card) {
   return renderReadableKeyValues("Planner-view settings", [
     ["View", view],
     ["Date", formatReadableDateKey(card.plannerViewDate || getTodayKey())],
-    ["Include today", options.includeToday ? "Yes" : "No"],
-    ["Include week", options.includeWeek ? "Yes" : "No"],
-    ["Include month", options.includeMonth ? "Yes" : "No"]
+    ["Include today", !options.excludeToday ? "Yes" : "No"],
+    ["Include week", !options.excludeWeek ? "Yes" : "No"],
+    ["Include month", !options.excludeMonth ? "Yes" : "No"]
   ]);
 }
 
@@ -13248,15 +12728,15 @@ function saveCloudSession(session) {
     writeLocalJson(CLOUD_SESSION_KEY, session, { silent: true });
     if (elements.cloudPassword) elements.cloudPassword.value = "";
   } else {
-    localStorage.removeItem(CLOUD_SESSION_KEY);
+    try {localStorage.removeItem(CLOUD_SESSION_KEY);} catch {}
   }
-  cloudSaveEnabled = Boolean(session?.access_token);
+  cloudSaveEnabled = Boolean(session?.access_token) && !isRestoreSyncPaused();
   renderCloudStatus();
 }
 
 function persistCloudSession() {
   if (!cloudSession) return;
-  localStorage.setItem(CLOUD_SESSION_KEY, JSON.stringify(cloudSession));
+  writeLocalJson(CLOUD_SESSION_KEY, cloudSession, {silent: true});
 }
 
 function setKnownCloudUpdatedAt(updatedAt) {
@@ -13269,18 +12749,14 @@ function getKnownCloudUpdatedAt() {
   return cloudSession?.cloud_updated_at || "";
 }
 
-function saveCloudRecoveryPoint(reason) {
+function saveCloudRecoveryPoint(reason, snapshot = state) {
   try {
-    const existing = JSON.parse(localStorage.getItem(CLOUD_RECOVERY_KEY) || "[]");
-    const recovery = {
-      reason,
-      savedAt: new Date().toISOString(),
-      state: JSON.parse(JSON.stringify(state))
-    };
-    writeLocalJson(CLOUD_RECOVERY_KEY, [recovery, ...existing].slice(0, 5), { silent: true });
-  } catch {
-    // Recovery is best effort only. The main save flow should continue.
-  }
+    const existing = readLocalJsonValue(CLOUD_RECOVERY_KEY, []);
+    const recovery = {id: createId(), reason, savedAt: new Date().toISOString(), state: JSON.parse(JSON.stringify(snapshot))};
+    const saved = writeLocalJson(CLOUD_RECOVERY_KEY, [recovery, ...(Array.isArray(existing) ? existing : [])].slice(0, 5), {silent: true});
+    if (!saved) setSaveStatus("Backup failed - download your data", "error");
+    return saved;
+  } catch { setSaveStatus("Backup failed - download your data", "error"); return false; }
 }
 
 function writeLocalJson(key, value, options = {}) {
@@ -13298,9 +12774,15 @@ function writeLocalJson(key, value, options = {}) {
 
 function renderCloudStatus(message) {
   if (!elements.cloudStatus) return;
+  if (PREVIEW_MODE) {
+    elements.cloudStatus.textContent="Preview";
+    elements.cloudNote.textContent="Local preview. Cloud access is disabled; changes here do not update your live account.";
+    elements.cloudPanel.querySelectorAll("button,input").forEach(node=>node.disabled=true);
+    return;
+  }
   if (message) cloudStatusMessage = message;
   const isSignedIn = Boolean(cloudSession?.access_token);
-  elements.cloudStatus.textContent = isSignedIn ? "Cloud" : "Local";
+  elements.cloudStatus.textContent = isRestoreSyncPaused() ? "Paused" : isSignedIn ? "Cloud" : "Local";
   elements.cloudEmail.value = cloudSession?.user?.email || elements.cloudEmail.value || "";
   elements.cloudPullButton.disabled = !isSignedIn;
   elements.cloudPushButton.disabled = !isSignedIn;
@@ -13316,9 +12798,9 @@ function renderCloudStatus(message) {
     ? `Last local edit: ${formatRecordDateTime(localSavedAt)}. Supabase copy: ${formatRecordDateTime(cloudSavedAt)}.`
     : `Last local edit: ${formatRecordDateTime(localSavedAt)}.`;
   elements.cloudNote.textContent =
-    cloudStatusMessage ||
+    message || (isRestoreSyncPaused() ? 'A backup was restored on this device. Automatic cloud sync is paused, including in other tabs and after reload. Choose Save cloud to review syncing, or Load cloud to return to the cloud copy.' : cloudStatusMessage) ||
     (isSignedIn
-      ? `Signed in as ${cloudSession.user?.email || "your account"}. Auto-save checks timestamps before replacing cloud data. ${savedDetail}`
+      ? `Signed in as ${cloudSession.user?.email || "your account"}. ${savedDetail}`
       : "Local browser storage is active.");
 }
 
@@ -13354,12 +12836,13 @@ function withCloudRedirect(path) {
 function getCloudHeaders(session) {
   return {
     apikey: SUPABASE_CONFIG.anonKey,
-    Authorization: `Bearer ${session?.access_token || SUPABASE_CONFIG.anonKey}`,
+    ...(session?.access_token ? {Authorization: `Bearer ${session.access_token}`} : {}),
     Accept: "application/json"
   };
 }
 
 async function handleCloudAuthRedirect() {
+  if (PREVIEW_MODE) return;
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const query = new URLSearchParams(window.location.search);
   const error = hash.get("error_description") || query.get("error_description");
@@ -13437,7 +12920,7 @@ function normalizeCloudError(message) {
     return CLOUD_TABLE_MISSING_MESSAGE;
   }
   if (/42501|permission denied/i.test(message)) {
-    return "Supabase table exists. Create or sign in to your Life OS login, then save cloud.";
+    return "Access denied. Check the signed-in account and Supabase row-level permissions. No cloud data was changed.";
   }
   if (/JWT|token|expired/i.test(message)) {
     return "Cloud session expired. Sign out, sign in again, then save cloud.";
@@ -13453,19 +12936,19 @@ async function getCloudResponseError(response, fallback) {
 
 async function checkCloudSetup() {
   try {
+    if (PREVIEW_MODE) return;
     renderCloudStatus("Checking Supabase setup...");
     const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?select=owner_id&limit=1`, {
       headers: getCloudHeaders()
     });
     if (!response.ok) {
       const message = await getCloudResponseError(response, "Supabase setup check failed.");
-      if (/table exists|permission denied/i.test(message)) {
-        renderCloudStatus("Supabase table exists. Create or sign in to your Life OS login, then save cloud.");
-        return;
-      }
       throw new Error(message);
     }
-    renderCloudStatus("Supabase setup is reachable. Sign in, then save cloud.");
+    const rows=await response.json();
+    renderCloudStatus(Array.isArray(rows) && rows.length
+      ? "Privacy warning: a signed-out request could read a user row. Review database policies before using cloud sync."
+      : "Connection reached. This check does not verify account-to-account privacy; database policies still need to be audited.");
   } catch (error) {
     renderCloudStatus(normalizeCloudError(error.message || "Supabase setup check failed."));
   }
@@ -13527,36 +13010,14 @@ async function signInToCloud() {
 
 async function syncCloudAfterSignIn() {
   const session = await ensureCloudSession();
-  syncActiveBoard();
-  const cloudRow = await fetchCloudStateRow(session);
-  if (!cloudRow) {
-    renderCloudStatus("No Supabase copy yet. Saving this browser to cloud...");
-    await pushCloudState({ manual: true, replaceCloud: true });
-    return;
+  if (isRestoreSyncPaused()) {renderCloudStatus(); return;}
+  if (corruptLocalStateDetected) {renderCloudStatus("Local recovery is needed. Load your cloud copy to restore."); return;}
+  if (!await flushDeviceWrites()) return;
+  const row = await fetchCloudStateRow(session);
+  if (row && (!state.hasUserChanges || localStateSource === "default")) {
+    await pullCloudState({confirmReplace:false}); return;
   }
-  if (!state.hasUserChanges || localStateSource === "default") {
-    await pullCloudState({ confirmReplace: false });
-    return;
-  }
-  if (doesCloudStateMatchLocal(cloudRow.state)) {
-    setKnownCloudUpdatedAt(cloudRow.updated_at);
-    renderCloudStatus(`Cloud is current. Supabase copy: ${formatRecordDateTime(cloudRow.updated_at)}.`);
-    return;
-  }
-  if (isRemoteNewerThanKnown(cloudRow.updated_at)) {
-    renderCloudStatus("This browser and Supabase both have saved data. Use Load cloud to use Supabase here, or Save cloud if this browser is the copy to keep.");
-    return;
-  }
-  if (isLocalNewerThanCloud(cloudRow)) {
-    renderCloudStatus("This browser has newer changes. Saving this browser to Supabase...");
-    await pushCloudState({ manual: true, replaceCloud: true });
-    return;
-  }
-  if (isCloudNewerThanLocal(cloudRow)) {
-    await pullCloudState({ confirmReplace: false });
-    return;
-  }
-  renderCloudStatus("Cloud and this browser both have changes. Use Load cloud to review Supabase, or Save cloud to keep this browser.");
+  await pushCloudState({manual:true});
 }
 
 function signOutCloud() {
@@ -13565,6 +13026,7 @@ function signOutCloud() {
 }
 
 async function cloudAuthRequest(path, body) {
+  if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   const response = await fetch(`${SUPABASE_CONFIG.url}${path}`, {
     method: "POST",
     headers: {
@@ -13594,6 +13056,7 @@ function normalizeCloudSession(result) {
 }
 
 async function ensureCloudSession() {
+  if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   if (!cloudSession?.access_token) throw new Error("Sign in to cloud sync first.");
   if (!cloudSession.refresh_token || Date.now() < Number(cloudSession.expires_at || 0)) {
     return cloudSession;
@@ -13651,250 +13114,175 @@ function doesCloudStateMatchLocal(cloudState) {
 }
 
 async function getCloudSavePlan(session, options = {}) {
-  const cloudRow = await fetchCloudStateRow(session);
-  if (!cloudRow) {
-    return { allowed: true, expectedUpdatedAt: "" };
+  if(state.syncConflicts?.length)return {allowed:false,conflict:true};
+  const row = await fetchCloudStateRow(session);
+  if (!row) return {allowed:true, expectedUpdatedAt:""};
+  if (!isValidBackup(row.state)) throw new Error("Cloud data is invalid. No data was replaced.");
+  if (doesCloudStateMatchLocal(row.state)) {
+    rememberCloudBase(row.state,session.user.id);
+    setKnownCloudUpdatedAt(row.updated_at);
+    return {allowed:true,noop:true,expectedUpdatedAt:row.updated_at};
   }
-  if (doesCloudStateMatchLocal(cloudRow.state)) {
-    setKnownCloudUpdatedAt(cloudRow.updated_at);
-    return { allowed: true, noop: true, expectedUpdatedAt: cloudRow.updated_at };
+  // The baseline is the payload this tab last synchronized, not a timestamp
+  // refreshed by a different tab. Compare it even when their stamps match.
+  const baselineDigest=cloudMergeBase?.ownerId===session.user.id?await LifeStateMerge.fingerprint(cloudMergeBase.state):'';
+  const baseline = baselineDigest ? LifeStateMerge.reviewedCloudBaseline(rehydrateState(cloudMergeBase.state),state.conflictResolutions,session.user.id,baselineDigest) : null;
+  if (!baseline) {
+    saveCloudRecoveryPoint("cloud-copy-for-review",row.state);
+    cloudConflictPending=true;
+    renderCloudStatus("This device and cloud have different information. Both remain available. Download the current information, then Load cloud to review the other copy.");
+    return {allowed:false,conflict:true};
   }
-  const cloudChangedAfterThisBrowserLoaded = isRemoteNewerThanKnown(cloudRow.updated_at);
-  if (cloudChangedAfterThisBrowserLoaded && !options.replaceCloud) {
-    const message = `Cloud has newer changes from another browser (${formatRecordDate(cloudRow.updated_at)}). Load cloud first, or press Save cloud again and confirm replace.`;
-    if (!options.manual) {
-      renderCloudStatus(message);
-      return { allowed: false, conflict: true };
-    }
-    const confirmed = window.confirm("Cloud has newer changes from another browser. Save this browser anyway and replace the cloud copy?");
-    if (!confirmed) {
-      renderCloudStatus("Cloud save cancelled. Load cloud to review the newer copy first.");
-      return { allowed: false, conflict: true };
-    }
-    saveCloudRecoveryPoint("before-cloud-overwrite");
-    return { allowed: true, expectedUpdatedAt: "", force: true };
+  const merged=LifeStateMerge.merge(baseline,state,rehydrateState(row.state));
+  if (merged.conflicts.length) {
+    const backedUp=saveCloudRecoveryPoint("cloud-conflict",row.state);
+    state.syncConflicts=LifeStateMerge.registerConflicts(merged.conflicts.map(item=>({...item,source:'cloud',ownerId:session.user.id,baseDigest:baselineDigest,recordedAt:Date.now()})),state.conflictResolutions,createId);
+    cloudConflictPending=true;
+    saveState({skipCloud:true,touch:false});
+    await flushDeviceWrites();
+    renderCloudStatus(backedUp?"The same information changed on two devices. Sync is paused. Open Recovery to review the versions; your current records remain on this device.":"Sync is paused, but the recovery copy could not be saved. Download your current writing before continuing.");
+    return {allowed:false,conflict:true};
   }
-  if (options.replaceCloud || isLocalNewerThanCloud(cloudRow)) {
-    if (options.replaceCloud) saveCloudRecoveryPoint("before-cloud-overwrite");
-    return { allowed: true, expectedUpdatedAt: cloudRow.updated_at };
-  }
-  if (!isCloudNewerThanLocal(cloudRow)) {
-    return { allowed: true, expectedUpdatedAt: cloudRow.updated_at };
-  }
-  const message = `Cloud has newer changes from another browser (${formatRecordDate(cloudRow.updated_at)}). Load cloud first, or press Save cloud again and confirm replace.`;
-  if (!options.manual) {
-    renderCloudStatus(message);
-    return { allowed: false, conflict: true };
-  }
-  const confirmed = window.confirm("Cloud has newer changes from another browser. Save this browser anyway and replace the cloud copy?");
-  if (!confirmed) {
-    renderCloudStatus("Cloud save cancelled. Load cloud to review the newer copy first.");
-    return { allowed: false, conflict: true };
-  }
-  saveCloudRecoveryPoint("before-cloud-overwrite");
-  return { allowed: true, expectedUpdatedAt: "", force: true };
+  state.boards=merged.boards.map(createBoardRecord);
+  state.deletedBoardIds=merged.deletedBoardIds;
+  if (!state.boards.some(board=>board.id===state.activeBoardId)) applyBoardToState(state,state.boards[0]?.id);
+  else reconcileActiveBoard();
+  cloudConflictPending=false;
+  state.syncConflicts=[];
+  saveState({skipCloud:true,touch:false});
+  if (!await flushDeviceWrites()) return {allowed:false};
+  if (!isUserEditingCriticalDraft()) renderCardsOnly();
+  return {allowed:true,expectedUpdatedAt:row.updated_at};
 }
 
 async function writeCloudState(session, payload, savePlan) {
-  const expectedUpdatedAt = savePlan.expectedUpdatedAt;
-  const isConditionalUpdate = expectedUpdatedAt && !savePlan.force;
-  const url = isConditionalUpdate
-    ? `${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&updated_at=eq.${encodeURIComponent(expectedUpdatedAt)}&select=updated_at`
-    : `${SUPABASE_CONFIG.url}/rest/v1/user_states?on_conflict=owner_id&select=updated_at`;
+  const expected = savePlan.expectedUpdatedAt;
+  const url = expected
+    ? SUPABASE_CONFIG.url + "/rest/v1/user_states?owner_id=eq." + session.user.id + "&updated_at=eq." + encodeURIComponent(expected) + "&select=updated_at"
+    : SUPABASE_CONFIG.url + "/rest/v1/user_states?select=updated_at";
+  const nextStamp = new Date(Math.max(Date.now(), (new Date(expected).getTime() || 0) + 1)).toISOString();
   const response = await fetch(url, {
-    method: isConditionalUpdate ? "PATCH" : "POST",
-    headers: {
-      ...getCloudHeaders(session),
-      "Content-Type": "application/json",
-      Prefer: isConditionalUpdate ? "return=representation" : "resolution=merge-duplicates,return=representation"
-    },
-    body: JSON.stringify(isConditionalUpdate ? { state: payload.state } : payload)
+    method: expected ? "PATCH" : "POST",
+    headers: {...getCloudHeaders(session), "Content-Type": "application/json", Prefer: "return=representation"},
+    body: JSON.stringify(expected ? {state: payload.state, updated_at: nextStamp} : {...payload, updated_at: nextStamp})
   });
-  if (!response.ok) {
-    throw new Error(await getCloudResponseError(response, "Cloud save failed."));
-  }
-  const savedRows = await response.json().catch(() => []);
-  if (isConditionalUpdate && !savedRows.length) {
-    throw new Error("Cloud has newer changes from another browser. Load cloud before saving again.");
-  }
-  return savedRows[0]?.updated_at || new Date().toISOString();
+  if (!response.ok) throw new Error(await getCloudResponseError(response, "Cloud save failed."));
+  const rows = await response.json();
+  if (!Array.isArray(rows) || !rows[0]?.updated_at) throw new Error("The cloud changed during saving. Your local edit is kept. Retry sync.");
+  return rows[0].updated_at;
 }
 
 async function pushCloudState(options = {}) {
-  if (!cloudSaveEnabled && !options.manual) return;
-  // Never auto-overwrite the cloud from a corrupt/safe-mode local load. Only an
-  // explicit manual Save cloud (options.manual) is allowed to proceed.
-  if (corruptLocalStateDetected && !options.manual) return;
+  if (PREVIEW_MODE || ((!cloudSaveEnabled || isRestoreSyncPaused()) && !options.manual) || corruptLocalStateDetected) return;
+  if (cloudPushInFlight) {cloudPushAgain = true; return;}
+  cloudPushInFlight = true;
   try {
-    const session = await ensureCloudSession();
-    syncActiveBoard();
-    const savePlan = await getCloudSavePlan(session, options);
-    if (!savePlan.allowed) {
-      if (savePlan.conflict && elements.savedState) {
-        elements.savedState.textContent = "Saved here — cloud has newer changes";
-        elements.savedState.classList.remove("is-saving");
-        elements.savedState.classList.add("is-sync-error");
+    await LifeDeviceStore.cloudLocked(async () => {
+      if (isRestoreSyncPaused()) {
+        if (!options.manual) return;
+        if (readRestoreGuard().unavailable) throw new Error('The restore safety setting could not be read. Cloud saving remains paused.');
+        if (!window.confirm('Sync the restored device copy? Cloud differences will be checked first. Conflicting edits will still need review.')) return;
       }
-      return;
-    }
-    if (savePlan.noop) {
-      if (elements.savedState) {
-        elements.savedState.textContent = "Saved here + cloud";
-        elements.savedState.classList.remove("is-saving", "is-sync-error");
+      if (!await flushDeviceWrites()) return;
+      const session = await ensureCloudSession();
+      if (state.cloudOwnerId && state.cloudOwnerId !== session.user.id) throw new Error("This local copy belongs to another account. Load your cloud copy before saving.");
+      syncActiveBoard({touchBoard: false});
+      const plan = await getCloudSavePlan(session, options);
+      if (!plan.allowed) {setSaveStatus("Changes need review", "error"); return;}
+      if (plan.noop) {
+        if (options.manual && !clearRestoreSyncPause()) throw new Error('Cloud is current, but the restore safety setting could not be updated. Automatic sync remains paused.');
+        cloudSaveEnabled = !isRestoreSyncPaused();
+        setSaveStatus(lastLocalSaveOk ? "Saved to cloud" : "Cloud saved - device storage full", lastLocalSaveOk ? "saved" : "error"); renderCloudStatus(); return;
       }
-      if (!options.silent) {
-        renderCloudStatus(`Supabase is already current ${formatRecordDateTime(savePlan.expectedUpdatedAt)}.`);
-      }
-      return;
-    }
-    const payload = {
-      owner_id: session.user.id,
-      state: getStateForStorage()
-    };
-    const cloudUpdatedAt = await writeCloudState(session, payload, savePlan);
-    setKnownCloudUpdatedAt(cloudUpdatedAt);
-    if (elements.savedState) {
-      elements.savedState.textContent = "Saved here + cloud";
-      elements.savedState.classList.remove("is-saving", "is-sync-error");
-    }
-    const savedMessage = `Saved to Supabase ${formatRecordDateTime(cloudUpdatedAt)}.`;
-    if (!options.silent) {
-      renderCloudStatus(savedMessage);
-    } else {
-      cloudStatusMessage = savedMessage;
-      renderCloudStatus();
-    }
+      state.cloudOwnerId = session.user.id;
+      saveState({skipCloud:true,touch:false});
+      if (!await flushDeviceWrites() || cloudConflictPending) return;
+      const snapshot = getStateForStorage();
+      const cloudUpdatedAt = await writeCloudState(session, {owner_id: session.user.id, state: snapshot}, plan);
+      setKnownCloudUpdatedAt(cloudUpdatedAt);
+      rememberCloudBase(snapshot, session.user.id);
+      if (options.manual && !clearRestoreSyncPause()) throw new Error('The cloud save succeeded, but the restore safety setting could not be updated. Automatic sync remains paused.');
+      cloudSaveEnabled = !isRestoreSyncPaused();
+      cloudConflictPending = false;
+      const changedDuringSave = !LifeStateMerge.equal(snapshot, getStateForStorage());
+      setSaveStatus(changedDuringSave ? "Saving latest changes" : lastLocalSaveOk ? "Saved to cloud" : "Cloud saved - device storage full", lastLocalSaveOk ? "saved" : "error");
+      renderCloudStatus("Cloud saved " + formatRecordDateTime(cloudUpdatedAt));
+      if (changedDuringSave) cloudPushAgain = true;
+    });
   } catch (error) {
-    // Surface cloud failures on the main indicator, not only inside Settings —
-    // otherwise the label stays "syncing" forever and the user trusts a sync
-    // that never happened (then loses data on a device switch).
-    if (elements.savedState) {
-      elements.savedState.textContent = "Saved here — cloud sync failed";
-      elements.savedState.classList.remove("is-saving");
-      elements.savedState.classList.add("is-sync-error");
-    }
+    setSaveStatus(lastLocalSaveOk ? "Saved on device - sync paused" : "Not saved - export now", "error");
     renderCloudStatus(normalizeCloudError(error.message || "Cloud save failed."));
+  } finally {
+    cloudPushInFlight = false;
+    if (cloudPushAgain) {cloudPushAgain = false; window.clearTimeout(cloudSaveTimer); cloudSaveTimer = window.setTimeout(() => pushCloudState({silent: true}), CLOUD_SAVE_DEBOUNCE_MS);}
   }
 }
 
 async function pullCloudState(options = {}) {
   try {
+    if (!corruptLocalStateDetected && !await flushDeviceWrites()) return;
+    const expected = restoreComparable(localStorage.getItem(STORAGE_KEY));
     const session = await ensureCloudSession();
-    const cloudRow = await fetchCloudStateRow(session);
-    if (!cloudRow) {
-      if (options.silentIfEmpty) {
-        await pushCloudState({ manual: true });
-      } else {
-        renderCloudStatus("No cloud board yet. Use Save cloud first.");
-      }
-      return;
-    }
-    if (options.confirmReplace) {
-      const loadMessage = isLocalNewerThanCloud(cloudRow)
-        ? "Supabase looks older than this browser. Load it and replace the newer local board view?"
-        : "Load Supabase data into this browser? This replaces the local board view.";
-      const confirmed = window.confirm(loadMessage);
-      if (!confirmed) return;
-    }
-    saveCloudRecoveryPoint("before-cloud-load");
-    state = rehydrateState(cloudRow.state);
-    setKnownCloudUpdatedAt(cloudRow.updated_at);
-    resetFormState();
-    render();
-    saveState({ skipCloud: true, touch: false, skipMerge: true });
-    localStateSource = "stored";
-    renderCloudStatus(`Loaded from Supabase ${formatRecordDate(cloudRow.updated_at)}.`);
-  } catch (error) {
-    renderCloudStatus(normalizeCloudError(error.message || "Cloud load failed."));
-  }
+    const row = await fetchCloudStateRow(session);
+    if (!row) {renderCloudStatus("No cloud copy yet. Save this device to begin syncing."); return;}
+    if (!isValidBackup(row.state)) throw new Error("Cloud data could not be validated. Nothing was replaced.");
+    if (options.confirmReplace && !window.confirm("Load the cloud copy on this device? The current copy will be kept in Recovery.")) return;
+    const restored = rehydrateState(row.state);
+    restored.cloudOwnerId = session.user.id;
+    await applyReviewedRestore(restored, expected, 'cloud');
+    setKnownCloudUpdatedAt(row.updated_at);
+    rememberCloudBase(row.state, session.user.id);
+    setSaveStatus("Saved to cloud", "saved");
+    renderCloudStatus("Cloud loaded " + formatRecordDateTime(row.updated_at));
+  } catch (error) {setSaveStatus("Cloud could not be loaded", "error"); renderCloudStatus(normalizeCloudError(error.message || "Cloud load failed."));}
 }
 
 function queueCloudSave(options = {}) {
-  if (!cloudSaveEnabled || !cloudSession?.access_token) return;
+  if (!cloudSaveEnabled || isRestoreSyncPaused() || !cloudSession?.access_token || corruptLocalStateDetected || cloudConflictPending) return;
   window.clearTimeout(cloudSaveTimer);
-  if (elements.savedState && !elements.savedState.textContent.startsWith("Diary saved") && !elements.savedState.textContent.startsWith("Side notes saved")) {
-    elements.savedState.textContent = "Saved here, syncing";
-  }
-  if (options.immediate) {
-    pushCloudState({ silent: options.silent });
-    return;
-  }
-  cloudSaveTimer = window.setTimeout(() => {
-    pushCloudState({ silent: options.silent });
-  }, CLOUD_SAVE_DEBOUNCE_MS);
+  if (!options.silent) setSaveStatus(lastLocalSaveOk ? "Saved on device, syncing" : "Saving to cloud", "saving");
+  if (options.immediate) {pushCloudState({silent: options.silent}); return;}
+  cloudSaveTimer = window.setTimeout(() => pushCloudState({silent: options.silent}), CLOUD_SAVE_DEBOUNCE_MS);
 }
 
 async function importBoardBackup(file) {
-  if (!file) return;
+  if (!file) return false;
   try {
-    const text = await file.text();
-    const parsed = JSON.parse(text);
-    const payload = parsed && parsed.state && typeof parsed.state === "object" ? parsed.state : parsed;
-    const looksLikeBoard =
-      payload && typeof payload === "object" &&
-      (Array.isArray(payload.cards) || Array.isArray(payload.boards));
-    if (!looksLikeBoard) {
-      window.alert("This file does not look like a Life OS backup, so nothing was changed.");
-      return;
-    }
-    const proceed = window.confirm(
-      "Import this backup?\n\nIt replaces everything in this browser and, once synced, the cloud copy. This cannot be undone."
-    );
-    if (!proceed) return;
-    saveCloudRecoveryPoint("before-import");
-    state = rehydrateState(parsed);
-    resetFormState();
-    render();
-    saveState();
-    window.alert("Backup imported into this browser.");
-  } catch {
-    window.alert("This backup file could not be imported.");
-  } finally {
-    elements.importDataFile.value = "";
-  }
+    if (hasUnfinishedRestoreEditor()) throw new Error('Finish or close the current editor before restoring. Your unfinished writing has not been replaced.');
+    if (!corruptLocalStateDetected && !await flushDeviceWrites()) return;
+    if (file.size > 25000000) throw new Error("The backup is larger than 25 MB. Split large media from the backup before importing.");
+    const parsed = JSON.parse(await file.text());
+    if (!isValidBackup(parsed)) throw new Error("This backup has invalid or duplicate records, or unsupported card types. Nothing was replaced. Keep the original file for review.");
+    const restored = rehydrateState(parsed);
+    return await reviewBackupRestore(restored, file.name);
+  } catch (error) {window.alert(error.message || "This backup could not be restored."); return false;}
+  finally {elements.importDataFile.value = "";}
 }
 
 function saveState(options = {}) {
-  if (applyingExternalStorageUpdate) return;
+  if (applyingExternalStorageUpdate) return false;
+  if (corruptLocalStateDetected) {setSaveStatus("Recovery needed - original protected", "error"); return false;}
   const touched = options.touch !== false;
-  if (touched) {
-    touchState();
-  }
-  syncActiveBoard({ touchBoard: touched, updatedAt: state.updatedAt });
-  // skipMerge: persist the current state verbatim without re-merging the stale
-  // pre-existing local boards back in. Used by "Load cloud" so a full cloud
-  // replace isn't silently contaminated by locally-newer non-active boards.
-  if (!options.skipMerge) mergeStoredBoardsIntoState({ preserveActiveBoard: true });
-  const localSaved = writeLocalJson(STORAGE_KEY, getStateForStorage(), {
-    silent: options.quiet,
-    message: "Local save failed. Remove large images or export a backup."
-  });
-  if (localSaved) localStateSource = "stored";
-  if (!options.quiet) {
-    elements.savedState.textContent = localSaved
-      ? cloudSaveEnabled
-        ? "Saved here, syncing"
-        : "Saved here"
-      : "Local save failed";
-    elements.savedState.classList.remove("is-saving");
-  }
-  if (!options.skipCloud && touched) {
-    queueCloudSave({ silent: options.quiet });
-  }
+  if (touched) touchState();
+  syncActiveBoard({touchBoard: touched, updatedAt: state.updatedAt});
+  const snapshot = getStateForStorage();
+  try {
+    LifeDeviceStore.stage(localMergeBase, snapshot);
+    localMergeBase = snapshot;
+    lastLocalSaveOk = true;
+    localStateSource = "stored";
+    flushDeviceWrites();
+  } catch {lastLocalSaveOk = false;}
+  if (cloudConflictPending) setSaveStatus("Changes need review", "error");
+  else if (!lastLocalSaveOk) setSaveStatus("Not saved on device - export now", "error");
+  else if (isRestoreSyncPaused()) setSaveStatus('Saved on device - cloud paused', 'local');
+  else if (touched || !options.quiet) setSaveStatus(cloudSaveEnabled ? "Saved on device, syncing" : "Saved on device", cloudSaveEnabled ? "saving" : "local");
+  if (!options.skipCloud && touched && !cloudConflictPending) queueCloudSave({silent: options.quiet});
+  return lastLocalSaveOk;
 }
 
 function persistLocalDraftState() {
-  try {
-    if (applyingExternalStorageUpdate) return;
-    syncActiveBoard({ touchBoard: true, updatedAt: Date.now() });
-    touchState();
-    mergeStoredBoardsIntoState({ preserveActiveBoard: true });
-    if (writeLocalJson(STORAGE_KEY, getStateForStorage(), { silent: true })) {
-      localStateSource = "stored";
-    }
-  } catch {
-    // Draft persistence is best-effort so typing never gets interrupted by storage errors.
-  }
+  return saveState({quiet: true});
 }
 
 function hydrateIcons(root = document) {

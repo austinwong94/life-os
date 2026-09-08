@@ -1,0 +1,61 @@
+name: Life OS regression tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm test
+      - name: Start isolated preview
+        run: npm start > /tmp/life-os-server.log 2>&1 &
+      - run: npm run test:browser
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:sync
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:features
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:usability
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:catalogue
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:capture
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:planner-review
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:health-review
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:responsive
+        env:
+          TEST_OUTPUT: test-results
+      - name: Check WebKit phone and portrait layouts
+        run: npm run test:responsive
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/webkit
+      - run: npm run test:conflicts
+        env:
+          TEST_OUTPUT: test-results
+      - run: npm run test:restore
+        env:
+          TEST_OUTPUT: test-results
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-regression-results
+          path: test-results/

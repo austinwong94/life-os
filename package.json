@@ -1,0 +1,22 @@
+{
+  "name": "life-os",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "start": "node dev-server.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "test:browser": "node tests/browser.cjs",
+    "test:sync": "node tests/sync.cjs",
+    "test:features": "node tests/features.cjs",
+    "test:usability": "node tests/usability.cjs",
+    "test:catalogue": "node tests/catalogue.cjs",
+    "test:capture": "node tests/capture.cjs",
+    "test:planner-review": "node tests/planner-review.cjs",
+    "test:health-review": "node tests/health-review.cjs",
+    "test:responsive": "node tests/responsive.cjs",
+    "test:conflicts": "node tests/conflicts.cjs",
+    "test:restore": "node tests/restore.cjs"
+  },
+  "devDependencies": {"playwright": "1.62.1"},
+  "engines": {"node": ">=22"}
+}

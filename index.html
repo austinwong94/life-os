@@ -12,6 +12,7 @@
     <link rel="icon" href="data:," />
     <script src="dev-redirect.js?v=20260703-secfix"></script>
     <link rel="stylesheet" href="styles.css?v=20260703-secfix" />
+    <link rel="stylesheet" href="experience.css?v=20260908" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -104,6 +105,7 @@
           <p class="data-note">Use the readable archive when you want to review your saved information. Use the JSON backup only when you need to restore the app later.</p>
           <div class="safety-summary" id="dataSafetySummary" aria-live="polite"></div>
           <div class="safety-download-actions">
+            <button type="button" class="template-open-button" id="recoveryButton"><span data-icon="history"></span><span>Recovery copies</span></button>
             <button type="button" class="template-open-button data-download-button" id="dataSafetyReadableButton">
               <span data-icon="download"></span>
               <span>Readable archive</span>
@@ -175,15 +177,15 @@
                   <option value="Custom">Custom</option>
                 </select>
               </label>
-              <label class="field">
-                <span>Priority</span>
+              <div class="field">
+                <span class="field-selection-label"><span>Priority</span><output id="prioritySelection" aria-live="polite">Normal</output></span>
                 <select id="cardPriority" hidden aria-hidden="true">
                   <option value="normal">Normal</option>
                   <option value="high">Important</option>
                   <option value="low">Secondary</option>
                 </select>
                 <div class="priority-buttons" id="priorityButtons" role="radiogroup" aria-label="Priority"></div>
-              </label>
+              </div>
             </div>
             <label class="field category-custom" id="categoryCustomField">
               <span>Custom area</span>
@@ -191,13 +193,13 @@
             </label>
             <div>
               <div class="field type-picker-field">
-                <span>Type</span>
+                <span class="field-selection-label"><span>Type</span><output id="cardTypeSelection" aria-live="polite"></output></span>
                 <select id="cardType" hidden aria-hidden="true">
                   <option value="planner">Planner</option>
                   <option value="planlist">Planner-view</option>
-                  <option value="daily" selected>To-do list</option>
+                  <option value="daily">To-do list</option>
                   <option value="diary">Daily diary</option>
-                  <option value="sidenote">Side notes</option>
+                  <option value="sidenote" selected>Side notes</option>
                   <option value="brief">Strategy brief</option>
                   <option value="quote">Motivation</option>
                   <option value="video">Video embed</option>
@@ -211,10 +213,20 @@
                   <option value="checklist">Project checklist</option>
                   <option value="weekly">Scorecard grid</option>
                 </select>
-                <div class="type-buttons" id="cardTypeButtons" role="radiogroup" aria-label="Card type"></div>
+                <div class="type-buttons" id="cardTypeButtons" role="radiogroup" aria-label="Card type">
+                  <div class="type-choice-grid" id="cardTypeFeatured"></div>
+                  <details class="type-more" id="cardTypeMore">
+                    <summary>More types <span id="cardTypeMoreCount"></span></summary>
+                    <label class="field type-search-field">
+                      <span>Find another type</span>
+                      <input id="cardTypeSearch" type="search" placeholder="Search other types" autocomplete="off" />
+                    </label>
+                    <div class="type-choice-grid" id="cardTypeMoreOptions"></div>
+                    <p class="type-empty" id="cardTypeEmpty" role="status" hidden>No matching types.</p>
+                  </details>
+                </div>
                 <p id="cardTypeHelp" class="type-help"></p>
               </div>
-              <div class="type-insight" id="typeInsight" aria-live="polite"></div>
               <input id="cardSize" type="hidden" value="standard" />
             </div>
             <div class="planner-input" id="plannerField">
@@ -226,7 +238,7 @@
               </div>
               <label class="field">
                 <span>Plan items</span>
-                <textarea id="plannerNote" maxlength="520" rows="4" placeholder="- Write a task, reminder, meeting, trip idea or future plan"></textarea>
+                <textarea id="plannerNote" rows="4" placeholder="- Write a task, reminder, meeting, trip idea or future plan"></textarea>
               </label>
             </div>
             <div class="planner-view-input" id="plannerViewField">
@@ -364,9 +376,10 @@
                 <label class="field">
                   <span>Feeling</span>
                   <select id="diaryFeeling">
+                    <option value="" selected>Not recorded</option>
                     <option value="Happy">Happy</option>
                     <option value="Okay">Okay</option>
-                    <option value="Calm" selected>Calm</option>
+                    <option value="Calm">Calm</option>
                     <option value="Sad">Sad</option>
                     <option value="Angry">Angry</option>
                     <option value="Anxious">Anxious</option>
@@ -455,10 +468,12 @@
             </div>
             <div class="board-title-row">
               <h2 id="boardTitle" class="sr-only">My Life OS</h2>
-              <label class="board-title-picker">
-                <span class="sr-only">Switch board</span>
-                <select id="boardQuickSelect" aria-label="Switch board"></select>
-              </label>
+              <div class="board-title-picker">
+                <button type="button" id="boardSwitcherButton" aria-label="Switch board" aria-haspopup="menu" aria-expanded="false" aria-controls="boardSwitcherMenu">
+                  <span id="boardSwitcherName">My Life OS</span><span class="board-switcher-caret" data-icon="chevron-right" aria-hidden="true"></span>
+                </button>
+                <select id="boardQuickSelect" aria-label="Switch board" hidden tabindex="-1"></select>
+              </div>
             </div>
           </div>
           <div class="stats" aria-label="Board stats">
@@ -474,12 +489,21 @@
               <span id="completionRate">0%</span>
               <p>Complete</p>
             </div>
-            <button type="button" class="stat-toggle" id="topControlsToggleButton" aria-pressed="false">
+            <button type="button" class="stat-toggle" id="topControlsToggleButton" aria-expanded="false" aria-controls="todayFocusStrip boardToolbar">
               <span data-icon="sliders"></span>
-              <p>Controls</p>
+              <p>Filters</p>
             </button>
           </div>
         </header>
+
+        <nav class="workspace-navigation" aria-label="Board views">
+          <div class="workspace-modes" role="group" aria-label="Workspace view">
+            <button type="button" id="boardModeButton" aria-pressed="true">My board</button>
+            <button type="button" id="todayModeButton" aria-pressed="false">Today</button>
+          </div>
+          <button type="button" class="review-link" id="weeklyReviewButton"><span data-icon="bar-chart"></span><span>Review</span></button>
+          <button type="button" id="headerSaveStatus" class="save-indicator" aria-live="polite">Checking save</button>
+        </nav>
 
         <section class="today-focus" id="todayFocusStrip" aria-label="Today focus">
           <button type="button" class="focus-tile" data-focus="today">
@@ -504,7 +528,7 @@
           </button>
         </section>
 
-        <section class="board-toolbar" aria-label="Board actions">
+        <section class="board-toolbar" id="boardToolbar" aria-label="Board actions">
           <div class="filter-strip">
             <div class="view-pills">
               <button type="button" class="pill is-active" data-filter="all">All</button>
@@ -814,6 +838,7 @@
         <div class="reports-modal-body">
           <div class="report-toolbar">
             <div class="report-tabs" role="tablist" aria-label="Report type">
+              <button type="button" data-report-type="progress">Life review</button>
               <button type="button" data-report-type="fitness" class="is-active">Fitness</button>
               <button type="button" data-report-type="food">Nutrition</button>
               <button type="button" data-report-type="diary">Daily diary</button>
@@ -938,6 +963,12 @@
       <button type="button" class="undo-toast-close" id="undoToastCloseButton" aria-label="Close undo message">x</button>
     </div>
 
-    <script src="app.js?v=20260703-secfix"></script>
+    <script src="planner-store.js?v=20260908"></script>
+    <script src="state-merge.js?v=20260908"></script>
+    <script src="device-store.js?v=20260908"></script>
+    <script src="restore-review.js?v=20260908"></script>
+    <script src="note-actions.js?v=20260908"></script>
+    <script src="experience.js?v=20260908"></script>
+    <script src="app.js?v=20260908"></script>
   </body>
 </html>
