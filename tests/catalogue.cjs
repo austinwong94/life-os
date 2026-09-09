@@ -162,7 +162,7 @@ const results = [];
   await run('Composer labels and diary feelings fit narrow screens, with reachable save controls', async page => {
     for (const width of [320,390,768,1440]) {
       await page.setViewportSize({width,height:900}); await page.waitForTimeout(350);
-      assert.equal(await page.locator('.mood-picker button').evaluateAll(buttons => buttons.every(e => {const r=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect();return r.width>=44 && r.height>=44 && r.left>=p.left-1 && r.right<=p.right+1;})), true);
+      assert.equal(await page.locator('.mood-picker button').evaluateAll(buttons => buttons.length===7 && buttons.every(e => {const r=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect(),first=buttons[0].getBoundingClientRect();return r.width>=32 && r.width<=45 && r.height===44 && Math.abs(r.top-first.top)<1 && r.left>=p.left-1 && r.right<=p.right+1;})), true);
       await page.locator('#railAddButton').click();
       const failures = await page.locator('.type-button-copy strong,.type-button-copy small').evaluateAll(labels => labels.filter(e => e.getBoundingClientRect().width && e.scrollWidth>e.clientWidth+1).map(e => e.textContent));
       assert.deepEqual(failures, []);

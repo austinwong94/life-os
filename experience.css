@@ -209,8 +209,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .priority-buttons button { min-height: 44px; border-radius: 6px; }
 .diary-feeling-label { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; line-height: 1.5; font-weight: 500; }
 .diary-feeling-selection { color: #53675b; }
-.mood-picker { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
-.mood-picker button { min-height: 44px; min-width: 44px; height: 44px; border-radius: 6px; font-size: 22px; }
+/* Keep every feeling visible, even in a narrow board column. Cap the row
+   width so wide cards do not turn the seven icons into oversized tiles. */
+.mood-picker { width: 100%; max-width: 320px; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.mood-picker button { width: 100%; min-width: 0; min-height: 44px; height: 44px; padding: 0; border-radius: 6px; font-size: 20px; }
 /* Card internals respond to their column width, including narrow desktop columns. */
 .type-food, .type-fitness, .type-diary { container-type: inline-size; }
 .food-summary-panel, .food-add-panel, .fitness-section { border: 0; border-radius: 0; background: transparent; padding: 0; }
@@ -269,7 +271,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .fitness-exercise-row { grid-template-columns: repeat(4, minmax(0, 1fr)) 44px; }
 .fitness-exercise-row .fitness-field:first-child { grid-column: 1 / -1; }
 @container (max-width: 440px) {
-  .mood-picker { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .food-macro-grid, .food-meal-summary, .food-target-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .food-target-grid .food-field:first-child { grid-column: 1 / -1; }
   .fitness-exercise-row { grid-template-columns: repeat(2, minmax(0, 1fr)) 44px; align-items: end; }

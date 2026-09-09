@@ -51,7 +51,9 @@ fs.mkdirSync(out,{recursive:true});const results=[];
    const compose=await page.locator('.side-note-compose').evaluate(e=>{const input=e.querySelector('textarea').getBoundingClientRect(),button=e.querySelector('button').getBoundingClientRect();return {width:e.clientWidth,inputWidth:input.width,below:button.top>=input.bottom,height:button.height};});
    assert.ok(compose.inputWidth>=compose.width-2&&compose.below&&compose.height>=44,JSON.stringify(compose));
    assert.ok(await page.locator('.diary-nav strong,.diary-nav span').evaluateAll(nodes=>nodes.every(e=>e.scrollWidth<=e.clientWidth+1)));
-   assert.equal(await page.locator('.mood-picker button').count(),7);
+   const feelings=await page.locator('.mood-picker button').evaluateAll(buttons=>buttons.map(e=>{const r=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect();return {top:r.top,width:r.width,height:r.height,inside:r.left>=p.left&&r.right<=p.right+1};}));
+   assert.equal(feelings.length,7);
+   assert.ok(feelings.every(r=>Math.abs(r.top-feelings[0].top)<1&&r.width>=32&&r.width<=45&&r.height===44&&r.inside),JSON.stringify({width,feelings}));
    assert.ok(await page.locator('.side-note-actions .card-menu-toggle svg').evaluate(e=>{const r=e.getBoundingClientRect(),button=e.parentElement.getBoundingClientRect();return r.width>=18&&r.height>=18&&r.left>=button.left&&r.right<=button.right&&r.top>=button.top&&r.bottom<=button.bottom;}));
    const add=page.locator('.planner-linked-add-button');await add.scrollIntoViewIfNeeded();
    assert.ok(await add.evaluate(e=>{const r=e.getBoundingClientRect();return r.width>=44&&r.height>=44&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));
@@ -64,6 +66,35 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   await page.reload();await page.locator('#todayModeButton').click();
   assert.equal(await page.locator('.diary-thoughts').inputValue(),'I took a short walk today.\nIt helped to make a little space for myself.');
   assert.equal(await page.locator('.side-note-text').innerText(),'An idea to come back to: a quiet weekend by the sea.');assert.equal(await page.locator('.planner-linked-copy').innerText(),'Arrange a short walk and call someone I care about');
+ });
+ await run('All seven feelings work in one row on both board views without losing diary text or history',async page=>{
+  const text='A complete thought, not just its first character.\nAnd another line worth keeping.';
+  await page.locator('.diary-thoughts').fill(text);
+  const savedDate=await page.evaluate(()=>getActiveDiaryDate(state.cards.find(c=>c.type==='diary')));
+  for(const mode of ['board','today']){
+   await page.locator(mode==='today'?'#todayModeButton':'#boardModeButton').click();
+   for(const width of [320,390,1080,1440]){
+    await page.setViewportSize({width,height:900});await page.waitForTimeout(150);
+    const labels=await page.locator('.mood-picker button').evaluateAll(buttons=>buttons.map(b=>b.getAttribute('aria-label')));
+    assert.equal(labels.length,7);
+    for(const label of labels){
+     const button=page.locator('.mood-picker').getByRole('button',{name:label,exact:true});
+     if(await button.getAttribute('aria-pressed')==='true')await button.click();
+     await button.click();
+     assert.equal(await page.locator('.diary-feeling-selection').innerText(),label);
+     assert.equal(await page.locator('.mood-picker [aria-pressed=true]').count(),1);
+     assert.equal(await page.locator('.diary-thoughts').inputValue(),text);
+    }
+   }
+  }
+  await page.locator('.mood-picker [aria-label=Happy]').focus();
+  for(let i=0;i<6;i++)await page.keyboard.press('Tab');
+  assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('aria-label')),'Meh');
+  await page.keyboard.press('Space');assert.equal(await page.locator('.mood-picker [aria-pressed=true]').count(),0);
+  await page.keyboard.press('Space');await page.evaluate(()=>flushDeviceWrites());await page.reload();
+  assert.equal(await page.locator('.diary-thoughts').inputValue(),text);
+  assert.equal(await page.locator('.diary-feeling-selection').innerText(),'Meh');
+  assert.equal(await page.evaluate(()=>getActiveDiaryDate(state.cards.find(c=>c.type==='diary'))),savedDate);
  });
  await run('Board menu supports keyboard, long names, scrolling and independent board selection',async(page,context)=>{
   await page.evaluate(async()=>{
