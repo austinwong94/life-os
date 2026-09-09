@@ -87,8 +87,12 @@ fs.mkdirSync(out,{recursive:true});const results=[];
     }
    }
   }
+  await page.evaluate(()=>flushDeviceWrites());
   await page.locator('.mood-picker [aria-label=Happy]').focus();
-  for(let i=0;i<6;i++)await page.keyboard.press('Tab');
+  // Safari on macOS uses Option-Tab to include buttons when full keyboard
+  // access is disabled; Linux WebKit and Chromium use Tab.
+  const nextControl=process.platform==='darwin'&&process.env.TEST_BROWSER==='webkit'?'Alt+Tab':'Tab';
+  for(let i=0;i<6;i++)await page.keyboard.press(nextControl);
   assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('aria-label')),'Meh');
   await page.keyboard.press('Space');assert.equal(await page.locator('.mood-picker [aria-pressed=true]').count(),0);
   await page.keyboard.press('Space');await page.evaluate(()=>flushDeviceWrites());await page.reload();
@@ -142,7 +146,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   assert.deepEqual(await page.evaluate(()=>state.cards.map(card=>card.id).sort()),ids);
  });
  await run('Board picker options stay focused during saves and outside click or Tab dismisses the menu',async page=>{
-  await page.evaluate(()=>{state.boards.push(createBoardRecord({id:'work',name:'Work',cards:[]}));renderBoardMeta();});
+  await page.evaluate(async()=>{await flushDeviceWrites();state.boards.push(createBoardRecord({id:'work',name:'Work',cards:[]}));saveState({skipCloud:true});await flushDeviceWrites();renderBoardMeta();});
   await page.locator('#boardSwitcherButton').click();await page.keyboard.press('ArrowDown');
   assert.equal(await page.evaluate(()=>document.activeElement.dataset.boardId),'work');
   await page.evaluate(async()=>{saveState({skipCloud:true});await flushDeviceWrites();renderBoardMeta();});
