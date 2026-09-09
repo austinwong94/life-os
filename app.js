@@ -3024,6 +3024,12 @@ function renderCardsOnly(options = {}) {
     queueDeferredBoardRender(options);
     return;
   }
+  // A completed background save may redraw the card between keyboard presses.
+  // Preserve focus on the same feeling without changing the saved selection.
+  const feelingButton = document.activeElement?.closest?.(".mood-picker button");
+  const feelingFocus = feelingButton && elements.boardGrid.contains(feelingButton)
+    ? { cardId: feelingButton.closest(".task-card")?.dataset.id, label: feelingButton.getAttribute("aria-label") }
+    : null;
   closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
@@ -3064,6 +3070,11 @@ function renderCardsOnly(options = {}) {
   renderRecentCards();
   hydrateIcons(elements.boardGrid);
   restoreScrollPosition(scrollSnapshot);
+  if (feelingFocus) {
+    const card = Array.from(elements.boardGrid.querySelectorAll(".task-card")).find(node => node.dataset.id === feelingFocus.cardId);
+    const button = Array.from(card?.querySelectorAll(".mood-picker button") || []).find(node => node.getAttribute("aria-label") === feelingFocus.label);
+    button?.focus({ preventScroll: true });
+  }
 }
 
 function isDraftTextElement(element) {

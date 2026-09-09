@@ -95,6 +95,8 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   for(let i=0;i<6;i++)await page.keyboard.press(nextControl);
   assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('aria-label')),'Meh');
   await page.keyboard.press('Space');assert.equal(await page.locator('.mood-picker [aria-pressed=true]').count(),0);
+  await page.evaluate(async()=>{await flushDeviceWrites();renderCardsOnly({force:true});});
+  assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('aria-label')),'Meh');
   await page.keyboard.press('Space');await page.evaluate(()=>flushDeviceWrites());await page.reload();
   assert.equal(await page.locator('.diary-thoughts').inputValue(),text);
   assert.equal(await page.locator('.diary-feeling-selection').innerText(),'Meh');
