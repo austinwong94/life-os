@@ -224,7 +224,7 @@ function renderCalendarWorkspace(root) {
     if(session.calendarMode==="month") {const date=new Date(session.day.slice(0,7)+"-01T12:00:00");date.setMonth(date.getMonth()+delta);session.day=LifePlanning.dateKey(date);}
     else session.day=LifePlanning.shift(session.day,delta*(session.calendarMode==="week"?7:1));planningRefresh();
   };
-  nav.append(planningIcon("Previous period",()=>changePeriod(-1),"chevron-left"),planningNode("h3","",new Date(session.day+"T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})),planningIcon("Next period",()=>changePeriod(1),"chevron-right"),planningButton("Today",()=>{session.day=getTodayKey();planningRefresh();}));root.append(nav);
+  nav.append(planningIcon("Previous period",()=>changePeriod(-1),"chevron-left"),planningNode("h3","",new Date(session.day+"T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})),planningIcon("Next period",()=>changePeriod(1),"chevron-right"),planningButton("Today",()=>{session.day=getTodayKey();planningRefresh();}));if(session.calendarMode!=="agenda")root.append(nav);
   const timezone=planningNode("p","calendar-timezone",Intl.DateTimeFormat().resolvedOptions().timeZone);root.append(timezone);
   const items=calendarActivities().filter(({activity})=>session.area==="*"||activity.area===session.area);
   if(session.calendarMode==="month") {
