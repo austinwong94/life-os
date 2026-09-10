@@ -113,10 +113,11 @@ function appendTaskMetadata(meta, item) {
 }
 function appendTaskEditFields(form, draft) {
   const grid = planningNode("div", "task-edit-details");
+  const deadline=planningInput("date",draft.deadline,value=>draft.deadline=value);deadline.setAttribute("aria-label","Deadline (optional)");
   grid.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>draft.area=value)),
     planningField("Status",planningSelect([["todo","To do"],["doing","Doing"],["waiting","Waiting"]],draft.status,value=>draft.status=value)),
     planningField("Project",planningInput("text",draft.project,value=>draft.project=value)),
-    planningField("Deadline (optional)",planningInput("date",draft.deadline,value=>draft.deadline=value)),
+    planningField("Deadline (optional)",planningOptionalDate(deadline,"Clear deadline",()=>draft.deadline="")),
     planningField("Priority",planningSelect(Object.entries(PRIORITY_META).map(([key,meta])=>[key,meta.label]),draft.priority,value=>draft.priority=value)));
   const notes = planningNode("textarea"); notes.value = draft.notes; notes.rows = 3; notes.oninput = () => draft.notes=notes.value;
   grid.append(planningField("Task notes",notes)); form.append(grid);

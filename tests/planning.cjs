@@ -20,6 +20,7 @@ const results=[];
  await run('categorized task entry, metadata edit, undated capture, search and reload retain original records',async p=>{
   await tasks(p);await add(p,'Prepare Culturely launch');await edit(p,'Prepare Culturely launch');
   await p.locator('.task-edit-details').getByLabel('Project',{exact:true}).fill('Website launch');await p.getByLabel('Status',{exact:true}).selectOption('waiting');await p.getByLabel('Task notes',{exact:true}).fill('First line\nSecond line');await p.getByLabel('Deadline (optional)',{exact:true}).fill('2027-01-01');await p.getByLabel('Save planner task',{exact:true}).click();
+  await edit(p,'Prepare Culturely launch');await p.getByRole('button',{name:'Clear deadline',exact:true}).click();await p.getByLabel('Save planner task',{exact:true}).click();assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].deadline),'');
   await add(p,'Book a workout','Fitness','');assert.equal(await p.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).getAttribute('aria-pressed'),'true');
   await p.getByLabel('Filter by area',{exact:true}).selectOption('Culturely');assert.equal(await p.locator('.planner-linked-copy').count(),1);assert.match(await p.locator('.task-results').innerText(),/Website launch/);
   await p.getByLabel('Search tasks and projects').fill('missing');assert.equal(await p.locator('.planner-linked-copy').count(),0);await p.getByLabel('Search tasks and projects').fill('launch');assert.equal(await p.locator('.planner-linked-copy').count(),1);
