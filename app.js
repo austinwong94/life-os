@@ -4149,9 +4149,13 @@ function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
   if (!LifePlanner.change(card, item.taskId, {title, dateKey: day, ...metadata})) return false;
   LifePlanner.project(card);
   card.updatedAt = Date.now();
+  if (!saveState()) {
+    if (draft) draft.base=LifeStateMerge.copy(current);
+    window.alert("Not saved yet. Your task edit is kept here; try again when device saving is available.");
+    return false;
+  }
   editingPlannerTaskKey = "";
   plannerTaskEditDraft = null;
-  saveState();
   renderCardsOnly({force: true});
   return true;
 }

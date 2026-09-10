@@ -15,6 +15,7 @@ Release candidate: 10 September 2026. Built on `27af3d5`.
 - Activities can be edited, archived and restored through Archive. Activity conflicts keep whole versions and require explicit review, including a recovery copy before applying a choice.
 - New task/activity drafts survive a pause, view changes and reload in the same browser tab. Drafts are tab-local until submitted, not cloud-saved records. Do not close a tab with an unfinished draft. The app's save indicator continues to report saved records, not an unsubmitted form.
 - Readable data downloads include task areas, projects, notes and deadlines, plus activity timing, location, notes and meeting links. JSON backups retain the structured fields.
+- Failed device writes leave the task/activity capture form or task editor open with its text. Retrying capture reuses its pending record ID instead of creating a duplicate.
 
 ## Data Boundaries
 

@@ -169,14 +169,19 @@ function renderTaskCapture() {
   form.onsubmit = event => {
     event.preventDefault();
     if (!title.value.trim() || (draft.dateKey && !LifePlanner.validDate(draft.dateKey))) return;
-    const source = getPlannerWriteSourceCard({category:draft.area || "Unsorted"},draft.dateKey);
-    const task = LifePlanner.add(source,draft.dateKey,title.value,createId()); if(!task)return;
-    LifePlanner.change(source,task.id,{area:draft.area,status:"todo",project:"",deadline:"",notes:""});LifePlanner.project(source);
-    session.lastArea=draft.area;session.capture={...draft,title:""};
+    draft.pendingTaskId ||= createId();
+    const source = getPlannerSourceCards().find(card=>LifePlanner.ensure(card).some(task=>task.id===draft.pendingTaskId)) || getPlannerWriteSourceCard({category:draft.area || "Unsorted"},draft.dateKey);
+    let task=LifePlanner.ensure(source).find(task=>task.id===draft.pendingTaskId);
+    if(task && draft.pendingBase && !LifeStateMerge.equal(task,draft.pendingBase)) {status.textContent="This task changed after the save attempt. Your draft is kept; review the task before retrying.";return;}
+    task ||= LifePlanner.add(source,draft.dateKey,title.value,draft.pendingTaskId); if(!task)return;
+    LifePlanner.change(source,task.id,{title:title.value.trim(),dateKey:draft.dateKey,area:draft.area,status:"todo",project:"",deadline:"",notes:""});LifePlanner.project(source);
+    draft.pendingBase=LifeStateMerge.copy(task);savePlanningSession();
+    if(!saveState()){status.textContent="Not saved yet. Your draft is kept; try again when device saving is available.";return;}
+    session.lastArea=draft.area;session.capture={area:draft.area,dateKey:draft.dateKey,title:""};
     // Keep the newly captured item visible without silently changing its date.
     if ((session.area!=="*" && session.area!==draft.area)) session.area="*";
     if (session.view==="completed" || !draft.dateKey || (session.view==="today" && draft.dateKey>session.day) || (session.view==="upcoming" && draft.dateKey<getTodayKey())) session.view="all";
-    session.search="";savePlanningSession();saveState();renderCardsOnly({force:true});
+    session.search="";savePlanningSession();renderCardsOnly({force:true});
     elements.boardGrid.querySelector('[aria-label="New task"]')?.focus({preventScroll:true});
   };
   return form;
@@ -315,12 +320,14 @@ function renderActivityEditor() {
     try{
       const activity=LifePlanning.activityFromDraft(draft);
       let card=draft.id?state.cards.find(card=>card.id===draft.id):null;
-      if(draft.id&&(!card||!LifeStateMerge.equal(draft.base,card.activity || {targetAt:card.targetAt,title:card.title,description:card.description})))throw new Error("This activity changed in another tab. Your draft is kept. Cancel and reopen to review the latest version.");
+      if(draft.id&&((!card && (!draft.pendingNew || getArchivedCards().some(card=>card.id===draft.id))) || (card && !LifeStateMerge.equal(draft.base,card.activity || {targetAt:card.targetAt,title:card.title,description:card.description}))))throw new Error("This activity changed in another tab. Your draft is kept. Cancel and reopen to review the latest version.");
       const targetAt=activity.allDay?new Date(activity.startDate+"T12:00:00").toISOString():activity.startAt;
-      if(!card){card=makeCard({type:"event",title:activity.title,category:activity.area||"Unsorted",timerMode:"date",targetAt});card.calendarOnly=true;state.cards.push(card);}
+      if(!card){card=makeCard({type:"event",title:activity.title,category:activity.area||"Unsorted",timerMode:"date",targetAt});card.id=draft.id || card.id;card.calendarOnly=true;state.cards.push(card);draft.pendingNew=true;}
       Object.assign(card,{activity,title:activity.title,category:activity.area||"Unsorted",targetAt,updatedAt:Date.now()});
+      draft.id=card.id;draft.base=LifeStateMerge.copy(activity);savePlanningSession();
+      if(!saveState())throw new Error("Not saved yet. Your activity draft is kept; try again when device saving is available.");
       session.lastArea=draft.area;session.day=activity.allDay?activity.startDate:LifePlanning.localInput(activity.startAt).slice(0,10);session.area="*";
-      delete session.activityDraft;savePlanningSession();saveState();renderCardsOnly({force:true});
+      delete session.activityDraft;savePlanningSession();renderCardsOnly({force:true});
     }catch(error){message.textContent=error.message;}
   };
   return form;

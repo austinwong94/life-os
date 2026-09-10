@@ -58,6 +58,7 @@ const results=[];
     assert.ok(await p.locator('.planning-workspace input,.planning-workspace select,.planning-workspace textarea').evaluateAll(nodes=>nodes.every(e=>e.getBoundingClientRect().right<=innerWidth+1)));
     await p.screenshot({path:out+'/'+mode+'-'+width+'.png',fullPage:true});
     if(mode==='tasks'){
+     if(width===320)assert.ok(await p.getByLabel('Planned day (optional)',{exact:true}).evaluate(e=>e.getBoundingClientRect().width>=200));
      await edit(p,'Review the Sunrise Villa bookings and prepare the next guest arrival checklist');
      assert.ok(await p.locator('.planner-linked-edit-form').evaluate(e=>e.getBoundingClientRect().width>=240&&e.scrollWidth<=e.clientWidth+1));
      await p.getByLabel('Task notes',{exact:true}).fill('A complete thought across\nmultiple lines');
@@ -93,6 +94,16 @@ const results=[];
   const save=p.getByRole('button',{name:'Save activity version',exact:true});assert.equal(await save.isDisabled(),true);
   await p.getByRole('radio',{name:'Other tab version',exact:true}).check();await p.getByLabel('Apply this version to this activity only.',{exact:true}).check();await save.click();await p.getByText(/Activity version saved/).waitFor();
   assert.equal(await p.evaluate(()=>calendarActivities()[0].activity.notes),'Other version');assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);
+ });
+ await run('failed device writes retain task and activity drafts and retries do not duplicate records',async p=>{
+  await tasks(p);await p.evaluate(()=>flushDeviceWrites());
+  const fail=()=>p.evaluate(()=>{window.originalSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(this===localStorage)throw new DOMException('Test quota','QuotaExceededError');return window.originalSetItem.call(this,key,value);};});
+  const recover=()=>p.evaluate(()=>{Storage.prototype.setItem=window.originalSetItem;});
+  await fail();await add(p,'Keep my whole task');assert.equal(await p.getByLabel('New task',{exact:true}).inputValue(),'Keep my whole task');assert.match(await p.locator('.task-capture [role=status]').innerText(),/Not saved/);
+  await recover();await p.getByLabel('New task',{exact:true}).press('Enter');await p.evaluate(()=>flushDeviceWrites());assert.equal(await p.evaluate(()=>getPlannerSourceItems().filter(t=>t.title==='Keep my whole task').length),1);
+  await edit(p,'Keep my whole task');await p.getByLabel('Task notes',{exact:true}).fill('Do not lose these notes');await fail();await p.getByLabel('Save planner task',{exact:true}).click();assert.equal(await p.getByLabel('Task notes',{exact:true}).inputValue(),'Do not lose these notes');await recover();await p.getByLabel('Save planner task',{exact:true}).click();assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].notes),'Do not lose these notes');
+  await p.locator('#calendarModeButton').click();await p.getByRole('button',{name:'Add activity',exact:true}).click();await p.getByLabel('Activity name',{exact:true}).fill('Keep my activity');await fail();await p.getByRole('button',{name:'Save activity',exact:true}).click();assert.equal(await p.getByLabel('Activity name',{exact:true}).inputValue(),'Keep my activity');assert.match(await p.locator('.activity-editor [role=alert]').innerText(),/Not saved/);
+  await recover();await p.getByRole('button',{name:'Save activity',exact:true}).click();await p.evaluate(()=>flushDeviceWrites());await p.reload();assert.equal(await p.evaluate(()=>calendarActivities().filter(e=>e.activity.title==='Keep my activity').length),1);
  });
  fs.writeFileSync(out+'/planning-results.json',JSON.stringify(results,null,2));await browser.close();if(results.some(r=>!r.pass))process.exitCode=1;
 })().catch(error=>{console.error(error);process.exitCode=1;});
