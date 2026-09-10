@@ -14,7 +14,7 @@ const AUTO_SAVE_INTERVAL_MS = 30000;
 const CLOUD_SAVE_DEBOUNCE_MS = 1400;
 const CLOUD_CONFLICT_TOLERANCE_MS = 1000;
 const LOCAL_DEV_RELOAD_POLL_MS = 1500;
-const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "app.js", "experience.js", "planner-store.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
+const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "app.js", "experience.js", "planning.js", "planner-store.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
 const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
 const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food"];
@@ -2623,7 +2623,7 @@ function toggleBoardControls() {
 
 function renderBoardControls() {
   const controlsOpen = state.ui.controlsOpen !== false;
-  const todayMode = state.ui.workspaceMode === "today";
+  const todayMode = ["today", "tasks", "calendar"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
   elements.topControlsToggleButton.hidden = todayMode;
   const controlsLabel = controlsOpen ? "Hide filters" : "Show filters";
@@ -3051,11 +3051,17 @@ function renderCardsOnly(options = {}) {
 
   const visibleCards = filteredByFocus.filter((card) => matchesCategory(card));
   const todayMode = state.ui.workspaceMode === "today";
+  const planningMode = ["tasks", "calendar"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("is-today-view", todayMode);
+  elements.workspace.classList.toggle("is-planning-view", planningMode);
   renderBoardControls();
   document.getElementById("todayModeButton").setAttribute("aria-pressed", String(todayMode));
-  document.getElementById("boardModeButton").setAttribute("aria-pressed", String(!todayMode));
-  if (todayMode) {
+  document.getElementById("boardModeButton").setAttribute("aria-pressed", String(!todayMode && !planningMode));
+  document.getElementById("tasksModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "tasks"));
+  document.getElementById("calendarModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "calendar"));
+  if (planningMode) {
+    renderPlanningWorkspace(state.ui.workspaceMode);
+  } else if (todayMode) {
     renderTodaySpace();
   } else if (!visibleCards.length) {
     const empty = document.createElement("div");
@@ -3930,17 +3936,18 @@ function renderPlannerLinkedItem(item) {
   date.type = "button";
   date.className = "planner-linked-date";
   const originalDateKey = item.isCarryover ? normalizeDateKey(item.carryoverFrom) : "";
-  const displayDateKey = originalDateKey || item.dateKey;
+  const displayDateKey = originalDateKey || item.scheduledDate || item.dateKey;
   date.classList.toggle("is-carryover", Boolean(originalDateKey));
-  date.textContent = originalDateKey ? formatPlannerOriginDate(originalDateKey) : formatPlannerListDate(item.dateKey);
+  date.textContent = item.undated ? "No date" : originalDateKey ? formatPlannerOriginDate(originalDateKey) : formatPlannerListDate(displayDateKey);
   date.title = originalDateKey ? `Open original planner date: ${formatPlannerOriginDate(originalDateKey)}` : "Open planner date";
-  date.addEventListener("click", () => setPlannerDate(item.card, displayDateKey));
+  date.addEventListener("click", () => item.workspaceTask ? startPlannerTaskEdit(item) : setPlannerDate(item.card, displayDateKey));
 
   const main = document.createElement("div");
   main.className = "planner-linked-main";
   const meta = document.createElement("div");
   meta.className = "planner-linked-meta";
   meta.append(date);
+  appendTaskMetadata(meta, item);
 
   const copy = document.createElement("button");
   copy.type = "button";
@@ -4043,7 +4050,8 @@ function startPlannerTaskEdit(item) {
   plannerTaskEditDraft = {
     key: editingPlannerTaskKey,
     title: item.title || "",
-    dateKey: normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey()
+    dateKey: item.undated ? "" : normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey(),
+    ...getTaskEditMetadata(item)
   };
   renderCardsOnly({ force: true });
 }
@@ -4060,7 +4068,8 @@ function getPlannerTaskEditDraft(item) {
     plannerTaskEditDraft = {
       key,
       title: item.title || "",
-      dateKey: normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey()
+      dateKey: item.undated ? "" : normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey(),
+      ...getTaskEditMetadata(item)
     };
   }
   return plannerTaskEditDraft;
@@ -4077,10 +4086,10 @@ function renderPlannerLinkedEditItem(item) {
   const dateInput = document.createElement("input");
   dateInput.type = "date";
   dateInput.className = "planner-linked-edit-date";
-  dateInput.value = normalizeDateKey(draft.dateKey) || normalizeDateKey(item.dateKey) || getTodayKey();
+  dateInput.value = draft.dateKey;
   dateInput.setAttribute("aria-label", "Task date");
   dateInput.addEventListener("input", () => {
-    draft.dateKey = normalizeDateKey(dateInput.value) || draft.dateKey;
+    draft.dateKey = normalizeDateKey(dateInput.value);
   });
 
   const titleInput = document.createElement("input");
@@ -4107,10 +4116,11 @@ function renderPlannerLinkedEditItem(item) {
   cancel.innerHTML = ICONS.x;
   cancel.addEventListener("click", cancelPlannerTaskEdit);
 
-  form.append(dateInput, titleInput, save, cancel);
+  form.append(planningOptionalDate(dateInput,"Clear task date",()=>{draft.dateKey="";}), titleInput, save, cancel);
+  appendTaskEditFields(form, draft);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const saved = updatePlannerTask(item, titleInput.value, dateInput.value);
+    const saved = updatePlannerTask(item, titleInput.value, dateInput.value, draft);
     if (!saved) return;
     editingPlannerTaskKey = "";
     plannerTaskEditDraft = null;
@@ -4125,12 +4135,18 @@ function buildPlannerNote(lines) {
   return lines.map((line) => `- ${line}`).join("\n");
 }
 
-function updatePlannerTask(item, nextTitle, nextDateKey) {
+function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
   const title = stripPlannerBullet(nextTitle);
   const day = normalizeDateKey(nextDateKey);
-  if (!item?.card || !item.taskId || !title || !day) return false;
+  if (!item?.card || !item.taskId || !title || (nextDateKey && !LifePlanner.validDate(day))) return false;
   const card = resolveLiveCard(item.card);
-  if (!LifePlanner.change(card, item.taskId, {title, dateKey: day})) return false;
+  const current = LifePlanner.ensure(card).find(task => task.id === item.taskId);
+  if (draft?.base && !LifeStateMerge.equal(draft.base, current)) {
+    window.alert("This task changed while you were editing. Your draft is still here. Cancel and reopen the task to compare the latest version.");
+    return false;
+  }
+  const metadata = draft ? {area:draft.area,project:draft.project.trim(),status:draft.status,deadline:draft.deadline,notes:draft.notes,priority:draft.priority} : {};
+  if (!LifePlanner.change(card, item.taskId, {title, dateKey: day, ...metadata})) return false;
   LifePlanner.project(card);
   card.updatedAt = Date.now();
   editingPlannerTaskKey = "";
@@ -6816,8 +6832,8 @@ function formatPlannerDate(dateKey) {
 function getPlannerScheduleItems(plannerCard) {
   normalizePlannerCard(plannerCard);
   return LifePlanner.ensure(plannerCard).filter(LifePlanner.active).map(task => ({
-    ...task, taskId: task.id, source: "Planner", group: getPlannerGroup(plannerCard),
-    isCarryover: false, carryoverFrom: "", priority: 0
+    ...task, taskId: task.id, source: "Planner", group: task.area ?? getPlannerGroup(plannerCard),
+    isCarryover: false, carryoverFrom: "", priority: task.priority || "normal"
   })).sort(sortPlannerScheduleItems);
 }
 
@@ -6826,10 +6842,9 @@ function getPlannerItemsForDate(dateKey, group = "") {
   if (!normalizedDate) return [];
   const normalizedGroup = group ? getPlannerGroup({ category: group }) : "";
   return getPlannerSourceCards()
-    .filter((card) => !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
     .flatMap((card) =>
       getPlannerScheduleItems(card)
-        .filter((item) => item.dateKey === normalizedDate)
+        .filter((item) => item.dateKey === normalizedDate && (!normalizedGroup || item.group === normalizedGroup))
         .map((item) => ({ ...item, card }))
     )
     .sort(sortPlannerScheduleItems);
@@ -6850,8 +6865,8 @@ function getPlannerSourceItems(group = "", options = {}) {
   const viewOptions = normalizePlannerViewOptions(options);
   const normalizedGroup = group ? getPlannerGroup({ category: group }) : "";
   return getPlannerSourceCards()
-    .filter((card) => viewOptions.sourceMode !== "area" || !normalizedGroup || getPlannerGroup(card) === normalizedGroup)
     .flatMap((card) => getPlannerScheduleItems(card).map((item) => ({ ...item, card })))
+    .filter((item) => viewOptions.sourceMode !== "area" || !normalizedGroup || item.group === normalizedGroup)
     .sort(sortPlannerScheduleItems);
 }
 
@@ -6860,10 +6875,10 @@ function getPlannerItemsForSelectedDay(allItems, selectedDayKey) {
   const day = normalizeDateKey(selectedDayKey) || getTodayKey();
   return allItems.filter(item => {
     if (item.dateKey === day || (item.done && item.completedOn === day)) return true;
-    return item.dateKey < day && (!item.done || (item.completedOn && item.completedOn >= day));
+    return Boolean(item.dateKey) && item.dateKey < day && (!item.done || (item.completedOn && item.completedOn >= day));
   }).map(item => ({
     ...item, scheduledDate: item.dateKey, dateKey: day,
-    isCarryover: item.dateKey < day, carryoverFrom: item.dateKey < day ? item.dateKey : ""
+    isCarryover: Boolean(item.dateKey && item.dateKey < day), carryoverFrom: item.dateKey && item.dateKey < day ? item.dateKey : ""
   })).sort(sortPlannerScheduleItems);
 }
 
@@ -6888,7 +6903,7 @@ function getPlannerTimelineMeta() {
 }
 
 function getPlannerItemTime(item) {
-  return dateKeyToLocalDate(item.dateKey).getTime();
+  return item.dateKey ? dateKeyToLocalDate(item.dateKey).getTime() : NaN;
 }
 
 function getPlannerItemDisplayDateKey(item) {
@@ -7070,7 +7085,7 @@ function sortPlannerScheduleItems(a, b) {
   const doneSort = Number(Boolean(a.done)) - Number(Boolean(b.done));
   const actualDateSort = getPlannerItemTime(a) - getPlannerItemTime(b);
   const lineSort = (a.lineIndex ?? 0) - (b.lineIndex ?? 0);
-  return dateSort || doneSort || actualDateSort || a.priority - b.priority || lineSort || a.title.localeCompare(b.title);
+  return dateSort || doneSort || actualDateSort || getPriorityWeight(a) - getPriorityWeight(b) || lineSort || a.title.localeCompare(b.title);
 }
 
 function formatPlannerListDate(dateKey) {
@@ -9654,7 +9669,7 @@ function commitCustomLayoutColumns(columns) {
       order += 1;
     });
   });
-  state.cards = columns.flat();
+  state.cards = [...columns.flat(), ...state.cards.filter(card => card.calendarOnly)];
   state.board.layout = "custom";
   draggedCardId = null;
   elements.boardGrid.classList.remove("is-dragging-card");
@@ -9692,7 +9707,7 @@ function saveCurrentLayout() {
       order += 1;
     });
   });
-  state.cards = columns.flat();
+  state.cards = [...columns.flat(), ...state.cards.filter(card => card.calendarOnly)];
   state.board.layout = "custom";
   state.board.savedLayout = state.cards.map((card) => ({
     id: card.id,
@@ -9729,7 +9744,7 @@ function restoreSavedLayout() {
 }
 
 function getOrderedCards() {
-  const cards = [...state.cards];
+  const cards = state.cards.filter(card => !card.calendarOnly);
   if (state.board.layout === "custom") {
     return cards.sort(
       (a, b) =>
@@ -12090,6 +12105,8 @@ function isUserEditingCriticalDraft() {
       editingCardId ||
       editingPlannerTaskKey ||
       plannerTaskEditDraft ||
+      planningSessions.get(state.activeBoardId)?.activityDraft ||
+      planningSessions.get(state.activeBoardId)?.capture?.title ||
       document.querySelector('.conflict-custom:not([hidden])') ||
       document.getElementById('restoreReviewModal') ||
       document.getElementById('noteTaskDialog') ||
@@ -12418,6 +12435,7 @@ function renderReadableCardContent(card) {
   if (card.type === "brief") blocks.push(renderReadableBrief(card));
   if (card.type === "fitness") blocks.push(renderReadableFitness(card));
   if (card.type === "food") blocks.push(renderReadableFood(card));
+  if (card.activity) blocks.push(renderReadableActivity(card.activity));
   if (card.type === "minutes") blocks.push(renderReadableKeyValues("Goal", [["Current", `${card.currentValue || 0} ${card.unit || ""}`], ["Target", `${card.targetValue || 0} ${card.unit || ""}`]]));
   if (card.type === "scheduled") blocks.push(renderReadableSchedule(card));
   if (card.type === "checklist" || card.type === "daily" || card.type === "routine") blocks.push(renderReadableChecklist(card.items || [], "Tasks"));
@@ -12519,11 +12537,14 @@ function renderReadablePlanner(card) {
   if (!tasks.length) return '<section class="block"><h5>Planner</h5><p>No planner items saved.</p></section>';
   const dates=[...new Set(tasks.map(task=>task.dateKey))];
   return '<section class="block"><h5>Planner</h5>'+dates.map(date=>{
-    return '<div class="entry"><div class="entry-head"><strong>'+escapeHtml(formatReadableDateKey(date))+'</strong></div><ul class="clean">'+tasks.filter(task=>task.dateKey===date).map(task=>{
+    return '<div class="entry"><div class="entry-head"><strong>'+escapeHtml(date ? formatReadableDateKey(date) : 'No planned date')+'</strong></div><ul class="clean">'+tasks.filter(task=>task.dateKey===date).map(task=>{
       const details=[
         task.done ? (task.completedOn ? 'Completed '+formatReadableDateKey(task.completedOn) : 'Completed (date not recorded)') : 'Unfinished',
         task.completedAt ? 'Completion time '+formatRecordDateTime(task.completedAt) : '',
         task.completionRecordedAt ? 'Recorded '+formatRecordDateTime(task.completionRecordedAt) : '',
+        task.area || '', task.project ? 'Project: '+task.project : '',
+        !task.done && task.status ? 'Status: '+task.status : '',
+        task.deadline ? 'Deadline: '+task.deadline : '', task.notes || '',
         task.deletedAt ? 'Removed (recoverable)' : task.archivedAt ? 'Archived' : ''
       ].filter(Boolean).join(' · ');
       return renderReadableItem(task.title,task.done,details);

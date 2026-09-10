@@ -261,6 +261,12 @@ function renderConflictReview() {
   for(const conflict of state.syncConflicts) {
     const row=document.createElement('article');row.className='conflict-item';
     const title=document.createElement('h4');title.textContent=getConflictLabel(conflict);row.append(title);
+    if (conflict.kind==='activity') {
+      row.append(renderActivityConflictForm(conflict,()=>{
+        row.replaceChildren(title);const done=document.createElement('p');done.textContent='Activity version saved. Earlier versions remain in Recovery copies.';row.append(done);
+        status.textContent=state.syncConflicts.length?state.syncConflicts.length+' unresolved':'All changes reviewed';
+      }));section.append(row);continue;
+    }
     if (conflict.kind==='health-record') {
       row.classList.add('health-conflict-item');
       row.append(renderHealthConflictForm(conflict,()=>{
@@ -380,6 +386,11 @@ function renderPlannerTaskVersion(task) {
   add(dates,'Status',task.done?'Completed':'Incomplete');
   add(dates,'Planned',dateLabel(task.dateKey));
   add(dates,'Completed',dateLabel(task.completedOn));
+  if(task.area!==undefined)add(dates,'Area',task.area || 'Unsorted');
+  if(task.project)add(dates,'Project',task.project);
+  if(task.status)add(dates,'Workflow',task.status);
+  if(task.deadline)add(dates,'Deadline',dateLabel(task.deadline));
+  if(task.notes)add(dates,'Notes',task.notes);
   const history=document.createElement('details');history.className='planner-conflict-history';
   const summary=document.createElement('summary');summary.textContent='Full timestamps';
   const details=document.createElement('dl');
@@ -457,7 +468,7 @@ function renderRecordConflictForm(conflict,onSaved,options) {
   const introduction=document.createElement('p');introduction.className='planner-conflict-intro';
   introduction.textContent=options.introduction;
   const choices=document.createElement('fieldset');choices.className='conflict-choices';
-  const legend=document.createElement('legend');legend.textContent=(options.noun==='task'?'Task':'Health')+' version to keep';
+  const legend=document.createElement('legend');legend.textContent=options.noun[0].toUpperCase()+options.noun.slice(1)+' version to keep';
   const consent=document.createElement('label');consent.className='planner-conflict-consent';
   const agree=document.createElement('input');agree.type='checkbox';
   consent.append(agree,document.createTextNode('Apply this version to this '+options.scope+' only.'));
@@ -518,6 +529,8 @@ function initializeExperience() {
   document.getElementById("recoveryButton").onclick = openRecovery;
   document.getElementById("boardModeButton").onclick = () => setWorkspaceMode("board");
   document.getElementById("todayModeButton").onclick = () => setWorkspaceMode("today");
+  document.getElementById("tasksModeButton").onclick = () => setWorkspaceMode("tasks");
+  document.getElementById("calendarModeButton").onclick = () => setWorkspaceMode("calendar");
   document.getElementById("weeklyReviewButton").onclick = () => {activeReportType = "progress"; openReportsModal();};
   elements.visibilityControl.closest(".field").hidden = true;
   elements.visibilityLabel.textContent = "Personal board";
@@ -562,7 +575,7 @@ function restoreTabBoardSelection() {
 
 function setWorkspaceMode(mode) {
   if (isProtectedTextEditActive()) document.activeElement?.blur();
-  state.ui.workspaceMode = mode === "today" ? "today" : "board";
+  state.ui.workspaceMode = ["today", "tasks", "calendar"].includes(mode) ? mode : "board";
   state.activeFilter = "all"; state.focusFilter = "all"; state.searchQuery = ""; state.activeCategories = [];
   renderCardsOnly({force: true}); renderBoardMeta(); saveState({touch: false, skipCloud: true});
 }

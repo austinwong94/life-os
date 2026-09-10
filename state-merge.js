@@ -32,6 +32,10 @@
       if (["updatedAt", "savedAt", "movedAt"].includes(field)) return Math.max(Number(l) || 0, Number(r) || 0);
       if (["updatedBy", "activeDate", "activePlannerDate", "plannerViewDate", "activeFoodDate", "activeFitnessDate", "activeSideNoteDate", "activeFoodMealId"].includes(field)) return copy(l);
       const recordType=healthRecordType(path);
+      if (path.length === 5 && path[0] === 'boards' && ['cards','archivedCards'].includes(path[2]) && field === 'activity' && object(l) && object(r)) {
+        conflicts.push({kind:'activity',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
+        return copy(l);
+      }
       if (recordType && object(l) && object(r)) {
         // Quantity and unit, nutrition basis, and a measured workout must never
         // turn into an unrecorded combination of two device versions.
@@ -60,10 +64,15 @@
         const result = {};
         for (const k of new Set([...Object.keys(b || {}), ...Object.keys(l), ...Object.keys(r)])) {
           if (unsafeKeys.has(k)) continue;
+          if (l.type==='event' && r.type==='event' && validActivity(l.activity) && validActivity(r.activity) && ['title','category','targetAt'].includes(k)) continue;
           // These are compatibility projections, not a second task database.
           if (l.plannerSchemaVersion === 2 && r.plannerSchemaVersion === 2 && ["plannerEntries", "plannerArchivedTasks"].includes(k)) { result[k] = copy(l[k]); continue; }
           const merged = value(b?.[k], l[k], r[k], [...path,k]);
           if (merged !== undefined) result[k] = merged;
+        }
+        if (result.type==='event' && validActivity(result.activity)) {
+          result.title=result.activity.title;result.category=result.activity.area || 'Unsorted';
+          result.targetAt=result.activity.allDay?new Date(result.activity.startDate+'T12:00:00').toISOString():result.activity.startAt;
         }
         return result;
       }
@@ -144,7 +153,7 @@
 
   function reviewableTask(task,id) {
     if (!object(task) || task.id!==id || typeof task.title!=='string' || !task.title.trim() || task.legacyNeedsReview ||
-        Object.keys(task).some(key=>unsafeKeys.has(key)) || !validTaskDate(task.dateKey) || !validTaskDate(task.originalDateKey) || typeof task.done!=='boolean') return false;
+        Object.keys(task).some(key=>unsafeKeys.has(key)) || (task.dateKey !== '' && !validTaskDate(task.dateKey)) || (task.originalDateKey !== '' && !validTaskDate(task.originalDateKey)) || typeof task.done!=='boolean') return false;
     if (!['createdAt','updatedAt','completedAt','completionRecordedAt','archivedAt','deletedAt'].every(key=>Number.isSafeInteger(task[key]) && task[key]>=0 && Number.isFinite(new Date(task[key]).getTime()))) return false;
     return task.done ? validTaskDate(task.completedOn) && task.completedAt>0
       : task.completedOn==='' && task.completedAt===0 && task.completionRecordedAt===0;
@@ -255,6 +264,11 @@
     const next=copy(snapshot);
     for(const receipt of Object.values(object(resolutions)?resolutions:{}).filter(object).sort((a,b)=>a.resolvedAt-b.resolvedAt)) {
       if (receipt?.source!=='cloud' || receipt.ownerId!==ownerId || !baseDigest || receipt.baseDigest!==baseDigest) continue;
+      if (receipt.kind==='activity') {
+        const field=locate(next,receipt.segments);
+        if (field && validActivity(receipt.remote) && equal(field.value,receipt.base)) field.parent[field.key]=copy(receipt.remote);
+        continue;
+      }
       if (receipt.kind==='health-record') {
         const location=locateHealthRecord(next,receipt.segments);
         if (location && location.recordType===receipt.recordType && reviewableHealthRecord(receipt.remote,receipt.segments) && equal(location.value,receipt.base)) {
@@ -281,7 +295,34 @@
     return Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
   }
 
-  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectHealthConflict,resolveHealthConflict,reviewedCloudBaseline,fingerprint};
+  function validActivity(record) {
+    if (!object(record) || typeof record.allDay!=='boolean' || !['title','area','notes','location','url','timezone'].every(key=>typeof record[key]==='string') || !record.title.trim()) return false;
+    if (Object.keys(record).some(key=>unsafeKeys.has(key))) return false;
+    if (!validTaskDate(record.startDate) || !validTaskDate(record.endDate)) return false;
+    if (record.allDay) return record.startDate<=record.endDate;
+    return typeof record.startAt==='string' && typeof record.endAt==='string' && Number.isFinite(Date.parse(record.startAt)) && Date.parse(record.startAt)<Date.parse(record.endAt);
+  }
+  function inspectActivityConflict(snapshot,conflict) {
+    const segments=conflict?.segments;
+    const field=Array.isArray(segments) && segments.length===5 && segments[4]==='activity' ? locate(snapshot,segments) : null;
+    return {editable:Boolean(conflict?.kind==='activity' && field?.parent.type==='event' && [field.value,conflict.local,conflict.remote].every(validActivity)),current:copy(field?.value)};
+  }
+  function resolveActivityConflict(snapshot,conflict,expected,selected,now=Date.now()) {
+    const live=(snapshot.syncConflicts || []).find(item=>item.id===conflict.id);
+    if (!live || !equal(live,conflict)) throw new Error('This comparison changed. Refresh before saving.');
+    const inspection=inspectActivityConflict(snapshot,live);
+    if (!inspection.editable || !equal(inspection.current,expected)) throw new Error('This activity changed or moved. Refresh before saving.');
+    if (![expected,live.local,live.remote].some(record=>equal(record,selected))) throw new Error('Choose a displayed activity version.');
+    const next=copy(snapshot),field=locate(next,live.segments);
+    field.parent.activity=copy(selected);field.parent.title=selected.title;field.parent.category=selected.area || 'Unsorted';
+    field.parent.targetAt=selected.allDay?new Date(selected.startDate+'T12:00:00').toISOString():selected.startAt;field.parent.updatedAt=now;
+    next.boards.find(board=>board.id===live.segments[1]).updatedAt=now;next.updatedAt=now;next.hasUserChanges=true;
+    next.syncConflicts=next.syncConflicts.filter(item=>item.id!==live.id);
+    next.conflictResolutions={...(next.conflictResolutions || {}),[live.id]:{kind:'activity',resolvedAt:now,source:live.source || 'device',ownerId:live.ownerId,segments:live.segments,base:live.base,remote:live.remote,baseDigest:live.baseDigest}};
+    return next;
+  }
+
+  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,validActivity,reviewedCloudBaseline,fingerprint};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LifeStateMerge = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

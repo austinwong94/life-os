@@ -3,7 +3,11 @@
   const clone = value => JSON.parse(JSON.stringify(value));
   const lines = text => String(text || "").split("\n").map(line => line.replace(/^\s*[-*]\s*/, "").trim()).filter(Boolean);
   const key = text => String(text || "").trim().replace(/\s+/g, " ").toLowerCase();
-  const validDate = date => /^\d{4}-\d{2}-\d{2}$/.test(String(date || ""));
+  const validDate = date => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return false;
+    const parsed = new Date(date + "T00:00:00Z");
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+  };
   const dateOf = timestamp => {
     const d = new Date(timestamp);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -63,7 +67,7 @@
   }
 
   function add(card, dateKey, title, id, now = Date.now()) {
-    if (!validDate(dateKey) || !String(title || "").trim()) return null;
+    if ((dateKey !== "" && !validDate(dateKey)) || !String(title || "").trim()) return null;
     const task = {id, title: String(title).trim(), dateKey, originalDateKey: dateKey, done: false, completedOn: "", completedAt: 0, completionRecordedAt: 0, createdAt: now, updatedAt: now, archivedAt: 0, deletedAt: 0};
     ensure(card).push(task);
     return task;
@@ -91,11 +95,11 @@
   function forDay(card, dayKey) {
     return ensure(card).filter(active).filter(task => {
       if (task.dateKey === dayKey || (task.done && task.completedOn === dayKey)) return true;
-      return task.dateKey < dayKey && (!task.done || (task.completedOn && task.completedOn >= dayKey));
+      return validDate(task.dateKey) && task.dateKey < dayKey && (!task.done || (task.completedOn && task.completedOn >= dayKey));
     }).map(task => ({
       ...task, taskId: task.id, scheduledDate: task.dateKey, dateKey: dayKey,
       done: Boolean(task.done),
-      isCarryover: task.dateKey < dayKey, carryoverFrom: task.dateKey < dayKey ? task.dateKey : ""
+      isCarryover: Boolean(task.dateKey && task.dateKey < dayKey), carryoverFrom: task.dateKey && task.dateKey < dayKey ? task.dateKey : ""
     }));
   }
 
@@ -139,7 +143,7 @@
     card.plannerArchivedTasks = tasks.filter(task => task.archivedAt && !task.deletedAt).map(task => ({...task, sourceDate: task.dateKey, wasDone: task.done}));
   }
 
-  const api = {ensure, add, change, complete, forDay, replaceDay, entry, project, active};
+  const api = {ensure, add, change, complete, forDay, replaceDay, entry, project, active, validDate};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LifePlanner = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

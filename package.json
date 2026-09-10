@@ -15,7 +15,8 @@
     "test:health-review": "node tests/health-review.cjs",
     "test:responsive": "node tests/responsive.cjs",
     "test:conflicts": "node tests/conflicts.cjs",
-    "test:restore": "node tests/restore.cjs"
+    "test:restore": "node tests/restore.cjs",
+    "test:planning": "node tests/planning.cjs"
   },
   "devDependencies": {"playwright": "1.62.1"},
   "engines": {"node": ">=22"}

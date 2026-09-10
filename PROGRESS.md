@@ -1,6 +1,14 @@
 # Life OS Reliability and Usability Progress
 
-Updated: 8 September 2026. Base reviewed: GitHub main `1b5480b`.
+Updated: 10 September 2026. Current published baseline: `27af3d5` (9 September diary and responsive release).
+
+## Current Upgrade
+
+The Tasks and Calendar upgrade is implemented and under release verification. It adds task-level areas and project/status/deadline/notes fields, undated capture, full-width task views, a board-owned activities calendar, readable exports and activity conflict review. Google event creation is an explicit separate-copy action; authenticated Google synchronization is not yet configured.
+
+See [Tasks and Calendar upgrade](TASKS-CALENDAR-UPGRADE.md) for exact scope and limitations, and [Google connection steps](GOOGLE-CALENDAR-SETUP.md) for the next integration stage. No Supabase records or schemas have been directly modified. Production conflict choices have not been made on the user's behalf.
+
+The September 8 material below is a historical audit. Its "local only" and "not yet deployed" statements describe that earlier stage, not the September 9 release, which was subsequently published and verified.
 
 ## Current Decision
 

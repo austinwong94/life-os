@@ -12,7 +12,7 @@
     <link rel="icon" href="data:," />
     <script src="dev-redirect.js?v=20260703-secfix"></script>
     <link rel="stylesheet" href="styles.css?v=20260703-secfix" />
-    <link rel="stylesheet" href="experience.css?v=20260909-diary" />
+    <link rel="stylesheet" href="experience.css?v=20260910-tasks" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -500,6 +500,8 @@
           <div class="workspace-modes" role="group" aria-label="Workspace view">
             <button type="button" id="boardModeButton" aria-pressed="true">My board</button>
             <button type="button" id="todayModeButton" aria-pressed="false">Today</button>
+            <button type="button" id="tasksModeButton" aria-pressed="false">Tasks</button>
+            <button type="button" id="calendarModeButton" aria-pressed="false">Calendar</button>
           </div>
           <button type="button" class="review-link" id="weeklyReviewButton"><span data-icon="bar-chart"></span><span>Review</span></button>
           <button type="button" id="headerSaveStatus" class="save-indicator" aria-live="polite">Checking save</button>
@@ -963,12 +965,13 @@
       <button type="button" class="undo-toast-close" id="undoToastCloseButton" aria-label="Close undo message">x</button>
     </div>
 
-    <script src="planner-store.js?v=20260908"></script>
-    <script src="state-merge.js?v=20260908"></script>
+    <script src="planner-store.js?v=20260910-tasks"></script>
+    <script src="state-merge.js?v=20260910-tasks"></script>
     <script src="device-store.js?v=20260908"></script>
     <script src="restore-review.js?v=20260908"></script>
     <script src="note-actions.js?v=20260908"></script>
-    <script src="experience.js?v=20260908"></script>
-    <script src="app.js?v=20260909-diary"></script>
+    <script src="planning.js?v=20260910-tasks"></script>
+    <script src="experience.js?v=20260910-tasks"></script>
+    <script src="app.js?v=20260910-tasks"></script>
   </body>
 </html>
