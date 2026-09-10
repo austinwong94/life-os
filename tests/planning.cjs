@@ -95,6 +95,24 @@ const results=[];
   await p.getByRole('radio',{name:'Other tab version',exact:true}).check();await p.getByLabel('Apply this version to this activity only.',{exact:true}).check();await save.click();await p.getByText(/Activity version saved/).waitFor();
   assert.equal(await p.evaluate(()=>calendarActivities()[0].activity.notes),'Other version');assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);
  });
+ await run('delayed task editor autofocus cannot move the cursor out of notes or another control',async p=>{
+  await tasks(p);await add(p,'Keep the cursor where I put it');
+  const focus=await p.evaluate(()=>{
+   const original=requestAnimationFrame,callbacks=[];
+   window.requestAnimationFrame=callback=>{callbacks.push(callback);return 1;};
+   try {
+    startPlannerTaskEdit(getPlannerSourceItems()[0]);
+    const notes=document.querySelector('.task-edit-details textarea');notes.focus();
+    callbacks.forEach(callback=>callback());
+    return document.activeElement.getAttribute('aria-label');
+   } finally {window.requestAnimationFrame=original;}
+  });
+  assert.equal(focus,'Task notes');
+  await p.keyboard.type('Keep every character here');
+  await p.getByLabel('Save planner task',{exact:true}).click();
+  assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].notes),'Keep every character here');
+  assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].title),'Keep the cursor where I put it');
+ });
  await run('failed device writes retain task and activity drafts and retries do not duplicate records',async p=>{
   await tasks(p);await p.evaluate(()=>flushDeviceWrites());
   const fail=()=>p.evaluate(()=>{window.originalSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(this===localStorage)throw new DOMException('Test quota','QuotaExceededError');return window.originalSetItem.call(this,key,value);};});

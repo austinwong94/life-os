@@ -4127,7 +4127,10 @@ function renderPlannerLinkedEditItem(item) {
   });
 
   row.append(form);
-  window.requestAnimationFrame(() => titleInput.focus());
+  window.requestAnimationFrame(() => {
+    // Autofocus must not steal a field the user has already started editing.
+    if (form.isConnected && document.activeElement === document.body) titleInput.focus({preventScroll:true});
+  });
   return row;
 }
 
