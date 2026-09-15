@@ -3246,7 +3246,8 @@ function getPreferredBoardColumnCount() {
 function getMaximumBoardColumnsForWidth(width) {
   const availableWidth = Number(width) || window.innerWidth || 0;
   if (availableWidth < 680) return 1;
-  if (availableWidth < 984) return 2;
+  // Three 292px cards plus two 12px gaps fit a portrait desktop.
+  if (availableWidth < 900) return 2;
   return 3;
 }
 
