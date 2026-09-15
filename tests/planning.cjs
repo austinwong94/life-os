@@ -88,12 +88,13 @@ const results=[];
      const r=[...meta.children].map(e=>e.getBoundingClientRect());
      return r.some((a,i)=>r.slice(i+1).some(b=>Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1));
     });
-    return {top:first.top,rowHeight:first.height,count:rows.length,overlaps,overflow:document.documentElement.scrollWidth-innerWidth,
+    const workspace=list.closest('.planning-workspace');
+    return {top:first.top,rowHeight:first.height,count:rows.length,overlaps,overflow:document.documentElement.scrollWidth-innerWidth,innerOverflow:workspace.scrollWidth-workspace.clientWidth,
      font:parseFloat(getComputedStyle(list.querySelector('.planner-linked-copy')).fontSize),
      menuHeight:list.querySelector('.planner-task-menu-toggle').getBoundingClientRect().height,
      captureHeights:[...document.querySelectorAll('.task-capture input,.task-capture select,.task-capture-submit')].map(e=>e.getBoundingClientRect().height)};
    });measurements.push({width,...m});
-   assert.equal(m.count,12);assert.equal(m.overlaps,false);assert.ok(m.overflow<=1);
+   assert.equal(m.count,12);assert.equal(m.overlaps,false);assert.ok(m.overflow<=1&&m.innerOverflow<=1,JSON.stringify({width,...m}));
    assert.ok(m.top<=(width<=380?620:width<=700?535:width<=900?530:410),JSON.stringify({width,...m}));
    assert.ok(m.rowHeight<=70,JSON.stringify({width,...m}));
    assert.ok(m.font<=(width<=700?15:14));if(width<=700)assert.ok(m.menuHeight>=44);
@@ -113,6 +114,9 @@ const results=[];
   assert.equal(await p.getByLabel('New task',{exact:true}).inputValue(),'My unfinished capture');
   await search.fill('');await p.getByRole('button',{name:'Search tasks',exact:true}).click();assert.equal(await search.isVisible(),false);
   assert.equal(await p.locator('.planner-linked-copy').count(),12);
+  await p.setViewportSize({width:320,height:740});
+  await p.addStyleTag({content:'.task-toolbar .planning-tabs .planning-button {font-family:monospace;font-size:13px;font-weight:700;}'});
+  assert.ok(await p.locator('.planning-workspace').evaluate(e=>e.scrollWidth-e.clientWidth<=1));
  });
  await run('scrolled task menus remain onscreen and clickable across phone and desktop breakpoints',async p=>{
   await tasks(p);await p.evaluate(()=>{

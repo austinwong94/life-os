@@ -481,7 +481,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .task-heading:not(.is-search-open) .planning-search { display: none; }
   .task-toolbar { gap: 8px; }
   .task-toolbar .planning-tabs { width: 100%; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
-  .task-toolbar .planning-tabs .planning-button { padding: 8px 4px; font-size: 12px; }
+  .task-toolbar .planning-tabs .planning-button { padding: 8px 0; font-size: 12px; }
+  .task-toolbar .planning-tabs .planning-button span { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
   .workspace-task-list .planner-linked-copy { font-size: 15px; }
   .workspace-task-list .planner-task-menu-toggle { width: 44px; height: 44px; }
 }
