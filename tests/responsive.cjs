@@ -145,12 +145,38 @@ fs.mkdirSync(out,{recursive:true});const results=[];
  await run('All card bodies fit portrait board columns and survive mode and width changes',async page=>{
   await page.evaluate(async()=>{state.cards=Object.keys(TYPE_META).map((type,index)=>({...makeCard({type,title:'Sample '+type,description:'A readable record\nAnother line',category:'Personal'}),order:index}));saveState({skipCloud:true});await flushDeviceWrites();renderCardsOnly({force:true});});
   const ids=await page.evaluate(()=>state.cards.map(card=>card.id).sort());
-  for(const columns of [2,3])for(const width of [320,390,680,700,701,768,900,1080,1206,1440]){
+  for(const columns of [2,3])for(const width of [320,390,680,700,701,768,900,980,981,1054,1055,1079,1080,1206,1440]){
    await page.setViewportSize({width,height:1600});await page.evaluate(columns=>{state.board.columnCount=columns;renderCardsOnly({force:true});},columns);await page.waitForTimeout(120);
    const issues=await page.evaluate(()=>[...document.querySelectorAll('#boardGrid .task-card')].flatMap(card=>{const body=card.querySelector('.card-body'),r=card.getBoundingClientRect();return body.scrollWidth>body.clientWidth+1 || r.right>innerWidth+1 || r.left<0?[{type:card.className,overflow:body.scrollWidth-body.clientWidth,width:r.width}]:[];}));
    assert.deepEqual(issues,[],JSON.stringify({width,columns,issues}));
   }
   assert.deepEqual(await page.evaluate(()=>state.cards.map(card=>card.id).sort()),ids);
+ });
+ await run('three selected board columns really render at portrait desktop widths without changing saved card positions',async page=>{
+  await page.setViewportSize({width:1079,height:2273});
+  await page.evaluate(async()=>{
+   state.ui.workspaceMode='board';state.board.layout='custom';state.board.columnCount=3;
+   state.cards=['sidenote','diary','quote','checklist','planlist','event','food','fitness','planner'].map((type,i)=>({...makeCard({type,title:'Portrait '+type,description:'Keep every recorded line',category:'Personal'}),layoutColumn:i%3,order:i}));
+   saveState();await flushDeviceWrites();renderCardsOnly({force:true});renderBoardMeta();
+  });
+  const original=await page.evaluate(()=>JSON.stringify(state.cards));
+  const picker=page.getByRole('group',{name:'Board columns',exact:true});
+  for(const width of [1079,1080,1055,1206]){
+   await page.setViewportSize({width,height:2273});await page.waitForTimeout(200);
+   assert.equal(await picker.getByRole('button',{name:'3 board columns',exact:true}).getAttribute('aria-pressed'),'true');
+   assert.equal(await page.locator('.board-columns-grid > .board-column').count(),3,'Three must render at '+width+'px, not just remain selected');
+   const geometry=await page.locator('.board-columns-grid > .board-column').evaluateAll(cols=>cols.map(c=>{const r=c.getBoundingClientRect();return {left:r.left,right:r.right,width:r.width};}));
+   assert.equal(new Set(geometry.map(c=>Math.round(c.left))).size,3);assert.ok(geometry.every(c=>c.width>=292&&c.left>=0&&c.right<=width));
+   assert.ok(await page.locator('.card-body').evaluateAll(bodies=>bodies.every(e=>e.scrollWidth<=e.clientWidth+1)));
+   assert.equal(await page.locator('.task-card').count(),9);
+   if(width===1079)await page.screenshot({path:out+'/board-three-columns-1079.png',fullPage:true});
+  }
+  await page.setViewportSize({width:1079,height:2273});await picker.getByRole('button',{name:'2 board columns',exact:true}).click();assert.equal(await page.locator('.board-column').count(),2);
+  await picker.getByRole('button',{name:'3 board columns',exact:true}).click();assert.equal(await page.locator('.board-column').count(),3);
+  await page.evaluate(()=>flushDeviceWrites());await page.reload();assert.equal(await page.locator('.board-column').count(),3);
+  await page.setViewportSize({width:390,height:844});await page.waitForTimeout(200);assert.equal(await page.locator('.board-column').count(),1);assert.equal(await page.evaluate(()=>state.board.columnCount),3);
+  await page.setViewportSize({width:1079,height:2273});await page.waitForTimeout(200);assert.equal(await page.locator('.board-column').count(),3);
+  assert.equal(await page.evaluate(()=>JSON.stringify(state.cards)),original);
  });
  await run('Board picker options stay focused during saves and outside click or Tab dismisses the menu',async page=>{
   await page.evaluate(async()=>{await flushDeviceWrites();state.boards.push(createBoardRecord({id:'work',name:'Work',cards:[]}));saveState({skipCloud:true});await flushDeviceWrites();renderBoardMeta();});

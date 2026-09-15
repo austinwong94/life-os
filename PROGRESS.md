@@ -1,6 +1,12 @@
 # Life OS Reliability and Usability Progress
 
-Updated: 15 September 2026. Previous published baseline: `289b432` (board and task column controls).
+Updated: 15 September 2026. Previous published baseline: `a06e285` (linked Calendar and one-day activity dates).
+
+## Portrait Three-Column Correction
+
+The board's 984px usable-width threshold overrode the selected three-column preference on the user's 1079px portrait screenshot. It now allows three readable 292px cards plus two 12px gaps from 900px of board width. Phones still use one column and narrower tablet windows adapt; the saved preference and manual card positions are not rewritten.
+
+A new regression requires three actual, distinct visible columns at 1055, 1079 and 1080px viewport widths, not merely a selected 3 button. It checks all nine fixture records, exact stored card preservation, 2/3 switching, reload and phone-to-desktop restoration. The all-card body checks include additional breakpoint widths. The full gate is **202 checks plus 30 WebKit repeats**. This is a display-only correction, with no database migration or cloud conflict selection.
 
 ## Calendar and Planner Connection
 

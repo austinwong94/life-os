@@ -8,6 +8,8 @@ A private personal workspace: boards hold your records, Today provides a daily e
 
 ## September 15 Design Changes
 
+- Portrait-column correction: three board columns now fit from 900px of actual board width, rather than requiring 984px after sidebar and margins. The previous threshold could show two columns with 3 selected on a 1079px portrait desktop. New assertions require three distinct visible columns at 1055, 1079 and 1080px viewport widths, with no card loss, body overflow or saved-position changes. Phone fallback remains one column and preserves the three-column preference for returning to desktop.
+
 - Consolidated task heading, area filter and search; task views and day navigation share a row where space permits.
 - A single desktop capture row replaces the oversized stacked form. On phones it wraps without reducing the native input text below 16px.
 - Consistent 36px mouse controls and 44px phone controls; 14px desktop task text and 15px phone task text.
@@ -48,6 +50,8 @@ No personal records are used as test fixtures. No production diary/task deletion
 ## Verification and Next Steps
 
 The columns baseline `289b432` passed 194 checks plus 24 WebKit repeats. The Calendar follow-up adds two core and five browser scenarios, making the gate **201 checks plus 29 WebKit repeats**. Coverage includes automatic one-day ends, explicit multi-day intervals, leap years, draft retention, original planner-card entry, linked edits and completion history, archive/restore, board/area isolation, ongoing activities without duplicate rows, cross-tab updates and 13-task lists at 320, 390, 768 and 1080 pixels. A first candidate stopped on WebKit reporting aborted development file-watcher fetches during reload. Responsive and planning tests now explicitly opt out with `liveReload=0`; a separate regression verifies that normal local previews still watch source changes. Production behavior and error assertions are unchanged. Existing column, mobile, recovery, sync and card regressions remain in the full gate. See [GitHub verification and deployment](https://github.com/austinwong94/life-os/actions) for the exact published commit's outcome.
+
+The portrait-column follow-up adds one scenario in both browser engines, bringing the full gate to **202 checks plus 30 WebKit repeats**. The all-card overflow sweep now also covers the sidebar breakpoint and both sides of the three-column threshold. The earlier test verified preference persistence and overflow, but did not require three actual board columns at the reported portrait width; that coverage gap is now explicit.
 
 Next priorities:
 
