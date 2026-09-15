@@ -477,6 +477,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 @media (max-width: 700px) {
   .task-heading { grid-template-columns: minmax(60px,1fr) minmax(120px,160px) 44px; gap: 8px; }
+  .task-capture { padding-block: 8px; }
   .task-heading .task-search-toggle { display: inline-flex; }
   .task-heading .planning-search { grid-column: 1 / -1; }
   .task-heading:not(.is-search-open) .planning-search { display: none; }
