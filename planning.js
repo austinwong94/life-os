@@ -216,7 +216,24 @@ function renderTaskResults(root) {
   if(query)items=items.filter(item=>[item.title,item.project,item.notes,item.group].some(value=>String(value||"").toLocaleLowerCase().includes(query)));
   items=items.slice().sort((a,b)=>session.view==="completed"?(b.completedOn||"").localeCompare(a.completedOn||"")||a.title.localeCompare(b.title)
     :Number(a.done)-Number(b.done)||(a.scheduledDate||a.dateKey||"9999").localeCompare(b.scheduledDate||b.dateKey||"9999")||a.title.localeCompare(b.title));
-  const count=planningNode("p","planning-count",`${items.length} ${items.length===1?"task":"tasks"}`);count.setAttribute("role","status");root.append(count);
+  const count=planningNode("p","planning-count",`${items.length} ${items.length===1?"task":"tasks"}`);count.setAttribute("role","status");
+  const heading=planningNode("div","task-results-heading"),columns=planningNode("div","column-picker");
+  columns.setAttribute("role","group");columns.setAttribute("aria-label","Task columns");columns.append(planningNode("span","","Columns"));
+  const selected=[1,2,3].includes(Number(session.columns))?Number(session.columns):1;
+  root.dataset.columns=String(selected);
+  for(const value of [1,2,3]){
+    const button=planningNode("button","",String(value));button.type="button";
+    button.setAttribute("aria-label",`${value} task ${value===1?"column":"columns"}`);
+    button.setAttribute("aria-pressed",String(value===selected));
+    button.title=`${value} ${value===1?"column":"columns"}; fewer on narrow screens`;
+    button.onclick=()=>{
+      // Change presentation in place so an open task editor keeps every keystroke.
+      session.columns=value;root.dataset.columns=String(value);savePlanningSession();
+      columns.querySelectorAll("button").forEach(item=>item.setAttribute("aria-pressed",String(item===button)));
+    };
+    columns.append(button);
+  }
+  heading.append(count,columns);root.append(heading);
   if(!items.length){root.append(planningNode("p","planning-empty",query?"No matching tasks.":"No tasks in this view."));return;}
   const list=planningNode("div","workspace-task-list");root.append(list);
   items.forEach(item=>{

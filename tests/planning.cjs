@@ -118,6 +118,55 @@ const results=[];
   await p.addStyleTag({content:'.task-toolbar .planning-tabs .planning-button {font-family:monospace;font-size:13px;font-weight:700;}'});
   assert.ok(await p.locator('.planning-workspace').evaluate(e=>e.scrollWidth-e.clientWidth<=1));
  });
+ await run('task columns preserve records, editing drafts, order and board-scoped preferences',async p=>{
+  await tasks(p);await add(p,'Column task 0');
+  await p.evaluate(async()=>{const source=getPlannerSourceCards()[0];for(let i=1;i<9;i++)LifePlanner.add(source,getTodayKey(),'Column task '+i,createId());saveState();await flushDeviceWrites();renderCardsOnly({force:true});});
+  const original=await p.evaluate(()=>JSON.stringify(getPlannerSourceCards().map(c=>c.plannerTasks)));
+  const picker=p.getByRole('group',{name:'Task columns',exact:true});
+  for(const selected of [1,2,3]){
+   await picker.getByRole('button',{name:`${selected} task ${selected===1?'column':'columns'}`,exact:true}).click();
+   for(const width of [320,390,768,1080,1440]){
+    await p.setViewportSize({width,height:1000});
+    const m=await p.locator('.workspace-task-list').evaluate(e=>({tracks:getComputedStyle(e).gridTemplateColumns.split(' ').length,width:e.clientWidth,overflow:e.scrollWidth-e.clientWidth,rows:[...e.children].map(r=>r.getBoundingClientRect().width)}));
+    const expected=Math.min(selected,m.width<600?1:m.width<900?2:3);assert.equal(m.tracks,expected,JSON.stringify({width,selected,m}));assert.ok(m.overflow<=1);
+    assert.equal(await p.locator('.planner-linked-copy').count(),9);assert.deepEqual(await p.locator('.planner-linked-copy').allTextContents(),Array.from({length:9},(_,i)=>'Column task '+i));
+    assert.ok(await p.locator('.planning-workspace').evaluate(e=>e.scrollWidth-e.clientWidth<=1));
+    if(selected===3)await p.screenshot({path:out+'/task-columns-'+width+'.png',fullPage:true});
+   }
+  }
+  await edit(p,'Column task 0');await p.getByLabel('Task notes',{exact:true}).fill('Keep this unfinished edit\nEvery line');
+  await p.getByLabel('Task notes',{exact:true}).evaluate(e=>window.columnEditInput=e);
+  await picker.getByRole('button',{name:'2 task columns',exact:true}).click();await picker.getByRole('button',{name:'3 task columns',exact:true}).click();
+  assert.equal(await p.getByLabel('Task notes',{exact:true}).evaluate(e=>e===window.columnEditInput),true);assert.equal(await p.getByLabel('Task notes',{exact:true}).inputValue(),'Keep this unfinished edit\nEvery line');
+  assert.ok(await p.locator('.planner-linked-edit-form').evaluate(e=>e.clientWidth>800&&e.scrollWidth<=e.clientWidth+1));
+  await p.getByLabel('Cancel planner task edit',{exact:true}).click();
+  assert.equal(await p.evaluate(()=>JSON.stringify(getPlannerSourceCards().map(c=>c.plannerTasks))),original);
+  const originalBoard=await p.evaluate(()=>state.activeBoardId);
+  await p.evaluate(()=>{state.boards.push(createBoardRecord({id:'columns-other',name:'Other board',cards:[]}));switchBoard('columns-other');});await tasks(p);
+  assert.equal(await picker.getByRole('button',{name:'1 task column',exact:true}).getAttribute('aria-pressed'),'true');
+  await p.evaluate(id=>switchBoard(id),originalBoard);await tasks(p);assert.equal(await picker.getByRole('button',{name:'3 task columns',exact:true}).getAttribute('aria-pressed'),'true');
+  await p.reload();await tasks(p);assert.equal(await picker.getByRole('button',{name:'3 task columns',exact:true}).getAttribute('aria-pressed'),'true');
+ });
+ await run('board quick columns and Settings share the saved choice without changing card placement or task layout',async p=>{
+  await p.setViewportSize({width:1440,height:1000});
+  await p.evaluate(async()=>{state.ui.workspaceMode='board';state.board.layout='custom';state.board.columnCount=2;state.cards=Array.from({length:6},(_,i)=>({...makeCard({type:'checklist',title:'Placed card '+i,items:['Keep my task']}),layoutColumn:i%3,order:i}));saveState();await flushDeviceWrites();renderCardsOnly({force:true});renderBoardMeta();});
+  const original=await p.evaluate(()=>JSON.stringify(state.cards));
+  const picker=p.locator('#boardColumnQuickControl');assert.equal(await picker.isVisible(),true);
+  await picker.getByRole('button',{name:'3 board columns',exact:true}).click();assert.equal(await p.locator('.board-columns-grid > .board-column').count(),3);
+  assert.equal(await p.locator('#columnControl [data-columns="3"]').evaluate(e=>e.classList.contains('is-active')),true);
+  await p.setViewportSize({width:390,height:844});await p.waitForTimeout(150);assert.equal(await p.locator('.board-columns-grid > .board-column').count(),1);assert.equal(await picker.getByRole('button',{name:'3 board columns',exact:true}).getAttribute('aria-pressed'),'true');
+  await p.setViewportSize({width:1440,height:1000});await p.waitForTimeout(150);assert.equal(await p.locator('.board-columns-grid > .board-column').count(),3);
+  await picker.getByRole('button',{name:'2 board columns',exact:true}).click();assert.equal(await p.locator('.board-columns-grid > .board-column').count(),2);
+  await p.locator('#railSettingsButton').click();await p.locator('#columnControl [data-columns="3"]').click();
+  assert.equal(await picker.getByRole('button',{name:'3 board columns',exact:true}).getAttribute('aria-pressed'),'true');
+  await p.evaluate(()=>closeSettingsModal());await tasks(p);assert.equal(await picker.isVisible(),false);
+  await p.getByRole('button',{name:'2 task columns',exact:true}).click();assert.equal(await p.evaluate(()=>state.board.columnCount),3);
+  await p.locator('#boardModeButton').click();assert.equal(await p.locator('.board-columns-grid > .board-column').count(),3);assert.equal(await p.evaluate(()=>JSON.stringify(state.cards)),original);
+  await p.evaluate(()=>flushDeviceWrites());await p.reload();assert.equal(await p.locator('.board-columns-grid > .board-column').count(),3);
+  assert.equal(await p.evaluate(()=>JSON.stringify(state.cards)),original);
+  for(const width of [320,390,700,768,980,981,1080,1157,1440]){await p.setViewportSize({width,height:1000});await p.waitForTimeout(120);assert.ok(await p.locator('.workspace-navigation').evaluate(e=>e.scrollWidth-e.clientWidth<=1));}
+  await p.screenshot({path:out+'/board-columns-1440.png',fullPage:true});
+ });
  await run('scrolled task menus remain onscreen and clickable across phone and desktop breakpoints',async p=>{
   await tasks(p);await p.evaluate(()=>{
    const card=getPlannerWriteSourceCard({category:'Personal'},getTodayKey());

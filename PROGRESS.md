@@ -1,10 +1,12 @@
 # Life OS Reliability and Usability Progress
 
-Updated: 15 September 2026. Previous published baseline: `7c86961` (10 September Tasks and Calendar release).
+Updated: 15 September 2026. Previous published baseline: `dbc0278` (compact Tasks design release).
 
 ## Current Design Pass
 
 The task workspace now uses compact, aligned controls, a consolidated toolbar and desktop capture row, readable wrapping metadata, and expandable phone search that cannot conceal an active filter. Existing board/diary records, saving and cloud behavior are unchanged. No Supabase migration is needed. See [current platform status](PLATFORM-STATUS.md) for implemented features, missing integrations, security boundaries and next steps. The earlier dated audit sections below are historical evidence, not a current deployment status.
+
+The column follow-up adds visible 2 / 3 choices in My board and independent 1 / 2 / 3 choices in Tasks. Narrow screens adapt without overwriting the selected preference. The board uses its existing saved setting; task columns are board-scoped and tab-local, retained on reload. Two new regression scenarios verify records, card placements, unfinished edits, Settings synchronization and responsive behavior, bringing the full gate to 194 checks plus 24 WebKit repeats.
 
 ## September 10 Upgrade
 

@@ -2,6 +2,9 @@ const conflictReviewDrafts=new Map();
 let quickBoardPickerSignature='';
 
 function renderQuickBoardPicker() {
+  document.querySelectorAll('#boardColumnQuickControl button').forEach(button=>{
+    button.setAttribute('aria-pressed',String(Number(button.dataset.columns)===getPreferredBoardColumnCount()));
+  });
   const trigger=document.getElementById('boardSwitcherButton');
   if (!trigger) return;
   document.getElementById('boardSwitcherName').textContent=state.board.name;
@@ -536,6 +539,10 @@ function initializeExperience() {
   elements.visibilityLabel.textContent = "Personal board";
   document.querySelector(".board-tools-field").removeAttribute("hidden");
   elements.boardPanel.append(document.querySelector(".board-tools-field"));
+  document.getElementById('boardColumnQuickControl').onclick=event=>{
+    const button=event.target.closest('button[data-columns]');
+    if(button)elements.columnControl.querySelector(`[data-columns="${button.dataset.columns}"]`)?.click();
+  };
   if (window.matchMedia("(max-width: 700px)").matches) state.ui.controlsOpen = false;
   renderBoardMeta();
   renderCardsOnly({force:true});

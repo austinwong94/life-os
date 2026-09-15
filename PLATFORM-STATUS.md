@@ -15,6 +15,7 @@ A private personal workspace: boards hold your records, Today provides a daily e
 - Mobile search expands on demand. An active search cannot be hidden, including when resizing from desktop, and capture text is preserved.
 - Calendar mouse controls use the same sizing. Existing diary/card layouts and board column positions are not redesigned or migrated in this pass.
 - Fixed a legacy CSS override that positioned task menus relative to the page instead of the viewport, making them disappear offscreen after scrolling. All three actions are hit-tested above the phone navigation.
+- Added visible column choices to both workspaces: My board has 2 / 3 columns next to its navigation; Tasks has 1 / 2 / 3 next to the task count. The board control uses its existing saved preference and Settings remains synchronized. Task columns are a board-scoped, tab-local preference retained on reload; they do not change card positions or cloud records. Narrow screens reduce the displayed columns without changing the selected preference, and an open task editor spans the available width without losing its draft.
 
 ## Feature Progress
 
@@ -42,7 +43,7 @@ No personal records are used as test fixtures. No production diary/task deletion
 
 ## Verification and Next Steps
 
-The previous release `7c86961` passed 190 checks plus 20 WebKit repeats. This release adds density/search and scrolled-menu regressions, making the gate **192 checks plus 22 WebKit repeats**. It checks task visibility, row sizes, metadata separation, consistent control heights and search/draft retention at 320, 390, 768, 1080 and 1440 CSS pixels, plus direct menu hit-testing around phone/tablet/desktop breakpoints. See [GitHub verification and deployment](https://github.com/austinwong94/life-os/actions) for the exact published commit's outcome.
+The density release `dbc0278` passed 192 checks plus 22 WebKit repeats. The column follow-up adds two scenarios, making the gate **194 checks plus 24 WebKit repeats**. It checks task visibility, row sizes, metadata separation, consistent control heights and search/draft retention at 320, 390, 768, 1080 and 1440 CSS pixels, plus direct menu hit-testing around phone/tablet/desktop breakpoints. Column tests check responsive fallback, exact task and card preservation, unfinished editor retention, independent board/task preferences, reload persistence and both board controls. See [GitHub verification and deployment](https://github.com/austinwong94/life-os/actions) for the exact published commit's outcome.
 
 Next priorities:
 
