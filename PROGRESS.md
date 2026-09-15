@@ -1,6 +1,14 @@
 # Life OS Reliability and Usability Progress
 
-Updated: 15 September 2026. Previous published baseline: `dbc0278` (compact Tasks design release).
+Updated: 15 September 2026. Previous published baseline: `289b432` (board and task column controls).
+
+## Calendar and Planner Connection
+
+Calendar Month, Week and Agenda now read dated canonical planner tasks from the current board, alongside separately grouped activities. Editing, completing, archiving or rescheduling uses the same task record; there is no duplicate activity or new task database. Completed tasks retain their scheduled-date entry and completion metadata. Undated tasks stay in Tasks. Existing Today carryover and completion-day history are unchanged; Google live synchronization is not connected.
+
+Activity End date follows Start date for one-day plans, including after clearing and re-entering the start. An explicitly different end stays independent. Invalid intervals are refused without erasing the draft. Reproduction also found a Planner card submitting the old date from its rendered closure, and a view refresh being skipped permanently when a cross-tab update arrived during the short typing guard. These now use the date currently displayed and a queued refresh that still respects unfinished editing.
+
+The release gate contains **200 checks plus 28 WebKit repeats**, including two new core and four browser scenarios. It covers original Planner card entry, Calendar/Tasks edits, completion on selected past dates, archive/restore, long future dates, board/area isolation, ongoing activity grouping, two-tab changes, retained unfinished activity notes and phone/portrait layouts. No production records are test fixtures. No SQL migration or bulk data replacement is needed. Follow [release checks](https://github.com/austinwong94/life-os/actions) for the exact candidate and deployment outcome.
 
 ## Current Design Pass
 

@@ -48,6 +48,89 @@ const results=[];
   const data=await p.evaluate(()=>{saveCurrentLayout();commitCustomLayoutColumns(getCustomLayoutColumns(2));syncActiveBoard();return {html:buildReadableDataArchive(getStateForStorage()),visible:getOrderedCards().filter(c=>c.calendarOnly).length,link:LifePlanning.googleLink(calendarActivities()[0].activity)};});assert.equal(data.visible,0);assert.match(data.html,/Agenda\nReview launch/);assert.match(data.link,/calendar.google.com/);
   await p.locator('.activity-more summary').click();await p.locator('.activity-more').getByRole('button',{name:'Archive',exact:true}).click();assert.equal(await p.locator('.activity-row').count(),0);assert.equal(await p.evaluate(()=>getArchivedCards().filter(c=>c.activity).length),1);
  });
+ await run('one-day activity ends follow start dates, explicit multi-day ends and date-editor focus survive reload',async p=>{
+  await p.locator('#calendarModeButton').click();await p.getByRole('button',{name:'Add activity',exact:true}).click();
+  await p.getByLabel('Activity name',{exact:true}).fill('One day away');
+  const start=p.getByLabel('Start date',{exact:true}),end=p.getByLabel('End date',{exact:true});
+  await start.fill('2027-06-10');assert.equal(await end.inputValue(),'2027-06-10');
+  await start.fill('');await start.fill('2027-06-11');assert.equal(await end.inputValue(),'2027-06-11');
+  await p.getByRole('button',{name:'Save activity',exact:true}).click();
+  assert.equal(await p.evaluate(()=>calendarActivities()[0].activity.startAt.slice(0,10)),'2027-06-11');
+  assert.equal(await p.evaluate(()=>calendarActivities()[0].activity.endAt.slice(0,10)),'2027-06-11');
+  await p.getByRole('button',{name:'Edit activity: One day away',exact:true}).click();await p.getByLabel('All day',{exact:true}).check();
+  await start.fill('2027-12-31');assert.equal(await end.inputValue(),'2027-12-31');
+  await end.fill('2028-01-03');await start.fill('2028-01-01');assert.equal(await end.inputValue(),'2028-01-03');
+  await p.reload();await p.locator('#calendarModeButton').click();assert.equal(await end.inputValue(),'2028-01-03');
+  await start.fill('2028-01-02');assert.equal(await end.inputValue(),'2028-01-03');
+  await end.fill('2028-01-02');await start.fill('2028-02-29');assert.equal(await end.inputValue(),'2028-02-29');
+  await p.getByRole('button',{name:'Save activity',exact:true}).click();
+  const saved=await p.evaluate(()=>calendarActivities()[0].activity);assert.equal(saved.startDate,'2028-02-29');assert.equal(saved.endDate,'2028-02-29');assert.equal(Object.hasOwn(saved,'endDateFollowsStart'),false);
+ });
+ await run('Planner card tasks appear once in Calendar and share edits, completion history, archive and rescheduling',async p=>{
+  const dates=await p.evaluate(()=>({today:getTodayKey(),past:LifePlanning.shift(getTodayKey(),-1),future:LifePlanning.shift(getTodayKey(),5)}));
+  await p.evaluate(()=>{state.cards.push(makeCard({type:'planner',title:'Future source',category:'Personal'}));saveState();renderCardsOnly({force:true});});
+  const planner=p.locator('.type-planner');await planner.getByLabel('Planner date',{exact:true}).fill(dates.future);await planner.getByLabel('Planner date',{exact:true}).press('Tab');
+  await planner.getByLabel('Planner task',{exact:true}).fill('Book the trip');await planner.getByLabel('Planner task',{exact:true}).press('Enter');
+  const source=await p.evaluate(()=>getPlannerSourceItems().find(item=>item.title==='Book the trip'));const originalId=source.taskId;
+  assert.equal(source.dateKey,dates.future);
+  await p.locator('#calendarModeButton').click();await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Month',exact:true}).click();
+  await p.getByRole('button',{name:`${dates.future}, 0 activities, 1 tasks`,exact:true}).click();assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').innerText(),'Book the trip');
+  await edit(p,'Book the trip');await p.getByLabel('Task name',{exact:true}).fill('Reserve the trip');await p.getByLabel('Save planner task',{exact:true}).click();
+  assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').innerText(),'Reserve the trip');
+  assert.equal(await p.evaluate(()=>calendarActivities().length),0);assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].taskId),originalId);
+  await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Week',exact:true}).click();assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').count(),1);
+  await edit(p,'Reserve the trip');await p.getByLabel('Task date',{exact:true}).fill(dates.past);await p.getByLabel('Save planner task',{exact:true}).click();
+  await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Month',exact:true}).click();await p.getByRole('button',{name:`${dates.past}, 0 activities, 1 tasks`,exact:true}).click();
+  await p.getByRole('checkbox',{name:'Mark done: Reserve the trip',exact:true}).click();assert.equal(await p.getByRole('checkbox',{name:'Mark open: Reserve the trip',exact:true}).isChecked(),true);assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').count(),1);
+  assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].completedOn),dates.past);
+  await tasks(p);await p.getByLabel('Selected day',{exact:true}).fill(dates.today);assert.equal(await p.locator('.workspace-task-list .planner-linked-copy').count(),0);
+  await p.locator('#calendarModeButton').click();await p.getByRole('button',{name:`${dates.past}, 0 activities, 1 tasks`,exact:true}).click();
+  await p.getByRole('button',{name:'Task options: Reserve the trip',exact:true}).click();await p.locator('.planner-task-menu:not([hidden])').getByRole('button',{name:'Archive',exact:true}).click();
+  assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').count(),0);assert.equal(await p.evaluate(()=>getPlannerSourceCards()[0].plannerTasks.length),1);
+  await p.evaluate(id=>restorePlannerTask(getPlannerSourceCards()[0].id,id),originalId);await p.evaluate(()=>flushDeviceWrites());await p.reload();
+  assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').innerText(),'Reserve the trip');assert.equal(await p.evaluate(()=>calendarActivities().length),0);
+ });
+ await run('calendar agenda groups dated tasks and ongoing activities without duplicating events or mixing boards and areas',async p=>{
+  await p.evaluate(async()=>{
+   const today=getTodayKey(),source=makeCard({type:'planner',title:'Source',category:'Personal'});state.cards.push(source);
+   for(const [id,date,title] of [['past',LifePlanning.shift(today,-1),'Past task'],['dated',today,'Dated task'],['undated','','No date task'],['far','2028-12-31','Long-term task'],['archived',today,'Archived task'],['deleted',today,'Deleted task']])LifePlanner.add(source,date,title,id);
+   LifePlanner.change(source,'dated',{area:'Culturely'});LifePlanner.change(source,'archived',{archivedAt:Date.now()});LifePlanner.change(source,'deleted',{deletedAt:Date.now()});
+   const activity=LifePlanning.activityFromDraft({title:'Ongoing trip',area:'Culturely',allDay:true,startDate:LifePlanning.shift(today,-2),endDate:LifePlanning.shift(today,3)});
+   state.cards.push({...makeCard({type:'event',title:activity.title}),activity,calendarOnly:true});
+   const privateSource=makeCard({type:'planner',title:'Other board source'});LifePlanner.add(privateSource,today,'Only on other board','dated');state.boards.push(createBoardRecord({id:'calendar-private',name:'Private second',cards:[privateSource]}));
+   saveState();await flushDeviceWrites();
+  });
+  await p.locator('#calendarModeButton').click();await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Agenda',exact:true}).click();
+  assert.deepEqual(await p.locator('.calendar-task-list .planner-linked-copy').allTextContents(),['Dated task','Long-term task']);assert.equal(await p.locator('.activity-row').count(),1);
+  await p.getByLabel('Filter by area',{exact:true}).selectOption('Culturely');assert.deepEqual(await p.locator('.calendar-task-list .planner-linked-copy').allTextContents(),['Dated task']);assert.equal(await p.locator('.activity-row').count(),1);
+  await p.getByLabel('Filter by area',{exact:true}).selectOption('*');await p.evaluate(()=>switchBoard('calendar-private'));await p.locator('#calendarModeButton').click();
+  assert.deepEqual(await p.locator('.calendar-task-list .planner-linked-copy').allTextContents(),['Only on other board']);assert.equal(await p.locator('.activity-row').count(),0);
+ });
+ await run('calendar receives task changes from another tab and its month, agenda and task editor fit phone and portrait layouts',async(p,context)=>{
+  await tasks(p);await add(p,'Original linked task','Culturely');
+  await p.locator('#calendarModeButton').click();await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Month',exact:true}).click();
+  const second=await context.newPage();await second.goto(URL+'?preview=1');await tasks(second);await edit(second,'Original linked task');await second.getByLabel('Task name',{exact:true}).fill('Linked task updated in another tab');await second.getByLabel('Save planner task',{exact:true}).click();await second.evaluate(()=>flushDeviceWrites());
+  await p.getByRole('button',{name:'Mark done: Linked task updated in another tab',exact:true}).waitFor();
+  assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').count(),1);
+  await p.getByRole('button',{name:'Add activity',exact:true}).click();await p.getByLabel('Activity notes',{exact:true}).fill('My unfinished activity draft\nKeep every character');
+  const notesHandle=await p.getByLabel('Activity notes',{exact:true}).elementHandle();
+  await edit(second,'Linked task updated in another tab');await second.getByLabel('Task notes',{exact:true}).fill('Changed elsewhere');await second.getByLabel('Save planner task',{exact:true}).click();await second.evaluate(()=>flushDeviceWrites());
+  await p.waitForTimeout(1600);assert.equal(await p.getByLabel('Activity notes',{exact:true}).inputValue(),'My unfinished activity draft\nKeep every character');assert.equal(await notesHandle.evaluate(e=>e.isConnected&&document.activeElement===e),true);
+  await p.getByRole('button',{name:'Cancel',exact:true}).click();
+  await p.evaluate(async()=>{const source=getPlannerSourceCards()[0];for(let i=0;i<12;i++)LifePlanner.add(source,getTodayKey(),'More linked work '+i,createId());const activity=LifePlanning.activityFromDraft({title:'Same day activity',area:'Culturely',allDay:true,startDate:getTodayKey(),endDate:getTodayKey()});state.cards.push({...makeCard({type:'event',title:activity.title}),activity,calendarOnly:true});saveState();await flushDeviceWrites();renderCardsOnly({force:true});});
+  for(const width of [320,390,768,1080]){
+   await p.setViewportSize({width,height:844});await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Month',exact:true}).click();
+   assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').count(),13);
+   assert.ok(await p.locator('.planning-workspace').evaluate(e=>e.scrollWidth-e.clientWidth<=1));
+   assert.ok(await p.locator('.calendar-day').evaluateAll(nodes=>nodes.every(e=>e.scrollWidth-e.clientWidth<=1&&e.scrollHeight-e.clientHeight<=1)));
+   await p.screenshot({path:out+'/calendar-linked-month-'+width+'.png',fullPage:true});
+   await edit(p,'Linked task updated in another tab');await p.getByLabel('Task notes',{exact:true}).fill('Every line of this calendar task draft\nMust remain readable');
+   assert.ok(await p.locator('.planner-linked-edit-form').evaluate(e=>e.scrollWidth-e.clientWidth<=1));await p.getByLabel('Cancel planner task edit',{exact:true}).click();
+   await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Agenda',exact:true}).click();assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').count(),13);
+   await p.screenshot({path:out+'/calendar-linked-agenda-'+width+'.png',fullPage:true});
+  }
+  await second.close();
+ });
  await run('phone and portrait desktop expose all task and activity controls without horizontal overflow',async p=>{
   await tasks(p);await add(p,'Review the Sunrise Villa bookings and prepare the next guest arrival checklist','Sunrise Villa');
   for(const [width,height] of [[320,740],[390,844],[768,1024],[1080,1920]]){

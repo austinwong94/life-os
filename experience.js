@@ -664,6 +664,7 @@ function commitDeviceWrites(entries) {
   renderBoardMeta();
   renderBoardSwitcher();
   if (!isUserEditingCriticalDraft()) renderCardsOnly();
+  else if (isProtectedTextEditActive()) queueDeferredBoardRender({reason:"device-commit"});
   return true;
 }
 

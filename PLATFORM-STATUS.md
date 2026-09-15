@@ -4,7 +4,7 @@ Updated: 15 September 2026. This is a status of implemented features and verifie
 
 ## Current Direction
 
-A private personal workspace: boards hold your records, Today provides a daily entrance, Tasks organizes actions, and Calendar organizes appointments and activities. The next priority is dependable daily use and proven cross-device recovery, not adding more overlapping card types.
+A private personal workspace: boards hold your records, Today provides a daily entrance, Tasks organizes actions, and Calendar brings dated planner tasks and activities together. The next priority is dependable daily use and proven cross-device recovery, not adding more overlapping card types.
 
 ## September 15 Design Changes
 
@@ -19,12 +19,16 @@ A private personal workspace: boards hold your records, Today provides a daily e
 
 ## Feature Progress
 
+Calendar now reads existing dated planner tasks on the active board in Month, Week and Agenda. It does not create duplicate activities, invent dates for undated tasks, or copy unfinished tasks onto future calendar dates. Calendar task actions use the same canonical task records as Tasks and Planner; completed tasks remain on their scheduled date with completion metadata. Today carryover and completion-day history are unchanged. Archived/deleted tasks remain recoverable but are excluded from Calendar.
+
+For a one-day activity, changing Start date also changes End date. Choosing a different End date makes it independent; invalid intervals are rejected. This works for timed and all-day activities and retains unfinished drafts. Testing also exposed and fixed a Planner card's stale captured submission date and a deferred-refresh gap that could leave another tab's edit invisible after a typing guard expired.
+
 | Area | Status | Remaining work |
 | --- | --- | --- |
 | Boards, Today, diary and side notes | Implemented with saved history and regression coverage | Continue real-device validation; protect external backups |
 | To-Do, Project and other card types | Implemented | Legacy independent checklists are not automatically merged into the newer Tasks view |
 | Tasks | Implemented: areas, project labels, status, dates, deadline, priority, notes, completion history | Recurrence, subtasks and a dedicated project entity remain future work |
-| Calendar | Implemented: Month, Week, Agenda, timed/all-day/multi-day activities | Recurring events and task-to-activity links are not implemented |
+| Calendar | Implemented: Month, Week, Agenda, dated planner tasks and timed/all-day/multi-day activities | Recurrence and live Google synchronization remain unimplemented |
 | Fitness, food and reports | Implemented, including history and readable exports | Real-user report usability and ongoing calculation regression coverage |
 | Device saving and recovery | Implemented: per-tab write-ahead records, backup/restore, conflict comparison | Browser storage is not an encrypted vault or an off-device backup |
 | Cloud synchronization | Implemented with simulated conflict and concurrency tests | The live browser still has a review warning; authenticated phone/desktop acceptance has not been certified |
@@ -37,13 +41,13 @@ There is no honest single "100% complete" percentage across those different conc
 
 ## Data and Deployment
 
-This design release changes client presentation and tab-local search UI. It does not change the board schema, saving protocol, cloud payload or database policies. Supabase already receives saved boards through the existing `user_states` flow; there is no CSS or HTML to deploy to Supabase and no SQL migration is required for this release.
+This release changes client presentation, date entry and deferred view refresh. It does not change the board schema, write-ahead saving protocol, cloud payload or database policies. Calendar reads the existing planner source. Supabase already receives saved boards through the existing `user_states` flow; no SQL migration is required.
 
 No personal records are used as test fixtures. No production diary/task deletion, bulk replacement, forced cloud upload, account reset or conflict-version choice is authorized by the visual cleanup. An existing "Changes need review" warning requires comparison, not a blind Save cloud or Load cloud action.
 
 ## Verification and Next Steps
 
-The density release `dbc0278` passed 192 checks plus 22 WebKit repeats. The column follow-up adds two scenarios, making the gate **194 checks plus 24 WebKit repeats**. It checks task visibility, row sizes, metadata separation, consistent control heights and search/draft retention at 320, 390, 768, 1080 and 1440 CSS pixels, plus direct menu hit-testing around phone/tablet/desktop breakpoints. Column tests check responsive fallback, exact task and card preservation, unfinished editor retention, independent board/task preferences, reload persistence and both board controls. See [GitHub verification and deployment](https://github.com/austinwong94/life-os/actions) for the exact published commit's outcome.
+The columns baseline `289b432` passed 194 checks plus 24 WebKit repeats. The Calendar follow-up adds two core and four browser scenarios, making the gate **200 checks plus 28 WebKit repeats**. Coverage includes automatic one-day ends, explicit multi-day intervals, leap years, draft retention, original planner-card entry, linked edits and completion history, archive/restore, board/area isolation, ongoing activities without duplicate rows, cross-tab updates and 13-task lists at 320, 390, 768 and 1080 pixels. Existing column, mobile, recovery, sync and card regressions remain in the full gate. See [GitHub verification and deployment](https://github.com/austinwong94/life-os/actions) for the exact published commit's outcome.
 
 Next priorities:
 

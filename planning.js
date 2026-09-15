@@ -7,6 +7,10 @@
     const date = new Date(iso);
     return Number.isFinite(date.getTime()) ? dateKey(date)+"T"+String(date.getHours()).padStart(2,"0")+":"+String(date.getMinutes()).padStart(2,"0") : "";
   }
+  function changeActivityStart(draft, value) {
+    const follows = draft.endDateFollowsStart ?? (!draft.endDate || draft.endDate === draft.startDate);
+    return {...draft, startDate:value, endDate:follows && LifePlanner.validDate(value) ? value : draft.endDate, endDateFollowsStart:follows};
+  }
   function activityFromDraft(draft) {
     const title = String(draft.title || "").trim();
     if (!title) throw new Error("Enter an activity name.");
@@ -44,7 +48,7 @@
     url.search = new URLSearchParams({action:"TEMPLATE",text:activity.title,dates,location:activity.location || "",details:[activity.notes,activity.url].filter(Boolean).join("\n")}).toString();
     return url.href;
   }
-  const api = {areas,dateKey,shift,localInput,activityFromDraft,occursOn,googleLink};
+  const api = {areas,dateKey,shift,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink};
   root.LifePlanning = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -252,6 +256,10 @@ function calendarActivities(includeArchived=false) {
     return [{card,activity:{title:card.title,area:card.category,allDay:false,startAt:card.targetAt,endAt:card.targetAt,notes:card.description || "",location:"",url:""},legacy:true}];
   });
 }
+function calendarPlannerTasks() {
+  const session=planningSession();
+  return getPlannerSourceItems().filter(item=>LifePlanner.validDate(item.dateKey) && (session.area==="*" || item.group===session.area));
+}
 function renderCalendarWorkspace(root) {
   const session=planningSession();
   const header=planningNode("header","planning-heading");header.append(planningNode("h2","","Calendar"),planningButton("Add activity",()=>openActivityEditor(),"plus"));root.append(header);
@@ -270,46 +278,68 @@ function renderCalendarWorkspace(root) {
   nav.append(planningIcon("Previous period",()=>changePeriod(-1),"chevron-left"),planningNode("h3","",new Date(session.day+"T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"})),planningIcon("Next period",()=>changePeriod(1),"chevron-right"),planningButton("Today",()=>{session.day=getTodayKey();planningRefresh();}));if(session.calendarMode!=="agenda")root.append(nav);
   const timezone=planningNode("p","calendar-timezone",Intl.DateTimeFormat().resolvedOptions().timeZone);root.append(timezone);
   const items=calendarActivities().filter(({activity})=>session.area==="*"||activity.area===session.area);
+  const tasks=calendarPlannerTasks();
   if(session.calendarMode==="month") {
-    renderCalendarMonth(root,items);
-    renderAgenda(root,items,[session.day]);
+    renderCalendarMonth(root,items,tasks);
+    renderAgenda(root,items,[session.day],tasks);
   } else if(session.calendarMode==="week") {
     const weekday=(new Date(session.day+"T12:00:00").getDay()+6)%7;
-    renderAgenda(root,items,Array.from({length:7},(_,i)=>LifePlanning.shift(session.day,i-weekday)));
+    renderAgenda(root,items,Array.from({length:7},(_,i)=>LifePlanning.shift(session.day,i-weekday)),tasks);
   } else {
     root.append(renderPlanningDateNavigation(session.day,value=>{session.day=value;planningRefresh();}));
     // One row per activity, including multi-day events already in progress.
     const upcoming=items.filter(({activity})=>activity.allDay?activity.endDate>=session.day:Date.parse(activity.endAt||activity.startAt)>=new Date(session.day+"T00:00:00").getTime());
-    upcoming.sort((a,b)=>activitySortKey(a.activity).localeCompare(activitySortKey(b.activity)));
-    if(!upcoming.length)root.append(planningNode("p","planning-empty","No upcoming activities."));
-    const list=planningNode("div","activity-list");root.append(list);upcoming.forEach(item=>list.append(renderActivityRow(item)));
+    const futureTasks=tasks.filter(item=>item.dateKey>=session.day);
+    const activityDay=item=>{const day=activitySortKey(item.activity).slice(0,10);return day<session.day?session.day:day;};
+    const days=[...new Set([...upcoming.map(activityDay),...futureTasks.map(item=>item.dateKey)])].sort();
+    if(!days.length)root.append(planningNode("p","planning-empty","No upcoming activities or dated tasks."));
+    const list=planningNode("div","activity-list");root.append(list);
+    days.forEach(day=>list.append(renderCalendarAgendaDay(day,upcoming.filter(item=>activityDay(item)===day),futureTasks.filter(item=>item.dateKey===day))));
   }
   const google=planningNode("details","calendar-connection");google.append(planningNode("summary","","Google Calendar - not connected"));
   google.append(planningNode("p","","Live Google sync is not configured. Add to Google Calendar opens a separate event for you to review and save; later edits do not sync."));root.append(google);
 }
 function activitySortKey(activity) {return activity.allDay?activity.startDate:LifePlanning.localInput(activity.startAt);}
-function renderCalendarMonth(root,items) {
+function renderCalendarMonth(root,items,tasks=[]) {
   const session=planningSession(),grid=planningNode("div","calendar-month");grid.setAttribute("role","group");grid.setAttribute("aria-label","Month dates");
   ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].forEach(day=>grid.append(planningNode("span","calendar-weekday",day)));
   const first=session.day.slice(0,7)+"-01",offset=(new Date(first+"T12:00:00").getDay()+6)%7;
   for(let i=0;i<42;i++){
-    const day=LifePlanning.shift(first,i-offset),matches=items.filter(({activity})=>LifePlanning.occursOn(activity,day));
+    const day=LifePlanning.shift(first,i-offset),matches=items.filter(({activity})=>LifePlanning.occursOn(activity,day)),datedTasks=tasks.filter(item=>item.dateKey===day);
     const button=planningButton("",()=>{session.day=day;planningRefresh();});button.className="calendar-day";
     button.replaceChildren(planningNode("span","",String(Number(day.slice(-2)))));
-    button.setAttribute("aria-label",`${day}, ${matches.length} activities`);button.setAttribute("aria-pressed",String(day===session.day));
+    button.setAttribute("aria-label",`${day}, ${matches.length} activities, ${datedTasks.length} tasks`);button.setAttribute("aria-pressed",String(day===session.day));
     if(day===getTodayKey())button.setAttribute("aria-current","date");if(day.slice(0,7)!==first.slice(0,7))button.classList.add("outside-month");
-    if(matches.length)button.append(planningNode("small","",`${matches.length}`));grid.append(button);
+    const counts=planningNode("span","calendar-counts");
+    for(const [count,kind,icon] of [[matches.length,"activities","calendar"],[datedTasks.length,"tasks","check"]])if(count){
+      const badge=planningNode("small","calendar-count calendar-count-"+kind);badge.title=`${count} ${kind}`;
+      const symbol=planningNode("span");symbol.innerHTML=ICONS[icon];symbol.setAttribute("aria-hidden","true");badge.append(symbol,planningNode("span","",String(count)));counts.append(badge);
+    }
+    button.append(counts);grid.append(button);
   }
   root.append(grid);
 }
-function renderAgenda(root,items,days) {
+function renderAgenda(root,items,days,tasks=[]) {
   const list=planningNode("div","activity-list");root.append(list);
   days.forEach(day=>{
-    const section=planningNode("section","agenda-day");section.append(planningNode("h3","",formatPlannerDate(day)));
-    const matches=items.filter(({activity})=>LifePlanning.occursOn(activity,day)).sort((a,b)=>activitySortKey(a.activity).localeCompare(activitySortKey(b.activity)));
-    if(!matches.length)section.append(planningNode("p","planning-empty","No activities."));
-    matches.forEach(item=>section.append(renderActivityRow(item)));list.append(section);
+    list.append(renderCalendarAgendaDay(day,items.filter(({activity})=>LifePlanning.occursOn(activity,day)),tasks.filter(item=>item.dateKey===day)));
   });
+}
+function renderCalendarAgendaDay(day,activities,tasks) {
+  const section=planningNode("section","agenda-day");section.dataset.day=day;section.append(planningNode("h3","",formatPlannerDate(day)));
+  if(!activities.length&&!tasks.length)section.append(planningNode("p","planning-empty","No activities or dated tasks."));
+  if(activities.length){
+    section.append(planningNode("h4","calendar-group-title","Activities"));
+    activities.slice().sort((a,b)=>activitySortKey(a.activity).localeCompare(activitySortKey(b.activity))).forEach(item=>section.append(renderActivityRow(item)));
+  }
+  if(tasks.length){
+    section.append(planningNode("h4","calendar-group-title","Planner tasks"));
+    const list=planningNode("div","workspace-task-list calendar-task-list");list.setAttribute("aria-label","Planner tasks for "+day);
+    // Read canonical tasks, never materialize a second calendar activity or carryover copy.
+    tasks.forEach(item=>list.append(renderPlannerLinkedItem({...item,workspaceTask:true,scheduledDate:item.dateKey,dateKey:day})));
+    section.append(list);
+  }
+  return section;
 }
 function formatActivityTiming(activity) {
   if(activity.allDay)return `${activity.startDate}${activity.endDate!==activity.startDate?" to "+activity.endDate:""} - All day`;
@@ -345,7 +375,12 @@ function renderActivityEditor() {
   const name=field("Activity name","text","title");name.querySelector("input").required=true;form.append(name);
   form.append(planningField("Activity area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{draft.area=value;savePlanningSession();})));
   const allDay=planningInput("checkbox","",()=>{});allDay.checked=draft.allDay;allDay.onchange=()=>{draft.allDay=allDay.checked;planningRefresh();};form.append(planningField("All day",allDay));
-  const dates=planningNode("div","activity-dates");dates.append(field("Start date","date","startDate"),field("End date","date","endDate"));
+  const endDate=planningInput("date",draft.endDate,value=>{draft.endDate=value;draft.endDateFollowsStart=!value||value===draft.startDate;savePlanningSession();});
+  endDate.min=LifePlanner.validDate(draft.startDate)?draft.startDate:"";
+  const startDate=planningInput("date",draft.startDate,value=>{
+    Object.assign(draft,LifePlanning.changeActivityStart(draft,value));endDate.value=draft.endDate;endDate.min=LifePlanner.validDate(value)?value:"";savePlanningSession();
+  });
+  const dates=planningNode("div","activity-dates");dates.append(planningField("Start date",startDate),planningField("End date",endDate));
   if(!draft.allDay)dates.append(field("Start time","time","startTime"),field("End time","time","endTime"));form.append(dates);
   form.append(field("Location","text","location"),field("Meeting link","url","url"));
   const notes=planningNode("textarea");notes.rows=4;notes.value=draft.notes;notes.oninput=()=>{draft.notes=notes.value;savePlanningSession();};form.append(planningField("Activity notes",notes));

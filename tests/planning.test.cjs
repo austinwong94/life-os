@@ -29,6 +29,18 @@ test('activity dates, overnight intervals and exclusive timed endpoints are cons
   assert.throws(()=>W.activityFromDraft({...draft,endTime:'13:00'}),/after/);
   assert.throws(()=>W.activityFromDraft({...draft,startDate:'2026-02-30'}),/valid/);
 });
+test('one-day end dates follow valid start changes through cleared input without mutating the original draft',()=>{
+  const next=W.changeActivityStart(draft,'2028-02-29');assert.equal(next.endDate,'2028-02-29');assert.equal(draft.endDate,'2026-09-10');
+  const cleared=W.changeActivityStart(next,'');assert.equal(cleared.endDate,'2028-02-29');assert.equal(cleared.endDateFollowsStart,true);
+  const resumed=W.changeActivityStart(cleared,'2029-01-02');assert.equal(resumed.endDate,'2029-01-02');assert.equal(resumed.startTime,draft.startTime);assert.equal(resumed.notes,draft.notes);
+  assert.equal(W.changeActivityStart(next,'2028-02-30').endDate,'2028-02-29');
+  assert.equal(W.changeActivityStart({...draft,endDate:''},'2027-12-31').endDate,'2027-12-31');
+});
+test('explicit multi-day ends stay independent and draft date-link state is not stored in an activity',()=>{
+  const next=W.changeActivityStart({...draft,endDate:'2026-09-15'},'2026-09-11');assert.equal(next.endDate,'2026-09-15');assert.equal(next.endDateFollowsStart,false);
+  const later=W.changeActivityStart(next,'2026-09-17');assert.equal(later.endDate,'2026-09-15');assert.throws(()=>W.activityFromDraft(later),/after/);
+  const activity=W.activityFromDraft(W.changeActivityStart({...draft,allDay:true},'2027-01-01'));assert.equal(activity.endDate,'2027-01-01');assert.equal(Object.hasOwn(activity,'endDateFollowsStart'),false);
+});
 test('multi-day all-day Google export includes the final day without shifting time zones',()=>{
   const event=W.activityFromDraft({...draft,allDay:true,startDate:'2026-12-28',endDate:'2027-01-02'});
   assert.ok(W.occursOn(event,'2027-01-02'));assert.equal(W.occursOn(event,'2027-01-03'),false);

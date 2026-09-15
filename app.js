@@ -3115,6 +3115,7 @@ function isBackgroundBoardRender(options = {}) {
 function shouldDeferBoardRender(options = {}) {
   if (options.force) return false;
   if (draggedCardId) return false;
+  if (options.reason === "device-commit" && isUserEditingCriticalDraft()) return true;
   const active = document.activeElement;
   if (isProtectedDraftElement(active)) return true;
   if (hasUnsubmittedDraftText() && isBackgroundBoardRender(options)) return true;
@@ -3131,7 +3132,7 @@ function queueDeferredBoardRender(options = {}) {
 function scheduleDeferredBoardRender(delay = 500) {
   window.clearTimeout(deferredBoardRenderTimer);
   deferredBoardRenderTimer = window.setTimeout(() => {
-    if (shouldDeferBoardRender({ force: false })) {
+    if (shouldDeferBoardRender({ ...pendingBoardRenderOptions, force: false })) {
       scheduleDeferredBoardRender(500);
       return;
     }
@@ -3737,9 +3738,10 @@ function renderPlanner(card) {
   addForm.addEventListener("submit", (event) => {
     event.preventDefault();
     const submittedText = stripPlannerBullet(taskInput.value);
-    if (!submittedText) return;
+    const selectedDate = normalizeDateKey(dateInput.value);
+    if (!submittedText || !selectedDate) return;
     clearPlannerDraft(card, ".planner-task-input");
-    if (!addPlannerTaskToDate(card, activeDate, submittedText)) return;
+    if (!addPlannerTaskToDate(card, selectedDate, submittedText)) return;
     clearPlannerDraft(card, ".planner-task-input");
     persistLocalDraftState();
   });

@@ -151,7 +151,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .calendar-day small { background: #e7f0eb; color: #176b57; padding: 0 5px; border-radius: 4px; font-size: 10px; line-height: 16px; }
 .calendar-day.outside-month { color: #85918a; background: #f7f9f7; }
 .calendar-day[aria-pressed=true] { background: #e1eee6; box-shadow: inset 0 0 0 2px #236d51; }
-.calendar-day[aria-current=date] > span { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.calendar-day[aria-current=date] > span:first-child { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.calendar-counts { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 2px; max-width: 100%; }
+.calendar-day .calendar-count { display: inline-flex; align-items: center; gap: 2px; padding: 0 3px; max-width: 100%; overflow-wrap: anywhere; }
+.calendar-count > span:first-child { display: inline-flex; }
+.calendar-count svg { width: 10px; height: 10px; stroke-width: 2; }
+.calendar-day .calendar-count-tasks { color: #176c83; background: #e7f1f5; }
+.calendar-group-title { margin: 12px 0 4px; color: #62736a; font-size: 12px; font-weight: 600; }
+.calendar-task-list { margin-top: 4px; }
+.calendar-task-list .planner-linked-copy { font-size: 15px; }
 .agenda-day { padding: 12px 0; border-bottom: 1px solid #dce4df; }
 .activity-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; padding: 16px 0; border-bottom: 1px solid #dce4df; }
 .activity-copy h4 { font-size: 16px; margin: 4px 0 6px; overflow-wrap: anywhere; }
@@ -184,7 +192,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .task-capture-main .planning-button span { display: none; }
   .planning-tabs { gap: 0; }
   .planning-tabs .planning-button { padding: 8px 10px; font-size: 13px; }
-  .calendar-day { height: 48px; }
+  .calendar-day { height: 64px; }
 }
 .settings-panel-mount > .panel { box-shadow: none; border-radius: 0; border-bottom: 1px solid #e0e6e2; padding: 20px; }
 .board-tools-field { margin-top: 16px; }
