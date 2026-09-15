@@ -10,10 +10,15 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   const context=await browser.newContext({viewport:{width:1206,height:866},timezoneId:'Asia/Kuala_Lumpur'});
   await context.route('https://**/*',route=>route.fulfill({status:503,body:'No external requests in tests'}));
   const page=await context.newPage(),errors=[];page.setDefaultTimeout(6000);page.on('pageerror',error=>errors.push(error.stack));
-  try{await page.goto(URL+'?preview=1');await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
+  try{await page.goto(URL+'?preview=1&liveReload=0');await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
   catch(error){results.push({name,pass:false,error:error.stack,pageErrors:errors});await page.screenshot({path:out+'/responsive-failure-'+results.length+'.png'}).catch(()=>{});}
   console.log(JSON.stringify(results.at(-1)));await context.close();
  }
+ await run('explicit preview test mode disables source polling while normal local previews still watch source changes',async page=>{
+  let polls=0;await page.route('**/*?lifeOsDev=*',route=>{polls++;return route.continue();});
+  await page.evaluate(()=>startLocalDevAutoReload());await page.waitForTimeout(1700);assert.equal(polls,0);
+  await page.goto(URL+'?preview=1');await page.waitForFunction(()=>Boolean(localDevSourceSignature));assert.ok(polls>0);
+ });
  await run('Today uses the full board width after either saved column preference, including portrait desktops',async page=>{
   for(const columns of [2,3]){
    await page.evaluate(columns=>{state.board.columnCount=columns;setWorkspaceMode('board');renderCardsOnly({force:true});},columns);
@@ -113,7 +118,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   await page.keyboard.press('Enter');assert.equal(await page.evaluate(()=>state.activeBoardId),'extra-23');assert.equal(await page.locator('#boardSwitcherMenu').isVisible(),false);
   await page.locator('#boardSwitcherButton').click();await page.keyboard.press('Home');assert.equal(await page.evaluate(()=>document.activeElement.dataset.boardId),initial);
   await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>document.activeElement.id),'boardSwitcherButton');
-  const second=await context.newPage();await second.goto(URL+'?preview=1');await second.evaluate(id=>switchBoard(id),initial);
+  const second=await context.newPage();await second.goto(URL+'?preview=1&liveReload=0');await second.evaluate(id=>switchBoard(id),initial);
   for(const width of [320,390,1080]){
    await page.setViewportSize({width,height:width===1080?1920:844});await page.waitForTimeout(150);await page.locator('#boardSwitcherButton').click();
    const menu=page.locator('#boardSwitcherMenu');assert.ok(await menu.evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&e.scrollWidth<=e.clientWidth+1;}));

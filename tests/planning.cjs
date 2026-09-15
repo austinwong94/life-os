@@ -10,7 +10,7 @@ const results=[];
   const context=await browser.newContext({viewport:{width:1080,height:1600},timezoneId:'Asia/Kuala_Lumpur'});
   await context.route('https://**/*',route=>route.fulfill({status:503,body:'No external requests in tests'}));
   const page=await context.newPage(),errors=[];page.setDefaultTimeout(6500);page.on('pageerror',error=>errors.push(error.stack));page.on('dialog',dialog=>dialog.accept());
-  try{await page.goto(URL+'?preview=1');await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
+  try{await page.goto(URL+'?preview=1&liveReload=0');await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
   catch(error){results.push({name,pass:false,error:error.stack,pageErrors:errors});await page.screenshot({path:out+'/planning-failure-'+results.length+'.png'}).catch(()=>{});}
   console.log(JSON.stringify(results.at(-1)));await context.close();
  }
@@ -109,7 +109,7 @@ const results=[];
  await run('calendar receives task changes from another tab and its month, agenda and task editor fit phone and portrait layouts',async(p,context)=>{
   await tasks(p);await add(p,'Original linked task','Culturely');
   await p.locator('#calendarModeButton').click();await p.getByRole('group',{name:'Calendar view'}).getByRole('button',{name:'Month',exact:true}).click();
-  const second=await context.newPage();await second.goto(URL+'?preview=1');await tasks(second);await edit(second,'Original linked task');await second.getByLabel('Task name',{exact:true}).fill('Linked task updated in another tab');await second.getByLabel('Save planner task',{exact:true}).click();await second.evaluate(()=>flushDeviceWrites());
+  const second=await context.newPage();await second.goto(URL+'?preview=1&liveReload=0');await tasks(second);await edit(second,'Original linked task');await second.getByLabel('Task name',{exact:true}).fill('Linked task updated in another tab');await second.getByLabel('Save planner task',{exact:true}).click();await second.evaluate(()=>flushDeviceWrites());
   await p.getByRole('button',{name:'Mark done: Linked task updated in another tab',exact:true}).waitFor();
   assert.equal(await p.locator('.calendar-task-list .planner-linked-copy').count(),1);
   await p.getByRole('button',{name:'Add activity',exact:true}).click();await p.getByLabel('Activity notes',{exact:true}).fill('My unfinished activity draft\nKeep every character');
@@ -274,7 +274,7 @@ const results=[];
  });
  await run('separate tabs writing tasks and activities to separate boards both survive reload',async(p,c)=>{
   const ids=await p.evaluate(()=>{const a=state.activeBoardId,b=createBoardRecord({name:'Other board'});state.boards.push(b);saveState();return {a,b:b.id};});await p.evaluate(()=>flushDeviceWrites());
-  const second=await c.newPage();await second.goto(URL+'?preview=1');await second.evaluate(id=>{switchBoard(id);},ids.b);
+  const second=await c.newPage();await second.goto(URL+'?preview=1&liveReload=0');await second.evaluate(id=>{switchBoard(id);},ids.b);
   await tasks(p);await add(p,'Culturely task on first board');
   await second.locator('#calendarModeButton').click();await second.getByRole('button',{name:'Add activity',exact:true}).click();await second.getByLabel('Activity name',{exact:true}).fill('Private second board activity');await second.getByRole('button',{name:'Save activity',exact:true}).click();
   await p.evaluate(()=>flushDeviceWrites());await second.evaluate(()=>flushDeviceWrites());await p.reload();await second.reload();

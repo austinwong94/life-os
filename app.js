@@ -12193,7 +12193,7 @@ function flushPendingLocalDevReload() {
 }
 
 function startLocalDevAutoReload() {
-  if (!isLocalDevPage()) return;
+  if (!isLocalDevPage() || new URLSearchParams(window.location.search).get("liveReload") === "0") return;
   checkLocalDevSourceChanges();
   window.setInterval(checkLocalDevSourceChanges, LOCAL_DEV_RELOAD_POLL_MS);
   window.addEventListener("focus", () => {
