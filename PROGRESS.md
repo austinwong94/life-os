@@ -1,8 +1,12 @@
 # Life OS Reliability and Usability Progress
 
-Updated: 10 September 2026. Previous published baseline: `27af3d5` (9 September diary and responsive release).
+Updated: 15 September 2026. Previous published baseline: `7c86961` (10 September Tasks and Calendar release).
 
-## Current Upgrade
+## Current Design Pass
+
+The task workspace now uses compact, aligned controls, a consolidated toolbar and desktop capture row, readable wrapping metadata, and expandable phone search that cannot conceal an active filter. Existing board/diary records, saving and cloud behavior are unchanged. No Supabase migration is needed. See [current platform status](PLATFORM-STATUS.md) for implemented features, missing integrations, security boundaries and next steps. The earlier dated audit sections below are historical evidence, not a current deployment status.
+
+## September 10 Upgrade
 
 The Tasks and Calendar upgrade is implemented. It adds task-level areas and project/status/deadline/notes fields, undated capture, full-width task views, a board-owned activities calendar, readable exports and activity conflict review. Google event creation is an explicit separate-copy action; authenticated Google synchronization is not yet configured.
 

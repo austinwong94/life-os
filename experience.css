@@ -101,6 +101,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .planning-tabs button[aria-pressed=true] { border-bottom-color: #176b57; color: #176b57; }
 .planning-field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; margin: 0; }
 .planning-field input, .planning-field select, .planning-field textarea, .planning-search, .task-capture-main input, .planning-date-nav input { width: 100%; max-width: 100%; border: 1px solid #d8e2dc; border-radius: 6px; background: #fff; min-height: 44px; padding: 8px 10px; color: #253a32; font-size: 16px; font-weight: 400; line-height: 1.5; }
+.planning-field input:not([type=checkbox]), .planning-field select, .planning-search, .task-capture-main input, .planning-date-nav input { height: 44px; }
 .planning-field textarea { resize: vertical; }
 .planning-field input[type=checkbox] { width: 24px; height: 24px; min-height: 24px; accent-color: #236d51; }
 .planning-date-nav { display: flex; gap: 6px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
@@ -115,11 +116,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .planning-message { color: #a1303e; font-size: 14px; }
 .planning-count, .planning-empty, .calendar-timezone { color: #62736a; font-size: 13px; margin: 12px 0; }
 .planning-empty { padding: 12px 0; }
-.workspace-task-list { border-top: 1px solid #dce4df; }
-.workspace-task-list .planner-linked-item { grid-template-columns: 28px minmax(0,1fr) 44px; gap: 12px; padding: 12px 4px; border-left: 2px solid transparent; }
+.workspace-task-list { --card-ink: #253a32; --card-muted: #64736a; --card-accent: #236d51; --card-soft: #e8f0eb; border-top: 1px solid #dce4df; }
+.workspace-task-list .planner-linked-item { grid-template-columns: 24px minmax(0,1fr) 44px; gap: 8px; padding: 6px 4px; border-left: 2px solid transparent; box-shadow: none; }
 .workspace-task-list .planner-task-menu-toggle { width: 44px; height: 44px; }
-.workspace-task-list .planner-linked-copy { font-size: 16px; line-height: 1.5; padding: 2px 0; }
-.workspace-task-list .planner-linked-meta > * { font-size: 12px; }
+.workspace-task-list .planner-linked-main { display: flex; flex-direction: column; gap: 2px; }
+.workspace-task-list .planner-linked-copy { order: -1; font-size: 14px; line-height: 1.4; padding: 2px 0; }
+.workspace-task-list .planner-linked-meta { flex-wrap: wrap; gap: 4px 8px; }
+.workspace-task-list .planner-linked-meta > * { width: auto; max-width: 100%; font-size: 11px; font-weight: 500; text-transform: none; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.workspace-task-list .planner-linked-date { min-width: 44px; padding: 2px 6px; }
+.workspace-task-list .planner-linked-carryover, .workspace-task-list .planner-linked-completed { padding: 1px 6px; }
+.workspace-task-list .planner-task-menu-toggle { background: transparent; border-color: transparent; border-radius: 6px; }
+.workspace-task-list .planner-task-menu-toggle:hover { background: #e8f0eb; }
+.workspace-task-list .planner-task-menu-toggle svg { width: 18px; height: 18px; stroke-width: 1.7; }
 .task-area, .task-status, .task-project, .task-deadline { font-size: 11px; line-height: 1.5; color: #546a60; font-weight: 500; overflow-wrap: anywhere; }
 .task-area { color: #176b57; }
 .task-status { color: #74580c; }
@@ -429,6 +437,54 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 @media (max-width: 380px) {
   .task-capture-options, .task-edit-details { grid-template-columns: minmax(0,1fr); }
   .planning-tabs .planning-button { padding: 8px 6px; font-size: 12px; }
+}
+
+/* Task controls share rows; phone inputs retain their native readable size. */
+.workspace.is-planning-view .workspace-header { margin-bottom: 8px; }
+.workspace.is-planning-view .workspace-navigation { margin-bottom: 12px; }
+.task-workspace { max-width: 960px; }
+.task-heading { display: grid; grid-template-columns: minmax(60px,1fr) 180px minmax(200px,300px); gap: 12px; margin-bottom: 8px; }
+.task-heading h2, .planning-heading h2 { font-size: 18px; }
+.task-heading > .planning-field { width: 100%; }
+.task-heading > .planning-field > span { display: none; }
+.task-search-toggle { display: none; }
+.task-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 8px; }
+.task-toolbar .planning-tabs, .task-toolbar .planning-date-nav { margin: 0; }
+.task-capture { display: grid; grid-template-columns: minmax(180px,1fr) minmax(300px,420px) 44px; align-items: end; gap: 8px 12px; padding: 10px 0; margin-bottom: 0; }
+.task-capture-main { display: block; }
+.task-capture-options { grid-template-columns: minmax(0,1fr) minmax(0,1.25fr); gap: 8px; margin: 0; }
+.task-capture .planning-field { gap: 4px; }
+.task-capture .planning-message { grid-column: 1 / -1; margin: 0; }
+.task-capture-submit { padding: 0; }
+.planning-count { margin: 8px 0; }
+@media (min-width: 701px) and (hover: hover) and (pointer: fine) {
+  .planning-button { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+  .planning-icon { width: 36px; height: 36px; flex-basis: 36px; padding: 0; }
+  .planning-field input:not([type=checkbox]), .planning-field select, .planning-search, .task-capture-main input, .planning-date-nav input { height: 36px; min-height: 36px; padding: 6px 9px; font-size: 14px; }
+  .planning-optional-date button { width: 32px; flex-basis: 32px; }
+  .task-capture { grid-template-columns: minmax(180px,1fr) minmax(300px,420px) 36px; }
+  .workspace-task-list .planner-linked-item { grid-template-columns: 24px minmax(0,1fr) 36px; }
+  .workspace-task-list .planner-task-menu-toggle { width: 36px; height: 36px; }
+}
+@media (max-width: 900px) {
+  .task-capture { grid-template-columns: minmax(0,1fr) 44px; }
+  .task-capture-main { grid-column: 1; grid-row: 1; }
+  .task-capture-submit { grid-column: 2; grid-row: 1; justify-self: end; }
+  .task-capture-options { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 700px) {
+  .task-heading { grid-template-columns: minmax(60px,1fr) minmax(120px,160px) 44px; gap: 8px; }
+  .task-heading .task-search-toggle { display: inline-flex; }
+  .task-heading .planning-search { grid-column: 1 / -1; }
+  .task-heading:not(.is-search-open) .planning-search { display: none; }
+  .task-toolbar { gap: 8px; }
+  .task-toolbar .planning-tabs { width: 100%; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .task-toolbar .planning-tabs .planning-button { padding: 8px 4px; font-size: 12px; }
+  .workspace-task-list .planner-linked-copy { font-size: 15px; }
+  .workspace-task-list .planner-task-menu-toggle { width: 44px; height: 44px; }
+}
+@media (max-width: 380px) {
+  .task-capture-options { grid-template-columns: minmax(0,1fr); }
 }
 
 @media print {

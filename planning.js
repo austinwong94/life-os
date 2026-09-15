@@ -142,30 +142,50 @@ function renderPlanningDateNavigation(day, change) {
 }
 function renderTasksWorkspace(root) {
   const session = planningSession();
-  const header = planningNode("header","planning-heading"); header.append(planningNode("h2","","Tasks"),renderPlanningAreaFilter()); root.append(header);
+  root.classList.add("task-workspace");
+  const results = planningNode("div","task-results");
+  const search = planningInput("search",session.search,value=>{
+    session.search=value;
+    if(value.trim()){session.searchExpanded=true;header.classList.add("is-search-open");searchToggle.setAttribute("aria-expanded","true");}
+    savePlanningSession();renderTaskResults(results);
+  });
+  search.placeholder = "Search tasks and projects"; search.setAttribute("aria-label","Search tasks and projects"); search.className="planning-search";
+  const header = planningNode("header","planning-heading task-heading");
+  const searchToggle = planningIcon("Search tasks",()=>{
+    // Never conceal a filter that is still limiting the visible task list.
+    session.searchExpanded = !session.searchExpanded || Boolean(session.search.trim());
+    header.classList.toggle("is-search-open",session.searchExpanded);
+    searchToggle.setAttribute("aria-expanded",String(session.searchExpanded));
+    savePlanningSession();if(session.searchExpanded)search.focus();
+  },"search");
+  session.searchExpanded = Boolean(session.searchExpanded || session.search.trim());
+  searchToggle.classList.add("task-search-toggle");searchToggle.setAttribute("aria-expanded",String(session.searchExpanded));
+  search.id="taskWorkspaceSearch";searchToggle.setAttribute("aria-controls",search.id);
+  header.classList.toggle("is-search-open",session.searchExpanded);
+  header.append(planningNode("h2","","Tasks"),renderPlanningAreaFilter(),searchToggle,search); root.append(header);
+  const toolbar = planningNode("div","task-toolbar");
   const tabs = planningNode("div","planning-tabs"); tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Task view");
   for (const [key,label] of [["today","Today"],["upcoming","Upcoming"],["all","All tasks"],["completed","Completed"]]) {
     const button=planningButton(label,()=>{session.view=key;planningRefresh();});button.setAttribute("aria-pressed",String(session.view===key));tabs.append(button);
   }
-  root.append(tabs);
-  if (session.view==="today") root.append(renderPlanningDateNavigation(session.day,value=>{session.day=value;if(session.capture&&!session.capture.title.trim())session.capture.dateKey=value;planningRefresh();}));
+  toolbar.append(tabs);
+  if (session.view==="today") toolbar.append(renderPlanningDateNavigation(session.day,value=>{session.day=value;if(session.capture&&!session.capture.title.trim())session.capture.dateKey=value;planningRefresh();}));
+  root.append(toolbar);
   root.append(renderTaskCapture());
-  const search = planningInput("search",session.search,value=>{session.search=value;savePlanningSession();renderTaskResults(results);});
-  search.placeholder = "Search tasks and projects"; search.setAttribute("aria-label","Search tasks and projects"); search.className="planning-search";root.append(search);
-  const results = planningNode("div","task-results"); root.append(results); renderTaskResults(results);
+  root.append(results); renderTaskResults(results);
 }
 function renderTaskCapture() {
   const session = planningSession();
   const draft = session.capture ||= {title:"",area:session.lastArea || "",dateKey:session.view==="today"?session.day:""};
   const form = planningNode("form","task-capture");
   const title = planningInput("text",draft.title,value=>{draft.title=value;savePlanningSession();}); title.placeholder="Add a task";title.required=true;title.setAttribute("aria-label","New task");
-  const add = planningButton("Add task",null,"plus"); add.type="submit";add.classList.add("is-primary");
-  const main = planningNode("div","task-capture-main");main.append(title,add);
+  const add = planningIcon("Add task",null,"plus"); add.type="submit";add.classList.add("is-primary","task-capture-submit");
+  const main = planningNode("div","task-capture-main");main.append(title);
   const options = planningNode("div","task-capture-options");
   const date=planningInput("date",draft.dateKey,value=>{draft.dateKey=value;savePlanningSession();});date.setAttribute("aria-label","Planned day (optional)");
   options.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{draft.area=value;savePlanningSession();})),
     planningField("Planned day (optional)",planningOptionalDate(date,"Clear planned day",()=>{draft.dateKey="";savePlanningSession();})));
-  const status=planningNode("p","planning-message");status.setAttribute("role","status");form.append(main,options,status);
+  const status=planningNode("p","planning-message");status.setAttribute("role","status");form.append(main,options,add,status);
   form.onsubmit = event => {
     event.preventDefault();
     if (!title.value.trim() || (draft.dateKey && !LifePlanner.validDate(draft.dateKey))) return;

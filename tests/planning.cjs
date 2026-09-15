@@ -69,6 +69,51 @@ const results=[];
    }
   }
  });
+ await run('task density keeps rows readable, badges separated and mobile search recoverable',async p=>{
+  await tasks(p);
+  await add(p,'Review guest arrivals','Sunrise Villa');
+  await add(p,'Prepare launch checklist','Culturely');
+  await p.evaluate(()=>{
+   const item=getPlannerSourceItems().find(t=>t.title==='Review guest arrivals');
+   LifePlanner.change(item.card,item.taskId,{status:'waiting',project:'Guest preparation and maintenance',deadline:'2026-12-31'});
+   for(let i=0;i<10;i++)LifePlanner.add(item.card,getTodayKey(),'Follow up item '+i,createId());
+   saveState();renderCardsOnly({force:true});
+  });
+  const measurements=[];
+  for(const [width,height] of [[320,740],[390,844],[768,1024],[1080,1920],[1440,900]]){
+   await p.setViewportSize({width,height});await p.evaluate(()=>scrollTo(0,0));
+   const m=await p.locator('.workspace-task-list').evaluate(list=>{
+    const rows=[...list.children],first=rows[0].getBoundingClientRect();
+    const overlaps=[...list.querySelectorAll('.planner-linked-meta')].some(meta=>{
+     const r=[...meta.children].map(e=>e.getBoundingClientRect());
+     return r.some((a,i)=>r.slice(i+1).some(b=>Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1));
+    });
+    return {top:first.top,rowHeight:first.height,count:rows.length,overlaps,overflow:document.documentElement.scrollWidth-innerWidth,
+     font:parseFloat(getComputedStyle(list.querySelector('.planner-linked-copy')).fontSize),
+     menuHeight:list.querySelector('.planner-task-menu-toggle').getBoundingClientRect().height,
+     captureHeights:[...document.querySelectorAll('.task-capture input,.task-capture select,.task-capture-submit')].map(e=>e.getBoundingClientRect().height)};
+   });measurements.push({width,...m});
+   assert.equal(m.count,12);assert.equal(m.overlaps,false);assert.ok(m.overflow<=1);
+   assert.ok(m.top<=(width<=380?620:width<=700?535:width<=900?530:410),JSON.stringify({width,...m}));
+   assert.ok(m.rowHeight<=70,JSON.stringify({width,...m}));
+   assert.ok(m.font<=(width<=700?15:14));if(width<=700)assert.ok(m.menuHeight>=44);
+   assert.ok(m.captureHeights.every(h=>Math.abs(h-(width<=700?44:36))<=1),JSON.stringify(m.captureHeights));
+   await p.screenshot({path:out+'/task-density-'+width+'.png',fullPage:true});
+  }
+  fs.writeFileSync(out+'/task-density-measurements.json',JSON.stringify(measurements,null,2));
+  const search=p.getByLabel('Search tasks and projects',{exact:true});await search.fill('launch');
+  await p.setViewportSize({width:390,height:844});await p.evaluate(()=>scrollTo(0,0));
+  assert.equal(await search.isVisible(),true);assert.equal(await p.locator('.planner-linked-copy').count(),1);
+  await search.fill('');await p.getByRole('button',{name:'Search tasks',exact:true}).click();assert.equal(await search.isVisible(),false);
+  await p.getByLabel('New task',{exact:true}).fill('My unfinished capture');
+  await p.getByRole('button',{name:'Search tasks',exact:true}).click();await search.fill('launch');
+  await p.getByRole('button',{name:'Search tasks',exact:true}).click();assert.equal(await search.isVisible(),true);
+  assert.equal(await p.locator('.planner-linked-copy').count(),1);
+  await p.reload();await tasks(p);assert.equal(await search.inputValue(),'launch');assert.equal(await search.isVisible(),true);
+  assert.equal(await p.getByLabel('New task',{exact:true}).inputValue(),'My unfinished capture');
+  await search.fill('');await p.getByRole('button',{name:'Search tasks',exact:true}).click();assert.equal(await search.isVisible(),false);
+  assert.equal(await p.locator('.planner-linked-copy').count(),12);
+ });
  await run('separate tabs writing tasks and activities to separate boards both survive reload',async(p,c)=>{
   const ids=await p.evaluate(()=>{const a=state.activeBoardId,b=createBoardRecord({name:'Other board'});state.boards.push(b);saveState();return {a,b:b.id};});await p.evaluate(()=>flushDeviceWrites());
   const second=await c.newPage();await second.goto(URL+'?preview=1');await second.evaluate(id=>{switchBoard(id);},ids.b);
