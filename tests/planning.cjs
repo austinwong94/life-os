@@ -114,6 +114,28 @@ const results=[];
   await search.fill('');await p.getByRole('button',{name:'Search tasks',exact:true}).click();assert.equal(await search.isVisible(),false);
   assert.equal(await p.locator('.planner-linked-copy').count(),12);
  });
+ await run('scrolled task menus remain onscreen and clickable across phone and desktop breakpoints',async p=>{
+  await tasks(p);await p.evaluate(()=>{
+   const card=getPlannerWriteSourceCard({category:'Personal'},getTodayKey());
+   for(let i=0;i<12;i++)LifePlanner.add(card,getTodayKey(),'Menu sample '+i,createId());
+   saveState();renderCardsOnly({force:true});
+  });
+  for(const width of [320,390,700,701,900,901,980,981,1157]){
+   await p.setViewportSize({width,height:844});
+   await p.getByRole('button',{name:'Task options: Menu sample 9',exact:true}).click();
+   const visible=await p.locator('.planner-task-menu:not([hidden])').evaluate(menu=>{
+    const r=menu.getBoundingClientRect(),nav=innerWidth<=980?document.querySelector('.sidebar').getBoundingClientRect().height:0;
+    return {position:getComputedStyle(menu).position,top:r.top,bottom:r.bottom,limit:innerHeight-nav,
+     hits:[...menu.querySelectorAll('button')].map(button=>{const b=button.getBoundingClientRect();return button.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2));})};
+   });
+   assert.equal(visible.position,'fixed');assert.ok(visible.top>=0&&visible.bottom<=visible.limit,JSON.stringify({width,...visible}));
+   assert.deepEqual(visible.hits,[true,true,true]);
+   await p.screenshot({path:out+'/task-menu-scrolled-'+width+'.png'});
+   await p.getByRole('button',{name:'Edit planner task: Menu sample 9',exact:true}).click();
+   await p.getByLabel('Task notes',{exact:true}).fill('A draft must not disappear');
+   await p.getByLabel('Cancel planner task edit',{exact:true}).click();
+  }
+ });
  await run('separate tabs writing tasks and activities to separate boards both survive reload',async(p,c)=>{
   const ids=await p.evaluate(()=>{const a=state.activeBoardId,b=createBoardRecord({name:'Other board'});state.boards.push(b);saveState();return {a,b:b.id};});await p.evaluate(()=>flushDeviceWrites());
   const second=await c.newPage();await second.goto(URL+'?preview=1');await second.evaluate(id=>{switchBoard(id);},ids.b);

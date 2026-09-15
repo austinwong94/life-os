@@ -14,6 +14,7 @@ A private personal workspace: boards hold your records, Today provides a daily e
 - Task names lead each row. Dates, areas, project labels and status wrap below with explicit spacing, rather than overflowing fixed-width badges.
 - Mobile search expands on demand. An active search cannot be hidden, including when resizing from desktop, and capture text is preserved.
 - Calendar mouse controls use the same sizing. Existing diary/card layouts and board column positions are not redesigned or migrated in this pass.
+- Fixed a legacy CSS override that positioned task menus relative to the page instead of the viewport, making them disappear offscreen after scrolling. All three actions are hit-tested above the phone navigation.
 
 ## Feature Progress
 
@@ -41,7 +42,7 @@ No personal records are used as test fixtures. No production diary/task deletion
 
 ## Verification and Next Steps
 
-The previous release `7c86961` passed 190 checks plus 20 WebKit repeats. This release adds a density/search regression, making the gate **191 checks plus 21 WebKit repeats**. It checks task visibility, row sizes, metadata separation, consistent control heights and search/draft retention at 320, 390, 768, 1080 and 1440 CSS pixels. See [GitHub verification and deployment](https://github.com/austinwong94/life-os/actions) for the exact published commit's outcome.
+The previous release `7c86961` passed 190 checks plus 20 WebKit repeats. This release adds density/search and scrolled-menu regressions, making the gate **192 checks plus 22 WebKit repeats**. It checks task visibility, row sizes, metadata separation, consistent control heights and search/draft retention at 320, 390, 768, 1080 and 1440 CSS pixels, plus direct menu hit-testing around phone/tablet/desktop breakpoints. See [GitHub verification and deployment](https://github.com/austinwong94/life-os/actions) for the exact published commit's outcome.
 
 Next priorities:
 

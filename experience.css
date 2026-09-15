@@ -45,8 +45,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .card-main { min-width: 0; }
 .card-body { min-width: 0; }
 .card-topline > .card-actions .card-menu-toggle { width: 44px; height: 44px; }
-.card-options-menu { position: fixed; z-index: 240; width: 204px; min-width: 0; max-width: calc(100vw - 16px); max-height: calc(100dvh - 96px); overflow: auto; overscroll-behavior: contain; border-radius: 8px; background: #fff; }
-.card-options-menu button { min-height: 44px; font-size: 13px; border-radius: 6px; }
+.card-options-menu, .planner-task-menu { position: fixed; z-index: 240; width: 204px; min-width: 0; max-width: calc(100vw - 16px); max-height: calc(100dvh - 96px); overflow: auto; overscroll-behavior: contain; border-radius: 8px; background: #fff; }
+.card-options-menu button, .planner-task-menu button { min-height: 44px; font-size: 13px; border-radius: 6px; }
+.planner-task-menu button:not(.is-danger) { color: #253a32; }
+.planner-task-menu button:hover { background: #edf3ef; }
 .card-title { font-size: 17px; line-height: 1.35; }
 .card-description { font-weight: 400; line-height: 1.5; }
 .type-diary .card-percent, .type-sidenote .card-percent, .type-quote .card-percent { display: none; }
