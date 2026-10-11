@@ -2,7 +2,7 @@
 
 ## October 11 Candidate
 
-Build `2026.10.11-follow-through`, candidate release `ea31e6d663383a97`. GitHub Pages **Source: GitHub Actions** was visibly saved on 11 October; the existing website remains available until a verified replacement is deployed. The first remote test/deploy and live asset hashes still require confirmation. No Supabase migration is required for the additive task and next-step metadata.
+Build `2026.10.11-follow-through`, candidate release `c17695f63315f569`. GitHub Pages **Source: GitHub Actions** was visibly saved on 11 October; the existing website remains available until a verified replacement is deployed. The first remote gate rejected a Linux-WebKit phone-spacing difference, preventing publication. The corrected candidate passes the local planning suite in both engines; the full remote test/deploy and live asset hashes still require confirmation. No Supabase migration is required for the additive task and next-step metadata.
 
 Run `npm run test:follow-through` in both engines. It covers original-card completion dates, unknown legacy dates, late completion and exact Undo, reopening history, failed saves/retry, retained daily plan drafts, original-choice denominators, task/activity agenda, explicit checkpoints, overdue check-in visibility, four-destination phone layout, unresolved comparison exclusion and readable history exports. The timer must not dismiss an error or reopen a task already completed elsewhere.
 

@@ -137,6 +137,7 @@ body, .workspace { background: var(--page); color: var(--ink); }
 .planning-button:focus-visible, .plan-view-switch button:focus-visible, .rail-button:focus-visible { outline: 2px solid var(--scheduled); outline-offset: 3px; }
 .plan-view-switch { display: flex; gap: 6px; margin-bottom: 0; }
 .task-view-label-short { display: none; }
+.task-results-heading { padding-block: 6px; }
 .plan-view-switch button { min-height: 36px; border-radius: 6px; color: var(--muted); }
 .plan-view-switch button[aria-pressed=true] { color: var(--action); border-color: var(--action); background: #e7f1ed; }
 .planner-linked-completed { color: var(--completed); background: #e8f3eb; }
@@ -185,6 +186,7 @@ body, .workspace { background: var(--page); color: var(--ink); }
   .report-document > h1 { font-size: 22px; }
 }
 @media (max-width:700px) {
+  .task-capture { padding-block: 6px; }
   .progress-measures, .progress-routine-weeks { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .task-toolbar .planning-tabs .task-view-label-full { display: none; }
   .task-toolbar .planning-tabs .task-view-label-short { display: inline; }

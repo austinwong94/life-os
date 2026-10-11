@@ -4,7 +4,7 @@ Updated: 11 October 2026. The earlier milestones below are historical. Release s
 
 ## October 11 Follow-Through
 
-Implemented build `2026.10.11-follow-through`, candidate `ea31e6d663383a97`:
+Implemented build `2026.10.11-follow-through`, candidate `c17695f63315f569`:
 
 - Today / Plan / Board / Progress, consistent phone navigation and preserved portrait column choices.
 - Optional next action, minutes, start time, daily budget and five-minute start/pause flow. Full drafts persist through thinking pauses and same-tab reload; no completion is inferred from a timer.
@@ -13,7 +13,7 @@ Implemented build `2026.10.11-follow-through`, candidate `ea31e6d663383a97`:
 - Readable next-step/history downloads, a functional colour palette, compact phone task labels and one-row diary feelings.
 - GitHub Pages source changed to GitHub Actions through the authenticated repository settings. Existing live content was not unpublished. The test-dependent workflow packages only 18 public assets and deploys that artifact after successful verification.
 
-99 unit checks passed. Existing packaged-browser checks have been rerun; all 57 affected scenarios pass in both Chromium and WebKit on the final candidate after correcting task-toolbar density, retry metadata and timer-error visibility issues. The complete exact-artifact remote verification gate is still required before publication. No personal records or production database settings were used as fixtures or modified. Final verification/publication is tracked in the workflow and [current status](PLATFORM-STATUS.md).
+99 unit checks passed. All 57 affected scenarios passed in Chromium and WebKit after correcting task-toolbar density, retry metadata and timer-error visibility issues. The remote gate caught another Linux-WebKit phone-spacing difference and prevented deployment; the corrected candidate passes all 18 planning scenarios in each local engine. The complete exact-artifact remote gate is still required before publication. No personal records or production database settings were used as fixtures or modified. Final verification/publication is tracked in the workflow and [current status](PLATFORM-STATUS.md).
 
 Remaining gated work: physical phones; live owner isolation; authenticated two-device offline/reconnect; Google configuration/backend; a reversible entity-level storage migration; encryption/recovery strategy. A feature percentage is not a probability that personal records are safe, and no zero-bug or zero-hacking guarantee is claimed.
 
