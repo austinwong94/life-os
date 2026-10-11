@@ -1,8 +1,8 @@
 # Safe Review and Release
 
-## October 11 Candidate
+## October 11 Published Release
 
-Build `2026.10.11-follow-through`, candidate release `9188131e517f1ca6`. GitHub Pages **Source: GitHub Actions** was visibly saved on 11 October; the existing website remains available until a verified replacement is deployed. The first remote gate rejected a Linux-WebKit phone-spacing difference, preventing publication. The corrected spacing passes the local planning suite in both engines; the final candidate also passes history validation and dialog replacement checks. The full remote test/deploy and live asset hashes still require confirmation. No Supabase migration is required for the additive task and next-step metadata.
+Build `2026.10.11-follow-through`, published release `9188131e517f1ca6`. GitHub Pages **Source: GitHub Actions** was visibly saved on 11 October. Earlier candidate failures stopped publication; the [final remote gate and deployment](https://github.com/austinwong94/life-os/actions/runs/38106794189) succeeded with 410 passing checks. The live release ID, 18 public file hashes and 17 startup cache versions match the tested artifact. No Supabase migration was performed or required for the additive task and next-step metadata. Physical-phone acceptance, authenticated two-device staging and live owner-policy inspection remain open; the automated tests do not certify these.
 
 Run `npm run test:follow-through` in both engines. It covers original-card completion dates, unknown legacy dates, late completion and exact Undo, reopening history, failed saves/retry, retained daily plan drafts, original-choice denominators, task/activity agenda, explicit checkpoints, overdue check-in visibility, four-destination phone layout, unresolved comparison exclusion and readable history exports. The timer must not dismiss an error or reopen a task already completed elsewhere.
 

@@ -4,7 +4,7 @@ Updated: 11 October 2026. The earlier milestones below are historical. Release s
 
 ## October 11 Follow-Through
 
-Implemented build `2026.10.11-follow-through`, candidate `9188131e517f1ca6`:
+Published build `2026.10.11-follow-through`, release `9188131e517f1ca6`:
 
 - Today / Plan / Board / Progress, consistent phone navigation and preserved portrait column choices.
 - Optional next action, minutes, start time, daily budget and five-minute start/pause flow. Full drafts persist through thinking pauses and same-tab reload; no completion is inferred from a timer.
@@ -16,6 +16,8 @@ Implemented build `2026.10.11-follow-through`, candidate `9188131e517f1ca6`:
 101 unit checks passed. All 57 affected scenarios passed in Chromium and WebKit after correcting task-toolbar density, retry metadata and timer-error visibility issues. The remote gate caught another Linux-WebKit phone-spacing difference and prevented deployment; all 18 planning scenarios pass in each local engine after correction. The final candidate also passes 12 follow-through scenarios in each engine, including malformed imported history, archived history and rapid dialog replacement. The complete exact-artifact remote gate is still required before publication. No personal records or production database settings were used as fixtures or modified. Final verification/publication is tracked in the workflow and [current status](PLATFORM-STATUS.md).
 
 Remaining gated work: physical phones; live owner isolation; authenticated two-device offline/reconnect; Google configuration/backend; a reversible entity-level storage migration; encryption/recovery strategy. A feature percentage is not a probability that personal records are safe, and no zero-bug or zero-hacking guarantee is claimed.
+
+Publication confirmed: [workflow 38106794189](https://github.com/austinwong94/life-os/actions/runs/38106794189) passed **410 checks** (101 unit, 209 Chromium, 100 WebKit repeats) and deployed the tested artifact. Live release ID, all 18 file hashes and 17 startup cache versions match. Save open writing before refreshing old tabs on phone and desktop. The database, owner policies and existing personal records were not modified by the publishing process. [Open the updated Life OS](https://austinwong94.github.io/life-os/?v=9188131e517f1ca6).
 
 ## September 22 Workspace Design
 
