@@ -16,18 +16,19 @@
   const dateOf = now => {const d=new Date(now);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
   function complete(target,done,day=dateOf(Date.now()),now=Date.now()) {
     if(typeof done!=='boolean' || !validDate(day) || !Number.isFinite(now) || now<=0)throw new Error('Choose a valid completion date.');
+    if(Object.hasOwn(target,'taskCompletionEvents') && !Array.isArray(target.taskCompletionEvents))throw new Error('Completion history needs review. The original record was kept.');
     const on=day>dateOf(now)?dateOf(now):day,date=new Date(on+'T00:00:00'),clock=new Date(now);
     date.setHours(clock.getHours(),clock.getMinutes(),clock.getSeconds(),clock.getMilliseconds());
     const record={id:crypto.randomUUID(),done,on:done?on:'',at:done?date.getTime():0,recordedAt:now};
     const events=Array.isArray(target.taskCompletionEvents)?target.taskCompletionEvents.slice():[],previous=knownCompletion(target);
-    if(previous && !events.some(e=>e.done && e.on===previous.on && e.at===previous.at))events.push({id:crypto.randomUUID(),...previous});
+    if(previous && !events.some(e=>e && e.done===true && e.on===previous.on && e.at===previous.at))events.push({id:crypto.randomUUID(),...previous});
     target.done=done;target.taskCompletion={done:record.done,on:record.on,at:record.at,recordedAt:now};
     target.taskCompletionEvents=[...events,record];
     return record;
   }
   function knownCompletion(target) {
     const c=target.taskCompletion;
-    return target.done && c?.done && validDate(c.on) && Number.isFinite(c.at) && c.at>0 ? c : null;
+    return target.done && c?.done===true && validDate(c.on) && Number.isFinite(c.at) && c.at>0 && Number.isFinite(new Date(c.at).getTime()) ? c : null;
   }
   function cards(board) {return Array.isArray(board?.cards) ? board.cards : [];}
   function collect(board,{includeArchived=false}={}) {
@@ -66,6 +67,8 @@
     if(Object.hasOwn(updates,'completedOn') && (!validDate(updates.completedOn) || updates.completedOn>dateOf(now) || !(updates.done ?? (item || card).done)))throw new Error('Choose a past or current completion date for a completed task.');
     if(Object.hasOwn(updates,'done') && !validDate(day))throw new Error('Choose a valid completion date.');
     const target=item || card;
+    const changesCompletion=Object.hasOwn(updates,'completedOn') && knownCompletion(target)?.on!==updates.completedOn || Object.hasOwn(updates,'done') && updates.done!==Boolean(target.done);
+    if(changesCompletion && (!Number.isFinite(now) || now<=0 || Object.hasOwn(target,'taskCompletionEvents') && !Array.isArray(target.taskCompletionEvents)))throw new Error('Completion history needs review. The original record was kept.');
     if(Object.hasOwn(updates,'title')) target[item?'text':'title']=updates.title.trim();
     if(Object.hasOwn(updates,'completedOn') && knownCompletion(target)?.on!==updates.completedOn)complete(target,updates.done ?? target.done,updates.completedOn,now);
     else if(Object.hasOwn(updates,'done') && updates.done!==Boolean(target.done))complete(target,updates.done,day,now);

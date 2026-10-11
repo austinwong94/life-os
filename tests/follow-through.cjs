@@ -106,5 +106,19 @@ const results=[];
     await p.evaluate(()=>LifeDeviceStore.stage=window.originalStage);await p.getByRole('button',{name:'Mark done',exact:true}).click();assert.equal(await p.evaluate(()=>LifePlanner.ensure(state.cards.find(c=>c.id==='follow-source')).find(t=>t.id==='b').done),true);
     await p.evaluate(()=>openDailyStart(getPlannerSourceItems().find(t=>t.taskId==='b')));await p.getByRole('button',{name:'Mark done',exact:true}).click();assert.match(await p.locator('#dailyDialog .daily-message').innerText(),/already completed/);assert.equal(await p.evaluate(()=>LifePlanner.ensure(state.cards.find(c=>c.id==='follow-source')).find(t=>t.id==='b').done),true);
   });
+  await run('malformed history stays intact, cannot crash reports, and archived or stale task history is safe',async p=>{
+    await seed(p);const unchanged=await p.evaluate(()=>{
+      const source=state.cards.find(c=>c.id==='follow-source'),project=state.cards.find(c=>c.id==='follow-project');
+      LifePlanner.ensure(source)[0].completionEvents=[null,'Original array value',{done:true,completedOn:getTodayKey(),completedAt:'not a timestamp'}];
+      project.items[0].taskCompletionEvents='Original imported value';const before=JSON.stringify([source,project]);
+      dailyCompletedTasks('2026-10-01','2026-10-31');openTaskHistory(getWorkspaceTaskItems().find(t=>t.sourceKind==='card' && t.ref.itemId==='new'));
+      return before===JSON.stringify([source,project]);
+    });assert.equal(unchanged,true);assert.match(await p.locator('#dailyDialog').innerText(),/No completion actions/);
+    await p.keyboard.press('Escape');await workspace(p,'board');await p.locator('[data-id=follow-project]').getByRole('checkbox',{name:'New project action',exact:true}).click();
+    assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='follow-project').items[0].done),false);assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='follow-project').items[0].taskCompletionEvents),'Original imported value');
+    await p.evaluate(()=>{const card=state.cards.find(c=>c.id==='follow-project');card.items[0].taskCompletionEvents=[];LifeTaskRepository.complete(card.items[0],true,getTodayKey());window.historyRef=LifeTaskRepository.collect(workspaceTaskBoard())[0];card.archivedAt=Date.now();state.cards=state.cards.filter(c=>c!==card);getArchivedCards().push(card);openTaskHistory(window.historyRef);});
+    assert.match(await p.locator('#dailyDialog').innerText(),/Completed · 2026-10-11/);await p.keyboard.press('Escape');
+    await p.evaluate(()=>{getArchivedCards().splice(0);openTaskHistory(window.historyRef);});assert.match(await p.locator('#dailyDialog').innerText(),/Task changed elsewhere/);
+  });
   await browser.close();fs.writeFileSync(out+'/follow-through-results.json',JSON.stringify(results,null,2));process.exitCode=results.some(r=>!r.pass)?1:0;
 })().catch(error=>{console.error(error);process.exitCode=1;});

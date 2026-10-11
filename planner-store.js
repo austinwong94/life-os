@@ -83,6 +83,7 @@
   function complete(card, id, dayKey, now = Date.now()) {
     const task = ensure(card).find(task => task.id === id);
     if (!task || !validDate(dayKey)) return null;
+    if(Object.hasOwn(task,'completionEvents') && !Array.isArray(task.completionEvents))throw new Error('Completion history needs review. The original record was kept.');
     const done = !task.done;
     const today = dateOf(now);
     const completedOn = dayKey > today ? today : dayKey;
@@ -91,7 +92,7 @@
     completion.setHours(recorded.getHours(), recorded.getMinutes(), recorded.getSeconds(), recorded.getMilliseconds());
     const events=Array.isArray(task.completionEvents)?task.completionEvents.slice():[];
     // Preserve known pre-history completions when explicitly reopening an older task.
-    if(task.done && validDate(task.completedOn) && task.completedAt>0 && !events.some(e=>e.done && e.completedOn===task.completedOn && e.completedAt===task.completedAt))events.push({id:crypto.randomUUID(),done:true,completedOn:task.completedOn,completedAt:task.completedAt,recordedAt:task.completionRecordedAt || 0});
+    if(task.done && validDate(task.completedOn) && task.completedAt>0 && !events.some(e=>e && e.done===true && e.completedOn===task.completedOn && e.completedAt===task.completedAt))events.push({id:crypto.randomUUID(),done:true,completedOn:task.completedOn,completedAt:task.completedAt,recordedAt:task.completionRecordedAt || 0});
     const event={id:crypto.randomUUID(),done,completedOn:done?completedOn:'',completedAt:done?completion.getTime():0,recordedAt:now};
     return change(card, id, {done, completedOn: done ? completedOn : "", completedAt: done ? completion.getTime() : 0, completionRecordedAt: done ? now : 0,completionEvents:[...events,event]}, now);
   }

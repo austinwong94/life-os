@@ -52,11 +52,11 @@ function dailySection(title, action) {
   header.append(planningNode('h3','',title));if(action)header.append(action);section.append(header);return section;
 }
 function dailyDialog(title) {
-  document.getElementById('dailyDialog')?.close();
+  const existing=document.getElementById('dailyDialog');existing?.close();existing?.remove();
   const previous=document.activeElement,dialog=planningNode('dialog','daily-dialog');dialog.id='dailyDialog';
   const heading=planningNode('h2','',title);heading.id='dailyDialogTitle';dialog.setAttribute('aria-labelledby',heading.id);
   const head=planningNode('header','daily-section-head');head.append(heading,planningIcon('Close',()=>dialog.close(),'x'));dialog.append(head);
-  document.body.append(dialog);dialog.addEventListener('close',()=>{dialog.remove();if(previous?.isConnected)previous.focus({preventScroll:true});},{once:true});dialog.showModal();return dialog;
+  document.body.append(dialog);dialog.addEventListener('close',()=>{dialog.remove();if(previous?.isConnected && !document.querySelector('dialog[open]'))previous.focus({preventScroll:true});},{once:true});dialog.showModal();return dialog;
 }
 function openDailyMore() {
   const dialog=dailyDialog('More'),list=planningNode('div','daily-menu');
@@ -288,15 +288,24 @@ function openDailyStepOptions(item) {
 }
 function openTaskHistory(item) {
   closeCardActionMenus();const dialog=dailyDialog('Task history · '+item.title);
-  const task=item.sourceKind==='card'?LifeTaskRepository.resolve(workspaceTaskBoard(),item.ref):LifePlanner.ensure(resolveLiveCard(item.card)).find(t=>t.id===item.taskId);
-  const record=item.sourceKind==='card'?task.item || task.card:task;
-  const events=item.sourceKind==='card'?(record.taskCompletionEvents || []).map(e=>({...e,completedOn:e.on,completedAt:e.at})):record.completionEvents || [];
+  let record;
+  try {
+    if(item.sourceKind==='card'){
+      const board={id:state.activeBoardId,cards:[...state.cards,...getArchivedCards()]};
+      const matches=LifeTaskRepository.collect(board,{includeArchived:true}).filter(row=>LifeStateMerge.equal(row.ref,item.ref));
+      if(matches.length===1)record=matches[0].base;
+    }else record=LifePlanner.ensure(resolveLiveCard(item.card)).find(t=>t.id===item.taskId);
+  }catch(error){dialog.append(planningNode('p','daily-message',error.message));return;}
+  if(!record){dialog.append(planningNode('p','daily-message','Task changed elsewhere. Reopen its history.'));return;}
+  const events=dailyHistoryEvents(item.sourceKind==='card'?record.taskCompletionEvents:record.completionEvents).map(e=>item.sourceKind==='card'?{...e,completedOn:e.on,completedAt:e.at}:e);
   if(!events.length)dialog.append(planningNode('p','daily-muted',record.done?'Completed · '+(item.completedOn || record.completedOn || 'Date not recorded'):'No completion actions recorded.'));
   for(const event of events.slice().sort((a,b)=>b.recordedAt-a.recordedAt)){
-    const row=planningNode('section','daily-history-row');row.append(planningNode('strong','',(event.done?'Completed · '+event.completedOn:'Reopened')+(event.excludedAt?' · Excluded after comparison':'')),planningNode('p','daily-muted',event.recordedAt?'Recorded '+formatRecordDateTime(event.recordedAt):'Recording time not recorded'));
-    if(event.completedAt)row.append(planningNode('small','',formatRecordDateTime(event.completedAt)));dialog.append(row);
+    const row=planningNode('section','daily-history-row');row.append(planningNode('strong','',(event.done?'Completed · '+(LifePlanner.validDate(event.completedOn)?event.completedOn:'Date not recorded'):'Reopened')+(event.excludedAt?' · Excluded after comparison':'')),planningNode('p','daily-muted',dailyHistoryTimestamp(event.recordedAt)?'Recorded '+formatRecordDateTime(event.recordedAt):'Recording time not recorded'));
+    if(dailyHistoryTimestamp(event.completedAt))row.append(planningNode('small','',formatRecordDateTime(event.completedAt)));dialog.append(row);
   }
 }
+function dailyHistoryEvents(value) {return Array.isArray(value)?value.filter(e=>e && typeof e==='object' && typeof e.done==='boolean'):[];}
+function dailyHistoryTimestamp(value) {return typeof value==='number' && value>0 && Number.isFinite(new Date(value).getTime());}
 function dailyWeekStart(day) {return LifePlanning.shift(day,-((new Date(day+'T12:00:00').getDay()+6)%7));}
 function dailyTaskCompletionPending(cardId,taskId,sourceKind) {
   return (state.syncConflicts || []).some(conflict=>{
@@ -307,16 +316,16 @@ function dailyTaskCompletionPending(cardId,taskId,sourceKind) {
 function dailyCompletedTasks(start,end) {
   const rows=[];
   const add=(task,key,events)=>{
-    const known=events.filter(e=>!e.excludedAt && LifePlanner.validDate(e.completedOn) && e.completedAt>0 && e.completedOn>=start && e.completedOn<=end);
+    const known=events.filter(e=>!e.excludedAt && LifePlanner.validDate(e.completedOn) && dailyHistoryTimestamp(e.completedAt) && e.completedOn>=start && e.completedOn<=end);
     for(const day of new Set(known.map(e=>e.completedOn))){const event=known.filter(e=>e.completedOn===day).sort((a,b)=>b.completedAt-a.completedAt)[0];rows.push({...task,...event,reportKey:key+':'+day});}
   };
   for(const card of getPlannerSourceCards())for(const task of LifePlanner.ensure(card).filter(t=>!t.deletedAt && !dailyTaskCompletionPending(card.id,t.id,'planner')))add({...task,card,taskId:task.id},JSON.stringify([card.id,task.id]),[
-    ...(task.completionEvents || []).filter(e=>e.done),...(task.done && task.completedOn?[{completedOn:task.completedOn,completedAt:task.completedAt}]:[])]);
+    ...dailyHistoryEvents(task.completionEvents).filter(e=>e.done),...(task.done && task.completedOn?[{completedOn:task.completedOn,completedAt:task.completedAt}]:[])]);
   const board={id:state.activeBoardId,cards:[...state.cards,...getArchivedCards()]};
   for(const item of LifeTaskRepository.collect(board,{includeArchived:true})){
     if(dailyTaskCompletionPending(item.ref.cardId,item.ref.itemId,'card'))continue;
     const target=item.base;
-    add(item,JSON.stringify(item.ref),[...(target?.taskCompletionEvents || []).filter(e=>e.done && !e.excludedAt).map(e=>({completedOn:e.on,completedAt:e.at})),...(item.done && item.completedOn?[{completedOn:item.completedOn,completedAt:item.completedAt}]:[])]);
+    add(item,JSON.stringify(item.ref),[...dailyHistoryEvents(target?.taskCompletionEvents).filter(e=>e.done && !e.excludedAt).map(e=>({completedOn:e.on,completedAt:e.at})),...(item.done && item.completedOn?[{completedOn:item.completedOn,completedAt:item.completedAt}]:[])]);
   }
   return rows;
 }

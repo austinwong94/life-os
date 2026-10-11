@@ -61,6 +61,12 @@ test('editing day text keeps existing done states and archives removed rows', ()
   P.replaceDay(c,'2026-09-08','- B',()=> 'new',now);assert.equal(c.plannerTasks.find(x=>x.id==='a').archivedAt,now);
 });
 const base=()=>({boards:[{id:'a',name:'A',cards:[{id:'d',diaryEntries:{'2026-09-08':{thoughts:'Original',sentence:'A'}}}]},{id:'b',name:'B',cards:[]}]});
+test('planner completion keeps malformed history intact and tolerates invalid array entries',()=>{
+ const c=make();P.add(c,'2026-09-08','Keep the original','a',now);c.plannerTasks[0].completionEvents='Original imported value';const before=clone(c);
+ assert.throws(()=>P.complete(c,'a','2026-09-08',now),/history needs review/);assert.deepEqual(c,before);
+ c.plannerTasks[0].completionEvents=[null,'Original array value'];P.complete(c,'a','2026-09-08',now);P.complete(c,'a','2026-09-08',now+1);
+ assert.deepEqual(c.plannerTasks[0].completionEvents.slice(0,2),[null,'Original array value']);
+});
 test('different-board edits merge without conflicts',()=>{
  const b=base(),l=clone(b),r=clone(b);l.boards[0].name='Local';r.boards[1].name='Remote';const m=M.merge(b,l,r);
  assert.equal(m.conflicts.length,0);assert.deepEqual(m.boards.map(x=>x.name),['Local','Remote']);

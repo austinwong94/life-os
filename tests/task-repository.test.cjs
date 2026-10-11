@@ -76,3 +76,10 @@ test('invalid changes are rejected before mutating the source',()=>{
     const board=fixture(),before=structuredClone(board),row=repo.collect(board)[0];assert.throws(()=>repo.change(board,row.ref,row.base,update));assert.deepEqual(board,before);
   }
 });
+test('malformed history cannot cause a partial rename or erase original values',()=>{
+  const board=fixture(),target=board.cards[0].items[0];target.taskCompletionEvents='Original imported value';
+  const before=structuredClone(board),row=repo.collect(board)[0];
+  assert.throws(()=>repo.change(board,row.ref,row.base,{title:'Changed',done:true}),/history needs review/);assert.deepEqual(board,before);
+  target.taskCompletionEvents=[null,'Original array value'];repo.complete(target,true,'2026-10-10',Date.parse('2026-10-11T04:00:00Z'));
+  repo.complete(target,false,'2026-10-11',Date.parse('2026-10-11T05:00:00Z'));assert.deepEqual(target.taskCompletionEvents.slice(0,2),[null,'Original array value']);
+});

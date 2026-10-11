@@ -6272,7 +6272,7 @@ function renderSingleTask(card) {
 }
 function saveSourceTaskCompletion(card,item,done) {
   const target=item || card,keys=['done','taskCompletion','taskCompletionEvents'],before=Object.fromEntries(keys.filter(key=>Object.hasOwn(target,key)).map(key=>[key,LifeStateMerge.copy(target[key])]));
-  LifeTaskRepository.complete(target,done,getTodayKey());
+  try{LifeTaskRepository.complete(target,done,getTodayKey());}catch(error){renderCardsOnly({force:true});setSaveStatus(error.message,'error');return;}
   if(!saveState()){for(const key of keys)delete target[key];Object.assign(target,before);syncActiveBoard({touchBoard:false});}
   renderCardsOnly({force:true});
 }
@@ -6653,7 +6653,7 @@ function togglePlannerTaskDone(item) {
   const task = LifePlanner.ensure(card).find(task => task.id === item.taskId);
   if (!task) return;
   const before = LifeStateMerge.copy(task);
-  LifePlanner.complete(card, item.taskId, item.dateKey);
+  try{LifePlanner.complete(card,item.taskId,item.dateKey);}catch(error){renderCardsOnly({force:true});setSaveStatus(error.message,'error');return;}
   LifePlanner.project(card);
   card.updatedAt = Date.now();
   if(!saveState()){
@@ -12543,8 +12543,8 @@ function renderReadableKeyValues(label, rows) {
 }
 
 function readableCompletionHistory(target) {
-  const events=(Array.isArray(target.completionEvents)?target.completionEvents:Array.isArray(target.taskCompletionEvents)?target.taskCompletionEvents:target.taskCompletion?[target.taskCompletion]:[]).filter(e=>e && typeof e==='object');
-  return events.map(e=>[(e.done?'Completed '+(e.completedOn || e.on || 'date not recorded'):'Reopened'),(e.completedAt || e.at)?'Completion time '+formatRecordDateTime(e.completedAt || e.at):'',e.recordedAt?'Recorded '+formatRecordDateTime(e.recordedAt):'Recording time not recorded',e.excludedAt?'Excluded after comparison':''].filter(Boolean).join(' · ')).join('\n');
+  const events=(Array.isArray(target.completionEvents)?target.completionEvents:Array.isArray(target.taskCompletionEvents)?target.taskCompletionEvents:target.taskCompletion?[target.taskCompletion]:[]).filter(e=>e && typeof e==='object' && typeof e.done==='boolean');
+  return events.map(e=>[(e.done?'Completed '+(e.completedOn || e.on || 'date not recorded'):'Reopened'),dailyHistoryTimestamp(e.completedAt || e.at)?'Completion time '+formatRecordDateTime(e.completedAt || e.at):'',dailyHistoryTimestamp(e.recordedAt)?'Recorded '+formatRecordDateTime(e.recordedAt):'Recording time not recorded',e.excludedAt?'Excluded after comparison':''].filter(Boolean).join(' · ')).join('\n');
 }
 function renderReadableChecklist(items, label, includeCompletion=false) {
   const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => getReadableItemTitle(item));
