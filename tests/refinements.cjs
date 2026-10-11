@@ -98,7 +98,10 @@ const results=[];
     await p.setViewportSize({width:390,height:844});await workspace(p,'today');
     assert.equal(await p.locator('.workspace-modes').isVisible(),false);
     const thoughts=p.getByLabel('Diary thoughts');
-    assert.ok((await thoughts.boundingBox()).y<760,'Diary writing must be reachable in the initial phone viewport');
+    await p.waitForFunction(()=>{
+      const textarea=document.querySelector('textarea[aria-label="Diary thoughts"]'),rect=textarea?.getBoundingClientRect();
+      return rect && rect.width>0 && rect.height>0 && rect.y<760;
+    });
     await thoughts.fill('A complete thought\nStill thinking after a pause.');await p.evaluate(()=>flushDeviceWrites());
     await p.screenshot({path:out+'/today-phone.png',fullPage:true});
     await workspace(p,'tasks');await workspace(p,'calendar');await workspace(p,'board');await workspace(p,'priorities');await workspace(p,'today');
