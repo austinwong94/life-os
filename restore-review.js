@@ -1,4 +1,4 @@
-const RESTORE_GUARD_KEY = 'life-os-restore-guard-v1';
+const RESTORE_GUARD_KEY = LifeStorageScope.key('life-os-restore-guard-v1');
 
 function readRestoreGuard() {
   try {

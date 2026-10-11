@@ -1,0 +1,20 @@
+[
+  "index.html",
+  "styles.css",
+  "experience.css",
+  "coaching.css",
+  "daily-workspace.css",
+  "dev-redirect.js",
+  "storage-scope.js",
+  "planner-store.js",
+  "task-repository.js",
+  "state-merge.js",
+  "device-store.js",
+  "restore-review.js",
+  "note-actions.js",
+  "planning.js",
+  "coaching.js",
+  "daily-workspace.js",
+  "experience.js",
+  "app.js"
+]

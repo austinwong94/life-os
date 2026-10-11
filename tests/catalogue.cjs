@@ -1,4 +1,5 @@
 const {chromium} = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const {capture}=require('./navigation.cjs');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const URL = process.env.TEST_URL || 'http://127.0.0.1:5180/';
@@ -24,7 +25,8 @@ const results = [];
   }
   await run('Seven everyday choices, ten more types, and opening Add does not modify saved cards', async page => {
     const before = await page.evaluate(() => JSON.stringify(state.cards));
-    await page.locator('#railAddButton').click();
+    await capture(page);
+    await page.getByRole('button',{name:'Add a card instead',exact:true}).click();
     assert.deepEqual(await page.locator('#cardTypeFeatured button').evaluateAll(buttons => buttons.map(b => b.dataset.type)), ['planlist','diary','sidenote','checklist','quote','fitness','food']);
     assert.equal(await page.locator('#cardTypeMore').getAttribute('open'), null);
     assert.equal(await page.locator('#cardTypeMoreCount').innerText(), '10');
@@ -34,7 +36,8 @@ const results = [];
     assert.equal(await page.evaluate(() => JSON.stringify(state.cards)), before);
   });
   await run('Searching More types keeps input focus, common fields and the chosen type', async page => {
-    await page.locator('#railAddButton').click();
+    await capture(page);
+    await page.getByRole('button',{name:'Add a card instead',exact:true}).click();
     await page.locator('#cardTitle').fill('My unfinished thought');
     await page.locator('#cardDescription').fill('Line one\nLine two');
     await page.locator('#cardTypeMore > summary').click();
@@ -55,7 +58,8 @@ const results = [];
     assert.equal(await page.locator('#cardTypeMore').getAttribute('open'), null);
   });
   await run('Type and priority choices support keyboard navigation without losing focus', async page => {
-    await page.locator('#railAddButton').click();
+    await capture(page);
+    await page.getByRole('button',{name:'Add a card instead',exact:true}).click();
     await page.locator('#cardTypeFeatured [data-type=sidenote]').focus();
     await page.keyboard.press('ArrowRight');
     assert.equal(await page.evaluate(() => getSelectedFormType()), 'checklist');
@@ -132,7 +136,7 @@ const results = [];
   await run('Each featured card can be created from Add and survives reload', async page => {
     await page.evaluate(async () => {state.cards=[];saveState();await flushDeviceWrites();renderCardsOnly({force:true});});
     for (const type of ['planlist','diary','sidenote','checklist','quote','fitness','food']) {
-      await page.locator('#railAddButton').click(); await page.locator('#cardTypeFeatured [data-type=' + type + ']').click();
+      await capture(page);await page.getByRole('button',{name:'Add a card instead',exact:true}).click(); await page.locator('#cardTypeFeatured [data-type=' + type + ']').click();
       await page.locator('#cardTitle').fill('Sample ' + type);
       if (type === 'quote') await page.locator('#cardDescription').fill('One line\nAnother line');
       await page.locator('#submitCardButton').click();
@@ -163,7 +167,8 @@ const results = [];
     for (const width of [320,390,768,1440]) {
       await page.setViewportSize({width,height:900}); await page.waitForTimeout(350);
       assert.equal(await page.locator('.mood-picker button').evaluateAll(buttons => buttons.length===7 && buttons.every(e => {const r=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect(),first=buttons[0].getBoundingClientRect();return r.width>=32 && r.width<=45 && r.height===44 && Math.abs(r.top-first.top)<1 && r.left>=p.left-1 && r.right<=p.right+1;})), true);
-      await page.locator('#railAddButton').click();
+      await capture(page);
+      await page.getByRole('button',{name:'Add a card instead',exact:true}).click();
       const failures = await page.locator('.type-button-copy strong,.type-button-copy small').evaluateAll(labels => labels.filter(e => e.getBoundingClientRect().width && e.scrollWidth>e.clientWidth+1).map(e => e.textContent));
       assert.deepEqual(failures, []);
       await page.locator('#cardTypeFeatured').evaluate(e => e.scrollIntoView({block:'start',behavior:'instant'}));

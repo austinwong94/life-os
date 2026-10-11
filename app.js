@@ -2,9 +2,9 @@ if (window.top !== window.self) {
   document.documentElement.hidden = true;
   throw new Error("Life OS must be opened directly, not inside another website.");
 }
-const STORAGE_KEY = "progress-board-v1";
-const PRE_UPGRADE_KEY = "life-os-before-storage-v3";
-const PREVIEW_MODE = new URLSearchParams(window.location.search).has("preview");
+const PREVIEW_MODE = LifeStorageScope.preview;
+const STORAGE_KEY = LifeStorageScope.key("progress-board-v1");
+const PRE_UPGRADE_KEY = LifeStorageScope.key("life-os-before-storage-v3");
 const SAMPLE_VERSION = 15;
 const COURSE_BOARD_VERSION = 1;
 const AI_COURSE_BOARD_VERSION = 1;
@@ -14,8 +14,8 @@ const AUTO_SAVE_INTERVAL_MS = 30000;
 const CLOUD_SAVE_DEBOUNCE_MS = 1400;
 const CLOUD_CONFLICT_TOLERANCE_MS = 1000;
 const LOCAL_DEV_RELOAD_POLL_MS = 1500;
-const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "app.js", "experience.js", "planning.js", "planner-store.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
-const DIARY_BACKUP_KEY = "life-os-diary-entry-backups";
+const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "coaching.css", "daily-workspace.js", "daily-workspace.css", "app.js", "experience.js", "planning.js", "coaching.js", "storage-scope.js", "planner-store.js", "task-repository.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
+const DIARY_BACKUP_KEY = LifeStorageScope.key("life-os-diary-entry-backups");
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
 const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food"];
 const TRUSTED_VIDEO_DOMAINS = {
@@ -28,10 +28,11 @@ const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
   anonKey: "sb_publishable_DFWPjTEDRTsgM3pA_XPWdw_LAYQk_lP",
   redirectUrl: "https://austinwong94.github.io/life-os/"
 };
-const CLOUD_SESSION_KEY = "life-os-cloud-session";
-const CLOUD_RECOVERY_KEY = "life-os-cloud-recovery";
+const CLOUD_SESSION_KEY = LifeStorageScope.key("life-os-cloud-session");
+const CLOUD_RECOVERY_KEY = LifeStorageScope.key("life-os-cloud-recovery");
+const CLOUD_BASE_KEY = LifeStorageScope.key("life-os-cloud-base-v2");
 const CLOUD_TABLE_MISSING_MESSAGE = "Cloud storage is unavailable. Check that the selected Supabase project exposes the user_states table and allows your account to access its own row. Your local data has not been deleted.";
-const LOCAL_CLIENT_KEY = "life-os-client-id";
+const LOCAL_CLIENT_KEY = LifeStorageScope.key("life-os-client-id");
 let cloudSession = PREVIEW_MODE ? null : loadCloudSession();
 let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
@@ -58,7 +59,7 @@ const THEMES = {
     bg: "#fae4d9",
     ink: "#37221d",
     muted: "#7c5b51",
-    accent: "#c45f43",
+    accent: "#a84b35",
     soft: "rgba(196, 95, 67, 0.16)",
     visual: "linear-gradient(135deg, #c45f43 0%, #f0aa79 48%, #f8e9b9 100%)"
   },
@@ -85,7 +86,7 @@ const THEMES = {
     bg: "#f4e7bd",
     ink: "#302714",
     muted: "#756644",
-    accent: "#a57919",
+    accent: "#89650b",
     soft: "rgba(165, 121, 25, 0.17)",
     visual: "linear-gradient(135deg, #a57919 0%, #e0bd55 52%, #fbefe1 100%)"
   },
@@ -150,7 +151,7 @@ const TYPE_META = {
   brief: { label: "Brief", icon: "list" },
   daily: { label: "To-do", icon: "list" },
   planner: { label: "Planner", icon: "calendar" },
-  planlist: { label: "Planner-view", icon: "list" },
+  planlist: { label: "Task list", icon: "list" },
   diary: { label: "Diary", icon: "calendar" },
   sidenote: { label: "Side notes", icon: "list" },
   quote: { label: "Motivation", icon: "quote" },
@@ -280,7 +281,7 @@ const TYPE_PICKER_GROUPS = [
     description: "Tasks, projects, dates",
     options: [
       { type: "planner", label: "Planner", hint: "Date entry only" },
-      { type: "planlist", label: "Planner-view", hint: "Shared dated tasks" },
+      { type: "planlist", label: "Task list", hint: "Shared dated tasks" },
       { type: "daily", label: "To-do", hint: "Separate checklist" },
       { type: "single", label: "Task", hint: "One outcome" },
       { type: "checklist", label: "Project", hint: "Multi-step" },
@@ -1131,6 +1132,7 @@ let draftTouched = false;
 let selectedTemplateId = boardTemplates[0]?.id || "";
 let selectedScheduleDays = [0, 2, 4];
 let boardResizeFrame = null;
+const activeBoardPointers = new Set();
 let pendingUndoAction = null;
 let undoToastTimer = null;
 let textEditGuardUntil = 0;
@@ -1484,6 +1486,18 @@ function bindEvents() {
   });
 
   window.addEventListener("resize", queueBoardRender);
+  // Keep a control alive from press through click, including a resize or
+  // background device commit arriving between pointerdown and pointerup.
+  document.addEventListener('pointerdown',event=>{
+    if(event.button===0 && elements.boardGrid.contains(event.target))activeBoardPointers.add(event.pointerId);
+  },true);
+  document.addEventListener('click',event=>{
+    if(event.pointerId===undefined)activeBoardPointers.clear();
+    else activeBoardPointers.delete(event.pointerId);
+  },true);
+  window.addEventListener('pointerup',event=>setTimeout(()=>activeBoardPointers.delete(event.pointerId),0),true);
+  window.addEventListener('pointercancel',event=>activeBoardPointers.delete(event.pointerId),true);
+  window.addEventListener('blur',()=>activeBoardPointers.clear());
 
   elements.boardName.addEventListener("input", (event) => {
     state.board.name = event.target.value.trimStart() || "My Life OS";
@@ -2224,8 +2238,8 @@ function updateExistingCard(nextCard) {
   if (sameType && ["checklist", "daily", "routine"].includes(current.type)) {
     const used = new Set();
     nextCard.items = nextCard.items.map(item => {
-      const previous = (current.items || []).find(old => !used.has(old.id) && old.text === item.text);
-      if (previous) { used.add(previous.id); return {...previous, text: item.text}; }
+      const previousIndex = (current.items || []).findIndex((old, index) => !used.has(index) && old.text === item.text);
+      if (previousIndex >= 0) { used.add(previousIndex); return {...current.items[previousIndex], text: item.text}; }
       return item;
     });
   }
@@ -2567,9 +2581,9 @@ function renderMoveCardModal(card) {
   });
   const linkedWarning =
     card.type === "planner"
-      ? "Planner-view cards on the old board will no longer read this planner card after it moves."
+      ? "Task list cards on the old board will no longer read this planner card after it moves."
       : card.type === "planlist"
-        ? "Planner-view cards read Planner data from the destination board after moving."
+        ? "Task list cards read Planner data from the destination board after moving."
         : "The card keeps its checklist, notes, diary pages, fitness logs, food logs and history.";
   elements.moveCardNote.textContent = destinations.length ? linkedWarning : "Create another board before moving this card.";
   elements.moveCardConfirmButton.disabled = destinations.length === 0;
@@ -2623,7 +2637,7 @@ function toggleBoardControls() {
 
 function renderBoardControls() {
   const controlsOpen = state.ui.controlsOpen !== false;
-  const todayMode = ["today", "tasks", "calendar"].includes(state.ui.workspaceMode);
+  const todayMode = ["today", "tasks", "calendar", "priorities"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
   elements.topControlsToggleButton.hidden = todayMode;
   const controlsLabel = controlsOpen ? "Hide filters" : "Show filters";
@@ -2972,7 +2986,7 @@ function getQuickCaptureTimer(value) {
 
 function getQuickCaptureFallbackTitle(type) {
   if (type === "planner") return "Future planner";
-  if (type === "planlist") return "Planner-view";
+  if (type === "planlist") return "Task list";
   if (type === "diary") return "Daily diary";
   if (type === "sidenote") return "Side notes";
   if (type === "quote") return "Motivation";
@@ -2988,7 +3002,7 @@ function getQuickCaptureFallbackTitle(type) {
 
 function getDefaultCardTitle(type) {
   if (type === "planner") return "Future planner";
-  if (type === "planlist") return "Planner-view";
+  if (type === "planlist") return "Task list";
   if (type === "diary") return "Daily diary";
   if (type === "sidenote") return "Side notes";
   if (type === "quote") return "Motivation";
@@ -3051,15 +3065,20 @@ function renderCardsOnly(options = {}) {
 
   const visibleCards = filteredByFocus.filter((card) => matchesCategory(card));
   const todayMode = state.ui.workspaceMode === "today";
-  const planningMode = ["tasks", "calendar"].includes(state.ui.workspaceMode);
+  const planningMode = ["tasks", "calendar", "priorities"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("is-today-view", todayMode);
   elements.workspace.classList.toggle("is-planning-view", planningMode);
   renderBoardControls();
   document.getElementById("todayModeButton").setAttribute("aria-pressed", String(todayMode));
   document.getElementById("boardModeButton").setAttribute("aria-pressed", String(!todayMode && !planningMode));
-  document.getElementById("tasksModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "tasks"));
+  document.getElementById("tasksModeButton").setAttribute("aria-pressed", String(['tasks','calendar'].includes(state.ui.workspaceMode)));
   document.getElementById("calendarModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "calendar"));
-  if (planningMode) {
+  document.getElementById("prioritiesModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "priorities"));
+  renderDailyNavigation();
+  if (state.ui.workspaceMode === "priorities") {
+    renderProgressHome();
+    renderCoachingWorkspace();
+  } else if (planningMode) {
     renderPlanningWorkspace(state.ui.workspaceMode);
   } else if (todayMode) {
     renderTodaySpace();
@@ -3096,6 +3115,7 @@ function isProtectedDraftElement(element) {
     elements.boardGrid?.contains(element) ||
       elements.cardComposerPanel?.contains(element) ||
       document.getElementById('recoveryModal')?.contains(element) ||
+      document.getElementById('dailyDialog')?.contains(element) ||
       elements.quickTodoPanel?.contains(element)
   );
 }
@@ -3113,8 +3133,9 @@ function isBackgroundBoardRender(options = {}) {
 }
 
 function shouldDeferBoardRender(options = {}) {
-  if (options.force) return false;
   if (draggedCardId) return false;
+  if (activeBoardPointers.size) return true;
+  if (options.force) return false;
   if (options.reason === "device-commit" && isUserEditingCriticalDraft()) return true;
   const active = document.activeElement;
   if (isProtectedDraftElement(active)) return true;
@@ -4019,7 +4040,8 @@ function renderPlannerLinkedItem(item) {
   edit.innerHTML = `${ICONS.pencil}<span>Edit</span>`;
   edit.classList.remove("planner-linked-edit-button");
   edit.addEventListener("click", () => closeCardActionMenus());
-  menu.append(edit, archive, remove);
+  const history=document.createElement('button');history.type='button';history.innerHTML=ICONS.calendar+'<span>Completion history</span>';history.onclick=event=>{event.stopPropagation();openTaskHistory(item);};
+  menu.append(edit, archive, remove,history);
   menuToggle.addEventListener("click", (event) => {
     event.stopPropagation();
     const willOpen = !menuShell.classList.contains("is-open");
@@ -4151,7 +4173,10 @@ function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
     window.alert("This task changed while you were editing. Your draft is still here. Cancel and reopen the task to compare the latest version.");
     return false;
   }
-  const metadata = draft ? {area:draft.area,project:draft.project.trim(),status:draft.status,deadline:draft.deadline,notes:draft.notes,priority:draft.priority} : {};
+  if (draft?.followUp && !LifePlanner.validDate(draft.followUp)) return false;
+  let metadata;
+  try{metadata = draft ? {area:draft.area,project:draft.project.trim(),status:draft.status,deadline:draft.deadline,notes:draft.notes,priority:draft.priority,...taskGoalFields(draft)} : {};}
+  catch(error){window.alert(error.message);return false;}
   if (!LifePlanner.change(card, item.taskId, {title, dateKey: day, ...metadata})) return false;
   LifePlanner.project(card);
   card.updatedAt = Date.now();
@@ -5919,7 +5944,7 @@ function renderChecklist(card) {
     input.type = "checkbox";
     input.checked = item.done;
     input.addEventListener("change", () => {
-      item.done = input.checked;
+      if(card.type==='checklist'){saveSourceTaskCompletion(card,item,input.checked);return;}else item.done = input.checked;
       if (card.type === "routine") {
         syncRoutineTodayHistory(card);
       }
@@ -6016,9 +6041,7 @@ function renderDailyList(card) {
     input.type = "checkbox";
     input.checked = item.done;
     input.addEventListener("change", () => {
-      item.done = input.checked;
-      saveState();
-      renderCardsOnly();
+      saveSourceTaskCompletion(card,item,input.checked);
     });
     const count = document.createElement("span");
     count.className = "daily-index";
@@ -6239,15 +6262,19 @@ function renderSingleTask(card) {
   input.type = "checkbox";
   input.checked = card.done;
   input.addEventListener("change", () => {
-    card.done = input.checked;
-    saveState();
-    renderCardsOnly();
+    saveSourceTaskCompletion(card,null,input.checked);
   });
   const span = document.createElement("span");
   span.textContent = "Complete";
   label.append(input, span);
   wrapper.append(label);
   return wrapper;
+}
+function saveSourceTaskCompletion(card,item,done) {
+  const target=item || card,keys=['done','taskCompletion','taskCompletionEvents'],before=Object.fromEntries(keys.filter(key=>Object.hasOwn(target,key)).map(key=>[key,LifeStateMerge.copy(target[key])]));
+  LifeTaskRepository.complete(target,done,getTodayKey());
+  if(!saveState()){for(const key of keys)delete target[key];Object.assign(target,before);syncActiveBoard({touchBoard:false});}
+  renderCardsOnly({force:true});
 }
 
 function renderTracker(card) {
@@ -6625,17 +6652,22 @@ function togglePlannerTaskDone(item) {
   const card = resolveLiveCard(item.card);
   const task = LifePlanner.ensure(card).find(task => task.id === item.taskId);
   if (!task) return;
-  const before = {...task};
+  const before = LifeStateMerge.copy(task);
   LifePlanner.complete(card, item.taskId, item.dateKey);
   LifePlanner.project(card);
   card.updatedAt = Date.now();
-  saveState();
+  if(!saveState()){
+    const tasks=LifePlanner.ensure(card);tasks.splice(tasks.findIndex(t=>t.id===task.id),1,before);LifePlanner.project(card);syncActiveBoard({touchBoard:false});renderCardsOnly({force:true});return;
+  }
+  const after=LifeStateMerge.copy(task);
   renderCardsOnly({force: true});
   showUndoToast({message: task.done ? "Task completed." : "Task reopened.", onUndo: () => {
     const live = resolveLiveCard(card);
-    LifePlanner.change(live, task.id, before);
+    const tasks=LifePlanner.ensure(live),index=tasks.findIndex(t=>t.id===task.id);
+    if(index<0 || !LifeStateMerge.equal(tasks[index],after)){setSaveStatus('Task changed again. Undo was not applied.','error');return;}
+    tasks.splice(index,1,LifeStateMerge.copy(before));
     LifePlanner.project(live);
-    saveState();
+    if(!saveState()){tasks.splice(index,1,LifeStateMerge.copy(after));LifePlanner.project(live);syncActiveBoard({touchBoard:false});}
     renderCardsOnly({force: true});
   }});
 }
@@ -6725,13 +6757,13 @@ function getDefaultPlannerViewAddDate(view, options = {}) {
 
 function getPlannerWriteSourceCard(planlistCard, dateKey) {
   const group = getPlannerGroup(planlistCard);
-  let source = state.cards.find((card) => card.type === "planner" && getPlannerGroup(card) === group);
+  let source = state.cards.find((card) => card.type === "planner" && !card.coachingStore && !card.dailyWorkspaceStore && getPlannerGroup(card) === group);
   if (source) return source;
-  source = getArchivedCards().find((card) => card.type === "planner" && getPlannerGroup(card) === group);
+  source = getArchivedCards().find((card) => card.type === "planner" && !card.coachingStore && !card.dailyWorkspaceStore && getPlannerGroup(card) === group);
   if (source) return source;
   source = makeCard({
     title: `${group} planner`,
-    description: "Source planner for dated tasks added from Planner-view cards.",
+    description: "Source planner for dated tasks added from Task list cards.",
     category: group,
     type: "planner",
     theme: planlistCard.theme || getThemeForCategory(group),
@@ -6863,10 +6895,10 @@ function getPlannerItemsForDate(dateKey, group = "") {
 function getPlannerSourceCards() {
   const sources = new Map();
   state.cards.forEach((card) => {
-    if (card?.type === "planner") sources.set(card.id, card);
+    if (card?.type === "planner" && !card.coachingStore && !card.dailyWorkspaceStore) sources.set(card.id, card);
   });
   getArchivedCards().forEach((card) => {
-    if (card?.type === "planner" && !sources.has(card.id)) sources.set(card.id, card);
+    if (card?.type === "planner" && !card.coachingStore && !card.dailyWorkspaceStore && !sources.has(card.id)) sources.set(card.id, card);
   });
   return [...sources.values()];
 }
@@ -6884,6 +6916,7 @@ function getPlannerSourceItems(group = "", options = {}) {
 function getPlannerItemsForSelectedDay(allItems, selectedDayKey) {
   const day = normalizeDateKey(selectedDayKey) || getTodayKey();
   return allItems.filter(item => {
+    if(item.status==='parked' && !item.done) return false;
     if (item.dateKey === day || (item.done && item.completedOn === day)) return true;
     return Boolean(item.dateKey) && item.dateKey < day && (!item.done || (item.completedOn && item.completedOn >= day));
   }).map(item => ({
@@ -8136,9 +8169,21 @@ function getFitnessSessionLine(session) {
 }
 
 function renderFoodReport(range) {
-  const days = collectFoodReportDays(range);
+  const cards = getCurrentBoardReportCards().filter(card=>card.type==='food');
+  const preference = dailySession().foodReportSource || '';
+  const sourceId = cards.some(card=>card.id===preference)?preference:'';
+  const days = collectFoodReportDays(range, sourceId);
   const totals = getFoodReportTotals(days);
   const documentNode = createReportDocument("Nutrition report", `${state.board.name} · ${range.label}`);
+  if(cards.length>1){
+    const select=planningSelect([['','All food trackers'],...cards.map(card=>[card.id,card.title || 'Food tracker'])],sourceId,value=>{
+      const focused=document.activeElement===select;
+      dailySession().foodReportSource=value;saveDailyDraft();renderReportsModal();
+      if(focused)document.getElementById('foodReportSource')?.focus({preventScroll:true});
+    });
+    select.id='foodReportSource';
+    const picker=planningField('Nutrition source',select);picker.classList.add('report-source-picker');documentNode.append(picker);
+  }
   const intro = document.createElement("p");
   intro.className = "report-lede";
   intro.textContent = "Built from Food tracker cards on this board. Logged foods use the nutrition snapshot saved on that day, so future library edits do not rewrite old records.";
@@ -8152,9 +8197,9 @@ function renderFoodReport(range) {
   const averageTarget = getFoodReportAverageTarget(days, totals);
   summary.append(
     createReportMetric("Logged days", days.length, "nutrition records"),
-    createReportMetric("Avg kcal", `${formatFoodNumber(averageCalories, "calories")}`, `/ ${formatFoodNumber(averageTarget.calories, "calories")} daily target`),
-    createReportMetric("Protein avg", `${formatFoodNumber(averageProtein, "protein")}g`, `${formatFoodNumber(averageTarget.protein, "protein")}g target`),
-    createReportMetric("Fiber avg", `${formatFoodNumber(averageFiber, "fiber")}g`, `${formatFoodNumber(averageTarget.fiber, "fiber")}g target`)
+    createReportMetric("Avg kcal", days.length?`${formatFoodNumber(averageCalories, "calories")}`:'Not recorded', averageTarget?`/ ${formatFoodNumber(averageTarget.calories, "calories")} daily target`:days.length?'Different tracker targets':'No logged days'),
+    createReportMetric("Protein avg", days.length?`${formatFoodNumber(averageProtein, "protein")}g`:'Not recorded', averageTarget?`${formatFoodNumber(averageTarget.protein, "protein")}g target`:'No combined target'),
+    createReportMetric("Fiber avg", days.length?`${formatFoodNumber(averageFiber, "fiber")}g`:'Not recorded', averageTarget?`${formatFoodNumber(averageTarget.fiber, "fiber")}g target`:'No combined target')
   );
   documentNode.append(summary);
   documentNode.append(createFoodTargetProgressSection(days, totals));
@@ -8163,10 +8208,11 @@ function renderFoodReport(range) {
   return documentNode;
 }
 
-function collectFoodReportDays(range) {
+function collectFoodReportDays(range, sourceId = '') {
   const daysByDate = new Map();
   getCurrentBoardReportCards()
-    .filter((card) => card.type === "food")
+    .filter((card) => card.type === "food" && (!sourceId || card.id===sourceId))
+    .map(card=>LifeStateMerge.copy(card))
     .forEach((card) => {
       normalizeFoodCard(card);
       Object.entries(card.foodEntries || {}).forEach(([dateKey, entry]) => {
@@ -8181,8 +8227,14 @@ function collectFoodReportDays(range) {
           entries: [],
           meals: [],
           consumed: createEmptyFoodTotals(),
-          target: normalizeFoodTarget(card.foodTargets?.[getFoodMonthKey(normalizedDate)] || card.foodTargets?.default || DEFAULT_FOOD_TARGETS)
+          target: null,
+          targetSources: []
         };
+        const target=normalizeFoodTarget(card.foodTargets?.[getFoodMonthKey(normalizedDate)] || card.foodTargets?.default || DEFAULT_FOOD_TARGETS);
+        dateRecord.targetSources.push({cardId:card.id,title:card.title || 'Food tracker',target});
+        dateRecord.targetSources.sort((a,b)=>a.cardId.localeCompare(b.cardId));
+        const first=dateRecord.targetSources[0].target;
+        dateRecord.target=dateRecord.targetSources.every(source=>FOOD_NUTRIENT_KEYS.every(key=>source.target[key]===first[key]))?first:null;
         dateRecord.consumed = addFoodTotals(dateRecord.consumed, entryTotals);
         normalizedEntry.meals.forEach((meal) => {
           if (!meal.items?.length) return;
@@ -8204,7 +8256,7 @@ function getFoodReportTotals(days) {
   return days.reduce(
     (totals, day) => {
       totals.consumed = addFoodTotals(totals.consumed, day.consumed);
-      totals.targets = addFoodTotals(totals.targets, day.target);
+      if(day.target)totals.targets = addFoodTotals(totals.targets, day.target);
       return totals;
     },
     { consumed: createEmptyFoodTotals(), targets: createEmptyFoodTotals() }
@@ -8212,7 +8264,7 @@ function getFoodReportTotals(days) {
 }
 
 function getFoodReportAverageTarget(days, totals) {
-  if (!days.length) return normalizeFoodTarget(DEFAULT_FOOD_TARGETS);
+  if (!days.length || days.some(day=>!day.target)) return null;
   return FOOD_NUTRIENT_KEYS.reduce((target, key) => {
     target[key] = (totals.targets[key] || 0) / days.length;
     return target;
@@ -8232,6 +8284,7 @@ function createFoodTargetProgressSection(days, totals) {
   }
   const table = document.createElement("div");
   table.className = "report-table food-report-table";
+  const ambiguous=days.filter(day=>!day.target);
   FOOD_NUTRIENT_KEYS.forEach((key) => {
     const consumed = totals.consumed[key] || 0;
     const target = totals.targets[key] || 0;
@@ -8241,11 +8294,18 @@ function createFoodTargetProgressSection(days, totals) {
     row.innerHTML = `
       <strong>${escapeHtml(FOOD_NUTRIENT_META[key].label)}</strong>
       <span>${formatFoodNumber(consumed, key)} ${unit}</span>
-      <span>${target ? `${percent}% of ${formatFoodNumber(target, key)} ${unit}` : "No target"}</span>
+      <span>${ambiguous.length?'Different tracker targets':target ? `${percent}% of ${formatFoodNumber(target, key)} ${unit}` : "No target"}</span>
     `;
     table.append(row);
   });
   section.append(heading, createReportSubhead(`${days.length} logged day${days.length === 1 ? "" : "s"} in this period`), table);
+  if(ambiguous.length){
+    const warning=document.createElement('p');warning.className='report-target-warning';warning.textContent='Target comparison unavailable: trackers have different targets.';section.append(warning);
+    for(const day of ambiguous){
+      const detail=document.createElement('details'),summary=document.createElement('summary');summary.textContent=formatRecordDate(day.dateKey)+' · Different targets';detail.append(summary);
+      for(const source of day.targetSources){const row=document.createElement('p');row.textContent=source.title+' · '+formatFoodReportMacroLine(source.target);detail.append(row);}section.append(detail);
+    }
+  }
   return section;
 }
 
@@ -8292,7 +8352,7 @@ function createFoodRecentDaysSection(days) {
   days.slice(0, 10).forEach((day) => {
     const item = document.createElement("article");
     const title = document.createElement("strong");
-    title.textContent = `${formatRecordDate(day.dateKey)} · ${getFoodStatusLabel(day.consumed, day.target)}`;
+    title.textContent = `${formatRecordDate(day.dateKey)} · ${day.target?getFoodStatusLabel(day.consumed, day.target):'Different tracker targets'}`;
     const details = document.createElement("p");
     details.textContent = formatFoodReportMacroLine(day.consumed);
     const meals = document.createElement("p");
@@ -8582,6 +8642,7 @@ function syncModalOpenState() {
     !elements.moveCardModal.hidden;
   document.body.classList.toggle("modal-open", hasOpenModal);
   syncRailActiveState();
+  syncModalAccessibility();
 }
 
 function syncRailActiveState() {
@@ -10407,7 +10468,7 @@ function nextOrder() {
   return state.cards.length ? Math.max(...state.cards.map((card) => card.order || 0)) + 1 : 1;
 }
 
-function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], createdAt = Date.now(), updatedAt = createdAt }) {
+function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], coachingPrograms, createdAt = Date.now(), updatedAt = createdAt }) {
   const normalizedCards = cards.map(normalizeCard).map((card, index) => ({
     ...card,
     order: Number(card.order) > 0 ? Number(card.order) : index + 1
@@ -10422,6 +10483,7 @@ function createBoardRecord({ id = createId(), name, visibility = "private", layo
     savedLayout: Array.isArray(savedLayout) ? savedLayout : [],
     cards: normalizedCards,
     archivedCards: normalizedArchivedCards,
+    ...(coachingPrograms !== undefined ? {coachingPrograms: LifeStateMerge.copy(coachingPrograms)} : {}),
     createdAt,
     updatedAt: normalizeTimestamp(updatedAt) || normalizeTimestamp(createdAt) || Date.now()
   };
@@ -10522,7 +10584,7 @@ function syncActiveBoard(options = {}) {
 }
 
 function switchBoard(boardId) {
-  try {sessionStorage.setItem("life-os-active-board",boardId);} catch {}
+  try {sessionStorage.setItem(LifeStorageScope.key("life-os-active-board"),boardId);} catch {}
   syncActiveBoard();
   applyBoardToState(state, boardId);
   state.activeFilter = "all";
@@ -12116,7 +12178,13 @@ function isUserEditingCriticalDraft() {
       editingPlannerTaskKey ||
       plannerTaskEditDraft ||
       planningSessions.get(state.activeBoardId)?.activityDraft ||
+      planningSessions.get(state.activeBoardId)?.cardTaskDraft ||
       planningSessions.get(state.activeBoardId)?.capture?.title ||
+      dailySessions.get(state.activeBoardId)?.capture?.text ||
+      Object.values(dailySessions.get(state.activeBoardId)?.reviews || {}).some(draft=>draft.changed) ||
+      coachingSessions.get(state.activeBoardId)?.draft ||
+      Object.keys(coachingSessions.get(state.activeBoardId)?.quickDrafts || {}).length > 0 ||
+      coachingSessions.get(state.activeBoardId)?.pickingFile ||
       document.querySelector('.conflict-custom:not([hidden])') ||
       document.getElementById('restoreReviewModal') ||
       document.getElementById('noteTaskDialog') ||
@@ -12371,10 +12439,13 @@ function renderReadableBoard(board, index) {
     </div>
     ${renderReadableCardGroup("Active cards", activeCards, "active")}
     ${renderReadableCardGroup("Archived cards", archivedCards, "archived")}
+    ${coachingProgramsForBoard(board).map(program => coachingReport(program)).join("")}
+    ${dailyReadableRecords(board)}
   </section>`;
 }
 
 function renderReadableCardGroup(title, cards, status) {
+  cards = cards.filter(card=>!card.dailyWorkspaceStore);
   if (!cards.length) return `<div class="empty">${escapeHtml(title)}: no cards saved.</div>`;
   const sortedCards = [...cards].sort((left, right) => {
     const leftOrder = Number(left.order) || 0;
@@ -12448,11 +12519,12 @@ function renderReadableCardContent(card) {
   if (card.activity) blocks.push(renderReadableActivity(card.activity));
   if (card.type === "minutes") blocks.push(renderReadableKeyValues("Goal", [["Current", `${card.currentValue || 0} ${card.unit || ""}`], ["Target", `${card.targetValue || 0} ${card.unit || ""}`]]));
   if (card.type === "scheduled") blocks.push(renderReadableSchedule(card));
-  if (card.type === "checklist" || card.type === "daily" || card.type === "routine") blocks.push(renderReadableChecklist(card.items || [], "Tasks"));
+  if (card.type === "checklist" || card.type === "daily" || card.type === "routine") blocks.push(renderReadableChecklist(card.items || [], "Tasks",card.type!=='routine'));
   if (card.type === "workout") blocks.push(renderReadableWorkout(card));
   if (card.type === "lab") blocks.push(renderReadableLab(card));
   if (card.type === "weekly" || card.type === "monthly" || card.type === "annual") blocks.push(renderReadableChecks(card));
   if (card.type === "single") blocks.push(renderReadableKeyValues("Status", [["Done", card.done ? "Yes" : "No"]]));
+  if (card.type === "single") blocks.push(renderReadableTextBlock('Completion history',readableCompletionHistory(card)));
   return blocks.filter(Boolean).join("") || `<p class="text">No extra saved content.</p>`;
 }
 
@@ -12470,10 +12542,14 @@ function renderReadableKeyValues(label, rows) {
     .join("")}</div></section>`;
 }
 
-function renderReadableChecklist(items, label) {
+function readableCompletionHistory(target) {
+  const events=(Array.isArray(target.completionEvents)?target.completionEvents:Array.isArray(target.taskCompletionEvents)?target.taskCompletionEvents:target.taskCompletion?[target.taskCompletion]:[]).filter(e=>e && typeof e==='object');
+  return events.map(e=>[(e.done?'Completed '+(e.completedOn || e.on || 'date not recorded'):'Reopened'),(e.completedAt || e.at)?'Completion time '+formatRecordDateTime(e.completedAt || e.at):'',e.recordedAt?'Recorded '+formatRecordDateTime(e.recordedAt):'Recording time not recorded',e.excludedAt?'Excluded after comparison':''].filter(Boolean).join(' · ')).join('\n');
+}
+function renderReadableChecklist(items, label, includeCompletion=false) {
   const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => getReadableItemTitle(item));
   if (!normalizedItems.length) return "";
-  return `<section class="block"><h5>${escapeHtml(label)}</h5><ul class="clean">${normalizedItems.map((item) => renderReadableItem(getReadableItemTitle(item), Boolean(item.done), item.note || item.prescription || item.deliverable || "")).join("")}</ul></section>`;
+  return `<section class="block"><h5>${escapeHtml(label)}</h5><ul class="clean">${normalizedItems.map((item) => renderReadableItem(getReadableItemTitle(item), Boolean(item.done), [item.note || item.prescription || item.deliverable || "",includeCompletion?readableCompletionHistory(item):''].filter(Boolean).join('\n'))).join("")}</ul></section>`;
 }
 
 function renderReadableItem(title, done = false, note = "") {
@@ -12555,6 +12631,8 @@ function renderReadablePlanner(card) {
         task.area || '', task.project ? 'Project: '+task.project : '',
         !task.done && task.status ? 'Status: '+task.status : '',
         task.deadline ? 'Deadline: '+task.deadline : '', task.notes || '',
+        task.nextAction ? 'Next action: '+task.nextAction : '',task.estimatedMinutes ? 'Estimate: '+task.estimatedMinutes+' minutes' : '',task.startTime ? 'Start: '+task.startTime : '',
+        readableCompletionHistory(task),
         task.deletedAt ? 'Removed (recoverable)' : task.archivedAt ? 'Archived' : ''
       ].filter(Boolean).join(' · ');
       return renderReadableItem(task.title,task.done,details);
@@ -12565,7 +12643,7 @@ function renderReadablePlanner(card) {
 function renderReadablePlannerView(card) {
   const view = normalizePlannerViewMode(card.plannerView);
   const options = normalizePlannerViewOptions(card.plannerViewOptions);
-  return renderReadableKeyValues("Planner-view settings", [
+  return renderReadableKeyValues("Task list settings", [
     ["View", view],
     ["Date", formatReadableDateKey(card.plannerViewDate || getTodayKey())],
     ["Include today", !options.excludeToday ? "Yes" : "No"],
@@ -12749,6 +12827,7 @@ function getBackupDataCounts(snapshot) {
 }
 
 function loadCloudSession() {
+  if (PREVIEW_MODE) return null;
   try {
     const stored = localStorage.getItem(CLOUD_SESSION_KEY);
     return stored ? JSON.parse(stored) : null;
@@ -12758,6 +12837,7 @@ function loadCloudSession() {
 }
 
 function saveCloudSession(session) {
+  if (PREVIEW_MODE) return;
   const previousCloudStamp =
     cloudSession?.user?.id && session?.user?.id && cloudSession.user.id === session.user.id
       ? cloudSession.cloud_updated_at
@@ -12777,7 +12857,7 @@ function saveCloudSession(session) {
 }
 
 function persistCloudSession() {
-  if (!cloudSession) return;
+  if (PREVIEW_MODE || !cloudSession) return;
   writeLocalJson(CLOUD_SESSION_KEY, cloudSession, {silent: true});
 }
 
@@ -12818,7 +12898,7 @@ function renderCloudStatus(message) {
   if (!elements.cloudStatus) return;
   if (PREVIEW_MODE) {
     elements.cloudStatus.textContent="Preview";
-    elements.cloudNote.textContent="Local preview. Cloud access is disabled; changes here do not update your live account.";
+    elements.cloudNote.textContent="Separate preview records on this browser. Cloud access is disabled.";
     elements.cloudPanel.querySelectorAll("button,input").forEach(node=>node.disabled=true);
     return;
   }
@@ -12943,6 +13023,7 @@ function clearCloudAuthUrl() {
 }
 
 async function fetchCloudUser(accessToken) {
+  if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   const response = await fetch(`${SUPABASE_CONFIG.url}/auth/v1/user`, {
     headers: getCloudHeaders({ access_token: accessToken })
   });
@@ -13113,6 +13194,7 @@ async function ensureCloudSession() {
 }
 
 async function fetchCloudStateRow(session) {
+  if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&select=state,updated_at&limit=1`, {
     headers: getCloudHeaders(session)
   });
@@ -13198,6 +13280,7 @@ async function getCloudSavePlan(session, options = {}) {
 }
 
 async function writeCloudState(session, payload, savePlan) {
+  if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   const expected = savePlan.expectedUpdatedAt;
   const url = expected
     ? SUPABASE_CONFIG.url + "/rest/v1/user_states?owner_id=eq." + session.user.id + "&updated_at=eq." + encodeURIComponent(expected) + "&select=updated_at"
@@ -13312,6 +13395,7 @@ function saveState(options = {}) {
     LifeDeviceStore.stage(localMergeBase, snapshot);
     localMergeBase = snapshot;
     lastLocalSaveOk = true;
+    if(touched) deviceSavedAt = Date.now();
     localStateSource = "stored";
     flushDeviceWrites();
   } catch {lastLocalSaveOk = false;}

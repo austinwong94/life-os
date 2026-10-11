@@ -2,6 +2,10 @@
 
 Status: 10 September 2026. Live Google synchronization is **not configured** in this release. Life OS Calendar works independently. Its **Add to Google Calendar** action opens a prefilled Google event for your review. Saving it creates a separate copy. Editing either copy does not update the other, and repeating the action may create another event.
 
+## 21 September Follow-up
+
+You confirmed that a Google Cloud/OAuth project is not configured yet. The daily-workspace upgrade does not change that status. No Google credentials, live events or Supabase records were accessed during this implementation. The preparation steps below are the next user action; backend implementation, deployment and account-isolation tests are still required before a real connection can be offered. Client IDs may be shared for configuration; client secrets belong only in your backend secret manager, never in chat or this repository.
+
 ## Prepare Your Google Project
 
 1. Open [Google Cloud Console](https://console.cloud.google.com/) and create or choose a project you control for Life OS.

@@ -15,7 +15,7 @@ async function seed(page,{conflict=true,type='food-item',archived=false}={}) {
     fitness.fitnessEntries={'2026-09-08':normalizeFitnessEntry({parts:{running:{active:true,distanceKm:5,durationMinutes:30},chest:{active:true,exercises:[{id:'bench',name:'Bench press',sets:3,reps:'12',weightKg:20,rpe:7}]}},metrics:{weightKg:70,heightCm:175}})};
     state.boards=[createBoardRecord({id:'health-board',name:'Health',cards:archived?[]:[food,fitness],archivedCards:archived?[{...food,archivedAt:100},{...fitness,archivedAt:100}]:[]}),
       createBoardRecord({id:'personal-board',name:'Personal',cards:[makeCard({type:'diary',title:'My diary',diaryEntries:{'2026-09-08':{thoughts:'Every original line\nStill here',sentence:'A quiet day',feeling:'calm',updatedAt:100}}})]})];
-    applyBoardToState(state,'health-board');sessionStorage.setItem('life-os-active-board',state.activeBoardId);saveState({skipCloud:true});await flushDeviceWrites();
+    applyBoardToState(state,'health-board');sessionStorage.setItem(LifeStorageScope.key('life-os-active-board'),state.activeBoardId);saveState({skipCloud:true});await flushDeviceWrites();
     window.healthRecord=(snapshot,recordType=type)=>{
       const cards=[...snapshot.boards[0].cards,...snapshot.boards[0].archivedCards];
       const food=cards.find(c=>c.id==='food'),fitness=cards.find(c=>c.id==='fitness');

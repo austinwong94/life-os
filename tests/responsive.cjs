@@ -1,3 +1,4 @@
+const {workspace}=require('./navigation.cjs');
 const browsers=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -22,14 +23,14 @@ fs.mkdirSync(out,{recursive:true});const results=[];
  await run('Today uses the full board width after either saved column preference, including portrait desktops',async page=>{
   for(const columns of [2,3]){
    await page.evaluate(columns=>{state.board.columnCount=columns;setWorkspaceMode('board');renderCardsOnly({force:true});},columns);
-   await page.locator('#todayModeButton').click();
+   await workspace(page,'today');
    for(const [width,height] of [[1206,866],[1080,1920],[900,1600],[768,1024],[701,1024],[700,1024],[680,1024],[390,844],[320,740],[1440,2560]]){
     await page.setViewportSize({width,height});await page.waitForTimeout(100);
-    const result=await page.evaluate(()=>{const board=document.querySelector('#boardGrid').getBoundingClientRect(),intro=document.querySelector('.today-intro').getBoundingClientRect(),grid=document.querySelector('.today-cards').getBoundingClientRect();return {board:board.width,grid:grid.width,aligned:Math.abs(board.left-grid.left)<2,below:grid.top>=intro.bottom,cards:[...document.querySelectorAll('.today-cards>.task-card')].map(c=>c.getBoundingClientRect().width)};});
+    const result=await page.evaluate(()=>{const board=document.querySelector('#boardGrid').getBoundingClientRect(),intro=document.querySelector('.daily-head').getBoundingClientRect(),grid=document.querySelector('.today-cards').getBoundingClientRect();return {board:board.width,grid:grid.width,aligned:Math.abs(board.left-grid.left)<2,below:grid.top>=intro.bottom,cards:[...document.querySelectorAll('.today-cards>.task-card')].map(c=>c.getBoundingClientRect().width)};});
     assert.ok(result.aligned&&result.below,JSON.stringify({width,columns,...result}));assert.ok(result.grid>=result.board-2,JSON.stringify(result));
     assert.ok(result.cards.every(w=>w>=Math.min(300,result.board)-2),JSON.stringify({width,columns,...result}));
     if(width<=700)assert.ok(result.cards.every(w=>Math.abs(w-result.board)<2),JSON.stringify({width,...result}));
-    if(width>700&&result.board>=658&&result.board<=995){const gap=await page.evaluate(()=>document.querySelector('.today-cards>:nth-child(3)').getBoundingClientRect().top-document.querySelector('.today-cards>:first-child').getBoundingClientRect().bottom);assert.ok(gap<30,JSON.stringify({width,gap}));}
+    if(width>700&&result.board>=658){const aligned=await page.locator('.today-cards').evaluate(e=>Math.abs(e.children[0].getBoundingClientRect().top-e.children[1].getBoundingClientRect().top)<2);assert.ok(aligned);}
    }
   }
  });
@@ -40,11 +41,12 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   assert.ok(await menu.locator('[role=menuitemradio]').evaluateAll(nodes=>nodes.every(e=>parseFloat(getComputedStyle(e).fontSize)<=16)));
  });
  await run('Daily inputs, dates and menus stay readable and clickable on phone and portrait desktop',async page=>{
-  await page.locator('#todayModeButton').click();
+  await workspace(page,'today');
   await page.locator('.diary-thoughts').fill('I took a short walk today.\nIt helped to make a little space for myself.');
   await page.getByLabel('Quick note',{exact:true}).fill('An idea to come back to: a quiet weekend by the sea.');
   await page.locator('.side-note-add').click();
-  await page.locator('.planner-linked-add-input').fill('Arrange a short walk and call someone I care about');await page.locator('.planner-linked-add-input').press('Enter');
+  await page.getByRole('button',{name:'Capture',exact:true}).click();await page.getByLabel('What is on your mind?',{exact:true}).fill('Arrange a short walk and call someone I care about');await page.getByRole('button',{name:'Save capture',exact:true}).click();
+  await page.getByRole('button',{name:'Choose',exact:true}).click();await page.getByRole('checkbox',{name:'Arrange a short walk and call someone I care about',exact:true}).check();await page.getByRole('button',{name:'Keep next steps',exact:true}).click();
   await page.evaluate(()=>flushDeviceWrites());
   for(const [width,height] of [[320,740],[390,844],[680,1024],[700,1024],[701,1024],[768,1024],[900,1600],[1080,1920],[1206,866],[1440,2560]]){
    await page.setViewportSize({width,height});await page.waitForTimeout(700);
@@ -60,7 +62,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
    assert.equal(feelings.length,7);
    assert.ok(feelings.every(r=>Math.abs(r.top-feelings[0].top)<1&&r.width>=32&&r.width<=45&&r.height===44&&r.inside),JSON.stringify({width,feelings}));
    assert.ok(await page.locator('.side-note-actions .card-menu-toggle svg').evaluate(e=>{const r=e.getBoundingClientRect(),button=e.parentElement.getBoundingClientRect();return r.width>=18&&r.height>=18&&r.left>=button.left&&r.right<=button.right&&r.top>=button.top&&r.bottom<=button.bottom;}));
-   const add=page.locator('.planner-linked-add-button');await add.scrollIntoViewIfNeeded();
+   const add=page.getByRole('button',{name:'Capture',exact:true});await add.scrollIntoViewIfNeeded();
    assert.ok(await add.evaluate(e=>{const r=e.getBoundingClientRect();return r.width>=44&&r.height>=44&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));
    await page.locator('.type-diary .card-menu-toggle').click();const edit=page.locator('.card-menu:not([hidden]) [data-card-action=edit]');await edit.waitFor({state:'visible'});
    assert.ok(await edit.evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));await page.keyboard.press('Escape');
@@ -68,7 +70,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
    await page.screenshot({path:out+'/today-'+width+'x'+height+'.png',fullPage:width<701});
    if(width===390)await page.screenshot({path:out+'/phone-390.png'});
   }
-  await page.reload();await page.locator('#todayModeButton').click();
+  await page.reload();await workspace(page,'today');
   assert.equal(await page.locator('.diary-thoughts').inputValue(),'I took a short walk today.\nIt helped to make a little space for myself.');
   assert.equal(await page.locator('.side-note-text').innerText(),'An idea to come back to: a quiet weekend by the sea.');assert.equal(await page.locator('.planner-linked-copy').innerText(),'Arrange a short walk and call someone I care about');
  });
@@ -77,7 +79,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   await page.locator('.diary-thoughts').fill(text);
   const savedDate=await page.evaluate(()=>getActiveDiaryDate(state.cards.find(c=>c.type==='diary')));
   for(const mode of ['board','today']){
-   await page.locator(mode==='today'?'#todayModeButton':'#boardModeButton').click();
+   await workspace(page,mode);
    for(const width of [320,390,1080,1440]){
     await page.setViewportSize({width,height:900});await page.waitForTimeout(150);
     const labels=await page.locator('.mood-picker button').evaluateAll(buttons=>buttons.map(b=>b.getAttribute('aria-label')));
@@ -132,13 +134,13 @@ fs.mkdirSync(out,{recursive:true});const results=[];
  await run('Resizing during unfinished diary writing keeps the same input and manual card positions',async page=>{
   await page.evaluate(async()=>{state.board.layout='custom';state.cards.forEach((card,index)=>{card.layoutColumn=index%3;card.layoutOrder=index;});saveState({skipCloud:true});await flushDeviceWrites();});
   const positions=await page.evaluate(()=>state.cards.map(card=>[card.id,card.layoutColumn,card.layoutOrder]));
-  await page.locator('#todayModeButton').click();const input=page.locator('.diary-thoughts');await input.fill('First line while I think.\nAn unfinished second thought');await input.evaluate(e=>window.writingInput=e);
+  await workspace(page,'today');const input=page.locator('.diary-thoughts');await input.fill('First line while I think.\nAn unfinished second thought');await input.evaluate(e=>window.writingInput=e);
   for(const [width,height] of [[390,844],[1080,1920],[900,1600],[390,600]]){
    await page.setViewportSize({width,height});await page.waitForTimeout(150);
    assert.equal(await input.evaluate(e=>e===window.writingInput&&e===document.activeElement),true);
    assert.equal(await input.inputValue(),'First line while I think.\nAn unfinished second thought');
   }
-  await input.press('End');await input.pressSequentially(' that is still here.');await page.locator('#boardModeButton').click();await page.evaluate(()=>flushDeviceWrites());
+  await input.press('End');await input.pressSequentially(' that is still here.');await workspace(page,'board');await page.evaluate(()=>flushDeviceWrites());
   assert.deepEqual(await page.evaluate(()=>state.cards.map(card=>[card.id,card.layoutColumn,card.layoutOrder])),positions);
   await page.reload();assert.match(await page.locator('.diary-thoughts').inputValue(),/that is still here\./);
  });
@@ -201,7 +203,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   await open();await page.locator('.card-options-menu:not([hidden]) [data-card-action=delete]').click();await page.evaluate(()=>flushDeviceWrites());await page.reload();
   const kept=await page.evaluate(()=>getArchivedCards().find(c=>c.id==='menu-test'));assert.equal(kept.description,'Keep every recorded line');assert.equal(kept.items[0].done,true);assert.equal(kept.archiveReason,'removed from board');
  });
- await run('Phone and tablet navigation has four equal targets and never covers an open menu',async page=>{
+ await run('Phone and tablet navigation has four equal primary targets and never covers an open menu',async page=>{
   await page.evaluate(()=>{state.boards.push(...Array.from({length:12},(_,i)=>createBoardRecord({id:'nav-'+i,name:'Navigation board '+i,cards:[]})));renderBoardMeta();});
   for(const width of [320,390,700,701,768,900,980]){
    await page.setViewportSize({width,height:480});await page.waitForTimeout(150);

@@ -13,6 +13,8 @@
     <script src="dev-redirect.js?v=20260703-secfix"></script>
     <link rel="stylesheet" href="styles.css?v=20260703-secfix" />
   <link rel="stylesheet" href="experience.css?v=20260915-calendar-linked" />
+  <link rel="stylesheet" href="coaching.css?v=20260920-simple" />
+  <link rel="stylesheet" href="daily-workspace.css?v=20260921" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -196,7 +198,7 @@
                 <span class="field-selection-label"><span>Type</span><output id="cardTypeSelection" aria-live="polite"></output></span>
                 <select id="cardType" hidden aria-hidden="true">
                   <option value="planner">Planner</option>
-                  <option value="planlist">Planner-view</option>
+                  <option value="planlist">Task list</option>
                   <option value="daily">To-do list</option>
                   <option value="diary">Daily diary</option>
                   <option value="sidenote" selected>Side notes</option>
@@ -251,7 +253,7 @@
                     <option value="month">This month</option>
                     <option value="upcoming">Upcoming</option>
                   </select>
-                  <div class="planner-view-mode-buttons" id="plannerViewModeButtons" role="radiogroup" aria-label="Planner-view"></div>
+                  <div class="planner-view-mode-buttons" id="plannerViewModeButtons" role="radiogroup" aria-label="Task list period"></div>
                 </label>
                 <div class="field planner-view-note">
                   <span>Source</span>
@@ -500,8 +502,9 @@
           <div class="workspace-modes" role="group" aria-label="Workspace view">
             <button type="button" id="boardModeButton" aria-pressed="true">My board</button>
             <button type="button" id="todayModeButton" aria-pressed="false">Today</button>
-            <button type="button" id="tasksModeButton" aria-pressed="false">Tasks</button>
-            <button type="button" id="calendarModeButton" aria-pressed="false">Calendar</button>
+            <button type="button" id="tasksModeButton" aria-pressed="false">Plan</button>
+            <button type="button" id="calendarModeButton" aria-pressed="false" hidden>Calendar</button>
+            <button type="button" id="prioritiesModeButton" aria-pressed="false">Progress</button>
           </div>
           <div class="column-picker board-column-picker" id="boardColumnQuickControl" role="group" aria-label="Board columns">
             <span>Columns</span>
@@ -970,13 +973,17 @@
       <button type="button" class="undo-toast-close" id="undoToastCloseButton" aria-label="Close undo message">x</button>
     </div>
 
+    <script src="storage-scope.js?v=20260922-preview-isolation"></script>
     <script src="planner-store.js?v=20260910-tasks"></script>
+    <script src="task-repository.js?v=20260922-card-tasks"></script>
     <script src="state-merge.js?v=20260910-tasks"></script>
     <script src="device-store.js?v=20260908"></script>
     <script src="restore-review.js?v=20260908"></script>
     <script src="note-actions.js?v=20260908"></script>
-  <script src="planning.js?v=20260915-calendar-linked"></script>
-    <script src="experience.js?v=20260915-calendar-linked"></script>
-  <script src="app.js?v=20260915-portrait-columns"></script>
+  <script src="planning.js?v=20260921-daily"></script>
+  <script src="coaching.js?v=20260921-daily"></script>
+  <script src="daily-workspace.js?v=20260921"></script>
+    <script src="experience.js?v=20260921-daily"></script>
+  <script src="app.js?v=20260921-daily"></script>
   </body>
 </html>

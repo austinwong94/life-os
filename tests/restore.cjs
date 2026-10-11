@@ -157,7 +157,7 @@ const results = [];
     assert.deepEqual(result.after,result.before);assert.equal(result.mealId,'imported-meal');assert.equal(result.mealName,'Imported dinner');
   });
   await run('unfinished editor input is not discarded by a restore attempt', async (p,context,alerts) => {
-    const backup=await seed(p);await p.locator('#railAddButton').click();await p.locator('#cardTitle').fill('My unfinished idea');
+    const backup=await seed(p);await p.locator('#railAddButton').click();await p.getByRole('button',{name:'Add a card instead',exact:true}).click();await p.locator('#cardTitle').fill('My unfinished idea');
     const result=await p.evaluate(backup=>importBoardBackup(new File([JSON.stringify(backup)],'backup.json')),backup);
     assert.equal(result,false);assert.match(alerts[0],/Finish or close the current editor/);assert.equal(await p.locator('#cardTitle').inputValue(),'My unfinished idea');
   });

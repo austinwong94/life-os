@@ -1,5 +1,59 @@
 const conflictReviewDrafts=new Map();
 let quickBoardPickerSignature='';
+const modalFocusState = {root:null, trigger:null, activation:null, inert:new Map()};
+
+function modalFocusable(root) {
+  return [...root.querySelectorAll('button, a[href], input, select, textarea, summary, [tabindex]')]
+    .filter(node=>!node.disabled && node.tabIndex>=0 && !node.closest('[hidden], [inert]') && node.getClientRects().length);
+}
+
+function syncModalAccessibility() {
+  const roots=[...document.querySelectorAll('.modal-backdrop, #settingsModal')];
+  const root=roots.filter(node=>!node.hidden).at(-1) || null;
+  if(root===modalFocusState.root)return;
+  const previous=modalFocusState.root,trigger=modalFocusState.trigger;
+  for(const [node,value] of modalFocusState.inert)node.inert=value;
+  modalFocusState.inert.clear();
+  modalFocusState.root=root;
+  if(root){
+    const activation=modalFocusState.activation;
+    const opener=activation?.isConnected && activation.getClientRects().length?activation:document.activeElement;
+    modalFocusState.trigger=previous && previous.contains(opener)?trigger:opener;
+    for(const node of [elements.appShell,...roots]){
+      if(node===root || node.contains(root))continue;
+      modalFocusState.inert.set(node,node.inert);node.inert=true;
+    }
+    const target=modalFocusable(root)[0] || root.querySelector('[role=dialog]') || root;
+    if(!target.hasAttribute('tabindex') && !target.matches('button,input,select,textarea,a[href]'))target.tabIndex=-1;
+    target.focus({preventScroll:true});
+  }else{
+    modalFocusState.trigger=null;
+    if(trigger?.isConnected && !trigger.closest('[hidden], [inert]') && trigger.getClientRects().length)trigger.focus({preventScroll:true});
+  }
+}
+
+function initializeModalAccessibility() {
+  // Safari does not focus a button on mouse click, so activeElement alone
+  // cannot identify the control that opened a dialog.
+  document.addEventListener('click',event=>{
+    const activation=event.target.closest('button, a[href], [role=button]');
+    modalFocusState.activation=activation;
+    setTimeout(()=>{if(modalFocusState.activation===activation)modalFocusState.activation=null;},0);
+  },true);
+  document.addEventListener('keydown',event=>{
+    const root=modalFocusState.root;
+    if(event.key!=='Tab' || !root || document.querySelector('dialog[open]'))return;
+    const items=modalFocusable(root),first=items[0],last=items.at(-1);
+    if(!first){event.preventDefault();return;}
+    if(!root.contains(document.activeElement) || (event.shiftKey?document.activeElement===first:document.activeElement===last)){
+      event.preventDefault();event.stopPropagation();(event.shiftKey?last:first).focus();
+    }
+  },true);
+  document.addEventListener('focusin',event=>{
+    const root=modalFocusState.root;
+    if(root && !root.contains(event.target) && !document.querySelector('dialog[open]'))modalFocusable(root)[0]?.focus({preventScroll:true});
+  });
+}
 
 function renderQuickBoardPicker() {
   document.querySelectorAll('#boardColumnQuickControl button').forEach(button=>{
@@ -124,7 +178,7 @@ function setSaveStatus(message, kind = "local") {
 
 function rememberCloudBase(snapshot, ownerId) {
   cloudMergeBase = {ownerId, state: JSON.parse(JSON.stringify(snapshot))};
-  writeLocalJson("life-os-cloud-base-v2", cloudMergeBase, {silent: true});
+  writeLocalJson(CLOUD_BASE_KEY, cloudMergeBase, {silent: true});
 }
 
 function isValidBackup(parsed) {
@@ -264,6 +318,13 @@ function renderConflictReview() {
   for(const conflict of state.syncConflicts) {
     const row=document.createElement('article');row.className='conflict-item';
     const title=document.createElement('h4');title.textContent=getConflictLabel(conflict);row.append(title);
+    if(conflict.kind==='task-completion'){
+      row.append(renderRecordConflictForm(conflict,()=>{row.replaceChildren(title,planningNode('p','','Completion version saved. Both recorded actions remain in history.'));status.textContent=state.syncConflicts.length+' unresolved';},{
+        noun:'completion',currentLabel:'Current completion',scope:'completion',className:'planner-conflict-form',inspect:LifeStateMerge.inspectCompletionConflict,
+        render:value=>planningNode('p','',value.done?'Completed · '+value.on+' · '+formatRecordDateTime(value.at):'Open · Recorded '+formatRecordDateTime(value.recordedAt)),
+        apply:(c,expected,selected)=>applyConflictChoice(c,expected,selected,LifeStateMerge.resolveCompletionConflict),introduction:'Choose one status and completion date together. Other tasks and earlier records are retained.',unavailable:'This completion cannot be identified safely. Keep the recovery copy.'
+      }));section.append(row);continue;
+    }
     if (conflict.kind==='activity') {
       row.append(renderActivityConflictForm(conflict,()=>{
         row.replaceChildren(title);const done=document.createElement('p');done.textContent='Activity version saved. Earlier versions remain in Recovery copies.';row.append(done);
@@ -313,7 +374,7 @@ function renderConflictReview() {
     const customLabel=document.createElement('label');customLabel.className='conflict-combine';
     const customRadio=document.createElement('input');customRadio.type='radio';customRadio.name='choice';customRadio.value='custom';
     customLabel.append(customRadio,document.createTextNode('Combine or edit'));
-    const draftKey='life-os-conflict-draft:'+conflict.id;
+    const draftKey=LifeStorageScope.key('life-os-conflict-draft:'+conflict.id);
     let draft=conflictReviewDrafts.get(conflict.id);
     try {draft=sessionStorage.getItem(draftKey) ?? draft;} catch {}
     const custom=document.createElement('textarea');custom.className='conflict-custom';custom.value=draft ?? expected;custom.rows=6;custom.hidden=draft===undefined;custom.setAttribute('aria-label','Combined version');
@@ -514,13 +575,14 @@ function renderRecordConflictForm(conflict,onSaved,options) {
 }
 
 function initializeExperience() {
+  initializeModalAccessibility();
   initializeQuickBoardPicker();
   mountResponsiveComposer();
   restoreTabBoardSelection();
   LifeDeviceStore.configure(commitDeviceWrites);
   if (!corruptLocalStateDetected) flushDeviceWrites();
   cloudConflictPending = Boolean(state.syncConflicts?.length);
-  cloudMergeBase = readLocalJsonValue("life-os-cloud-base-v2", null);
+  cloudMergeBase = readLocalJsonValue(CLOUD_BASE_KEY, null);
   if (isRestoreSyncPaused()) {cloudSaveEnabled = false; window.clearTimeout(cloudSaveTimer);}
   const status = document.getElementById("headerSaveStatus");
   status.onclick = () => cloudConflictPending || corruptLocalStateDetected ? openRecovery() : openSettingsModal();
@@ -534,6 +596,7 @@ function initializeExperience() {
   document.getElementById("todayModeButton").onclick = () => setWorkspaceMode("today");
   document.getElementById("tasksModeButton").onclick = () => setWorkspaceMode("tasks");
   document.getElementById("calendarModeButton").onclick = () => setWorkspaceMode("calendar");
+  document.getElementById("prioritiesModeButton").onclick = () => setWorkspaceMode("priorities");
   document.getElementById("weeklyReviewButton").onclick = () => {activeReportType = "progress"; openReportsModal();};
   elements.visibilityControl.closest(".field").hidden = true;
   elements.visibilityLabel.textContent = "Personal board";
@@ -552,6 +615,7 @@ function initializeExperience() {
   setSaveStatus(corruptLocalStateDetected ? "Recovery needed - original protected" : cloudConflictPending ? "Changes need review" : isRestoreSyncPaused() ? "Restored on device - cloud paused" : cloudSession ? "Saved on device - checking cloud" : "Saved on device", corruptLocalStateDetected || cloudConflictPending ? "error" : "local");
   window.addEventListener("online", () => {if (cloudSaveEnabled) queueCloudSave({immediate: true});});
   window.addEventListener("offline", () => setSaveStatus(lastLocalSaveOk ? "Offline - saved on device" : "Offline - export your draft", lastLocalSaveOk ? "local" : "error"));
+  initializeDailyWorkspace();
 }
 
 function mountResponsiveComposer() {
@@ -574,54 +638,40 @@ function mountResponsiveComposer() {
 
 function restoreTabBoardSelection() {
   try {
-    const preferred=sessionStorage.getItem("life-os-active-board");
+    const preferred=sessionStorage.getItem(LifeStorageScope.key("life-os-active-board"));
     if (state.boards.some(board=>board.id===preferred)) applyBoardToState(state,preferred);
-    sessionStorage.setItem("life-os-active-board",state.activeBoardId);
+    sessionStorage.setItem(LifeStorageScope.key("life-os-active-board"),state.activeBoardId);
   } catch {}
 }
 
 function setWorkspaceMode(mode) {
   if (isProtectedTextEditActive()) document.activeElement?.blur();
-  state.ui.workspaceMode = ["today", "tasks", "calendar"].includes(mode) ? mode : "board";
+  state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities"].includes(mode) ? mode : "board";
   state.activeFilter = "all"; state.focusFilter = "all"; state.searchQuery = ""; state.activeCategories = [];
   renderCardsOnly({force: true}); renderBoardMeta(); saveState({touch: false, skipCloud: true});
 }
 
 function renderTodaySpace() {
-  const root = elements.boardGrid;
-  const head = document.createElement("header"); head.className = "today-intro";
-  const title = document.createElement("h2"); title.textContent = "Today, at your pace";
-  const text = document.createElement("p"); text.textContent = "One next step. A note worth keeping. Room to begin again.";
-  head.append(title, text); root.append(head);
-  const wanted = ["planlist", "diary", "sidenote"];
-  const grid = document.createElement("div"); grid.className = "today-cards";
-  wanted.forEach(type => {
-    const card = state.cards.find(card => card.type === type && (type !== "planlist" || card.plannerView === "today"));
-    if (card) {grid.append(renderCard(card)); return;}
-    const add = document.createElement("button"); add.className = "today-add-card secondary-action";
-    add.innerHTML = ICONS.plus;
-    const label = document.createElement("span"); label.textContent = type === "planlist" ? "Add today's planner" : type === "diary" ? "Add a diary" : "Add quick notes";
-    add.append(label); add.onclick = () => {openCardComposer(); setFormType(type); if (type === "planlist") elements.plannerViewMode.value = "today"; renderConditionalFields();};
-    grid.append(add);
-  });
-  root.append(grid);
+  renderDailyHome();
 }
 
 function renderProgressReport(range) {
   const report = createReportDocument("Life review", range.label + " · " + state.board.name);
-  const tasks = getPlannerSourceCards().flatMap(card => LifePlanner.ensure(card)).filter(task => task.done && !task.deletedAt && isDateInReportRange(task.completedOn, range));
+  const tasks = dailyCompletedTasks(range.startKey || '0001-01-01',range.endKey);
   const diary = collectDiaryReportEntries(range);
   const notes = collectSideNoteReportEntries(range);
   const summary = document.createElement("p");
   summary.textContent = tasks.length + " tasks completed · " + diary.length + " diary entries · " + notes.length + " notes captured";
   report.append(summary);
+  const undated=LifeTaskRepository.collect({id:state.activeBoardId,cards:[...state.cards,...getArchivedCards()]},{includeArchived:true}).filter(t=>t.done && !t.completedOn);
+  if(undated.length)report.append(planningNode('p','report-history-gap',undated.length+' completed source-card items have no recorded completion date and are not included in dated totals.'));
+  if((state.syncConflicts || []).some(c=>c.segments?.[1]===state.activeBoardId && ['task-completion','planner-task'].includes(c.kind)))report.append(planningNode('p','report-history-gap','Tasks with unresolved sync comparisons are excluded from confirmed completion totals. Review Changes need review before relying on this report.'));
   const message = document.createElement("p"); message.textContent = "Unrecorded days are gaps in the record, not a measure of your effort."; report.append(message);
-  const list = document.createElement("div");
-  tasks.sort((a,b) => b.completedOn.localeCompare(a.completedOn)).forEach(task => {
-    const row = document.createElement("p"); row.textContent = task.completedOn + " · " + task.title; list.append(row);
-  });
-  if (!tasks.length) {const empty = document.createElement("p"); empty.textContent = "No completed planner tasks recorded in this period."; list.append(empty);}
-  report.append(list); return report;
+  appendDailyReviewFacts(report,range.startKey || '0001-01-01',range.endKey);
+  for(const entry of dailyRecords().filter(e=>e.kind==='review' && isDateInReportRange(e.date,range))) {
+    report.append(planningNode('h3','','Reflection · '+entry.date),planningNode('p','',entry.mattered),planningNode('p','',entry.easier));
+  }
+  return report;
 }
 
 function commitDeviceWrites(entries) {

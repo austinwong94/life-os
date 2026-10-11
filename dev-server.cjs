@@ -1,9 +1,10 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
-const root = __dirname;
+const root = process.env.LIFE_OS_SERVE_RELEASE==='1'?path.resolve(process.env.LIFE_OS_RELEASE_DIR || path.join(__dirname,'dist')):__dirname;
 const port = Number(process.env.PORT || 5180);
-const allowed = new Set(['index.html', 'styles.css', 'experience.css', 'app.js', 'experience.js', 'planning.js', 'planner-store.js', 'state-merge.js', 'device-store.js', 'restore-review.js', 'note-actions.js', 'dev-redirect.js']);
+const allowed = new Set(require('./release-files.json'));
+if(process.env.LIFE_OS_SERVE_RELEASE==='1')allowed.add('release.json');
 const mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'};
 http.createServer((req, res) => {
   const file = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';

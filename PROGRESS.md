@@ -1,6 +1,73 @@
 # Life OS Reliability and Usability Progress
 
-Updated: 15 September 2026. Previous published baseline: `a06e285` (linked Calendar and one-day activity dates).
+Updated: 11 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
+
+## October 11 Follow-Through
+
+Implemented build `2026.10.11-follow-through`, candidate `ea31e6d663383a97`:
+
+- Today / Plan / Board / Progress, consistent phone navigation and preserved portrait column choices.
+- Optional next action, minutes, start time, daily budget and five-minute start/pause flow. Full drafts persist through thinking pauses and same-tab reload; no completion is inferred from a timer.
+- Original chosen-action tracking, partial routine evidence, readable weekly reflections, task/activity Coming up and explicit dated goal checkpoints.
+- Completion dates/history for new ticks on original Project/To-Do/Task records, legacy unknown-date honesty, exact Undo and failed-save rollback/retry, coherent conflict comparison and inclusive review totals.
+- Readable next-step/history downloads, a functional colour palette, compact phone task labels and one-row diary feelings.
+- GitHub Pages source changed to GitHub Actions through the authenticated repository settings. Existing live content was not unpublished. The test-dependent workflow packages only 18 public assets and deploys that artifact after successful verification.
+
+99 unit checks passed. Existing packaged-browser checks have been rerun; all 57 affected scenarios pass in both Chromium and WebKit on the final candidate after correcting task-toolbar density, retry metadata and timer-error visibility issues. The complete exact-artifact remote verification gate is still required before publication. No personal records or production database settings were used as fixtures or modified. Final verification/publication is tracked in the workflow and [current status](PLATFORM-STATUS.md).
+
+Remaining gated work: physical phones; live owner isolation; authenticated two-device offline/reconnect; Google configuration/backend; a reversible entity-level storage migration; encryption/recovery strategy. A feature percentage is not a probability that personal records are safe, and no zero-bug or zero-hacking guarantee is claimed.
+
+## September 22 Workspace Design
+
+Local build `2026.09.22-workspace-polish`, artifact `ec16032005ca8d4b`. Implemented a calmer sidebar and card headers, consistent controls, clearer task hierarchy and diary writing surfaces. Today now shows completion of the chosen next steps, including a truthful smaller denominator in Lighter day; no personal score or invented goal progress is added.
+
+All saved card positions, theme choices, record formats and save logic are unchanged by this visual pass. The new design suite checks five workspaces at five viewport widths, stable three-column portrait task layout, one-row feelings, mobile navigation and full diary retention. **292 distinct checks passed** (95 unit and 197 Chromium), plus **88 WebKit repeats**. All 26 browser suite runs used the packaged artifact; screenshots, hashes, syntax, workflow YAML and diff checks passed. Evidence: the Codex `workspace-design-20260922` artifact folder. This remains local, not published, and physical-phone/live-account acceptance remains open.
+
+## Earlier September 22 Preview-Isolation Follow-Up
+
+Local build `2026.09.22-preview-isolation`, artifact `317213f2112a6799`. A synthetic reproduction confirmed that the former cloud-disabled preview still shared normal local records and journals. Preview edits could reach the normal tab and therefore potentially its cloud save. This release separates every application storage-key family, pending-write queue, save lock and draft namespace while preserving the normal format and keys. Cloud network helpers now reject preview calls directly; preview cannot save or clear the normal login.
+
+No old data was moved or deleted. Existing unscoped records remain in the normal workspace. Saving details distinguish preview records and provide a deliberate link to the saved workspace. Shared browser quota, unlocked-profile access, old running clients and live security assurance are separate remaining concerns.
+
+**Verified: 288 distinct checks plus 84 WebKit repeats**: 95 unit and 193 Chromium scenarios, with seven suites repeated in WebKit. All 24 browser runs passed against the packaged artifact. The new 11 browser scenarios verify normal-record preservation, independent recovery/drafts/locks, corrupted/failed storage, explicit return to saved records and a simulated cloud save excluding preview data. Phone screenshots, syntax, YAML, asset hashes and diff checks passed. Evidence is in the Codex `preview-isolation-20260922` artifact folder. This is local verification, not a live security or physical-phone certification. The earlier milestones below describe previous local builds, not the current published site.
+
+## Earlier September 22 Source-Adapter Follow-Up
+
+Local build `2026.09.22-card-tasks`, artifact `d661f265017493a1`. All tasks, Completed and the Today next-step picker now include active Project, To-Do and single Task records through board-scoped source adapters. Edits write back to the original fields and retain source identity; there is no automatic migration or duplicate Planner task. Full-text drafts, stale-source guards, failed-save rollback and guarded Undo are implemented. A source-card metadata bug affecting completion on ID-less checklist items is also fixed.
+
+History remains deliberately bounded: older card tasks have no reliable completion date. They are not included in Calendar/date-based Planner views or weekly completion totals, and are labelled Date not recorded. A richer history model requires a separate reversible conversion and compatibility gate. Ambiguous legacy IDs remain read-only in the combined view. Recurring habits are not reinterpreted as one-off tasks.
+
+**Verified: 271 distinct checks plus 73 WebKit repeats** against the packaged artifact: 89 unit, 182 Chromium scenarios and six browser suites repeated in WebKit. All 22 browser runs passed. Screenshots at phone/portrait sizes were inspected; syntax, YAML, artifact hashes and diff checks passed. No private records, database schema/policies, authentication settings or production deployment changed. See [current status](PLATFORM-STATUS.md) for exact scope and outstanding gates.
+
+## Earlier September 22 Audit Follow-Up
+
+Current local build: `2026.09.22-refinements`, artifact `5d7ed6aeb4db6621`. Implemented modal focus/background isolation, Safari trigger restoration, interrupted-click protection (including input-blur redraws), unambiguous nutrition report source/target handling, explicit weekly periods, and a less repetitive mobile Today layout with writing above secondary summaries. Existing records and database structure are unchanged.
+
+Release packaging now checks one allowlist, versions all startup assets together, and excludes private/source-only files. The workflow tests this exact artifact before its Pages deploy job. Remote Pages configuration and the live deployment are still unverified; no publishing occurred.
+
+**Verified: 250 distinct passing checks plus 62 WebKit repeats**, with all final browser cases run against artifact `5d7ed6aeb4db6621`. This includes 79 unit checks, 171 Chromium scenarios and five suites repeated in WebKit. A test setup timing issue was corrected and the focused suite rerun in both engines; its pressed-control assertions remain intact. Syntax, YAML, artifact hashes and diff whitespace checks also passed. The audit phase table records what is complete locally and what still needs staged migration, account isolation and real-device proof. The milestones below are historical rather than claims about the current live website.
+
+## September 21 Daily Workspace Upgrade
+
+Local build `2026.09.21-daily`: customizable Today, lighter-day mode, source-specific next steps, upcoming activities, existing weekly priority ticks, completed-this-week history, shared task/note/experience capture, task-to-goal links, Waiting on and Parked views, a guided weekly reflection with readable download, mobile daily navigation, and detailed device/cloud/version status. Existing cards, planner identity, completion dates and layouts remain intact. There are no silent archiving or rescheduling actions.
+
+Saved reflections are immutable, board-scoped records inside the existing backup/sync payload. Earlier versions remain readable. Unsaved capture and reflection drafts are board-scoped, tab-local, explicitly labelled and retained on same-tab reload. Notes created through Capture enter the existing notes card. Focus stores both source ID and task ID; duplicate IDs in separate planner cards cannot select or complete the wrong task. Goal links never substitute task counts for actual outcome measurements.
+
+**Verified: 238 distinct checks plus 55 WebKit repeats.** This includes 74 unit, 139 existing Chromium browser regressions, 12 coaching and 13 new daily workflows. Responsive, planning, coaching and daily suites were repeated in WebKit. Initial failures were corrected and affected suites rerun. Coverage includes full-text drafts after Save then further writing, failed-save retry, same/different-board concurrent reflections, archive completion history, backup normalization, literal HTML text, phone navigation and portrait layouts. Existing composer/review tests now exercise the new entry points.
+
+No live records, Supabase policies/schema, personal programme import or deployment changed. Google Cloud is not configured yet; authenticated Google sync remains blocked on configuration and backend implementation. Live database-policy checks and real-phone acceptance are still required. See [current status](PLATFORM-STATUS.md) and [Google setup](GOOGLE-CALENDAR-SETUP.md). The sections below document earlier milestones rather than today's deployment state.
+
+## Priorities and Coaching Workspace
+
+The simplicity follow-up replaces the all-at-once form-heavy overview with priority selection, visible goal percentages and direct controls. Weekly habits and milestones save on tick; numeric totals save on Enter or the check button; experiences become reversible checked records. Optional per-goal thoughts preserve full text separately from progress calculations, with tab-local draft status and explicit saving. Weekly checkbox records merge by the changed field so one tab's tick cannot clear another tab's different tick or reflection.
+
+Current verification: **225 distinct checks and 12 coaching workflows repeated in WebKit**. All 139 existing browser regressions were rerun. The full configured CI gate now has 42 WebKit repeats; this pass did not rerun the older 30. This remains a local preview with no production record changes.
+
+Local review build only. The new Priorities tab supports private programme import, per-result measures, activity records, weekly reflection, coaching notes and readable downloads. No combined life/productivity score is produced; unreported measures remain explicitly unreported. Targets and measurement definitions come from the imported programme, not assumptions inferred from private diary records.
+
+Next actions use the existing canonical planner source, including completion history. Check-in calendar creation is explicit and idempotent. Stored programme records stay within their board and its existing backup/sync payload. A hidden known-type source record preserves the programme when an older client normalizes the board. Drafts survive view changes and same-tab reload but are not synced until saved. Tests caught and fixed archived-source action completion, file-picker refresh protection and planner writes selecting the wrong hidden source.
+
+Verified locally: **217 distinct checks**, with **seven new workflows repeated in WebKit**. This includes 71 unit tests, all 139 existing Chromium browser regressions, and seven new priorities workflows. The complete configured CI gate adds 37 WebKit repeats; only the seven new repeats were rerun during this pass. No production data, database policy, deployment or existing conflict choice was changed. See [current platform status](PLATFORM-STATUS.md) for remaining boundaries.
 
 ## Portrait Three-Column Correction
 

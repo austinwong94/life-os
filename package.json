@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node dev-server.cjs",
+    "build": "node build-release.cjs",
     "test": "node --test tests/*.test.cjs",
     "test:browser": "node tests/browser.cjs",
     "test:sync": "node tests/sync.cjs",
@@ -16,7 +17,14 @@
     "test:responsive": "node tests/responsive.cjs",
     "test:conflicts": "node tests/conflicts.cjs",
     "test:restore": "node tests/restore.cjs",
-    "test:planning": "node tests/planning.cjs"
+    "test:planning": "node tests/planning.cjs",
+    "test:coaching": "node tests/coaching.cjs",
+    "test:daily": "node tests/daily-workspace.cjs",
+    "test:refinements": "node tests/refinements.cjs",
+    "test:task-sources": "node tests/task-sources.cjs",
+    "test:preview-isolation": "node tests/preview-isolation.cjs",
+    "test:design": "node tests/design.cjs",
+    "test:follow-through": "node tests/follow-through.cjs"
   },
   "devDependencies": {"playwright": "1.62.1"},
   "engines": {"node": ">=22"}

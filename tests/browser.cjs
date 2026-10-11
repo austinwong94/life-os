@@ -1,3 +1,4 @@
+const {workspace,capture}=require('./navigation.cjs');
 const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -91,10 +92,11 @@ const results=[];
  });
  await run('mobile and desktop fit, navigation and reports open',async p=>{
   await p.screenshot({path:path.join(OUT,'desktop.png')});
-  await p.locator('#todayModeButton').click();await p.locator('#boardModeButton').click();await p.locator('#weeklyReviewButton').click();assert.match(await p.locator('#reportPrintArea').innerText(),/Life review/);await p.evaluate(()=>closeReportsModal());
+  await workspace(p,'today');await workspace(p,'board');await p.locator('#weeklyReviewButton').click();assert.equal(await p.getByLabel('What mattered?',{exact:true}).isVisible(),true);await p.keyboard.press('Escape');await p.evaluate(()=>{activeReportType='progress';openReportsModal();});assert.match(await p.locator('#reportPrintArea').innerText(),/Life review/);await p.evaluate(()=>closeReportsModal());
   for(const width of [390,320,768,1440]){await p.setViewportSize({width,height:844});await p.waitForTimeout(1600);const dims=await p.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));assert.ok(dims.scroll<=dims.width+1,JSON.stringify(dims));}
   await p.setViewportSize({width:390,height:844});await p.waitForTimeout(1600);assert.ok((await p.locator('.task-card').first().boundingBox()).y<230);await p.screenshot({path:path.join(OUT,'mobile.png')});
-  await p.locator('#railAddButton').click();
+  await capture(p);
+  await p.getByRole('button',{name:'Add a card instead',exact:true}).click();
   for (const width of [320,390,768]) {
    await p.setViewportSize({width,height:844});
    const title=p.locator('#cardTitle');await title.scrollIntoViewIfNeeded();await title.fill('A small next step');

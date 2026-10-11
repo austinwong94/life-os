@@ -1,6 +1,6 @@
 /* Workspace polish. Legacy component styles remain until individually verified. */
-:root { --muted: #626b68; --shadow: 0 2px 10px rgba(21,40,31,.05); }
-body { background: #f4f6f5; }
+:root { --muted: #626b68; --line: #dde3e1; --ink: #242c29; --shadow: 0 1px 3px rgba(21,40,31,.04); }
+body { background: #f5f6f6; }
 button, input, textarea, select { letter-spacing: 0; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #167564; outline-offset: 3px; }
 .workspace { padding: 24px 28px 60px; min-width: 0; }
@@ -34,7 +34,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .workspace-navigation { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; min-width: 0; }
 .workspace-modes { display: flex; border-bottom: 1px solid #d9e1dd; flex-shrink: 0; }
 .workspace-modes button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 11px 14px; font-size: 14px; font-weight: 600; color: #6a7370; min-height: 42px; }
-.workspace-modes button[aria-pressed="true"] { color: #176b57; border-bottom-color: #176b57; }
+.workspace-modes button[aria-pressed="true"] { color: #176b57; border-bottom-color: #176b57; background: #eaf1ee; }
 .review-link { display: inline-flex; align-items: center; gap: 6px; padding: 8px; border: 0; background: none; color: #53615a; font-size: 13px; min-height: 40px; }
 .review-link svg { width: 17px; height: 17px; }
 .save-indicator { margin-left: auto; min-height: 36px; max-width: 240px; padding: 6px 0; background: none; border: 0; color: #4d695b; font-size: 12px; text-align: right; line-height: 1.4; }
@@ -49,7 +49,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .card-options-menu button, .planner-task-menu button { min-height: 44px; font-size: 13px; border-radius: 6px; }
 .planner-task-menu button:not(.is-danger) { color: #253a32; }
 .planner-task-menu button:hover { background: #edf3ef; }
-.card-title { font-size: 17px; line-height: 1.35; }
+.card-main h3 { font-size: 16px; line-height: 1.4; font-weight: 650; }
 .card-description { font-weight: 400; line-height: 1.5; }
 .type-diary .card-percent, .type-sidenote .card-percent, .type-quote .card-percent { display: none; }
 .diary-sentence, .diary-thoughts, .side-note-input { font-weight: 400; font-size: 14px; line-height: 1.6; }
@@ -94,7 +94,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .planning-heading h2 { margin: 0; font-size: 22px; }
 .planning-heading > .planning-field, .calendar-toolbar > .planning-field { width: min(100%,240px); }
 .planning-workspace h3 { font-size: 16px; margin: 0; }
-.planning-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 8px 12px; background: #fff; border: 1px solid #d7e1db; border-radius: 6px; color: #293f34; font-size: 14px; font-weight: 600; box-shadow: none; }
+.planning-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 8px 12px; background: #fff; border: 1px solid #d7e1db; border-radius: 6px; color: #293f34; font-size: 14px; font-weight: 600; line-height: 1.4; box-shadow: none; }
 .planning-button svg { width: 18px; height: 18px; flex: 0 0 18px; }
 .planning-icon { width: 44px; height: 44px; flex: 0 0 44px; padding: 0; }
 .planning-icon > span { display: none; }
@@ -517,6 +517,40 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 }
 @container task-results (min-width: 900px) {
   .task-results[data-columns="3"] .workspace-task-list { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}
+
+/* Shared visual treatment; keep saved layouts and component dimensions intact. */
+.sidebar { background: #fcfcfc; border-color: #dde3e1; backdrop-filter: none; }
+.rail-button, .sidebar-toggle { border-color: transparent; border-radius: 8px; background: transparent; box-shadow: none; }
+.rail-button:hover, .sidebar-toggle:hover, .rail-button:focus-visible, .sidebar-toggle:focus-visible { transform: none; background: #edf1ef; border-color: #d6dfda; box-shadow: none; }
+.rail-button small { font-size: 10px; font-weight: 600; }
+.rail-primary { color: #176b57; background: #e7f0eb; border-color: #d2e2d9; }
+.rail-button.is-active, .sidebar-toggle.is-active { background: #e7f0eb; color: #176b57; border-color: #b9cec1; box-shadow: none; }
+.card-type { background: transparent; border: 0; padding-inline: 0; font-weight: 700; font-size: 10px; }
+.card-category, .card-percent, .card-date-chip { border-radius: 5px; min-height: 22px; padding: 3px 6px; font-weight: 600; }
+.card-topline > .card-actions .card-menu-toggle { border-radius: 6px; background: transparent; border-color: transparent; box-shadow: none; }
+.card-topline > .card-actions .card-menu-toggle:hover { background: #f0f3f1; }
+.diary-nav button, .planner-linked-day-button { border-radius: 6px; box-shadow: none; }
+.planning-tabs button[aria-pressed=true] { background: #eaf1ee; }
+.task-toolbar .planning-tabs { gap: 2px; }
+.task-toolbar .planning-tabs .planning-button { border-radius: 4px 4px 0 0; }
+.task-results-heading { padding-block: 8px; }
+.task-results .workspace-task-list { border-top: 0; row-gap: 2px; }
+.workspace-task-list .planner-linked-item { padding-block: 10px; }
+.workspace-task-list .planner-linked-copy { font-weight: 550; }
+.workspace-task-list .planner-linked-item:focus-within { background: #edf3f0; }
+.planning-date-nav input { font-variant-numeric: tabular-nums; }
+.calendar-month { border-radius: 6px; overflow: hidden; }
+.calendar-weekday { background: #f0f2f3; color: #5d6963; font-weight: 600; }
+.calendar-day { font-variant-numeric: tabular-nums; }
+@media (hover: hover) {
+  .planning-button:not(:disabled):hover { border-color: #9eb4a8; background: #f0f5f2; }
+  .planning-button.is-primary:not(:disabled):hover { background: #185b42; border-color: #185b42; }
+  .workspace-task-list .planner-linked-item:hover { background: #edf3f0; }
+}
+@media (max-width: 980px) {
+  .rail-nav { gap: 2px; }
+  .rail-button { border: 0; }
 }
 
 @media print {

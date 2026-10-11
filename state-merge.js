@@ -29,6 +29,9 @@
       if (equal(l, r) || equal(b, r)) return copy(l);
       if (equal(b, l)) return copy(r);
       const field = path.at(-1);
+      if(field==='taskCompletion' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]) && object(l) && object(r)){
+        conflicts.push({kind:'task-completion',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});return copy(l);
+      }
       if (["updatedAt", "savedAt", "movedAt"].includes(field)) return Math.max(Number(l) || 0, Number(r) || 0);
       if (["updatedBy", "activeDate", "activePlannerDate", "plannerViewDate", "activeFoodDate", "activeFitnessDate", "activeSideNoteDate", "activeFoodMealId"].includes(field)) return copy(l);
       const recordType=healthRecordType(path);
@@ -74,6 +77,7 @@
           result.title=result.activity.title;result.category=result.activity.area || 'Unsorted';
           result.targetAt=result.activity.allDay?new Date(result.activity.startDate+'T12:00:00').toISOString():result.activity.startAt;
         }
+        if(result.taskCompletion && object(l.taskCompletion) && object(r.taskCompletion))result.done=Boolean(result.taskCompletion.done);
         return result;
       }
       conflicts.push({path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
@@ -135,6 +139,23 @@
       segments:live.segments,base:live.base,remote:live.remote,baseDigest:live.baseDigest
     }};
     return next;
+  }
+  function validCompletion(c) {return object(c) && typeof c.done==='boolean' && Number.isFinite(c.recordedAt) && c.recordedAt>0 && (c.done?validTaskDate(c.on) && Number.isFinite(c.at) && c.at>0:c.on==='' && c.at===0);}
+  function inspectCompletionConflict(snapshot,conflict) {
+    const field=locate(snapshot,conflict?.segments),parts=conflict?.segments || [];
+    const validPath=parts[0]==='boards' && ['cards','archivedCards'].includes(parts[2]) && parts.at(-1)==='taskCompletion' && [5,7].includes(parts.length) && (parts.length===5 || parts[4]==='items');
+    return {editable:Boolean(conflict?.kind==='task-completion' && validPath && field && [field.value,conflict.local,conflict.remote].every(validCompletion)),current:copy(field?.value)};
+  }
+  function resolveCompletionConflict(snapshot,conflict,expected,selected,now=Date.now()) {
+    const live=(snapshot.syncConflicts || []).find(item=>item.id===conflict.id),inspection=inspectCompletionConflict(snapshot,live);
+    if(!live || !equal(live,conflict) || !inspection.editable || !equal(inspection.current,expected))throw new Error('This completion changed. Refresh the comparison before saving.');
+    if(![expected,live.local,live.remote].some(value=>equal(value,selected)))throw new Error('Choose one displayed completion version.');
+    const next=copy(snapshot),field=locate(next,live.segments);field.parent[field.key]=copy(selected);field.parent.done=selected.done;
+    const rejected=[live.local,live.remote].filter(version=>!equal(version,selected));
+    field.parent.taskCompletionEvents=(field.parent.taskCompletionEvents || []).map(event=>rejected.some(c=>event.recordedAt===c.recordedAt && event.on===c.on && event.at===c.at)?{...event,excludedAt:now}:event);
+    next.boards.find(b=>b.id===live.segments[1]).updatedAt=now;next.updatedAt=now;next.hasUserChanges=true;
+    next.syncConflicts=next.syncConflicts.filter(c=>c.id!==live.id);
+    next.conflictResolutions={...(next.conflictResolutions || {}),[live.id]:{kind:'task-completion',resolvedAt:now,source:live.source || 'device',ownerId:live.ownerId,segments:live.segments,base:live.base,remote:live.remote,baseDigest:live.baseDigest}};return next;
   }
 
   function locatePlannerTask(snapshot,segments) {
@@ -283,6 +304,9 @@
         }
         continue;
       }
+      if(receipt.kind==='task-completion'){
+        const field=locate(next,receipt.segments);if(field && validCompletion(receipt.remote) && equal(field.value,receipt.base)){field.parent[field.key]=copy(receipt.remote);field.parent.done=receipt.remote.done;}continue;
+      }
       const field=locate(next,receipt.segments);
       if (field && textFields.has(field.key) && typeof receipt.remote==='string' && equal(field.value,receipt.base)) field.parent[field.key]=receipt.remote;
     }
@@ -322,7 +346,7 @@
     return next;
   }
 
-  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,validActivity,reviewedCloudBaseline,fingerprint};
+  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,validActivity,reviewedCloudBaseline,fingerprint};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LifeStateMerge = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

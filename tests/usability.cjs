@@ -1,3 +1,4 @@
+const {workspace}=require('./navigation.cjs');
 const {chromium} = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -53,12 +54,12 @@ const results = [];
       await filters.click();
       assert.equal(await filters.getAttribute('aria-expanded'), String(!open));
       assert.equal(await page.locator('#boardToolbar').isVisible(), !open);
-      await page.locator('#todayModeButton').click();
+      await workspace(page,'today');
       assert.equal(await filters.isVisible(), false);
       assert.equal(await filters.getAttribute('aria-expanded'), 'false');
       await page.evaluate(() => toggleBoardControls());
       assert.equal(await page.evaluate(() => state.ui.controlsOpen), !open);
-      await page.locator('#boardModeButton').click();
+      await workspace(page,'board');
       assert.equal(await filters.isVisible(), true);
       assert.equal(await filters.getAttribute('aria-expanded'), String(!open));
       assert.equal(await page.locator('#boardToolbar').isVisible(), !open);
@@ -172,7 +173,7 @@ const results = [];
       await page.evaluate(columns => {state.board.columnCount = columns; renderCardsOnly({force: true});}, columns);
       await resize(page, 320); await resize(page, 1440);
     }
-    await page.locator('#todayModeButton').click(); await page.locator('#boardModeButton').click();
+    await workspace(page,'today'); await workspace(page,'board');
     await page.evaluate(() => flushDeviceWrites()); await page.reload();
     assert.deepEqual(await snapshot(), before);
   });

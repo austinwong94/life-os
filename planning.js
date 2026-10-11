@@ -58,13 +58,13 @@
 const planningSessions = new Map();
 function planningSession() {
   if (!planningSessions.has(state.activeBoardId)) {
-    let saved = {}; try { saved = JSON.parse(sessionStorage.getItem("life-os-planning:"+state.activeBoardId) || "{}"); } catch {}
+    let saved = {}; try { saved = JSON.parse(sessionStorage.getItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId)) || "{}"); } catch {}
     planningSessions.set(state.activeBoardId, {view:"today",area:"*",search:"",day:getTodayKey(),calendarMode:innerWidth<=700?"agenda":"month",...saved});
   }
   return planningSessions.get(state.activeBoardId);
 }
 function savePlanningSession() {
-  try { sessionStorage.setItem("life-os-planning:"+state.activeBoardId,JSON.stringify(planningSession())); }
+  try { sessionStorage.setItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId),JSON.stringify(planningSession())); }
   catch { setSaveStatus("Draft kept in this tab - draft storage unavailable", "error"); }
 }
 function planningNode(tag, className, text) {
@@ -99,13 +99,97 @@ function planningSelect(options, value, onChange) {
   select.value = value; select.onchange = () => onChange(select.value); return select;
 }
 function taskAreaOptions(extra = "") {
-  const values = new Set([...LifePlanning.areas, ...getPlannerSourceItems().map(item=>item.group), ...state.cards.map(card=>card.activity?.area), extra]);
+  const values = new Set([...LifePlanning.areas, ...getWorkspaceTaskItems().map(item=>item.group), ...state.cards.map(card=>card.activity?.area), extra]);
   return [["","Unsorted"], ...[...values].filter(Boolean).map(value=>[value,value])];
+}
+function workspaceTaskBoard() {return {id:state.activeBoardId,cards:state.cards};}
+function getWorkspaceTaskItems() {
+  return [...getPlannerSourceItems(),...LifeTaskRepository.collect(workspaceTaskBoard())];
+}
+function saveCardTaskChange(ref,base,updates,day=getTodayKey()) {
+  const transaction=LifeTaskRepository.change(workspaceTaskBoard(),ref,base,updates,{day});
+  if(!saveState()){
+    LifeTaskRepository.restore(workspaceTaskBoard(),transaction);
+    syncActiveBoard({touchBoard:false});
+    throw new Error("Not saved yet. Your draft is kept; try again when device saving is available.");
+  }
+  return transaction;
+}
+function showCardTaskUndo(transaction) {
+  showUndoToast({message:"Task updated in its source card.",onUndo:()=>{
+    try{
+      const undo=LifeTaskRepository.restore(workspaceTaskBoard(),transaction);
+      if(!saveState()){
+        LifeTaskRepository.restore(workspaceTaskBoard(),undo);syncActiveBoard({touchBoard:false});
+        throw new Error("Undo was not saved. The task is unchanged.");
+      }
+      clearUndoToast();renderCardsOnly({force:true});
+    }catch(error){clearUndoToast();setSaveStatus(error.message,"error");}
+  }});
+}
+function openCardTaskSource(ref) {
+  const matches=state.cards.filter(card=>card.id===ref.cardId);
+  if(ref.boardId!==state.activeBoardId || matches.length!==1 || !matches[0].id){setSaveStatus("The source card is no longer available on this board.","error");return;}
+  document.getElementById('dailyDialog')?.close();setWorkspaceMode('board');startEditingCard(ref.cardId);
+}
+function openCardTaskEditor(item) {
+  const session=planningSession();
+  if(item && !item.editable)return;
+  if(item && session.cardTaskDraft && !LifeStateMerge.equal(session.cardTaskDraft.ref,item.ref)){
+    setSaveStatus("Finish or discard the open task draft before editing another task.","error");
+  }else if(item && !session.cardTaskDraft){
+    session.cardTaskDraft={ref:item.ref,base:LifeStateMerge.copy(item.base),title:item.title,sourceTitle:item.sourceTitle,completedOn:item.completedOn || ''};savePlanningSession();
+  }
+  const draft=session.cardTaskDraft;if(!draft)return;
+  const dialog=dailyDialog('Edit card task'),form=planningNode('form','card-task-editor');
+  const name=planningInput('text',draft.title,value=>{draft.title=value;savePlanningSession();});name.required=true;
+  const message=planningNode('p','planning-message');message.setAttribute('role','status');
+  const actions=planningNode('div','daily-actions'),save=planningButton('Save task',null,'check');save.type='submit';
+  actions.append(save,planningButton('Discard draft',()=>{delete session.cardTaskDraft;savePlanningSession();dialog.close();renderCardsOnly({force:true});}),
+    planningButton('Edit source card',()=>openCardTaskSource(draft.ref),'pencil'));
+  form.append(planningNode('p','daily-muted',draft.sourceTitle),planningField('Task name',name));
+  if(draft.base.done){const date=planningInput('date',draft.completedOn,value=>{draft.completedOn=value;savePlanningSession();});date.max=getTodayKey();form.append(planningField('Completion date (optional)',date));}
+  form.append(actions,message);
+  form.onsubmit=event=>{
+    event.preventDefault();
+    try{
+      const transaction=saveCardTaskChange(draft.ref,draft.base,{title:draft.title,...(draft.completedOn?{completedOn:draft.completedOn}:{})});
+      delete session.cardTaskDraft;savePlanningSession();dialog.close();renderCardsOnly({force:true});showCardTaskUndo(transaction);
+    }catch(error){message.textContent=error.message;}
+  };
+  dialog.append(form);name.focus();
+}
+function renderWorkspaceTaskItem(item) {
+  if(item.sourceKind!=="card")return renderPlannerLinkedItem(item);
+  const row=planningNode('div','planner-linked-item card-source-task');row.classList.toggle('is-done',item.done);
+  row.dataset.sourceCard=item.ref.cardId || '';row.dataset.sourceTask=item.ref.itemId || '';
+  const check=planningInput('checkbox','',()=>{});check.className='planner-linked-check';check.checked=item.done;check.disabled=!item.editable;
+  const label=`${item.done?'Mark open':'Mark done'}: ${item.title}`;check.setAttribute('aria-label',label);
+  const main=planningNode('div','planner-linked-main'),meta=planningNode('div','planner-linked-meta');
+  const source=item.sourceLabel+(item.ref.kind==='single'?'':' · '+item.sourceTitle);
+  meta.append(planningNode('span','task-source-label',source),planningNode('span','task-area',item.group || 'Unsorted'));
+  if(item.done){const done=planningNode('span','planner-linked-completed','Done · '+(item.completedOn?formatPlannerOriginDate(item.completedOn):'Date not recorded'));if(item.completedAt)done.title=formatRecordDateTime(item.completedAt);meta.append(done);}
+  if(!item.editable)meta.append(planningNode('span','task-status','Edit in source card'));
+  const title=planningNode('button','planner-linked-copy',item.title);title.type='button';title.disabled=!item.editable;title.setAttribute('aria-label',label);
+  const message=planningNode('p','planning-message');message.setAttribute('role','status');
+  const toggle=()=>{
+    try{
+      const transaction=saveCardTaskChange(item.ref,item.base,{done:!item.done},item.dateKey || getTodayKey());
+      renderCardsOnly({force:true});showCardTaskUndo(transaction);
+    }catch(error){check.checked=item.done;message.textContent=error.message;}
+  };check.onchange=toggle;title.onclick=toggle;
+  const actions=planningNode('div','planner-linked-actions');
+  actions.append(planningIcon('Task options: '+item.title,()=>{
+    const dialog=dailyDialog('Task options'),menu=planningNode('div','daily-menu');
+    const edit=planningButton('Edit task',()=>{dialog.close();openCardTaskEditor(item);},'pencil');edit.disabled=!item.editable;
+    menu.append(edit,planningButton('Edit source card',()=>openCardTaskSource(item.ref),'pencil'),planningButton('Completion history',()=>{dialog.close();openTaskHistory(item);},'calendar'));dialog.append(menu);
+  },'more-vertical'));
+  main.append(meta,title,message);row.append(check,main,actions);return row;
 }
 function getTaskEditMetadata(item) {
   const task = LifePlanner.ensure(resolveLiveCard(item.card)).find(task=>task.id===item.taskId);
   return {area:task?.area ?? item.group ?? getPlannerGroup(item.card), project:task?.project || "", status:task?.status || "todo",
-    deadline:task?.deadline || "", notes:task?.notes || "", priority:task?.priority || "normal", base:LifeStateMerge.copy(task)};
+    deadline:task?.deadline || "", notes:task?.notes || "", priority:task?.priority || "normal", goalLink:taskGoalValue(task || {}), followUp:task?.followUp || '', intent:task?.intent || 'task', minutes:task?.estimatedMinutes || '',nextAction:task?.nextAction || '',startTime:task?.startTime || '',base:LifeStateMerge.copy(task)};
 }
 function appendTaskMetadata(meta, item) {
   if (!item.workspaceTask && item.area === undefined) return;
@@ -114,21 +198,29 @@ function appendTaskMetadata(meta, item) {
   if (item.project) meta.append(planningNode("span", "task-project", item.project));
   if (!item.done && ["doing","waiting"].includes(item.status)) meta.append(planningNode("span", "task-status", item.status === "doing" ? "Doing" : "Waiting"));
   if (!item.done && item.deadline) meta.append(planningNode("span", "task-deadline"+(item.deadline<getTodayKey()?" is-late":""), "Due "+formatPlannerOriginDate(item.deadline)));
+  if (!item.done && item.followUp) meta.append(planningNode('span','task-follow-up','Follow up '+formatPlannerOriginDate(item.followUp)));
+  if (item.status==='parked') meta.append(planningNode('span','task-status','Parked'));
+  if (item.coachingProgramId) {
+    const program=currentCoachingPrograms().find(p=>p.id===item.coachingProgramId),priority=program?.priorities.find(p=>p.id===item.coachingPriorityId),kr=priority?.krs.find(k=>k.id===item.coachingKrId);
+    meta.append(planningNode('span','task-goal',kr?.title || priority?.title || 'Linked priority'));
+  }
 }
 function appendTaskEditFields(form, draft) {
   const grid = planningNode("div", "task-edit-details");
   const deadline=planningInput("date",draft.deadline,value=>draft.deadline=value);deadline.setAttribute("aria-label","Deadline (optional)");
   grid.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>draft.area=value)),
-    planningField("Status",planningSelect([["todo","To do"],["doing","Doing"],["waiting","Waiting"]],draft.status,value=>draft.status=value)),
+    planningField("Status",planningSelect([["todo","To do"],["doing","Doing"],["waiting","Waiting"],["parked","Parked"]],draft.status,value=>draft.status=value)),
     planningField("Project",planningInput("text",draft.project,value=>draft.project=value)),
     planningField("Deadline (optional)",planningOptionalDate(deadline,"Clear deadline",()=>draft.deadline="")),
     planningField("Priority",planningSelect(Object.entries(PRIORITY_META).map(([key,meta])=>[key,meta.label]),draft.priority,value=>draft.priority=value)));
   const notes = planningNode("textarea"); notes.value = draft.notes; notes.rows = 3; notes.oninput = () => draft.notes=notes.value;
-  grid.append(planningField("Task notes",notes)); form.append(grid);
+  grid.append(planningField("Task notes",notes)); appendDailyTaskFields(grid,draft); form.append(grid);
 }
 function renderPlanningWorkspace(mode) {
   const root = planningNode("section", "planning-workspace"); root.setAttribute("aria-label",mode==="tasks"?"Tasks":"Calendar");
   elements.boardGrid.append(root);
+  const nav=planningNode('nav','plan-view-switch');nav.setAttribute('aria-label','Planning view');
+  for(const [key,label] of [['tasks','Tasks'],['calendar','Calendar']]){const button=planningButton(label,()=>setWorkspaceMode(key));button.id='plan'+label+'Button';button.setAttribute('aria-pressed',String(mode===key));nav.append(button);}root.append(nav);
   if (mode === "tasks") renderTasksWorkspace(root); else renderCalendarWorkspace(root);
 }
 function planningRefresh() { savePlanningSession(); renderCardsOnly({force:true}); }
@@ -171,7 +263,18 @@ function renderTasksWorkspace(root) {
   const tabs = planningNode("div","planning-tabs"); tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Task view");
   for (const [key,label] of [["today","Today"],["upcoming","Upcoming"],["all","All tasks"],["completed","Completed"]]) {
     const button=planningButton(label,()=>{session.view=key;planningRefresh();});button.setAttribute("aria-pressed",String(session.view===key));tabs.append(button);
+    if(['all','completed'].includes(key)){
+      button.setAttribute('aria-label',label);
+      const full=button.querySelector('span');full.classList.add('task-view-label-full');
+      button.append(planningNode('span','task-view-label-short',key==='all'?'All':'Done'));
+    }
   }
+  tabs.append(planningIcon('More task views',()=>{
+    const dialog=dailyDialog('Task views'),menu=planningNode('div','daily-menu');
+    for(const [key,label] of [['waiting','Waiting on'],['parked','Parked'],['experiences','Experiences']]){
+      const button=planningButton(label,()=>{session.view=key;dialog.close();planningRefresh();});button.setAttribute('aria-pressed',String(session.view===key));menu.append(button);
+    }dialog.append(menu);
+  },'more-vertical'));
   toolbar.append(tabs);
   if (session.view==="today") toolbar.append(renderPlanningDateNavigation(session.day,value=>{session.day=value;if(session.capture&&!session.capture.title.trim())session.capture.dateKey=value;planningRefresh();}));
   root.append(toolbar);
@@ -212,15 +315,22 @@ function renderTaskCapture() {
 }
 function renderTaskResults(root) {
   root.replaceChildren();const session=planningSession();
-  const all=getPlannerSourceItems().filter(item=>session.area==="*" || item.group===session.area);
-  let items=session.view==="today"?getPlannerItemsForSelectedDay(all,session.day):all;
-  if(session.view==="upcoming")items=items.filter(item=>!item.done&&item.dateKey>=getTodayKey());
+  // Old card checklists have no completion-day history. Keep date-based views
+  // on canonical planner records instead of guessing dates for those items.
+  const source=['all','completed'].includes(session.view)?getWorkspaceTaskItems():getPlannerSourceItems();
+  const all=source.filter(item=>session.area==="*" || item.group===session.area);
+  let items=session.view==="today"?[...getPlannerItemsForSelectedDay(all,session.day),...LifeTaskRepository.collect(workspaceTaskBoard()).filter(t=>t.done && t.completedOn===session.day && (session.area==='*' || t.group===session.area))]:all;
+  if(session.view==="upcoming")items=items.filter(item=>!item.done&&item.status!=='parked'&&item.dateKey>=getTodayKey());
+  if(session.view==="waiting")items=items.filter(item=>!item.done&&item.status==='waiting');
+  if(session.view==="parked")items=items.filter(item=>!item.done&&item.status==='parked');
+  if(session.view==="experiences")items=items.filter(item=>item.intent==='experience');
   if(session.view==="completed")items=items.filter(item=>item.done);
   const query=session.search.trim().toLocaleLowerCase();
-  if(query)items=items.filter(item=>[item.title,item.project,item.notes,item.group].some(value=>String(value||"").toLocaleLowerCase().includes(query)));
-  items=items.slice().sort((a,b)=>session.view==="completed"?(b.completedOn||"").localeCompare(a.completedOn||"")||a.title.localeCompare(b.title)
+  if(query)items=items.filter(item=>[item.title,item.project,item.notes,item.group,item.sourceTitle].some(value=>String(value||"").toLocaleLowerCase().includes(query)));
+  items=items.slice().sort((a,b)=>session.view==="waiting"?(a.followUp||'9999').localeCompare(b.followUp||'9999')||a.title.localeCompare(b.title):session.view==="completed"?(b.completedOn||"").localeCompare(a.completedOn||"")||a.title.localeCompare(b.title)
     :Number(a.done)-Number(b.done)||(a.scheduledDate||a.dateKey||"9999").localeCompare(b.scheduledDate||b.dateKey||"9999")||a.title.localeCompare(b.title));
   const count=planningNode("p","planning-count",`${items.length} ${items.length===1?"task":"tasks"}`);count.setAttribute("role","status");
+  const extraLabel={waiting:'Waiting on',parked:'Parked',experiences:'Experiences'}[session.view];if(extraLabel)count.textContent=extraLabel+' · '+count.textContent;
   const heading=planningNode("div","task-results-heading"),columns=planningNode("div","column-picker");
   columns.setAttribute("role","group");columns.setAttribute("aria-label","Task columns");columns.append(planningNode("span","","Columns"));
   const selected=[1,2,3].includes(Number(session.columns))?Number(session.columns):1;
@@ -238,11 +348,12 @@ function renderTaskResults(root) {
     columns.append(button);
   }
   heading.append(count,columns);root.append(heading);
+  if(session.cardTaskDraft)root.append(planningButton('Continue task draft',()=>openCardTaskEditor(),'pencil'));
   if(!items.length){root.append(planningNode("p","planning-empty",query?"No matching tasks.":"No tasks in this view."));return;}
   const list=planningNode("div","workspace-task-list");root.append(list);
   items.forEach(item=>{
     const day=session.view==="today"?session.day:getTodayKey();
-    const row=renderPlannerLinkedItem({...item,workspaceTask:true,undated:!(item.scheduledDate??item.dateKey),scheduledDate:item.scheduledDate??item.dateKey,dateKey:day});
+    const row=renderWorkspaceTaskItem({...item,workspaceTask:true,undated:!(item.scheduledDate??item.dateKey),scheduledDate:item.scheduledDate??item.dateKey,dateKey:day});
     if(item.priority && item.priority!=="normal")row.style.borderLeftColor=PRIORITY_META[item.priority]?.color || "";
     list.append(row);
   });

@@ -20,6 +20,15 @@ test('uncompleted past task carries forward indefinitely without stored copies',
   const c=make();P.add(c,'2026-01-01','Appointment','a',now);
   assert.equal(P.forDay(c,'2027-01-01').length,1);assert.equal(c.plannerTasks.length,1);
 });
+test('explicitly reopening a pre-history completion preserves its real date without inventing a recording time',()=>{
+  const c=make();P.add(c,'2026-09-07','Old finished task','old',now);
+  P.change(c,'old',{done:true,completedOn:'2026-09-07',completedAt:now-86400000,completionRecordedAt:0},now);
+  P.complete(c,'old','2026-09-08',now);
+  assert.equal(c.plannerTasks[0].done,false);
+  assert.equal(c.plannerTasks[0].completionEvents[0].completedOn,'2026-09-07');
+  assert.equal(c.plannerTasks[0].completionEvents[0].recordedAt,0);
+  assert.equal(c.plannerTasks[0].completionEvents[1].done,false);
+});
 test('duplicate titles have independent identity and completion', () => {
   const c=make();P.add(c,'2026-09-08','Medication','a',now);P.add(c,'2026-09-08','Medication','b',now);P.complete(c,'a','2026-09-08',now);
   assert.deepEqual(c.plannerTasks.map(x=>x.done),[true,false]);

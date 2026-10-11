@@ -2,7 +2,7 @@
    Web Locks serialize shared writes; an interrupted commit can be replayed. */
 (function(root) {
   'use strict';
-  const prefix = 'life-os-pending-v2:';
+  const prefix = LifeStorageScope.key('life-os-pending-v2:');
   const tabId = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : Date.now() + '-' + Math.random();
   let sequence = 0;
   let lastSavedAt = 0;
@@ -46,11 +46,11 @@
   function configure(handler) {commitHandler=handler;}
   async function locked(action) {
     if (!navigator.locks?.request) throw new Error('This browser cannot coordinate safe multi-tab saves. Your pending copy is kept. Use an up-to-date browser over HTTPS.');
-    return navigator.locks.request('life-os-device-snapshot-v2',action);
+    return navigator.locks.request(LifeStorageScope.key('life-os-device-snapshot-v2'),action);
   }
   async function cloudLocked(action) {
     if (!navigator.locks?.request) throw new Error('This browser cannot coordinate cloud saving and restoration safely. Use an up-to-date browser over HTTPS.');
-    return navigator.locks.request('life-os-cloud-and-restore-v1',action);
+    return navigator.locks.request(LifeStorageScope.key('life-os-cloud-and-restore-v1'),action);
   }
   async function flush() {
     flushRequested = true;

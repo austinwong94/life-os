@@ -1,3 +1,4 @@
+const {workspace}=require('./navigation.cjs');
 const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -46,7 +47,7 @@ const results=[];
  });
  await run('Today dates reset on a fresh visit and both views retain all records',async p=>{
   await p.locator('[aria-label="Previous planner day"]').click();assert.match(await p.locator('.planner-linked-title-row').innerText(),/Yesterday/);await p.reload();assert.match(await p.locator('.planner-linked-title-row').innerText(),/Today/);
-  await p.evaluate(()=>{const c=state.cards.find(c=>c.type==='planlist');for(let i=0;i<8;i++)addPlannerTaskFromPlannerView(c,'2026-01-01','Earlier '+i);});await p.locator('#todayModeButton').click();assert.equal(await p.locator('.earlier-plans .planner-linked-copy').count(),8);await p.locator('.earlier-plans summary').click();assert.ok(await p.locator('.earlier-plans .planner-linked-copy').first().isVisible());await p.locator('#boardModeButton').click();assert.equal(await p.locator('.planner-linked-copy').count(),8);
+  await p.evaluate(()=>{const c=state.cards.find(c=>c.type==='planlist');for(let i=0;i<8;i++)addPlannerTaskFromPlannerView(c,'2026-01-01','Earlier '+i);});await workspace(p,'today');await p.getByRole('button',{name:'All tasks (8)',exact:true}).click();assert.equal(await p.locator('.planner-linked-copy').count(),8);assert.ok(await p.locator('.planner-linked-copy').first().isVisible());await workspace(p,'board');assert.equal(await p.locator('.planner-linked-copy').count(),8);
  });
  await run('readable export preserves duplicate task completion and multiline diary',async p=>{
   const html=await p.evaluate(()=>{const v=state.cards.find(c=>c.type==='planlist');addPlannerTaskFromPlannerView(v,getTodayKey(),'Same task');addPlannerTaskFromPlannerView(v,getTodayKey(),'Same task');const task=getPlannerViewData('today','Personal',{},getTodayKey()).items[0];togglePlannerTaskDone(task);updateDiaryEntry(state.cards.find(c=>c.type==='diary'),getTodayKey(),{thoughts:'My line one\nMy line two'});syncActiveBoard();return buildReadableDataArchive(getStateForStorage());});
