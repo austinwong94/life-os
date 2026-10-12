@@ -29,6 +29,8 @@
       if (equal(l, r) || equal(b, r)) return copy(l);
       if (equal(b, l)) return copy(r);
       const field = path.at(-1);
+      // A card's summary view is presentation, not account ownership.
+      if(field==='moneyOwner' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]))return copy(l);
       if(path.length===5 && path[0]==='boards' && path[2]==='money' && ['accounts','entries','budgets'].includes(path[3]) && object(l) && object(r)) {
         conflicts.push({kind:'money-record',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
         return copy(l);

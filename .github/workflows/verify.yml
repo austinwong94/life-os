@@ -26,6 +26,14 @@ jobs:
         run: npm run build
       - name: Start isolated preview
         run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-server.log 2>&1 &
+      - run: npm run test:money
+        env:
+          TEST_OUTPUT: test-results/money
+      - name: Check money flows in WebKit
+        run: npm run test:money
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/money-webkit
       - run: npm run test:browser
         env:
           TEST_OUTPUT: test-results
@@ -105,14 +113,6 @@ jobs:
       - run: npm run test:subtasks
         env:
           TEST_OUTPUT: test-results/subtasks
-      - run: npm run test:money
-        env:
-          TEST_OUTPUT: test-results/money
-      - name: Check money flows in WebKit
-        run: npm run test:money
-        env:
-          TEST_BROWSER: webkit
-          TEST_OUTPUT: test-results/money-webkit
       - name: Check subtasks in WebKit
         run: npm run test:subtasks
         env:

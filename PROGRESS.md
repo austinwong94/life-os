@@ -6,6 +6,8 @@ Updated: 12 October 2026. The earlier milestones below are historical. Release s
 
 Implemented Money navigation and a linked board card, Personal/Sunrise Villa separation, MYR accounts, income/spending/transfers, recurring bills, Airbnb payout statuses, monthly/category budgets, dated cash-flow forecasts, reconciliation, retained drafts, financial conflict review, recovery/exports and responsive phone/portrait layouts. Existing private data is not migrated or reset. Full release verification and publication are pending; see PLATFORM-STATUS.md for supported boundaries.
 
+The first candidate did not deploy: Linux-WebKit detected a 320-pixel page overflow. The retry fixes size constraints and wrapping, preserves the original width assertions, adds offender diagnostics, and treats summary-card filters as non-financial view preferences. All 139 unit checks pass locally. Publishing still requires the full exact-artifact workflow and live hash verification.
+
 ## October 12 Published (Previous Release)
 
 Release `9c37122167957436` is live. [Workflow 38198049109](https://github.com/austinwong94/life-os/actions/runs/38198049109) passed **480 checks** (123 unit checks and 357 browser scenarios/repeats), then deployed the tested artifact. The live manifest and all 21 public file hashes match. Includes subtasks, planner confirmation/saving fixes, exact-card responsive/WebKit focus restoration and the prepared Calendar layout. The earlier WebKit failure prevented publication until corrected; that failed candidate did not replace the existing site.

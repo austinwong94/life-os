@@ -80,3 +80,7 @@ test('cloud financial review acknowledges only the exact baseline and owner, inc
   const acknowledged=merge.reviewedCloudBaseline(base,next.conflictResolutions,'owner','exact');assert.equal(acknowledged.boards[0].money.entries[0].amountCents,20000);assert.equal(merge.merge(acknowledged,next,b).conflicts.length,0);
   assert.deepEqual(merge.reviewedCloudBaseline(base,next.conflictResolutions,'other','exact'),base);assert.deepEqual(merge.reviewedCloudBaseline(base,next.conflictResolutions,'owner','wrong'),base);
 });
+test('summary-card view preferences cannot pause financial saving or change ledger ownership',()=>{
+  const base={boards:[{id:'one',cards:[{id:'summary',type:'money',moneyOwner:'personal'}],money:ledger()}]},local=M.copy(base),remote=M.copy(base);local.boards[0].cards[0].moneyOwner='villa';remote.boards[0].cards[0].moneyOwner='all';
+  const result=merge.merge(base,local,remote);assert.equal(result.conflicts.length,0);assert.equal(result.boards[0].cards[0].moneyOwner,'villa');assert.deepEqual(result.boards[0].money,base.boards[0].money);
+});

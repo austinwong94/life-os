@@ -1,4 +1,6 @@
 .money-workspace { width: 100%; min-width: 0; color: #233c38; }
+.money-workspace *, .money-dialog *, .money-card * { box-sizing: border-box; min-width: 0; }
+.money-workspace input, .money-workspace select, .money-card select { max-width: 100%; }
 .money-heading, .money-controls, .money-actions, .money-tabs { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .money-heading { justify-content: space-between; margin-bottom: 16px; }
 .money-heading h2 { font-size: 24px; margin: 0; }
@@ -10,7 +12,7 @@
 .money-stat { min-width: 0; padding: 12px 0; border-top: 2px solid #c6dcd5; display: flex; flex-direction: column; gap: 5px; }
 .money-stat span { font-size: 13px; color: #536560; }
 .money-stat strong { font-size: 22px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.money-stat small { color: #536560; font-size: 12px; line-height: 1.4; }
+.money-stat small { color: #536560; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
 .money-stat.is-warning { border-color: #b94f65; color: #92374e; }
 .money-tabs { padding-bottom: 8px; border-bottom: 1px solid #dce5e1; margin-bottom: 16px; }
 .money-tabs button[aria-pressed=true] { background: #245f55; color: #fff; border-color: #245f55; }
@@ -23,7 +25,7 @@
 .money-row-copy { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .money-row-copy strong, .money-row-copy small { overflow-wrap: anywhere; }
 .money-row-copy small { color: #536560; font-size: 12px; line-height: 1.5; }
-.money-row-amount { color: #245f55; font-variant-numeric: tabular-nums; font-size: 14px; }
+.money-row-amount { color: #245f55; font-variant-numeric: tabular-nums; font-size: 14px; max-width: 120px; overflow-wrap: anywhere; text-align: right; }
 .money-row-amount.is-outgoing { color: #8d4050; }
 .money-row .planning-icon, .money-account .planning-icon { width: 40px; height: 40px; }
 .money-timeline { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px 12px; padding: 12px 0; border-bottom: 1px solid #dce5e1; }
