@@ -80,6 +80,9 @@
 .daily-save-details { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.6fr); gap: 12px; font-size: 13px; line-height: 1.5; margin-bottom: 24px; }
 .daily-save-details dt { font-weight: 600; }
 .daily-save-details dd { margin: 0; overflow-wrap: anywhere; }
+.release-update-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid #dce5e1; padding: 10px 0; margin-bottom: 16px; font-size: 13px; }
+.release-update-notice p { margin: 0; flex: 1 1 200px; }
+.release-update-notice .planning-button { flex: 0 0 auto; }
 .daily-review-history { margin-block: 20px; }
 .daily-review-history small { display: block; margin-top: 16px; }
 .task-goal { background: #e9eef8; color: #405570; }

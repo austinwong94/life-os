@@ -4188,8 +4188,9 @@ function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
   const title = stripPlannerBullet(nextTitle);
   const day = normalizeDateKey(nextDateKey);
   if (!item?.card || !item.taskId || !title || (nextDateKey && !LifePlanner.validDate(day))) return false;
-  const card = resolveLiveCard(item.card);
-  const current = LifePlanner.ensure(card).find(task => task.id === item.taskId);
+  let card,current;
+  try{const live=resolveSubtaskParent(taskSubtaskRef(item));card=live.card;current=live.target;}
+  catch(error){setSaveStatus(error.message,'error');return false;}
   if (draft?.base && !LifeStateMerge.equal(draft.base, current)) {
     window.alert("This task changed while you were editing. Your draft is still here. Cancel and reopen the task to compare the latest version.");
     return false;
@@ -4198,11 +4199,14 @@ function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
   let metadata;
   try{metadata = draft ? {area:draft.area,project:draft.project.trim(),status:draft.status,deadline:draft.deadline,notes:draft.notes,priority:draft.priority,...taskGoalFields(draft)} : {};}
   catch(error){window.alert(error.message);return false;}
+  const before=LifeStateMerge.copy(current),previousTime=card.updatedAt;
   if (!LifePlanner.change(card, item.taskId, {title, dateKey: day, ...metadata})) return false;
   LifePlanner.project(card);
   card.updatedAt = Date.now();
   if (!saveState()) {
-    if (draft) draft.base=LifeStateMerge.copy(current);
+    const tasks=LifePlanner.ensure(card);tasks.splice(tasks.findIndex(task=>task.id===item.taskId),1,before);
+    if(previousTime===undefined)delete card.updatedAt;else card.updatedAt=previousTime;
+    LifePlanner.project(card);syncActiveBoard({touchBoard:false});
     window.alert("Not saved yet. Your task edit is kept here; try again when device saving is available.");
     return false;
   }
@@ -6682,8 +6686,8 @@ function updatePlannerEntry(card, dateKey, updates, options = {}) {
 
 async function togglePlannerTaskDone(item) {
   if (!item?.card || !item.taskId) return false;
-  let card,task;
-  try{card=resolveSubtaskParent(taskSubtaskRef(item)).card;task=LifePlanner.ensure(card).find(task=>task.id===item.taskId);}
+  let card,task,ref;
+  try{ref=taskSubtaskRef(item);const live=resolveSubtaskParent(ref);card=live.card;task=live.target;}
   catch(error){setSaveStatus(error.message,'error');return false;}
   if (!task) return false;
   const boardId=state.activeBoardId,before=LifeStateMerge.copy(task);
@@ -6701,7 +6705,9 @@ async function togglePlannerTaskDone(item) {
   const after=LifeStateMerge.copy(task);
   renderCardsOnly({force: true});
   showUndoToast({message: task.done ? "Task completed." : "Task reopened.", onUndo: () => {
-    const live = resolveLiveCard(card);
+    let live;
+    try{live=resolveSubtaskParent(ref).card;}
+    catch(error){setSaveStatus(error.message,'error');return;}
     const tasks=LifePlanner.ensure(live),index=tasks.findIndex(t=>t.id===task.id);
     if(index<0 || !LifeStateMerge.equal(tasks[index],after)){setSaveStatus('Task changed again. Undo was not applied.','error');return;}
     tasks.splice(index,1,LifeStateMerge.copy(before));

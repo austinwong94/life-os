@@ -1,6 +1,7 @@
 const engines=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
+const {workspace}=require('./navigation.cjs');
 const URL=process.env.TEST_URL || 'http://127.0.0.1:5180/';
 const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-planner-archive';
 fs.mkdirSync(out,{recursive:true});const results=[];
@@ -41,6 +42,37 @@ async function absent(page) {
     const text=await page.evaluate(()=>renderArchivedPlannerTasks().innerText);assert.match(text,/Archive regression task/);
     assert.equal(await page.evaluate(()=>restorePlannerTask('archive-source','archive-task')),true);await flush(page);await page.reload();assert.equal((await task(page)).archivedAt,0);
   });
+  await run('Plan All tasks menu Archive removes the actual visible row immediately and after reload',async page=>{
+    await seed(page);await workspace(page,'tasks');await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).click();
+    await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Archive',exact:true}).click();
+    await page.getByRole('button',{name:'Mark done: Archive regression task',exact:true}).waitFor({state:'detached'});
+    assert.ok((await task(page)).archivedAt);await page.reload();await workspace(page,'tasks');await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).click();
+    assert.equal(await page.locator('.workspace-task-list .planner-linked-item').count(),0);await absent(page);
+  });
+  await run('All tasks Archive reports failed saving and retry removes only the selected task',async page=>{
+    await seed(page);await workspace(page,'tasks');await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).click();const before=await task(page);
+    await page.evaluate(()=>{window.originalStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw new Error('Injected full storage');};});
+    const clickArchive=async()=>{await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Archive',exact:true}).click();};
+    await clickArchive();assert.deepEqual(await task(page),before);assert.match(await page.locator('#headerSaveStatus').innerText(),/Archive was not saved/);
+    await page.evaluate(()=>LifeDeviceStore.stage=window.originalStage);await clickArchive();await flush(page);await page.reload();await absent(page);
+  });
+  await run('Today task menu Archive and actual Archive Restore keep the original record and history',async page=>{
+    const before=await seed(page);await workspace(page,'today');await page.getByRole('button',{name:'Choose',exact:true}).click();
+    await page.getByRole('checkbox',{name:'Archive regression task',exact:true}).check();await page.getByRole('button',{name:'Keep next steps',exact:true}).click();
+    await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Archive',exact:true}).click();
+    await page.getByRole('button',{name:'Mark done: Archive regression task',exact:true}).waitFor({state:'detached'});
+    await page.locator('#railArchiveButton').click();await page.locator('.archived-task-row').filter({hasText:'Archive regression task'}).getByRole('button',{name:'Restore',exact:true}).click();
+    await page.locator('#recordsModalCloseButton').click();await flush(page);await page.reload();const after=await task(page);
+    for(const key of ['id','title','dateKey','originalDateKey','done','completedAt','createdAt'])assert.deepEqual(after[key],before[key]);assert.equal(after.archivedAt,0);
+  });
+  await run('All tasks Delete requires confirmation, never ticks completion and remains recoverable',async page=>{
+    const before=await seed(page);await workspace(page,'tasks');await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).click();
+    const openDelete=async()=>{await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Delete',exact:true}).click();};
+    await openDelete();await page.getByRole('dialog',{name:'Delete this task?',exact:true}).getByRole('button',{name:'Cancel',exact:true}).click();assert.deepEqual(await task(page),before);
+    await openDelete();await page.getByRole('dialog',{name:'Delete this task?',exact:true}).getByRole('button',{name:'Delete task',exact:true}).click();
+    await page.getByRole('button',{name:'Mark done: Archive regression task',exact:true}).waitFor({state:'detached'});await flush(page);await page.reload();await absent(page);assert.ok((await task(page)).deletedAt);assert.equal((await task(page)).done,false);
+    await page.locator('#railArchiveButton').click();await page.locator('.archived-task-row').filter({hasText:'Archive regression task'}).getByRole('button',{name:'Restore',exact:true}).click();await flush(page);await page.reload();assert.equal((await task(page)).deletedAt,0);assert.equal((await task(page)).done,false);
+  });
   for(const edit of ['rename','complete'])for(const order of ['archive-first','edit-first'])await run(`Two-tab stale ${edit}, ${order}, cannot revive an archive after reload`,async(page,context)=>{
     const before=await seed(page),other=await context.newPage();await other.goto(URL+'?preview=1');
     for(const p of [page,other])await p.evaluate(()=>LifeDeviceStore.configure(()=>false));
@@ -72,6 +104,32 @@ async function absent(page) {
     assert.equal(await page.evaluate(()=>archivePlannerTask(window.capturedItem)),false);
     assert.equal(await page.evaluate(expected=>restorePlannerTask('archive-source','archive-task',{boardId:'archive-board',expected}),expected),false);
     assert.deepEqual(await task(page),other);await flush(page);await page.reload();assert.deepEqual(await task(page),other);
+  });
+  await run('A captured Planner edit cannot rename a matching task on another board',async page=>{
+    await seed(page);await page.evaluate(()=>{window.capturedItem=getPlannerSourceItems()[0];window.capturedDraft=getTaskEditMetadata(window.capturedItem);});
+    await page.evaluate(()=>switchBoard('other-board'));const before=await task(page);
+    assert.equal(await page.evaluate(()=>updatePlannerTask(window.capturedItem,'Wrong board rename',getTodayKey(),window.capturedDraft)),false);
+    assert.deepEqual(await task(page),before);await flush(page);await page.reload();assert.deepEqual(await task(page),before);
+  });
+  await run('Planner completion Undo cannot reopen an identical task on another board',async page=>{
+    await seed(page);await page.evaluate(async()=>{
+      await togglePlannerTaskDone(getPlannerSourceItems()[0]);
+      const other=state.boards.find(b=>b.id==='other-board').cards.find(c=>c.id==='archive-source');
+      other.plannerTasks=LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks);LifePlanner.project(other);
+      saveState({skipCloud:true});await flushDeviceWrites();switchBoard('other-board');
+    });const before=await task(page);
+    await page.getByRole('button',{name:'Undo',exact:true}).click();assert.deepEqual(await task(page),before);
+    await flush(page);await page.reload();assert.deepEqual(await task(page),before);
+  });
+  await run('Failed Planner edits keep the original record and original draft baseline for a safe retry',async page=>{
+    await seed(page);const before=await task(page);
+    await page.evaluate(()=>{window.capturedItem=getPlannerSourceItems()[0];window.capturedDraft=getTaskEditMetadata(window.capturedItem);window.originalStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw new Error('Injected journal failure');};});
+    page.once('dialog',dialog=>dialog.accept());
+    assert.equal(await page.evaluate(()=>updatePlannerTask(window.capturedItem,'Retained replacement',getTodayKey(),window.capturedDraft)),false);
+    assert.deepEqual(await task(page),before);assert.deepEqual(await page.evaluate(()=>window.capturedDraft.base),before);
+    await page.evaluate(()=>LifeDeviceStore.stage=window.originalStage);
+    assert.equal(await page.evaluate(()=>updatePlannerTask(window.capturedItem,'Retained replacement',getTodayKey(),window.capturedDraft)),true);
+    await flush(page);await page.reload();assert.equal((await task(page)).title,'Retained replacement');
   });
   await run('Undo refuses a newer archived task instead of overwriting later edits',async page=>{
     await seed(page);await archive(page);const expected=await task(page);
@@ -112,6 +170,23 @@ async function absent(page) {
     const clocks=await page.evaluate(()=>LifeDeviceStore.pending().map(({entry})=>entry.state.boards[0].cards.find(c=>c.id==='clock-routine').remaining));assert.ok(new Set(clocks).size>1);
     await flush(page);await page.reload();const conflicts=await page.evaluate(()=>state.syncConflicts);assert.equal(conflicts.length,0,JSON.stringify(conflicts));
     assert.equal(await page.evaluate(()=>state.cards.find(c=>c.id==='clock-routine').items[0].done),true);
+  });
+  await run('Published update notice does not reload, overwrite drafts or hide saving conflicts',async page=>{
+    await seed(page);const before=await task(page),fake={id:'bbbbbbbbbbbbbbbb',files:{'index.html':'a'.repeat(64)}};
+    await page.route('**/release.json?*',r=>r.fulfill({json:fake}));
+    await page.evaluate(()=>checkPublishedRelease('aaaaaaaaaaaaaaaa'));await page.getByRole('button',{name:'Update now',exact:true}).waitFor();
+    await page.evaluate(()=>{plannerTaskEditDraft={title:'Full unfinished thought'};});await page.getByRole('button',{name:'Update now',exact:true}).click();
+    await page.getByText('Finish or save your open draft before updating. Your writing has not been changed.',{exact:true}).waitFor();
+    assert.match(await page.locator('#releaseUpdateMessage').innerText(),/save your open draft/);assert.deepEqual(await task(page),before);assert.equal(await page.evaluate(()=>plannerTaskEditDraft.title),'Full unfinished thought');
+    for(const width of [320,390,768,1080]){await page.setViewportSize({width,height:1000});assert.equal(await page.locator('#releaseUpdateNotice').evaluate(e=>e.scrollWidth<=e.clientWidth+1),true);}
+    await page.screenshot({path:out+'/safe-update-notice.png'});
+  });
+  await run('Current or malformed release manifests do not claim an update or modify records',async page=>{
+    await seed(page);const before=await task(page);
+    for(const response of [{id:'aaaaaaaaaaaaaaaa',files:{'index.html':'a'.repeat(64)}},{id:'invalid',files:{}},{id:'bbbbbbbbbbbbbbbb',files:{}}]){
+      await page.route('**/release.json?*',r=>r.fulfill({json:response}));await page.evaluate(()=>{publishedReleaseCheckAt=0;return checkPublishedRelease('aaaaaaaaaaaaaaaa');});
+      assert.equal(await page.locator('#releaseUpdateNotice').count(),0);assert.deepEqual(await task(page),before);await page.unroute('**/release.json?*');
+    }
   });
   fs.writeFileSync(out+'/planner-archive-results.json',JSON.stringify(results,null,2));await browser.close();if(results.some(r=>!r.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exit(1);});

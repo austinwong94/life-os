@@ -1,6 +1,50 @@
-const LIFE_OS_BUILD = '2026.10.12-planner-archive';
+const LIFE_OS_BUILD = '2026.10.12-task-actions';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
+let publishedReleaseCheckAt=0,publishedReleaseCheckInFlight=false;
+
+function loadedReleaseId() {
+  const script=[...document.scripts].find(script=>new URL(script.src || location.href).pathname.endsWith('/daily-workspace.js'));
+  const id=script?new URL(script.src).searchParams.get('v'):'';
+  return /^[a-f0-9]{16}$/.test(id || '')?id:'';
+}
+function canApplyPublishedUpdate() {
+  try{return lastLocalSaveOk && !corruptLocalStateDetected && !isUserEditingCriticalDraft() && !hasUnsubmittedDraftText() && LifeDeviceStore.pending().length===0;}
+  catch{return false;}
+}
+async function applyPublishedUpdate() {
+  await flushDeviceWrites();
+  if(!canApplyPublishedUpdate()){
+    const message=document.getElementById('releaseUpdateMessage');
+    if(message)message.textContent='Finish or save your open draft before updating. Your writing has not been changed.';
+    return false;
+  }
+  // Conflicts are stored records, not permission to discard either version.
+  window.location.reload();return true;
+}
+async function checkPublishedRelease(currentId=loadedReleaseId()) {
+  if(!/^[a-f0-9]{16}$/.test(currentId || '') || publishedReleaseCheckInFlight || Date.now()-publishedReleaseCheckAt<30000)return;
+  publishedReleaseCheckAt=Date.now();publishedReleaseCheckInFlight=true;
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),10000);
+  try{
+    const response=await fetch(new URL('release.json?check='+Date.now(),location.href),{cache:'no-store',signal:controller.signal});
+    if(!response.ok)return;
+    const release=await response.json();
+    if(!/^[a-f0-9]{16}$/.test(release.id || '') || !/^[a-f0-9]{64}$/.test(release.files?.['index.html'] || '') || release.id===currentId)return;
+    if(document.getElementById('releaseUpdateNotice'))return;
+    const notice=planningNode('section','release-update-notice');notice.id='releaseUpdateNotice';notice.setAttribute('aria-label','Website update');
+    const message=planningNode('p','','A newer version of Life OS is available.');message.id='releaseUpdateMessage';message.setAttribute('role','status');
+    notice.append(message,planningButton('Update now',applyPublishedUpdate,'rotate-ccw'));
+    document.querySelector('.workspace-navigation').after(notice);
+  }catch{/* Offline checks must never interrupt recording or saving. */}
+  finally{clearTimeout(timeout);publishedReleaseCheckInFlight=false;}
+}
+function initializePublishedUpdates() {
+  if(PREVIEW_MODE || location.protocol!=='https:' || !loadedReleaseId())return;
+  checkPublishedRelease();setInterval(()=>{if(document.visibilityState==='visible')checkPublishedRelease();},60000);
+  window.addEventListener('focus',()=>checkPublishedRelease());
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')checkPublishedRelease();});
+}
 
 function dailySession() {
   const key = state.activeBoardId;
@@ -87,6 +131,7 @@ function initializeDailyWorkspace() {
   document.getElementById('headerSaveStatus').onclick=openSaveDetails;
   document.getElementById('headerSaveStatus').title=(PREVIEW_MODE?'Preview':'Build')+' '+LIFE_OS_BUILD+' · Saving details';
   renderDailyNavigation();
+  initializePublishedUpdates();
 }
 function renderDailyNavigation() {
   for(const mode of ['today','tasks','calendar'])document.getElementById('mobile'+mode[0].toUpperCase()+mode.slice(1)+'Button')?.setAttribute('aria-pressed',String(state.ui.workspaceMode===mode));
