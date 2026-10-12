@@ -262,6 +262,13 @@ function openRecovery() {
   const body = document.createElement("div"); body.className = "recovery-body";
   const review = renderConflictReview();
   if (review) body.append(review);
+  const retainedTimers=Object.values(state.conflictResolutions || {}).filter(receipt=>receipt.kind==='automatic-timer' && receipt.comparison);
+  if(retainedTimers.length) {
+    const retained=document.createElement('details'),summary=document.createElement('summary'),text=document.createElement('pre');
+    summary.textContent='Retained countdown comparisons ('+retainedTimers.length+')';text.className='conflict-text';
+    text.textContent=JSON.stringify(retainedTimers.map(receipt=>receipt.comparison),null,2);
+    retained.append(summary,text);body.append(retained);
+  }
   const copies = readLocalJsonValue(CLOUD_RECOVERY_KEY, []);
   const info = document.createElement("p");
   info.textContent = copies.length ? "Saved before a restore, deletion, or conflicting edit. Restoring keeps cloud sync paused." : "No recovery copies yet. Your current information can be downloaded in Settings.";
@@ -312,7 +319,7 @@ function getConflictLabel(conflict) {
   const board=state.boards.find(item=>item.id===segments[1]);
   const card=[...(board?.cards || []),...(board?.archivedCards || [])].find(item=>item.id===segments[3]);
   const task=segments[4]==='plannerTasks'?card?.plannerTasks?.find(item=>item.id===segments[5]):null;
-  const labels={name:'Name',title:'Title',description:'Notes',thoughts:'Diary thoughts',sentence:'One sentence',text:'Note',note:'Notes',quoteAuthor:'Author'};
+  const labels={name:'Name',title:'Title',description:'Notes',thoughts:'Diary thoughts',sentence:'One sentence',text:'Note',note:'Notes',quoteAuthor:'Author',targetAt:'Countdown target',duration:'Countdown duration',remaining:'Countdown remaining',runningSince:'Countdown start'};
   const date=segments.find(part=>/^\d{4}-\d{2}-\d{2}$/.test(part)) || task?.dateKey;
   if (conflict.kind==='health-record') {
     const types={'food-item':'Logged food','food-definition':'Food library','food-target':'Nutrition target','fitness-exercise':'Exercise','fitness-part':'Workout','body-metrics':'Body measurements'};
@@ -328,6 +335,19 @@ function renderConflictReview() {
   const heading=document.createElement('h3');heading.textContent='Review changes';
   const status=document.createElement('p');status.className='conflict-review-status';status.textContent=state.syncConflicts.length+' unresolved';status.setAttribute('aria-live','polite');
   section.append(heading,status);
+  const reviewSnapshot=getStateForStorage();
+  const automatic=state.syncConflicts.filter(c=>LifeStateMerge.inspectAutomaticTimerConflict(reviewSnapshot,c).editable);
+  if(automatic.length) {
+    const summary=planningNode('section','recovery-row');
+    summary.append(planningNode('p','',automatic.length+' automatic countdown comparisons. Resolving these keeps every current record unchanged and retains the original comparisons.'));
+    const message=planningNode('p','conflict-message');message.setAttribute('role','status');
+    const button=planningButton('Resolve automatic countdowns',async()=>{
+      button.disabled=true;
+      try{await applyAutomaticTimerChoices(automatic);openRecovery();}
+      catch(error){message.textContent=error.message;button.disabled=false;}
+    });
+    summary.append(button,message);section.append(summary);
+  }
   for(const conflict of state.syncConflicts) {
     const row=document.createElement('article');row.className='conflict-item';
     const title=document.createElement('h4');title.textContent=getConflictLabel(conflict);row.append(title);
@@ -380,7 +400,10 @@ function renderConflictReview() {
     const message=document.createElement('p');message.className='conflict-message';message.setAttribute('role','status');
     if (!inspection.editable) {
       message.textContent='This record needs a full recovery copy. Text-only changes cannot safely restore a deletion, date, or measurement.';
-      row.append(message);section.append(row);continue;
+      const details=document.createElement('details'),summary=document.createElement('summary'),text=document.createElement('pre');
+      summary.textContent='Original comparison';text.className='conflict-text';
+      text.textContent=JSON.stringify({segments:conflict.segments,base:conflict.base,local:conflict.local,remote:conflict.remote},null,2);
+      details.append(summary,text);row.append(message,details);section.append(row);continue;
     }
     let expected=inspection.current;
     const form=document.createElement('form');form.className='conflict-form';
@@ -435,6 +458,22 @@ function renderConflictReview() {
     actions.append(refresh,save);form.append(choices,customLabel,custom,message,actions);row.append(form);section.append(row);
   }
   return section;
+}
+
+async function applyAutomaticTimerChoices(expected) {
+  if(corruptLocalStateDetected || !lastLocalSaveOk || !await flushDeviceWrites())throw new Error('Device saving needs attention. No comparison was resolved.');
+  await LifeDeviceStore.locked(()=>{
+    if(LifeDeviceStore.pending().length)throw new Error('Another edit is still saving. Try again.');
+    if(expected.some(c=>c.source==='cloud' && c.ownerId!==cloudSession?.user?.id))throw new Error('Sign in to the account that created these comparisons.');
+    const saved=readStoredStateSnapshot();if(!saved)throw new Error('The saved copy could not be read. Nothing was replaced.');
+    const next=LifeStateMerge.resolveAutomaticTimerConflicts(saved,expected);
+    if(!LifeStateMerge.equal(saved.boards,next.boards))throw new Error('Record preservation check failed. Nothing was replaced.');
+    // The complete original comparisons travel in the same atomic write as
+    // their receipts; existing recovery copies are not rotated or replaced.
+    if(!writeLocalJson(STORAGE_KEY,next,{silent:true}))throw new Error('The retained comparisons could not be saved. Nothing was resolved.');
+  });
+  if(!await flushDeviceWrites())throw new Error('Review was stored but saving needs attention. Keep this tab open.');
+  if(!state.syncConflicts.length){setSaveStatus('Saved on device, checking cloud','saving');queueCloudSave({immediate:true});}
 }
 
 async function applyConflictTextChoice(conflict,expected,text) {

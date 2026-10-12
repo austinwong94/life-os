@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.13-compact-saves';
+const LIFE_OS_BUILD = '2026.10.13-timer-review';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 let publishedReleaseCheckAt=0,publishedReleaseCheckInFlight=false;

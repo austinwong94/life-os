@@ -143,6 +143,34 @@
   }
 
   const textFields=new Set(['name','title','description','thoughts','sentence','text','note','quoteAuthor']);
+  function inspectAutomaticTimerConflict(snapshot,conflict) {
+    const parts=conflict?.segments,field=locate(snapshot,parts);
+    const scoped=Array.isArray(parts) && parts.length===5 && parts[0]==='boards' && ['cards','archivedCards'].includes(parts[2]);
+    const automatic=field && (field.parent.type==='routine' || field.parent.timerMode==='daily');
+    const key=parts?.at(-1),values=[field?.value,conflict?.base,conflict?.local,conflict?.remote];
+    const valid=value=>key==='targetAt'?typeof value==='string' && Number.isFinite(Date.parse(value)):
+      key==='runningSince'?value===null || Number.isFinite(value) && value>=0:
+      Number.isFinite(value) && value>=0;
+    return {editable:Boolean(scoped && automatic && !conflict.kind && ['targetAt','duration','remaining','runningSince'].includes(key) && values.every(valid)),current:copy(field?.value),field:key};
+  }
+
+  function resolveAutomaticTimerConflicts(snapshot,expected,now=Date.now()) {
+    if(!Array.isArray(expected) || !expected.length || new Set(expected.map(c=>c.id)).size!==expected.length)throw new Error('Select identified automatic timer comparisons.');
+    const next=copy(snapshot);
+    for(const comparison of expected) {
+      const live=(snapshot.syncConflicts || []).find(c=>c.id===comparison.id);
+      if(!live || !equal(live,comparison) || !inspectAutomaticTimerConflict(snapshot,live).editable)throw new Error('A timer comparison changed. Refresh the review; nothing was replaced.');
+      // Only acknowledge clock-derived fields. Every original comparison is
+      // retained, and no board, diary, task, measurement or routine history changes.
+      next.conflictResolutions={...(next.conflictResolutions || {}),[live.id]:{
+        kind:'automatic-timer',resolvedAt:now,source:live.source || 'device',ownerId:live.ownerId,
+        segments:copy(live.segments),base:copy(live.base),remote:copy(live.remote),baseDigest:live.baseDigest,comparison:copy(live)
+      }};
+    }
+    const ids=new Set(expected.map(c=>c.id));next.syncConflicts=next.syncConflicts.filter(c=>!ids.has(c.id));
+    return next;
+  }
+
   function inspectTextConflict(snapshot,conflict) {
     const field=locate(snapshot,conflict?.segments);
     const editable=Boolean(field && textFields.has(field.key) && typeof field.value==='string' && typeof conflict.local==='string' && typeof conflict.remote==='string');
@@ -456,7 +484,7 @@
     next.conflictResolutions={...(next.conflictResolutions || {}),[live.id]:{kind:'money-record',resolvedAt:now,source:live.source || 'device',ownerId:live.ownerId,segments:live.segments,base:live.base,remote:live.remote,baseDigest:live.baseDigest}};
     return next;
   }
-  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,pendingPlannerRemoval,inspectSubtaskConflict,resolveSubtaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,inspectMoneyConflict,resolveMoneyConflict,validActivity,reviewedCloudBaseline,fingerprint};
+  const api = {merge,copy,equal,registerConflicts,inspectAutomaticTimerConflict,resolveAutomaticTimerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,pendingPlannerRemoval,inspectSubtaskConflict,resolveSubtaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,inspectMoneyConflict,resolveMoneyConflict,validActivity,reviewedCloudBaseline,fingerprint};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LifeStateMerge = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

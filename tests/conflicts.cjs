@@ -1,4 +1,4 @@
-const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const URL=process.env.TEST_URL || 'http://127.0.0.1:5180/';
@@ -6,7 +6,7 @@ const OUT=process.env.TEST_OUTPUT || 'test-results';
 fs.mkdirSync(OUT,{recursive:true});
 const results=[];
 (async()=>{
- const browser=await chromium.launch({headless:true});
+ const browser=await (process.env.TEST_BROWSER==='webkit'?webkit:chromium).launch({headless:true});
  async function run(name,fn){
   const context=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
   await context.route('https://**/*',r=>r.fulfill({status:503,body:'No real cloud access in tests'}));
@@ -23,6 +23,28 @@ const results=[];
   state.syncConflicts=LifeStateMerge.registerConflicts(LifeStateMerge.merge(base,getStateForStorage(),remote).conflicts.map(c=>({...c,source:'device'})),{},createId);
   saveState({skipCloud:true});await flushDeviceWrites();openRecovery();return state.syncConflicts[0].id;
  },remoteText);}
+ async function seedTimers(p){return p.evaluate(async()=>{
+   const routine=makeCard({type:'routine',title:'Automatic daily routine'});routine.id='retained-routine';
+   state.cards.push(routine);saveState({skipCloud:true});await flushDeviceWrites();
+   const saved=getStateForStorage(),source=state.cards.find(c=>c.id===routine.id);
+   state.syncConflicts=Array.from({length:112},(_,i)=>({id:'timer-'+i,source:'device',segments:['boards',state.activeBoardId,'cards',routine.id,'duration'],base:100+i,local:200+i,remote:300+i}));
+   saveState({skipCloud:true});await flushDeviceWrites();
+   const before={boards:JSON.stringify(getStateForStorage().boards),comparisons:LifeStateMerge.copy(state.syncConflicts),recovery:localStorage.getItem(CLOUD_RECOVERY_KEY)};
+   openRecovery();return before;
+ });}
+ await run('112 automatic timer comparisons resolve through UI, retain all versions and original records across refresh',async p=>{
+   const before=await seedTimers(p);await p.getByRole('button',{name:'Resolve automatic countdowns',exact:true}).click();
+   await p.getByText('Retained countdown comparisons (112)',{exact:true}).waitFor();
+   await p.reload();const after=await p.evaluate(()=>({boards:JSON.stringify(getStateForStorage().boards),comparisons:Object.values(state.conflictResolutions).filter(r=>r.kind==='automatic-timer').map(r=>r.comparison),recovery:localStorage.getItem(CLOUD_RECOVERY_KEY),unresolved:state.syncConflicts.length}));
+   // Daily hydration changes derived countdowns, but not any recorded fields.
+   const clean=boards=>JSON.parse(boards).map(b=>({...b,cards:b.cards.map(c=>c.id==='retained-routine'?Object.fromEntries(Object.entries(c).filter(([k])=>!['targetAt','duration','remaining','runningSince'].includes(k))):c)}));
+   assert.deepEqual(clean(after.boards),clean(before.boards));assert.deepEqual(after.comparisons,before.comparisons);assert.equal(after.recovery,before.recovery);assert.equal(after.unresolved,0);
+ });
+ await run('failed automatic comparison write retains every pending comparison and existing recovery',async p=>{
+   const before=await seedTimers(p);await p.evaluate(()=>{const write=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key===STORAGE_KEY)throw new DOMException('Full','QuotaExceededError');return write.call(this,key,value);};});
+   await p.getByRole('button',{name:'Resolve automatic countdowns',exact:true}).click();await p.getByText('The retained comparisons could not be saved. Nothing was resolved.',{exact:true}).waitFor();
+   assert.deepEqual(await p.evaluate(()=>({comparisons:state.syncConflicts,recovery:localStorage.getItem(CLOUD_RECOVERY_KEY)})),{comparisons:before.comparisons,recovery:before.recovery});
+ });
  await run('review keeps both versions, applies one text field, and preserves other boards',async p=>{
   await seed(p);assert.equal(await p.getByRole('button',{name:'Save choice',exact:true}).isDisabled(),true);
   await p.getByText('Other tab version',{exact:true}).click();await p.getByRole('button',{name:'Save choice',exact:true}).click();await p.getByText(/Choice saved\./).waitFor();

@@ -2,6 +2,35 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const M=require('../state-merge.js');
 const copy=M.copy;
+function timerFixture(){
+ const card={id:'routine',type:'routine',timerMode:'daily',targetAt:'2026-10-14T00:00:00.000Z',duration:12000,remaining:12000,runningSince:null,items:[{id:'step',text:'Keep this',done:true}],history:{'2026-10-12':{done:2}}};
+ const conflicts=Array.from({length:112},(_,i)=>({id:'timer-'+i,source:'device',segments:['boards','board','cards','routine','remaining'],base:100+i,local:200+i,remote:300+i}));
+ return {boards:[{id:'board',cards:[card,{id:'diary',type:'diary',diaryEntries:{'2026-10-12':{thoughts:'Every original word\n第二行'}}},{id:'planner',plannerTasks:[{id:'task',title:'Original task',done:true,completedOn:'2026-10-12'}]}]}],syncConflicts:conflicts,conflictResolutions:{earlier:{resolvedAt:1}}};
+}
+test('112 automatic timer acknowledgements preserve every board byte and original comparison',()=>{
+ const before=timerFixture(),next=M.resolveAutomaticTimerConflicts(before,before.syncConflicts,500);
+ assert.deepEqual(next.boards,before.boards);assert.equal(next.syncConflicts.length,0);
+ assert.deepEqual(next.conflictResolutions.earlier,before.conflictResolutions.earlier);
+ for(const c of before.syncConflicts)assert.deepEqual(next.conflictResolutions[c.id].comparison,c);
+ assert.equal(before.syncConflicts.length,112);assert.deepEqual(M.registerConflicts(before.syncConflicts,next.conflictResolutions),[]);
+});
+test('automatic timer review refuses history, manual timers, tasks, deleted cards and unsafe paths',()=>{
+ const f=timerFixture(),c=f.syncConflicts[0];
+ for(const segments of [['boards','board','cards','routine','history'],['boards','board','cards','diary','remaining'],['boards','board','cards','planner','remaining'],['boards','board','cards','missing','remaining'],['boards','board','__proto__','routine','remaining']])assert.equal(M.inspectAutomaticTimerConflict(f,{...c,segments}).editable,false);
+ f.boards[0].cards[0].type='minutes';f.boards[0].cards[0].timerMode='hours';assert.equal(M.inspectAutomaticTimerConflict(f,c).editable,false);
+});
+test('automatic timer review rejects stale comparisons and never resolves real writing conflicts',()=>{
+ const f=timerFixture(),expected=copy(f.syncConflicts);f.syncConflicts[0].remote=999;
+ assert.throws(()=>M.resolveAutomaticTimerConflicts(f,expected),/comparison changed/);
+ f.syncConflicts=copy(expected);const text={id:'writing',segments:['boards','board','cards','diary','diaryEntries','2026-10-12','thoughts'],base:'Old',local:'Current',remote:'Other'};f.syncConflicts.push(text);
+ const next=M.resolveAutomaticTimerConflicts(f,expected);assert.deepEqual(next.syncConflicts,[text]);assert.deepEqual(next.boards,f.boards);
+});
+test('automatic timer classification validates numeric values and target dates before acknowledgement',()=>{
+ const f=timerFixture(),c=f.syncConflicts[0];
+ for(const value of ['123',-1,null,{value:123}])assert.equal(M.inspectAutomaticTimerConflict(f,{...c,remote:value}).editable,false);
+ const target={...c,segments:c.segments.slice(0,-1).concat('targetAt'),base:'2026-10-12T00:00:00Z',local:'2026-10-13T00:00:00Z',remote:'2026-10-14T00:00:00Z'};
+ assert.equal(M.inspectAutomaticTimerConflict(f,target).editable,true);assert.equal(M.inspectAutomaticTimerConflict(f,{...target,remote:'not a date'}).editable,false);
+});
 function fixture(){
  const base={boards:[{id:'board.with.dots',name:'Personal',cards:[{id:'diary',type:'diary',diaryEntries:{'2026-09-08':{thoughts:'Original',sentence:'Keep this',updatedAt:1}}}]},{id:'other',name:'Work',cards:[]}]};
  const local=copy(base),remote=copy(base);
