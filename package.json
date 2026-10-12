@@ -13,6 +13,7 @@
     "test:catalogue": "node tests/catalogue.cjs",
     "test:capture": "node tests/capture.cjs",
     "test:planner-review": "node tests/planner-review.cjs",
+    "test:planner-archive": "node tests/planner-archive.cjs",
     "test:health-review": "node tests/health-review.cjs",
     "test:responsive": "node tests/responsive.cjs",
     "test:conflicts": "node tests/conflicts.cjs",

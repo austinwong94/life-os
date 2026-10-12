@@ -6729,16 +6729,26 @@ async function deletePlannerTask(item) {
 }
 
 function archivePlannerTask(item) {
-  if (!item?.card || !item.taskId) return;
-  const card = resolveLiveCard(item.card);
+  if (!item?.card || !item.taskId) return false;
+  let card,before,ref;
+  try{ref=taskSubtaskRef(item);const live=resolveSubtaskParent(ref);card=live.card;before=LifeStateMerge.copy(live.target);}
+  catch(error){setSaveStatus(error.message,'error');return false;}
+  const previousTime=card.updatedAt;
   const task = LifePlanner.change(card, item.taskId, {archivedAt: Date.now()});
-  if (!task) return;
   LifePlanner.project(card);
-  saveState();
+  card.updatedAt=Date.now();
+  if(!saveState()){
+    const tasks=LifePlanner.ensure(card);tasks.splice(tasks.findIndex(t=>t.id===item.taskId),1,before);
+    if(previousTime===undefined)delete card.updatedAt;else card.updatedAt=previousTime;
+    LifePlanner.project(card);syncActiveBoard({touchBoard:false});renderCardsOnly({force:true});
+    setSaveStatus('Archive was not saved. Your task is still available. Please retry.','error');return false;
+  }
+  const after=LifeStateMerge.copy(task);
   renderCardsOnly({force: true});
   showUndoToast({message: "Task archived. Find it in Archive.", onUndo: () => {
-    restorePlannerTask(card.id, task.id);
+    restorePlannerTask(card.id, task.id, {boardId:ref.boardId,expected:after});
   }});
+  return true;
 }
 
 function removePlannerTaskAcrossEntries(item) {
@@ -6920,8 +6930,8 @@ function formatPlannerDate(dateKey) {
 
 function getPlannerScheduleItems(plannerCard) {
   normalizePlannerCard(plannerCard);
-  return LifePlanner.ensure(plannerCard).filter(LifePlanner.active).map(task => ({
-    ...task, taskId: task.id, source: "Planner", group: task.area ?? getPlannerGroup(plannerCard),
+  return LifePlanner.ensure(plannerCard).filter(task=>LifePlanner.active(task) && !LifeStateMerge.pendingPlannerRemoval(state,state.activeBoardId,plannerCard.id,task)).map(task => ({
+    ...task, boardId:state.activeBoardId, taskId: task.id, source: "Planner", group: task.area ?? getPlannerGroup(plannerCard),
     isCarryover: false, carryoverFrom: "", priority: task.priority || "normal"
   })).sort(sortPlannerScheduleItems);
 }

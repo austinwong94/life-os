@@ -2,6 +2,12 @@
 
 Updated: 12 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
 
+## October 12 Planner Archive Repair Candidate
+
+Reproduced an archive being implicitly restored by a stale tab's rename/completion after queued writes merged. Planner lifecycle conflicts now retain a whole archive/removal version until explicit review, preserve both competing histories, and do not treat an unrelated edit as Restore. Previously stored/cloud active-versus-archive conflicts are excluded from active Planner/Tasks/Calendar views without rewriting the original versions; Archive offers Review versions. Explicit Restore remains available.
+
+Archive/Restore now roll back failed journal writes and guard captured board IDs and exact Undo versions. New regression coverage exercises immediate refresh, both competing write orders, completion history, existing conflict recovery, failed saves/retry and phone/portrait task menus. Unit checks: 146 passing; focused archive scenarios: 11 passing in Chromium and 11 in WebKit. Full exact-artifact verification and publication are pending. Existing personal records and the unresolved conflict queue have not been cleared or automatically resolved. Mixed older tabs require saving open writing and refreshing before use.
+
 ## October 12 Money Published
 
 Release `2deb81c3270695be` is live. [Workflow 38224448536](https://github.com/austinwong94/life-os/actions/runs/38224448536) passed **512 checks** (139 unit, 373 browser scenarios/repeats) and deployed the exact tested package. The public manifest, 24 file hashes and 23 startup asset versions were verified. Earlier width failures blocked deployment until the native forecast selector was correctly sized; no assertion was weakened.

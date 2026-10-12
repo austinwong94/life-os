@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.12-money';
+const LIFE_OS_BUILD = '2026.10.12-planner-archive';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 

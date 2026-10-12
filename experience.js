@@ -199,19 +199,31 @@ function isValidBackup(parsed) {
   return Array.isArray(data.cards) && (!data.archivedCards || Array.isArray(data.archivedCards)) && uniqueCards([...data.cards, ...(data.archivedCards || [])]);
 }
 
-function restorePlannerTask(cardId, taskId) {
-  const card = getPlannerSourceCards().find(item => item.id === cardId);
-  if (!card) return;
+function restorePlannerTask(cardId, taskId, options = {}) {
+  if(options.boardId && options.boardId!==state.activeBoardId){setSaveStatus('This task belongs to another board. Restore it from that board.','error');return false;}
+  const cards=getPlannerSourceCards().filter(item=>item.id===cardId),card=cards.length===1?cards[0]:null;
+  const tasks=card?LifePlanner.ensure(card):[],matches=tasks.filter(task=>task.id===taskId),task=matches.length===1?matches[0]:null;
+  if(!task || !(task.archivedAt || task.deletedAt) || options.expected && !LifeStateMerge.equal(task,options.expected)){setSaveStatus('This task changed. Reopen Archive before restoring it.','error');return false;}
+  const before=LifeStateMerge.copy(task),previousTime=card.updatedAt;
   LifePlanner.change(card, taskId, {archivedAt: 0, deletedAt: 0});
-  LifePlanner.project(card);
-  saveState(); renderCardsOnly({force: true}); renderRecordsModal();
+  LifePlanner.project(card);card.updatedAt=Date.now();
+  if(!saveState()){
+    tasks.splice(tasks.findIndex(t=>t.id===taskId),1,before);
+    if(previousTime===undefined)delete card.updatedAt;else card.updatedAt=previousTime;
+    LifePlanner.project(card);syncActiveBoard({touchBoard:false});renderCardsOnly({force:true});renderRecordsModal();
+    setSaveStatus('Restore was not saved. The archived task was kept. Please retry.','error');return false;
+  }
+  renderCardsOnly({force: true}); renderRecordsModal();return true;
 }
 
 function renderArchivedPlannerTasks() {
   const search = String(elements.recordsSearch.value || "").toLowerCase();
   const filters = getArchiveFilters();
-  const items = getPlannerSourceCards().flatMap(card => LifePlanner.ensure(card)
-    .filter(task => task.archivedAt || task.deletedAt).map(task => ({card, task})))
+  const boardId=state.activeBoardId;
+  const items = getPlannerSourceCards().flatMap(card => LifePlanner.ensure(card).map(current=>{
+    const pending=LifeStateMerge.pendingPlannerRemoval(state,boardId,card.id,current);
+    return {card,current,task:pending || current,pending:Boolean(pending)};
+  }).filter(({task})=>task.archivedAt || task.deletedAt))
     .filter(({task}) => !search || task.title.toLowerCase().includes(search))
     .filter(({card,task}) => (filters.type==='all' || filters.type==='planner') && (filters.area==='all' || card.category===filters.area) && matchesArchiveDateFilter({archivedAt:task.deletedAt || task.archivedAt},filters.date))
     .sort((a, b) => (b.task.deletedAt || b.task.archivedAt) - (a.task.deletedAt || a.task.archivedAt));
@@ -220,15 +232,16 @@ function renderArchivedPlannerTasks() {
   section.className = "archived-task-section";
   const heading = document.createElement("h3"); heading.textContent = "Planner tasks";
   section.append(heading);
-  items.forEach(({card, task}) => {
+  items.forEach(({card, task, current, pending}) => {
     const row = document.createElement("div"); row.className = "archived-task-row";
     const copy = document.createElement("div");
     const title = document.createElement("strong"); title.textContent = task.title;
     const detail = document.createElement("small");
-    detail.textContent = task.dateKey + " · " + (task.deletedAt ? "Removed" : "Archived") + " · " + (task.done ? "Completed " + (task.completedOn || "(date unknown)") : "Unfinished");
+    detail.textContent = task.dateKey + " · " + (task.deletedAt ? "Removed" : "Archived") + " · " + (task.done ? "Completed " + (task.completedOn || "(date unknown)") : "Unfinished") + (pending?" · Conflicting edit needs review":"");
     copy.append(title, detail);
     const restore = document.createElement("button"); restore.type = "button"; restore.className = "secondary-action";
-    restore.textContent = "Restore"; restore.addEventListener("click", () => restorePlannerTask(card.id, task.id));
+    const expected=LifeStateMerge.copy(current);
+    restore.textContent = pending?"Review versions":"Restore"; restore.addEventListener("click", () => pending?openRecovery():restorePlannerTask(card.id, task.id,{boardId,expected}));
     row.append(copy, restore); section.append(row);
   });
   return section;

@@ -104,7 +104,7 @@ function taskAreaOptions(extra = "") {
 }
 function workspaceTaskBoard() {return {id:state.activeBoardId,cards:state.cards};}
 function taskSubtaskRef(item) {
-  return item.sourceKind==='card' ? {...item.ref} : {boardId:state.activeBoardId,cardId:item.card.id,kind:'planner',itemId:item.taskId};
+  return item.sourceKind==='card' ? {...item.ref} : {boardId:item.boardId || state.activeBoardId,cardId:item.card.id,kind:'planner',itemId:item.taskId};
 }
 function resolveSubtaskParent(ref) {
   if(ref.boardId!==state.activeBoardId)throw new Error('This checklist belongs to another board. Your draft was kept.');

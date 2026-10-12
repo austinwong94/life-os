@@ -210,6 +210,23 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   await p.getByLabel('Apply this version to this task only.',{exact:true}).check();
   await p.getByRole('button',{name:'Save task version',exact:true}).click();await p.getByText(/Task version saved/).waitFor();
  }
+ await run('cloud archive versus a stale device rename stays absent after reload and keeps both task versions',async context=>{
+  const {a,b,backend}=await setupPlanner(context);
+  await a.evaluate(async()=>{archivePlannerTask(getPlannerSourceItems().find(t=>t.taskId==='sync-review-task'));await flushDeviceWrites();await pushCloudState({manual:true});});
+  await b.evaluate(async()=>{const c=getPlannerSourceCards().find(c=>c.id==='sync-review-source');LifePlanner.change(c,'sync-review-task',{title:'Stale device rename'});LifePlanner.project(c);saveState({skipCloud:true});await flushDeviceWrites();await pushCloudState({manual:true});});
+  assert.equal(backend.writes,1);assert.equal(await b.evaluate(()=>state.syncConflicts[0]?.kind),'planner-task');
+  await b.reload();assert.equal(await b.evaluate(()=>getPlannerSourceItems().filter(t=>t.taskId==='sync-review-task').length),0);
+  const original=await b.evaluate(()=>getPlannerSourceCards().find(c=>c.id==='sync-review-source').plannerTasks[0]);assert.equal(original.title,'Stale device rename');assert.equal(original.archivedAt,0);
+  assert.match(await b.evaluate(()=>renderArchivedPlannerTasks().innerText),/Review versions/);
+  const versions=await b.evaluate(()=>state.syncConflicts[0]);assert.ok(versions.remote.archivedAt);assert.equal(versions.local.title,'Stale device rename');
+  assert.ok(backend.state.boards[0].cards.find(c=>c.id==='sync-review-source').plannerTasks[0].archivedAt);
+  await b.evaluate(user=>{cloudSession={user:{id:user},access_token:'synthetic-test-token',expires_at:Date.now()+3600000};cloudSaveEnabled=false;openRecovery();},user);
+  await b.getByRole('radio',{name:'Cloud version at conflict',exact:true}).check();await b.getByLabel('Apply this version to this task only.',{exact:true}).check();
+  await b.getByRole('button',{name:'Save task version',exact:true}).click();await b.getByText(/Task version saved/).waitFor();await b.evaluate(()=>pushCloudState({manual:true}));
+  assert.equal(backend.writes,2);assert.equal(await b.evaluate(()=>state.syncConflicts.length),0);
+  assert.ok(backend.state.boards[0].cards.find(c=>c.id==='sync-review-source').plannerTasks[0].archivedAt);
+  await b.reload();assert.equal(await b.evaluate(()=>getPlannerSourceItems().filter(t=>t.taskId==='sync-review-task').length),0);
+ });
  await run('cloud planner history conflict pauses upload, survives reload, and resumes after whole-task review',async context=>{
   const {a,b,backend}=await setupPlanner(context);await plannerConflict(a,b);assert.equal(backend.writes,1);
   const before=clone(backend.state.boards.find(board=>board.id==='work'));

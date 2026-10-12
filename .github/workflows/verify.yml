@@ -26,6 +26,14 @@ jobs:
         run: npm run build
       - name: Start isolated preview
         run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-server.log 2>&1 &
+      - run: npm run test:planner-archive
+        env:
+          TEST_OUTPUT: test-results/planner-archive
+      - name: Check planner archive persistence in WebKit
+        run: npm run test:planner-archive
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/planner-archive-webkit
       - run: npm run test:money
         env:
           TEST_OUTPUT: test-results/money

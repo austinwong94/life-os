@@ -4,6 +4,12 @@ Latest assessment: [22 September structure and usability review](PLATFORM-REASSE
 
 Updated: 12 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
 
+## October 12: Planner Archive Repair Candidate
+
+Build `2026.10.12-planner-archive`. A reproduced stale-tab edit could reactivate an archived task during snapshot conflict merging. Lifecycle-changing Planner versions now remain coherent and archived/removed pending explicit review. Existing saved/cloud conflicts are read without changing their payloads; pending removals no longer leak into active task, day, upcoming or Calendar views, and remain discoverable in Archive. Explicit whole-version review can intentionally retain either version; nothing automatically deletes competing notes or completion histories.
+
+Failed archive/restore journal writes roll back, and captured Undo/Restore actions are guarded against another board or a newer task version. Added 7 unit checks and 11 browser scenarios repeated in Chromium/WebKit; all 146 unit checks and both focused browser runs pass locally. The CI gate includes these regressions plus the existing save, recovery, diary, task, health, Money and responsive suites. Full packaged release verification/deployment is pending. No production data, Supabase schema, policies or credentials were changed; unresolved existing conflicts are not auto-selected or purged. Refresh older clients after saving open writing; physical-device/live-account acceptance and a zero-bug guarantee are not claimed.
+
 ## October 12: Money Publication Confirmed
 
 Published build `2026.10.12-money`, release `2deb81c3270695be`, source commit `954f6ee9d58e79e2ede103dc92479b18739bb3ff`. [Workflow 38224448536](https://github.com/austinwong94/life-os/actions/runs/38224448536) passed **512 checks**: 139 unit checks and 373 browser scenarios/repeats. Verification and the dependent Pages deployment both succeeded. The live release manifest, all 24 public file hashes and all 23 startup asset versions match the tested package. [Open Money-ready Life OS](https://austinwong94.github.io/life-os/?v=2deb81c3270695be).

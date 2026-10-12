@@ -11,6 +11,47 @@ function fixture() {
   return {base,local:M.copy(base),remote:M.copy(base)};
 }
 const source=s=>s.boards[0].cards[0];
+for(const lifecycle of ['archivedAt','deletedAt'])for(const edit of ['rename','complete']) {
+  test(`${lifecycle} cannot be implicitly restored by a stale ${edit} in either merge order`,()=>{
+    const f=fixture();P.change(source(f.local),'task.with.dots',{[lifecycle]:now},now);
+    if(edit==='rename')P.change(source(f.remote),'task.with.dots',{title:'New wording'},now+1);
+    else P.complete(source(f.remote),'task.with.dots','2026-09-08',now+1);
+    for(const [local,remote] of [[f.local,f.remote],[f.remote,f.local]]){
+      const merged=M.merge(f.base,local,remote),kept=source(merged).plannerTasks[0];
+      assert.deepEqual(kept,source(f.local).plannerTasks[0]);assert.equal(merged.conflicts[0].kind,'planner-task');
+      const snapshot={...merged,syncConflicts:M.registerConflicts(merged.conflicts)};
+      assert.deepEqual(M.pendingPlannerRemoval(snapshot,'personal.with.dots','planner.with.dots',kept),kept);
+      assert.deepEqual(source(merged).plannerTasks[1],source(f.base).plannerTasks[1]);
+    }
+  });
+}
+test('explicit restoration remains a complete reviewable version, not mistaken for a stale rename',()=>{
+  const f=fixture();P.change(source(f.base),'task.with.dots',{archivedAt:now},now);
+  f.local=M.copy(f.base);f.remote=M.copy(f.base);
+  P.change(source(f.local),'task.with.dots',{archivedAt:0},now+1);
+  P.change(source(f.remote),'task.with.dots',{title:'Renamed while archived'},now+2);
+  for(const [local,remote] of [[f.local,f.remote],[f.remote,f.local]]){
+    const merged=M.merge(f.base,local,remote);assert.deepEqual(source(merged).plannerTasks[0],source(f.local).plannerTasks[0]);
+    assert.equal(M.pendingPlannerRemoval({...merged,syncConflicts:merged.conflicts},'personal.with.dots','planner.with.dots',source(merged).plannerTasks[0]),undefined);
+  }
+});
+test('older stored conflicts hide only the exact pending removal and preserve all versions for explicit review',()=>{
+  const f=fixture();P.change(source(f.local),'task.with.dots',{title:'Stale edit'},now);
+  P.change(source(f.remote),'task.with.dots',{archivedAt:now+1},now+1);
+  f.local.syncConflicts=M.registerConflicts(M.merge(f.base,f.local,f.remote).conflicts);
+  const before=M.copy(f.local),task=source(f.local).plannerTasks[0];
+  assert.deepEqual(M.pendingPlannerRemoval(f.local,'personal.with.dots','planner.with.dots',task),source(f.remote).plannerTasks[0]);
+  for(const [board,card,current] of [['work','planner.with.dots',task],['personal.with.dots','other',task],['personal.with.dots','planner.with.dots',{...task,title:'A newer record'}]])assert.equal(M.pendingPlannerRemoval(f.local,board,card,current),undefined);
+  assert.deepEqual(f.local,before);
+  const conflict=f.local.syncConflicts[0],chosen=M.resolvePlannerTaskConflict(f.local,conflict,task,conflict.local,now+3);
+  assert.equal(M.pendingPlannerRemoval(chosen,'personal.with.dots','planner.with.dots',source(chosen).plannerTasks[0]),undefined);
+  assert.equal(chosen.syncConflicts.length,0);assert.equal(source(chosen).plannerTasks[0].archivedAt,0);
+});
+test('unreviewable or mismatched archive conflicts never hide a task by guessing',()=>{
+  const f=fixture();P.change(source(f.local),'task.with.dots',{title:'Stale'},now);P.change(source(f.remote),'task.with.dots',{archivedAt:now+1},now+1);
+  const conflict=M.merge(f.base,f.local,f.remote).conflicts[0],task=source(f.local).plannerTasks[0];
+  for(const bad of [null,{...conflict,base:undefined},{...conflict,remote:{...conflict.remote,legacyNeedsReview:true}},{...conflict,segments:['boards','__proto__']},{...conflict,remote:{...conflict.remote,id:'different'}}])assert.equal(M.pendingPlannerRemoval({...f.local,syncConflicts:[bad]},'personal.with.dots','planner.with.dots',task),undefined);
+});
 function conflicting(f) {
   P.complete(source(f.local),'task.with.dots','2026-09-07',now);
   P.change(source(f.remote),'task.with.dots',{dateKey:'2026-09-15'},now+1);

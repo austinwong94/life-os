@@ -10,6 +10,17 @@
     path.every(key => typeof key === 'string' && key && !unsafeKeys.has(key));
   const taskContent = task => object(task) ? Object.fromEntries(Object.entries(task).filter(([key]) => key !== 'updatedAt')) : task;
   const taskStructure = task => object(task) ? Object.fromEntries(Object.entries(taskContent(task)).filter(([key]) => !['title','subtasks'].includes(key))) : task;
+  function plannerConflictVersion(base,local,remote) {
+    const valid=task=>object(task) && ['archivedAt','deletedAt'].every(key=>Number.isSafeInteger(task[key]) && task[key]>=0);
+    if(![base,local,remote].every(valid))return local;
+    const lifecycle=task=>[task.archivedAt,task.deletedAt];
+    const localChanged=!equal(lifecycle(base),lifecycle(local)),remoteChanged=!equal(lifecycle(base),lifecycle(remote));
+    // A stale rename or completion is not an instruction to restore a task.
+    // Keep a whole lifecycle-changing version visible until explicit review.
+    if(localChanged!==remoteChanged)return localChanged?local:remote;
+    if(localChanged && !equal(lifecycle(local),lifecycle(remote)))return local.archivedAt || local.deletedAt?local:remote;
+    return local;
+  }
   function healthRecordType(path) {
     if (!Array.isArray(path) || path[0]!=='boards' || !['cards','archivedCards'].includes(path[2]) ||
         path.some(key=>typeof key!=='string' || !key || unsafeKeys.has(key))) return null;
@@ -64,7 +75,7 @@
         // synthesize a third history from two independently edited versions.
         if (!equal(taskStructure(b),taskStructure(l)) || !equal(taskStructure(b),taskStructure(r))) {
           conflicts.push({kind:'planner-task',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
-          return copy(l);
+          return copy(plannerConflictVersion(b,l,r));
         }
       }
       if (keyed(l) && keyed(r) && (b === undefined || keyed(b))) {
@@ -228,6 +239,18 @@
     const editable=Boolean(conflict?.kind==='planner-task' && location &&
       [location.task,conflict.local,conflict.remote].every(task=>reviewableTask(task,conflict.segments[5])));
     return {editable,current:copy(location?.task)};
+  }
+
+  function pendingPlannerRemoval(snapshot,boardId,cardId,task) {
+    for(const conflict of snapshot.syncConflicts || []) {
+      const parts=conflict?.segments;
+      if(conflict?.kind!=='planner-task' || !plannerPath(parts) || parts[1]!==boardId || parts[3]!==cardId || parts[5]!==task.id ||
+        ![conflict.base,conflict.local,conflict.remote].every(record=>reviewableTask(record,task.id)) ||
+        ![conflict.local,conflict.remote].some(record=>equal(record,task)))continue;
+      const preferred=plannerConflictVersion(conflict.base,conflict.local,conflict.remote);
+      if(preferred.archivedAt || preferred.deletedAt)return copy(preferred);
+    }
+    return undefined;
   }
 
   function locateHealthRecord(snapshot,segments) {
@@ -428,7 +451,7 @@
     next.conflictResolutions={...(next.conflictResolutions || {}),[live.id]:{kind:'money-record',resolvedAt:now,source:live.source || 'device',ownerId:live.ownerId,segments:live.segments,base:live.base,remote:live.remote,baseDigest:live.baseDigest}};
     return next;
   }
-  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectSubtaskConflict,resolveSubtaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,inspectMoneyConflict,resolveMoneyConflict,validActivity,reviewedCloudBaseline,fingerprint};
+  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,pendingPlannerRemoval,inspectSubtaskConflict,resolveSubtaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,inspectMoneyConflict,resolveMoneyConflict,validActivity,reviewedCloudBaseline,fingerprint};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LifeStateMerge = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
