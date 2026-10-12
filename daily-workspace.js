@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.12-task-actions';
+const LIFE_OS_BUILD = '2026.10.13-compact-saves';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 let publishedReleaseCheckAt=0,publishedReleaseCheckInFlight=false;
@@ -150,6 +150,12 @@ function openSaveDetails() {
     add('Last device write',deviceSavedAt?formatRecordDateTime(deviceSavedAt):'No write recorded in this tab yet');
     let pending;try{pending=LifeDeviceStore.pending().length;}catch{}
     add('Pending device copies',pending===undefined?'Unable to read':String(pending));
+    try{
+      const storage=LifeDeviceStore.diagnostics(),mb=bytes=>(bytes/1048576).toFixed(2)+' MB';
+      add('Browser storage used (estimate)',mb(storage.totalBytes));
+      add('Pending copy storage',mb(storage.pendingBytes));
+      if(lastDeviceSaveError)add('Last device save issue',deviceSaveFailureReason()+' '+formatRecordDateTime(lastDeviceSaveError.at));
+    }catch{add('Browser storage','Access unavailable');}
     const signedIn=Boolean(cloudSession?.user?.id);
     add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':cloudConflictPending?'Paused - review conflicting changes':isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled':'Sync paused');
     add('Last known cloud version',getKnownCloudUpdatedAt()?formatRecordDateTime(getKnownCloudUpdatedAt()):'No cloud version confirmed');

@@ -749,5 +749,5 @@ function commitDeviceWrites(entries) {
 
 async function flushDeviceWrites() {
   try {return await LifeDeviceStore.flush() !== false && lastLocalSaveOk;}
-  catch(error) {setSaveStatus("Pending copy kept - saving needs attention", "error"); renderCloudStatus(error.message); return false;}
+  catch(error) {lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};setSaveStatus("Pending copy kept - saving needs attention", "error"); renderCloudStatus(error.message); return false;}
 }

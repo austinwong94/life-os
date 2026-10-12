@@ -65,6 +65,48 @@ async function absent(page) {
     await page.locator('#recordsModalCloseButton').click();await flush(page);await page.reload();const after=await task(page);
     for(const key of ['id','title','dateKey','originalDateKey','done','completedAt','createdAt'])assert.deepEqual(after[key],before[key]);assert.equal(after.archivedAt,0);
   });
+  await run('Native browser quota rejects the old full-copy journal but compact Archive survives reload without clearing other records',async page=>{
+    await seed(page);
+    const before=await page.evaluate(async()=>{
+      const diary=makeCard({type:'diary',title:'Large retained diary'});diary.id='quota-diary';
+      diary.diaryEntries=Object.fromEntries(Array.from({length:365},(_,i)=>[getTodayKey(addDays(new Date('2025-01-01T12:00:00'),i)),{thoughts:('Meaningful original diary '+i+'\nKeep every word. ').repeat(18),sentence:'Original sentence',feeling:'neutral',updatedAt:1000+i}]));
+      state.cards.push(diary);saveState({skipCloud:true});await flushDeviceWrites();
+      const snapshot=getStateForStorage();localStorage.setItem(CLOUD_RECOVERY_KEY,JSON.stringify([{id:'retained-copy',reason:'original',state:snapshot}]));
+      const oldEntry=JSON.stringify({base:snapshot,state:snapshot,savedAt:Date.now(),writerId:'legacy',sequence:1});
+      const key=LifeStorageScope.key('quota-test-other-records');let padding='';
+      for(const step of [1048576,131072,16384]){
+        while(true){try{localStorage.setItem(key,padding+'x'.repeat(step));padding+='x'.repeat(step);}catch(e){if(e.name!=='QuotaExceededError')throw e;break;}}
+      }
+      // Leave enough capacity for the compact journal and the slightly larger
+      // committed snapshot, but not two full uncompressed histories.
+      padding=padding.slice(0,Math.max(0,padding.length-180000));localStorage.setItem(key,padding);
+      let rejected=false;try{localStorage.setItem(LifeDeviceStore.legacyPrefix+'quota-probe',oldEntry);}catch(e){if(e.name!=='QuotaExceededError')throw e;rejected=true;}
+      if(!rejected)throw new Error('The old journal unexpectedly fit; the native quota test did not reproduce pressure.');
+      return {diary:JSON.stringify(diary.diaryEntries),recovery:localStorage.getItem(CLOUD_RECOVERY_KEY),paddingLength:padding.length};
+    });
+    await workspace(page,'tasks');await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).click();
+    await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Archive',exact:true}).click();
+    assert.ok((await task(page)).archivedAt);await flush(page);await page.reload();await absent(page);
+    const after=await page.evaluate(()=>({diary:JSON.stringify(state.cards.find(c=>c.id==='quota-diary').diaryEntries),recovery:localStorage.getItem(CLOUD_RECOVERY_KEY),paddingLength:localStorage.getItem(LifeStorageScope.key('quota-test-other-records')).length,pending:LifeDeviceStore.pending().length}));
+    assert.deepEqual({...after,pending:undefined},{...before,pending:undefined});assert.equal(after.pending,0);
+    assert.equal(await page.evaluate(()=>restorePlannerTask('archive-source','archive-task')),true);await flush(page);await page.reload();assert.equal((await task(page)).archivedAt,0);
+  });
+  await run('Interrupted archive replay retains all previously unresolved comparisons',async page=>{
+    await seed(page);
+    const retained=await page.evaluate(async()=>{
+      const conflict={id:'existing-comparison',path:'boards.archive-board.name',segments:['boards','archive-board','name'],base:'Original',local:'Local name',remote:'Other name',source:'device'};
+      state.syncConflicts=[conflict];saveState({skipCloud:true});await flushDeviceWrites();
+      LifeDeviceStore.configure(()=>false);return conflict;
+    });
+    assert.equal(await archive(page),true);
+    await page.evaluate(()=>{
+      const remote=JSON.parse(localStorage.getItem(STORAGE_KEY)),source=remote.boards[0].cards.find(c=>c.id==='archive-source');
+      LifePlanner.change(source,'archive-task',{title:'Uncommitted competing rename'});LifePlanner.project(source);localStorage.setItem(STORAGE_KEY,JSON.stringify(remote));
+    });
+    await page.reload();await absent(page);
+    assert.ok(await page.evaluate(record=>state.syncConflicts.some(c=>LifeStateMerge.equal(c,record)),retained));
+    assert.ok(await page.evaluate(()=>state.syncConflicts.some(c=>c.kind==='planner-task')));
+  });
   await run('All tasks Delete requires confirmation, never ticks completion and remains recoverable',async page=>{
     const before=await seed(page);await workspace(page,'tasks');await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).click();
     const openDelete=async()=>{await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Delete',exact:true}).click();};

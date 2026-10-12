@@ -12,6 +12,7 @@
   "subtask-store.js",
   "money-store.js",
   "state-merge.js",
+  "lz-string.js",
   "device-store.js",
   "restore-review.js",
   "note-actions.js",

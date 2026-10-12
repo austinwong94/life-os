@@ -33,6 +33,7 @@ const CLOUD_RECOVERY_KEY = LifeStorageScope.key("life-os-cloud-recovery");
 const CLOUD_BASE_KEY = LifeStorageScope.key("life-os-cloud-base-v2");
 const CLOUD_TABLE_MISSING_MESSAGE = "Cloud storage is unavailable. Check that the selected Supabase project exposes the user_states table and allows your account to access its own row. Your local data has not been deleted.";
 const LOCAL_CLIENT_KEY = LifeStorageScope.key("life-os-client-id");
+let lastDeviceSaveError = null;
 let cloudSession = PREVIEW_MODE ? null : loadCloudSession();
 let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
@@ -1396,7 +1397,7 @@ window.addEventListener("storage", (event) => {
     cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
     if (isRestoreSyncPaused()) {setSaveStatus('Restored on device - cloud paused', 'local'); renderCloudStatus();}
   }
-  if (event.key?.startsWith(LifeDeviceStore.prefix) && event.newValue && !corruptLocalStateDetected) flushDeviceWrites();
+  if (LifeDeviceStore.isPendingKey(event.key) && event.newValue && !corruptLocalStateDetected) flushDeviceWrites();
   if (event.key === STORAGE_KEY) {
     applyExternalStorageState(event.newValue);
   }
@@ -6747,7 +6748,7 @@ function archivePlannerTask(item) {
     const tasks=LifePlanner.ensure(card);tasks.splice(tasks.findIndex(t=>t.id===item.taskId),1,before);
     if(previousTime===undefined)delete card.updatedAt;else card.updatedAt=previousTime;
     LifePlanner.project(card);syncActiveBoard({touchBoard:false});renderCardsOnly({force:true});
-    setSaveStatus('Archive was not saved. Your task is still available. Please retry.','error');return false;
+    setSaveStatus('Archive was not saved. '+deviceSaveFailureReason()+' Your task is still available. Open Saving details.','error');return false;
   }
   const after=LifeStateMerge.copy(task);
   renderCardsOnly({force: true});
@@ -11869,7 +11870,7 @@ function loadState() {
     if (pending.length) {
       const recovered = LifeDeviceStore.replay(stored ? JSON.parse(stored) : pending[0].entry.base);
       localStateSource = "stored";
-      if (recovered.conflicts.length) recovered.state.syncConflicts = recovered.conflicts;
+      if (recovered.conflicts.length) recovered.state.syncConflicts = LifeStateMerge.registerConflicts([...(recovered.state.syncConflicts || []),...recovered.conflicts],recovered.state.conflictResolutions || {},createId);
       return resetBoardViewState(restoreDiaryBackups(rehydrateState(recovered.state)));
     }
     if (!stored) {
@@ -12956,7 +12957,8 @@ function writeLocalJson(key, value, options = {}) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
-  } catch {
+  } catch (error) {
+    lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};
     if (!options.silent && elements.savedState) {
       elements.savedState.textContent = options.message || "Save failed locally";
       elements.savedState.classList.remove("is-saving");
@@ -13465,14 +13467,15 @@ function saveState(options = {}) {
   const snapshot = getStateForStorage();
   try {
     LifeDeviceStore.stage(localMergeBase, snapshot);
+    lastDeviceSaveError = null;
     localMergeBase = snapshot;
     lastLocalSaveOk = true;
     if(touched) deviceSavedAt = Date.now();
     localStateSource = "stored";
     flushDeviceWrites();
-  } catch {lastLocalSaveOk = false;}
-  if (cloudConflictPending) setSaveStatus("Changes need review", "error");
-  else if (!lastLocalSaveOk) setSaveStatus("Not saved on device - export now", "error");
+  } catch (error) {lastLocalSaveOk = false;lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};}
+  if (!lastLocalSaveOk) setSaveStatus("Not saved on device - "+deviceSaveFailureReason(), "error");
+  else if (cloudConflictPending) setSaveStatus("Changes need review", "error");
   else if (isRestoreSyncPaused()) setSaveStatus('Saved on device - cloud paused', 'local');
   else if (touched || !options.quiet) setSaveStatus(cloudSaveEnabled ? "Saved on device, syncing" : "Saved on device", cloudSaveEnabled ? "saving" : "local");
   if (!options.skipCloud && touched && !cloudConflictPending) queueCloudSave({silent: options.quiet});
@@ -13481,6 +13484,12 @@ function saveState(options = {}) {
 
 function persistLocalDraftState() {
   return saveState({quiet: true});
+}
+
+function deviceSaveFailureReason() {
+  if(lastDeviceSaveError?.name==='QuotaExceededError')return 'Browser storage is full.';
+  if(lastDeviceSaveError?.name==='SecurityError')return 'Browser storage access is blocked.';
+  return 'Device saving needs attention.';
 }
 
 function hydrateIcons(root = document) {

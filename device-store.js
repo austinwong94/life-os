@@ -2,26 +2,47 @@
    Web Locks serialize shared writes; an interrupted commit can be replayed. */
 (function(root) {
   'use strict';
-  const prefix = LifeStorageScope.key('life-os-pending-v2:');
+  const prefix = LifeStorageScope.key('life-os-pending-v3:');
+  const legacyPrefix = LifeStorageScope.key('life-os-pending-v2:');
   const tabId = typeof crypto?.randomUUID === 'function' ? crypto.randomUUID() : Date.now() + '-' + Math.random();
   let sequence = 0;
   let lastSavedAt = 0;
   let flushing = null;
   let flushRequested = false;
   let commitHandler = null;
+  let lastStageSize = null;
+  const isPendingKey = key => typeof key==='string' && (key.startsWith(prefix) || key.startsWith(legacyPrefix));
+  function checksum(text) {
+    let hash=2166136261;
+    for(let i=0;i<text.length;i++)hash=Math.imul(hash^text.charCodeAt(i),16777619);
+    return (hash>>>0).toString(16);
+  }
+  function decode(raw, key) {
+    const parsed=JSON.parse(raw);
+    if(!key.startsWith(prefix))return parsed;
+    if(parsed?.format!=='life-os-wal-lz-v1' || typeof parsed.payload!=='string' || !Number.isSafeInteger(parsed.length) || parsed.length<0)throw new Error('A pending device copy needs recovery. It has not been removed.');
+    const text=LZString.decompressFromUTF16(parsed.payload);
+    if(typeof text!=='string' || text.length!==parsed.length || checksum(text)!==parsed.checksum)throw new Error('A pending device copy failed its integrity check. It has not been removed.');
+    return JSON.parse(text);
+  }
   function pending() {
-    return Object.keys(localStorage).filter(key => key.startsWith(prefix)).map(key => ({key,raw:localStorage.getItem(key)}))
-      .map(item => ({...item,entry:JSON.parse(item.raw)})).sort((a,b)=>a.entry.savedAt-b.entry.savedAt);
+    return Object.keys(localStorage).filter(isPendingKey).map(key => ({key,raw:localStorage.getItem(key)}))
+      .map(item => ({...item,entry:decode(item.raw,item.key)})).sort((a,b)=>a.entry.savedAt-b.entry.savedAt);
   }
   function replay(snapshot) {
     let current = snapshot;
     const conflicts = [];
+    let resolutions={...(snapshot?.conflictResolutions || {})};
+    let retained=LifeStateMerge.registerConflicts(snapshot?.syncConflicts || [],resolutions);
     for (const item of pending()) {
       if (isApplied(current,item)) continue;
       const {entry}=item;
       const merged = LifeStateMerge.merge(entry.base, entry.state, current || entry.base);
-      current = {...(current || entry.state),boards:merged.boards,deletedBoardIds:merged.deletedBoardIds,deviceWriteHeads:appliedHeads(current,item)};
-      conflicts.push(...merged.conflicts);
+      const comparisons=merged.conflicts.map(record=>({...record,source:'device',recordedAt:entry.savedAt}));
+      resolutions={...resolutions,...(entry.state.conflictResolutions || {})};
+      retained=LifeStateMerge.registerConflicts([...retained,...(entry.state.syncConflicts || []),...comparisons],resolutions);
+      current = {...(current || entry.state),boards:merged.boards,deletedBoardIds:merged.deletedBoardIds,deviceWriteHeads:appliedHeads(current,item),syncConflicts:retained,conflictResolutions:resolutions};
+      conflicts.push(...comparisons);
     }
     return {state:current,conflicts};
   }
@@ -30,7 +51,21 @@
     // already captured the preceding edit for a commit.
     lastSavedAt = Math.max(Date.now(), lastSavedAt + 1);
     const entry = {base,state,savedAt:lastSavedAt,writerId:tabId,sequence:++sequence};
-    localStorage.setItem(prefix + tabId + ':' + sequence,JSON.stringify(entry));
+    // Only the immutable journal is compressed. Existing shared snapshots and
+    // recovery copies remain readable by already-open older tabs.
+    const text=JSON.stringify(entry),raw=JSON.stringify({format:'life-os-wal-lz-v1',length:text.length,checksum:checksum(text),payload:LZString.compressToUTF16(text)});
+    lastStageSize={originalBytes:text.length*2,storedBytes:raw.length*2};
+    localStorage.setItem(prefix + tabId + ':' + sequence,raw);
+    if(localStorage.getItem(prefix + tabId + ':' + sequence)!==raw)throw new Error('The browser did not retain the pending device copy.');
+  }
+  function diagnostics() {
+    let totalBytes=0,pendingBytes=0,legacyCopies=0;
+    for(const key of Object.keys(localStorage)){
+      const bytes=(key.length+(localStorage.getItem(key)?.length || 0))*2;totalBytes+=bytes;
+      if(isPendingKey(key))pendingBytes+=bytes;
+      if(key.startsWith(legacyPrefix))legacyCopies++;
+    }
+    return {totalBytes,pendingBytes,legacyCopies,lastStageSize};
   }
   function isApplied(snapshot,item) {
     const {writerId,sequence}=item.entry;
@@ -74,5 +109,5 @@
     })().finally(()=>{flushing=null;});
     return flushing;
   }
-  root.LifeDeviceStore={stage,replay,configure,flush,locked,cloudLocked,prefix,pending,isApplied,appliedHeads};
+  root.LifeDeviceStore={stage,replay,configure,flush,locked,cloudLocked,prefix,legacyPrefix,isPendingKey,pending,isApplied,appliedHeads,diagnostics};
 })(globalThis);
