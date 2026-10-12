@@ -4,9 +4,9 @@ Updated: 12 October 2026. The earlier milestones below are historical. Release s
 
 ## October 12 Publication Candidate
 
-The user requested publication of the latest frontend while deferring Google Calendar. Corrected candidate `72b93e138b10ee22` keeps Google sync explicitly disabled with no automatic backend probes; the existing tasks/activity Calendar and Life OS cloud saving remain available. No Supabase configuration or personal data migration is part of publication. Exact-artifact CI and live-release verification are required before marking this release live.
+The user requested publication of the latest frontend while deferring Google Calendar. Final candidate `9c37122167957436` keeps Google sync explicitly disabled with no automatic backend probes; the existing tasks/activity Calendar and Life OS cloud saving remain available. No Supabase configuration or personal data migration is part of publication. Exact-artifact CI and live-release verification are required before marking this release live.
 
-The first candidate's remote gate blocked deployment for Linux-WebKit keyboard focus after cancelling a task confirmation. That candidate never replaced the live site. Focus restoration now waits for WebKit's native close lifecycle and remains stable through later redraws. The exact-focus assertion is retained, with an additional forced-redraw check; all 13 scenarios pass locally in both engines. The corrected remote gate is still pending.
+The first candidate's remote gate blocked deployment for Linux-WebKit keyboard focus after cancelling a task confirmation. That candidate never replaced the live site. Focus restoration now waits for WebKit's native close lifecycle and remains stable through later redraws, bound to the exact clicked card if two views share a task. The exact-focus assertion is retained, with an additional forced-redraw check; all 14 scenarios pass locally in both engines. The final remote gate is still pending.
 
 ## October 12 Checkbox Follow-Up
 

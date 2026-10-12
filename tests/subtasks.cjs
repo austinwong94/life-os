@@ -87,6 +87,18 @@ const confirm=async(p,action='Complete task')=>{await p.locator('#taskConfirmati
     assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].done),false);assert.equal(await p.getByRole('checkbox',{name:'Mark done: Changed elsewhere',exact:true}).isChecked(),false);
     await p.evaluate(()=>{LifeDeviceStore.stage=window.originalStage;});
   });
+  await run('focus returns to the clicked planner card when two views show the same original task',async p=>{
+    await p.evaluate(()=>{
+      const source=state.cards.find(c=>c.id==='source');LifeSubtasks.change(source.plannerTasks[0],{type:'add',id:'cake',title:'Buy cake'});
+      state.cards=['first-view','second-view'].map(id=>({...makeCard({type:'planlist',title:id,category:'Personal'}),id,plannerViewMode:'today'}));
+      state.archivedCards.push(source);saveState();renderCardsOnly({force:true});
+    });await workspace(p,'board');
+    const check=p.locator('.task-card[data-id="second-view"]').getByRole('checkbox',{name:"Mark done: Sister's birthday",exact:true});
+    await check.click();await confirm(p,'Cancel');await p.evaluate(()=>renderCardsOnly({force:true}));
+    await p.waitForFunction(()=>document.activeElement?.closest('.task-card')?.dataset.id==='second-view');
+    assert.equal(await check.evaluate(el=>el===document.activeElement),true);
+    assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].done),false);
+  });
   await run('focus session waits for confirmation and keeps the session open on Cancel',async p=>{
     await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');
     await p.evaluate(()=>openDailyStart(getPlannerSourceItems()[0]));await p.locator('#dailyDialog').getByRole('button',{name:'Mark done',exact:true}).click();

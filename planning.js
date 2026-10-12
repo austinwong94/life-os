@@ -143,11 +143,12 @@ function openTaskSubtasks(item) {
 function captureTaskControlFocus(element=document.activeElement) {
   const taskRef=element?.closest('.planner-linked-item')?.dataset.taskRef;
   const control=element?.matches('.planner-linked-check')?'.planner-linked-check':element?.matches('.planner-linked-copy')?'.planner-linked-copy':null;
-  return taskRef && control ? {taskRef,control} : null;
+  const viewId=element?.closest('.task-card')?.dataset.id || '';
+  return taskRef && control ? {taskRef,control,viewId} : null;
 }
 function restoreTaskControlFocus(key) {
   if(!key || document.querySelector('dialog[open]'))return;
-  const target=[...elements.boardGrid.querySelectorAll('.planner-linked-item')].find(row=>row.dataset.taskRef===key.taskRef)?.querySelector(key.control);
+  const target=[...elements.boardGrid.querySelectorAll('.planner-linked-item')].find(row=>row.dataset.taskRef===key.taskRef && (row.closest('.task-card')?.dataset.id || '')===key.viewId)?.querySelector(key.control);
   if(target && target.getClientRects().length && !target.closest('[hidden], [inert]'))target.focus({preventScroll:true});
 }
 function confirmTaskAction(title,message,actionLabel,{danger=false}={}) {
