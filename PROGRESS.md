@@ -2,6 +2,16 @@
 
 Updated: 12 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
 
+## October 12 Task Action Follow-Up Published
+
+Build `2026.10.12-task-actions`, release `46f0c4b2499486ab`, source `dab4b30d2796bb4cb447755cdc3f8d080a7c9fb8`. [Workflow 38254407053](https://github.com/austinwong94/life-os/actions/runs/38254407053) passed **563 checks** (147 unit, 416 browser scenarios/repeats) and deployed the tested package. All 24 public file hashes and 23 startup asset versions were verified. A separate published-site test and the actual Codex browser both exercised Plan > All tasks > task menu > Archive, refreshed the page, and found the retained task in Archive with Restore available. Synthetic preview records only were used for these actions.
+
+The reported screen was also checked in the actual open live tabs: older loaded builds were still running despite the newer publication. After checking device saves and visible draft fields, those tabs were refreshed without resetting their saved records. New releases announce an available update, but never silently reload unfinished writing. The update action refuses unfinished drafts, failed device saving or pending journal copies.
+
+Additional reproduced defects repaired: captured Planner edits could rename another board's matching ID; completion Undo could reopen an identical task on another board; failed Planner edits changed the in-memory record and draft baseline instead of rolling back. Each now has a regression. The task-action suite covers 21 scenarios in each engine, including the actual All tasks menu, Today, recoverable Delete/Restore, save failures, stale tabs, completion history and phone/portrait layouts. The broader gate covers the existing sync, diary, cards, capture, recovery, health, Money, coaching, reports and responsive suites.
+
+No existing personal data, unresolved conflict versions or production Supabase schema/policies were cleared or migrated. Existing sync comparisons still require explicit review, and cloud access still requires sign-in. Physical phones, authenticated live multi-device/owner isolation, whole-state storage scaling and the wider structural/security acceptance remain open. This is not a claim of zero bugs. [Use the verified release](https://austinwong94.github.io/life-os/?v=46f0c4b2499486ab).
+
 ## October 12 Planner Archive Repair Published
 
 Release `6a5bd7d04a175924` is live. [Workflow 38243935181](https://github.com/austinwong94/life-os/actions/runs/38243935181) passed **545 checks** (147 unit, 398 browser scenarios/repeats), then deployed the exact tested package. All 24 public file hashes and 23 network-loaded startup versions match the package. Includes archive persistence across reload/stale tabs, recoverable competing versions, guarded Restore/Undo, failed-save rollback, and prevention of false conflicts from daily countdown display drift.
