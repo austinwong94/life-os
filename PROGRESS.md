@@ -2,7 +2,13 @@
 
 Updated: 12 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
 
-## October 12 Publication Candidate
+## October 12 Published
+
+Release `9c37122167957436` is live. [Workflow 38198049109](https://github.com/austinwong94/life-os/actions/runs/38198049109) passed **480 checks** (123 unit checks and 357 browser scenarios/repeats), then deployed the tested artifact. The live manifest and all 21 public file hashes match. Includes subtasks, planner confirmation/saving fixes, exact-card responsive/WebKit focus restoration and the prepared Calendar layout. The earlier WebKit failure prevented publication until corrected; that failed candidate did not replace the existing site.
+
+Google Calendar sync remains disabled for later setup. No Supabase function, secret, schema, owner policy or personal-record migration was deployed. Save open writing before refreshing older tabs on both devices. [Open the verified live version](https://austinwong94.github.io/life-os/?v=9c37122167957436). This does not claim zero bugs or completed real-device/account/security acceptance.
+
+## October 12 Publication Candidate (Historical)
 
 The user requested publication of the latest frontend while deferring Google Calendar. Final candidate `9c37122167957436` keeps Google sync explicitly disabled with no automatic backend probes; the existing tasks/activity Calendar and Life OS cloud saving remain available. No Supabase configuration or personal data migration is part of publication. Exact-artifact CI and live-release verification are required before marking this release live.
 

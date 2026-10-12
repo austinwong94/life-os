@@ -4,7 +4,13 @@ Latest assessment: [22 September structure and usability review](PLATFORM-REASSE
 
 Updated: 12 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
 
-## October 12: Publication Candidate
+## October 12: Publication Confirmed
+
+Published build `2026.10.12-task-confirmation`, release `9c37122167957436`, source commit `c1faaa85f28249ddcb0992bafd3c4384c160acd2`. [Verification and deployment workflow 38198049109](https://github.com/austinwong94/life-os/actions/runs/38198049109) passed **480 checks**: 123 unit checks and 357 browser scenarios/repeats. Both the complete verification job and its dependent Pages deployment succeeded. The live release manifest and all 21 public asset hashes match the tested package. [Open this verified release](https://austinwong94.github.io/life-os/?v=9c37122167957436).
+
+Includes task subtasks, explicit in-app completion/deletion confirmation, retained checklist drafts, coherent conflict review, failed-save rollback and exact-card focus restoration after WebKit close/resize/redraw. The earlier failed candidate was never deployed. Google Calendar remains explicitly disabled with no automatic integration requests; its backend, secrets, OAuth setup and production tables were not deployed. No existing personal records or normal storage namespace were reset or migrated by publication. Save open writing before refreshing older Life OS tabs on desktop and phone. Physical-device/live-account acceptance and security guarantees remain separate outstanding gates.
+
+## October 12: Publication Candidate (Historical)
 
 Publication requested for build `2026.10.12-task-confirmation`, final candidate release `9c37122167957436` (21 public assets). Includes subtasks, planner confirmation/saving fixes and the prepared Calendar layout improvements. Publication must wait for the exact-artifact GitHub verification/deployment workflow; this section is not yet a live confirmation.
 
