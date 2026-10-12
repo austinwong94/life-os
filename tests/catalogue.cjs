@@ -23,13 +23,14 @@ const results = [];
     }
     console.log(JSON.stringify(results.at(-1))); await context.close();
   }
-  await run('Seven everyday choices, ten more types, and opening Add does not modify saved cards', async page => {
+  await run('Seven everyday choices, eleven more types including Money, and opening Add does not modify saved cards', async page => {
     const before = await page.evaluate(() => JSON.stringify(state.cards));
     await capture(page);
     await page.getByRole('button',{name:'Add a card instead',exact:true}).click();
     assert.deepEqual(await page.locator('#cardTypeFeatured button').evaluateAll(buttons => buttons.map(b => b.dataset.type)), ['planlist','diary','sidenote','checklist','quote','fitness','food']);
     assert.equal(await page.locator('#cardTypeMore').getAttribute('open'), null);
-    assert.equal(await page.locator('#cardTypeMoreCount').innerText(), '10');
+    assert.equal(await page.locator('#cardTypeMoreCount').innerText(), '11');
+    assert.equal(await page.locator('#cardTypeMoreOptions [data-type=money]').count(),1);
     assert.equal(await page.evaluate(() => getSelectedFormType()), 'sidenote');
     assert.equal(await page.locator('#cardTypeSelection').innerText(), 'Side notes');
     await page.locator('#composerCloseButton').click();
@@ -71,7 +72,7 @@ const results = [];
     await page.keyboard.press('End'); assert.equal(await page.locator('#prioritySelection').innerText(), 'Secondary');
     assert.equal(await page.locator('#priorityButtons [aria-checked=true]').count(), 1);
   });
-  await run('All 21 existing types remain editable with their original ID and type', async page => {
+  await run('All 22 types including Money remain editable with their original ID and type', async page => {
     const cards = await page.evaluate(async () => {
       state.cards = Object.keys(TYPE_META).map(type => makeCard({type, title: 'Legacy ' + type})); saveState(); await flushDeviceWrites(); renderCardsOnly({force: true});
       return state.cards.map(c => ({id:c.id, type:c.type}));

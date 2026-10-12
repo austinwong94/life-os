@@ -105,6 +105,14 @@ jobs:
       - run: npm run test:subtasks
         env:
           TEST_OUTPUT: test-results/subtasks
+      - run: npm run test:money
+        env:
+          TEST_OUTPUT: test-results/money
+      - name: Check money flows in WebKit
+        run: npm run test:money
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/money-webkit
       - name: Check subtasks in WebKit
         run: npm run test:subtasks
         env:

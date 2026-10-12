@@ -325,6 +325,13 @@ function renderConflictReview() {
         apply:(c,expected,selected)=>applyConflictChoice(c,expected,selected,LifeStateMerge.resolveSubtaskConflict),introduction:'Choose one complete version of this checklist step. Other subtasks and the parent task stay unchanged.',unavailable:'This subtask cannot be identified safely. Its recovery copy was kept.'
       }));section.append(row);continue;
     }
+    if(conflict.kind==='money-record'){
+      row.append(renderRecordConflictForm(conflict,()=>{row.replaceChildren(title,planningNode('p','','Money version saved. Other ledger records were kept.'));status.textContent=state.syncConflicts.length+' unresolved';},{
+        noun:'money',currentLabel:'Current financial record',scope:'financial record',className:'planner-conflict-form',inspect:LifeStateMerge.inspectMoneyConflict,
+        render:moneyVersion,apply:(c,expected,selected)=>applyConflictChoice(c,expected,selected,LifeStateMerge.resolveMoneyConflict),
+        introduction:'Choose one complete financial record. Amount, account, date and payment status stay together. Earlier versions remain in Recovery.',unavailable:'This financial record cannot be applied safely. Keep its recovery copy.'
+      }));section.append(row);continue;
+    }
     if(conflict.kind==='task-completion'){
       row.append(renderRecordConflictForm(conflict,()=>{row.replaceChildren(title,planningNode('p','','Completion version saved. Both recorded actions remain in history.'));status.textContent=state.syncConflicts.length+' unresolved';},{
         noun:'completion',currentLabel:'Current completion',scope:'completion',className:'planner-conflict-form',inspect:LifeStateMerge.inspectCompletionConflict,
@@ -605,6 +612,7 @@ function initializeExperience() {
   document.getElementById("tasksModeButton").onclick = () => setWorkspaceMode("tasks");
   document.getElementById("calendarModeButton").onclick = () => setWorkspaceMode("calendar");
   document.getElementById("prioritiesModeButton").onclick = () => setWorkspaceMode("priorities");
+  document.getElementById("moneyModeButton").onclick = () => setWorkspaceMode("money");
   document.getElementById("weeklyReviewButton").onclick = () => {activeReportType = "progress"; openReportsModal();};
   elements.visibilityControl.closest(".field").hidden = true;
   elements.visibilityLabel.textContent = "Personal board";
@@ -654,7 +662,7 @@ function restoreTabBoardSelection() {
 
 function setWorkspaceMode(mode) {
   if (isProtectedTextEditActive()) document.activeElement?.blur();
-  state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities"].includes(mode) ? mode : "board";
+  state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities", "money"].includes(mode) ? mode : "board";
   state.activeFilter = "all"; state.focusFilter = "all"; state.searchQuery = ""; state.activeCategories = [];
   renderCardsOnly({force: true}); renderBoardMeta(); saveState({touch: false, skipCloud: true});
 }

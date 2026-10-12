@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.12-task-confirmation';
+const LIFE_OS_BUILD = '2026.10.12-money';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 
@@ -62,7 +62,7 @@ function openDailyMore() {
   const dialog=dailyDialog('More'),list=planningNode('div','daily-menu');
   for(const [label,icon,action] of [
     ['Capture','plus',openDailyCapture],['My board','layout-grid',()=>setWorkspaceMode('board')],['Priorities','check',()=>setWorkspaceMode('priorities')],
-    ['Weekly review','bar-chart',openDailyReview],['Archive','archive',openRecordsModal],['Reports','bar-chart',openReportsModal],
+    ['Money','bar-chart',()=>setWorkspaceMode('money')],['Weekly review','bar-chart',openDailyReview],['Archive','archive',openRecordsModal],['Reports','bar-chart',openReportsModal],
     ['Settings','settings',openSettingsModal],['Saving & version','check',openSaveDetails]
   ])list.append(planningButton(label,()=>{dialog.close();action();},icon));dialog.append(list);
 }

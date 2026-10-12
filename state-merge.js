@@ -29,6 +29,10 @@
       if (equal(l, r) || equal(b, r)) return copy(l);
       if (equal(b, l)) return copy(r);
       const field = path.at(-1);
+      if(path.length===5 && path[0]==='boards' && path[2]==='money' && ['accounts','entries','budgets'].includes(path[3]) && object(l) && object(r)) {
+        conflicts.push({kind:'money-record',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
+        return copy(l);
+      }
       if (path.at(-2)==='subtasks' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]) && object(l) && object(r)) {
         conflicts.push({kind:'subtask',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
         return copy(l);
@@ -322,6 +326,18 @@
     const next=copy(snapshot);
     for(const receipt of Object.values(object(resolutions)?resolutions:{}).filter(object).sort((a,b)=>a.resolvedAt-b.resolvedAt)) {
       if (receipt?.source!=='cloud' || receipt.ownerId!==ownerId || !baseDigest || receipt.baseDigest!==baseDigest) continue;
+      if(receipt.kind==='money-record'){
+        const parts=receipt.segments,location=locateMoney(next,parts);
+        try {
+          if(location && equal(location.value,receipt.base)){
+            const ledger=copy(location.board.money);ledger[parts[3]][location.index]=copy(receipt.remote);moneyApi().validate(ledger);location.rows[location.index]=copy(receipt.remote);
+          } else if(receipt.base===undefined && Array.isArray(parts) && parts.length===5 && parts[0]==='boards' && parts[2]==='money' && ['accounts','entries','budgets'].includes(parts[3]) && !parts.some(key=>typeof key!=='string' || unsafeKeys.has(key))){
+            const board=next.boards.find(b=>b.id===parts[1]),rows=board?.money?.[parts[3]];
+            if(keyed(rows) && !rows.some(r=>r.id===parts[4]) && receipt.remote?.id===parts[4]){const ledger=copy(board.money);ledger[parts[3]].push(copy(receipt.remote));moneyApi().validate(ledger);rows.push(copy(receipt.remote));}
+          }
+        }catch{}
+        continue;
+      }
       if(receipt.kind==='subtask'){
         const location=locateSubtask(next,receipt.segments);
         if(location && reviewableSubtask(receipt.remote,receipt.segments.at(-1)) && equal(location.value,receipt.base))location.parent[location.key]=copy(receipt.remote);
@@ -388,7 +404,29 @@
     return next;
   }
 
-  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectSubtaskConflict,resolveSubtaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,validActivity,reviewedCloudBaseline,fingerprint};
+  function locateMoney(snapshot,parts) {
+    if(!Array.isArray(parts) || parts.length!==5 || parts[0]!=='boards' || parts[2]!=='money' || !['accounts','entries','budgets'].includes(parts[3]) || parts.some(key=>typeof key!=='string' || unsafeKeys.has(key)))return null;
+    const board=snapshot.boards?.find(b=>b.id===parts[1]),rows=board?.money?.[parts[3]];
+    if(!keyed(rows))return null;const index=rows.findIndex(r=>r.id===parts[4]);return index<0?null:{board,rows,index,value:rows[index]};
+  }
+  function moneyApi(){return root.LifeMoney || (typeof require==='function'?require('./money-store.js'):null);}
+  function inspectMoneyConflict(snapshot,conflict) {
+    const location=locateMoney(snapshot,conflict?.segments);let editable=false;
+    if(conflict?.kind==='money-record' && location)try {
+      for(const record of [location.value,conflict.local,conflict.remote]){if(record?.id!==conflict.segments[4])throw new Error();const ledger=copy(location.board.money);ledger[conflict.segments[3]][location.index]=copy(record);moneyApi().validate(ledger);}editable=true;
+    }catch{}
+    return {editable,current:copy(location?.value)};
+  }
+  function resolveMoneyConflict(snapshot,conflict,expected,selected,now=Date.now()) {
+    const live=(snapshot.syncConflicts || []).find(c=>c.id===conflict.id),inspection=inspectMoneyConflict(snapshot,live);
+    if(!live || !equal(live,conflict) || !inspection.editable || !equal(inspection.current,expected))throw new Error('This financial comparison changed. Keep the recovery copy and review it again.');
+    if(![expected,live.local,live.remote].some(record=>equal(record,selected)))throw new Error('Choose a displayed financial version.');
+    const next=copy(snapshot),location=locateMoney(next,live.segments);location.rows[location.index]=copy(selected);location.board.updatedAt=now;next.updatedAt=now;next.hasUserChanges=true;
+    next.syncConflicts=next.syncConflicts.filter(c=>c.id!==live.id);
+    next.conflictResolutions={...(next.conflictResolutions || {}),[live.id]:{kind:'money-record',resolvedAt:now,source:live.source || 'device',ownerId:live.ownerId,segments:live.segments,base:live.base,remote:live.remote,baseDigest:live.baseDigest}};
+    return next;
+  }
+  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectSubtaskConflict,resolveSubtaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,inspectMoneyConflict,resolveMoneyConflict,validActivity,reviewedCloudBaseline,fingerprint};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LifeStateMerge = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

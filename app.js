@@ -17,7 +17,7 @@ const LOCAL_DEV_RELOAD_POLL_MS = 1500;
 const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "coaching.css", "daily-workspace.js", "daily-workspace.css", "app.js", "experience.js", "planning.js", "calendar-sync-core.js", "google-calendar.js", "coaching.js", "storage-scope.js", "planner-store.js", "task-repository.js", "subtask-store.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
 const DIARY_BACKUP_KEY = LifeStorageScope.key("life-os-diary-entry-backups");
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
-const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food"];
+const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food", "money"];
 const TRUSTED_VIDEO_DOMAINS = {
   youtube: ["youtube.com", "youtu.be"],
   instagram: ["instagram.com"],
@@ -158,6 +158,7 @@ const TYPE_META = {
   video: { label: "Video", icon: "video" },
   fitness: { label: "Fitness log", icon: "dumbbell" },
   food: { label: "Food tracker", icon: "utensils" },
+  money: { label: "Money", icon: "bar-chart" },
   routine: { label: "Routine", icon: "timer" },
   scheduled: { label: "Schedule", icon: "calendar" },
   lab: { label: "AI Lab", icon: "list" },
@@ -170,6 +171,7 @@ const TYPE_META = {
 };
 
 const TYPE_HELP = {
+  money: "A summary of this board's Money ledger. Removing this card does not delete financial records.",
   daily: "Use for a one-day to-do list. It does not reset automatically, so it is best for today, tomorrow, or a specific short plan.",
   planner: "Use like a physical planner book. Pick a date and write future plans inside one card without splitting the board.",
   planlist: "Use for Today, This week, This month, or Upcoming lists connected to Planner cards on this board.",
@@ -194,6 +196,7 @@ const TYPE_HELP = {
 };
 
 const TYPE_DETAILS = {
+  money: { best: "Balances, spending, upcoming bills and receipts", timing: "No timer. Open Money for account balances, entries and forecasts." },
   daily: {
     best: "Today, tomorrow, day-after, or next-week task lists",
     timing: "Plan day is the main signal. Add a deadline only when the list must close by a real time."
@@ -272,7 +275,7 @@ const TYPE_DETAILS = {
   }
 };
 
-const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "sidenote", "brief", "quote", "video", "fitness", "food", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
+const MANUAL_TYPE_OPTIONS = ["planner", "planlist", "daily", "diary", "sidenote", "brief", "quote", "video", "fitness", "food", "money", "single", "event", "routine", "scheduled", "minutes", "checklist", "weekly"];
 const SCORECARD_TYPES = ["weekly", "monthly", "annual"];
 const TEMPLATE_ONLY_TYPES = ["lab", "workout"];
 const TYPE_PICKER_GROUPS = [
@@ -303,6 +306,7 @@ const TYPE_PICKER_GROUPS = [
     description: "Targets and scorecards",
     options: [
       { type: "weekly", label: "Scorecard", hint: "Full period" },
+      { type: "money", label: "Money", hint: "Linked ledger summary" },
       { type: "minutes", label: "Goal", hint: "Track number" }
     ]
   },
@@ -2645,7 +2649,7 @@ function toggleBoardControls() {
 
 function renderBoardControls() {
   const controlsOpen = state.ui.controlsOpen !== false;
-  const todayMode = ["today", "tasks", "calendar", "priorities"].includes(state.ui.workspaceMode);
+  const todayMode = ["today", "tasks", "calendar", "priorities", "money"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
   elements.topControlsToggleButton.hidden = todayMode;
   const controlsLabel = controlsOpen ? "Hide filters" : "Show filters";
@@ -3074,7 +3078,7 @@ function renderCardsOnly(options = {}) {
 
   const visibleCards = filteredByFocus.filter((card) => matchesCategory(card));
   const todayMode = state.ui.workspaceMode === "today";
-  const planningMode = ["tasks", "calendar", "priorities"].includes(state.ui.workspaceMode);
+  const planningMode = ["tasks", "calendar", "priorities", "money"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("is-today-view", todayMode);
   elements.workspace.classList.toggle("is-planning-view", planningMode);
   renderBoardControls();
@@ -3083,8 +3087,11 @@ function renderCardsOnly(options = {}) {
   document.getElementById("tasksModeButton").setAttribute("aria-pressed", String(['tasks','calendar'].includes(state.ui.workspaceMode)));
   document.getElementById("calendarModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "calendar"));
   document.getElementById("prioritiesModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "priorities"));
+  document.getElementById("moneyModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "money"));
   renderDailyNavigation();
-  if (state.ui.workspaceMode === "priorities") {
+  if (state.ui.workspaceMode === "money") {
+    renderMoneyWorkspace();
+  } else if (state.ui.workspaceMode === "priorities") {
     renderProgressHome();
     renderCoachingWorkspace();
   } else if (planningMode) {
@@ -3631,6 +3638,7 @@ function renderCard(card, options = {}) {
   if (card.type === "food") {
     body.append(renderFoodTracker(card));
   }
+  if (card.type === "money") body.append(renderMoneyCard(card, interactive));
   if (card.type === "checklist") {
     body.append(renderChecklist(card));
   }
@@ -9986,6 +9994,7 @@ function getAverageProgress(cards) {
 }
 
 function getProgress(card) {
+  if (card.type === "money") return {percent:0,label:"Ledger"};
   if (card.type === "planner") {
     const entry = getPlannerEntry(card, getActivePlannerDate(card));
     return { percent: entry.note ? 100 : 0, label: entry.note ? "Planned" : "Planner" };
@@ -10507,7 +10516,7 @@ function nextOrder() {
   return state.cards.length ? Math.max(...state.cards.map((card) => card.order || 0)) + 1 : 1;
 }
 
-function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], coachingPrograms, createdAt = Date.now(), updatedAt = createdAt }) {
+function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], coachingPrograms, money, createdAt = Date.now(), updatedAt = createdAt }) {
   const normalizedCards = cards.map(normalizeCard).map((card, index) => ({
     ...card,
     order: Number(card.order) > 0 ? Number(card.order) : index + 1
@@ -10523,6 +10532,7 @@ function createBoardRecord({ id = createId(), name, visibility = "private", layo
     cards: normalizedCards,
     archivedCards: normalizedArchivedCards,
     ...(coachingPrograms !== undefined ? {coachingPrograms: LifeStateMerge.copy(coachingPrograms)} : {}),
+    ...(money !== undefined ? {money: LifeStateMerge.copy(money)} : {}),
     createdAt,
     updatedAt: normalizeTimestamp(updatedAt) || normalizeTimestamp(createdAt) || Date.now()
   };
@@ -12480,6 +12490,7 @@ function renderReadableBoard(board, index) {
     ${renderReadableCardGroup("Archived cards", archivedCards, "archived")}
     ${coachingProgramsForBoard(board).map(program => coachingReport(program)).join("")}
     ${dailyReadableRecords(board)}
+    ${moneyReadable(board)}
   </section>`;
 }
 

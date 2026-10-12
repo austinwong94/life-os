@@ -4,7 +4,20 @@ Latest assessment: [22 September structure and usability review](PLATFORM-REASSE
 
 Updated: 12 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
 
-## October 12: Publication Confirmed
+## October 12: Money Release Candidate
+
+Implemented a board-scoped Money workspace and linked Money summary cards. Personal and Sunrise Villa account ownership remain separate, with a Combined reporting view and explicit transfers. Nothing seeds private financial examples or migrates existing diary, task, health or cloud records.
+
+- MYR amounts use integer sen with strict decimal parsing. Recorded balance, unpaid commitments, protected reserves and dated projected balance are distinct; expected Airbnb income never becomes cash before it is recorded as received.
+- Expenses, income, transfers, upcoming payments and monthly recurring schedules have stable IDs. Monthly dates handle short/leap months; paid/cancelled occurrences do not regenerate.
+- Manual net Airbnb payouts include expected arrival, source/reference and received/released/upcoming states. Referenced payouts use deterministic identities across tabs. No Airbnb connection or import is claimed.
+- Monthly/category budgets preserve prior months. Bank/cash reconciliation records an audited checkpoint, not fabricated income. Competing versions share one checkpoint identity, including zero-difference checks.
+- Per-tab/per-board form drafts survive closing and reload. Failed journal writes restore prior money records and retain drafts. Same-record conflicts keep amount/account/date/status together for guarded review; independent records and boards use existing merge/cloud saving.
+- Void confirmation, retained history, Restore entry, guarded Undo, readable full-information export and formula-safe CSV download are included. Removing/moving a summary card does not move or delete its source board's ledger.
+
+Boundaries: manual records, not a live bank balance, accounting/tax system or guaranteed spending allowance. MYR bank/cash only. Credit-card debt, foreign currency, partial settlements, statement import and direct bank/Airbnb connections are not implemented; record installments separately. Forecasts depend on complete records and accurate dates. Google remains disabled. No SQL migration or production financial write is required. Publication is pending the exact artifact's full regression/deployment gate.
+
+## October 12: Publication Confirmed (Previous Release)
 
 Published build `2026.10.12-task-confirmation`, release `9c37122167957436`, source commit `c1faaa85f28249ddcb0992bafd3c4384c160acd2`. [Verification and deployment workflow 38198049109](https://github.com/austinwong94/life-os/actions/runs/38198049109) passed **480 checks**: 123 unit checks and 357 browser scenarios/repeats. Both the complete verification job and its dependent Pages deployment succeeded. The live release manifest and all 21 public asset hashes match the tested package. [Open this verified release](https://austinwong94.github.io/life-os/?v=9c37122167957436).
 
