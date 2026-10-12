@@ -2,7 +2,13 @@
 
 Updated: 12 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
 
-## October 12 Money Upgrade
+## October 12 Money Published
+
+Release `2deb81c3270695be` is live. [Workflow 38224448536](https://github.com/austinwong94/life-os/actions/runs/38224448536) passed **512 checks** (139 unit, 373 browser scenarios/repeats) and deployed the exact tested package. The public manifest, 24 file hashes and 23 startup asset versions were verified. Earlier width failures blocked deployment until the native forecast selector was correctly sized; no assertion was weakened.
+
+Money includes the workspace and shared summary cards, separate Personal/Sunrise Villa accounts, recorded vs expected balances, recurring payments, monthly budgets, reconciliation, retained drafts, conflict review and readable exports. Start **Money > Add account**; phone access is **More > Money**. Save open writing and refresh all older tabs on both devices. Existing personal data and production Supabase settings were not reset or migrated. Manual MYR records only: no live bank/Airbnb feed or guaranteed spending allowance. Physical-device/live-account acceptance remains open. [Use the published version](https://austinwong94.github.io/life-os/?v=2deb81c3270695be).
+
+## October 12 Money Upgrade (Historical Candidate)
 
 Implemented Money navigation and a linked board card, Personal/Sunrise Villa separation, MYR accounts, income/spending/transfers, recurring bills, Airbnb payout statuses, monthly/category budgets, dated cash-flow forecasts, reconciliation, retained drafts, financial conflict review, recovery/exports and responsive phone/portrait layouts. Existing private data is not migrated or reset. Full release verification and publication are pending; see PLATFORM-STATUS.md for supported boundaries.
 

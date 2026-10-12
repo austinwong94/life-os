@@ -4,7 +4,15 @@ Latest assessment: [22 September structure and usability review](PLATFORM-REASSE
 
 Updated: 12 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
 
-## October 12: Money Release Candidate
+## October 12: Money Publication Confirmed
+
+Published build `2026.10.12-money`, release `2deb81c3270695be`, source commit `954f6ee9d58e79e2ede103dc92479b18739bb3ff`. [Workflow 38224448536](https://github.com/austinwong94/life-os/actions/runs/38224448536) passed **512 checks**: 139 unit checks and 373 browser scenarios/repeats. Verification and the dependent Pages deployment both succeeded. The live release manifest, all 24 public file hashes and all 23 startup asset versions match the tested package. [Open Money-ready Life OS](https://austinwong94.github.io/life-os/?v=2deb81c3270695be).
+
+Start with **Money > Add account**, record the balance and date that your bank/cash actually shows, and mark the account Personal or Sunrise Villa. Add expenses, expected net Airbnb payouts, received income, monthly bills and budgets. **Add summary card** displays the same board ledger. On phones, use the header **More > Money**. Save open writing, then refresh all older Life OS tabs on phone and desktop before entering new financial records; mixed older clients are not certified.
+
+No existing diary, task, health or cloud records were reset or migrated. No Supabase function, SQL schema, secret or owner policy was deployed. Money uses the existing authenticated state-saving system; expected payouts never become recorded cash automatically. Airbnb/bank entries are manual and MYR-only, not live account feeds. Forecasts depend on complete records, and this is not an accounting/tax system or guaranteed spending allowance. Physical-device and authenticated live multi-device/security acceptance remain separate gates; no zero-bug or zero-hacking claim is made. Earlier failed width candidates never deployed.
+
+## October 12: Money Release Candidate (Historical)
 
 Implemented a board-scoped Money workspace and linked Money summary cards. Personal and Sunrise Villa account ownership remain separate, with a Combined reporting view and explicit transfers. Nothing seeds private financial examples or migrates existing diary, task, health or cloud records.
 
