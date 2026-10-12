@@ -4,6 +4,15 @@ Latest assessment: [22 September structure and usability review](PLATFORM-REASSE
 
 Updated: 13 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
 
+## October 13: Retained Countdown Conflict Resolution Confirmed
+
+Published build `2026.10.13-timer-review`, release `d240f2d47ecdbd92`, source commit `d441ecb55bda6ace7a057ee824b2d11483c24b70`. [Workflow 38295334781](https://github.com/austinwong94/life-os/actions/runs/38295334781) passed verification and Pages deployment. All 25 public file hashes and 24 startup cache versions match the tested package. [Open the verified version](https://austinwong94.github.io/life-os/?v=d240f2d47ecdbd92).
+
+- **Narrow resolution:** Recovery identifies validated clock-only comparisons on automatic daily countdowns. Resolution changes conflict metadata only, keeps the board records equal, and atomically retains each complete original comparison. Real writing, checkmarks, history, manual timers, missing records and invalid/stale comparisons are excluded. Storage failure refuses the resolution rather than discarding versions.
+- **Actual browser acceptance:** All 112 existing comparisons qualified as automatic countdown duration/remaining differences. They were retained locally before resolution and retained in Recovery afterward; every original path/base/local/remote value matched. After reopening the app, unresolved comparisons remained zero. Existing board, card, diary, planner and recovery counts were unchanged. The original working tab was not reloaded or its unfinished input cleared. No private records or comparison files were committed to GitHub.
+- **Cloud boundary:** An actual Save cloud attempt was refused because the existing Supabase session expired. Successful production upload is **not yet confirmed**; the owner must sign out and sign in again, then use Save cloud. No older cloud copy was loaded or forced over current records. No Supabase schema, policy, secret or function changed.
+- **Validation:** 156 unit checks and the complete CI browser gate passed. Focused conflict scenarios pass in Chromium and WebKit, including 112 retained comparisons and quota-failure rollback. Isolated old-cloud integration checks in both engines preserve current diary/motivation writing and use a conditional cloud write. These simulations do not replace authenticated production/two-device acceptance.
+
 ## October 13: Device Save Capacity Repair Confirmed
 
 Published build `2026.10.13-compact-saves`, release `5a27e15da2839661`, source commit `bed70593ebfd146b9c1317392c6538d60eec24cf`. [Workflow 38284948565](https://github.com/austinwong94/life-os/actions/runs/38284948565) passed **572 checks** (152 unit, 420 browser scenarios/repeats); verification and Pages deployment succeeded. The live manifest, all 25 public hashes and 24 startup cache versions match the tested package. [Open the verified version](https://austinwong94.github.io/life-os/?v=5a27e15da2839661).
