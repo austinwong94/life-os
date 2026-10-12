@@ -63,7 +63,7 @@
   .money-row-amount { font-size: 12px; }
   .money-stats { gap: 12px; }
   .money-stat strong { font-size: 20px; }
-  .money-controls .planning-field { flex: 1 1 130px; }
+  .money-controls .planning-field { flex: 1 1 200px; }
   .money-form { grid-template-columns: minmax(0,1fr); }
   .money-form .money-actions button { flex: 1; }
 }

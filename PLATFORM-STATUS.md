@@ -19,6 +19,8 @@ Boundaries: manual records, not a live bank balance, accounting/tax system or gu
 
 The first Money candidate was blocked by a 320-pixel Linux-WebKit page-width check in [workflow 38221723180](https://github.com/austinwong94/life-os/actions/runs/38221723180); deployment was skipped and the prior live version retained. Scoped minimum-width constraints and wrapping are corrected without masking overflow or weakening the test. The retry includes 139 passing unit checks, local Money-flow checks in both engines, and explicit overflowing-element diagnostics. Summary-card ownership filters are presentation preferences, not competing financial-record edits. The complete remote gate remains required before publication.
 
+Detailed Linux diagnostics identified the remaining overflow inside the native forecast select, not the ledger rows. Phone filter fields now stack below their usable minimum width rather than compressing into 144-pixel fields. Both document and individual filter-field overflow remain release assertions. Failed candidates did not deploy.
+
 ## October 12: Publication Confirmed (Previous Release)
 
 Published build `2026.10.12-task-confirmation`, release `9c37122167957436`, source commit `c1faaa85f28249ddcb0992bafd3c4384c160acd2`. [Verification and deployment workflow 38198049109](https://github.com/austinwong94/life-os/actions/runs/38198049109) passed **480 checks**: 123 unit checks and 357 browser scenarios/repeats. Both the complete verification job and its dependent Pages deployment succeeded. The live release manifest and all 21 public asset hashes match the tested package. [Open this verified release](https://austinwong94.github.io/life-os/?v=9c37122167957436).
