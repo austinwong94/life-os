@@ -64,7 +64,9 @@ const confirm=async(p,action='Complete task')=>{await p.locator('#taskConfirmati
     await p.setViewportSize({width:390,height:844});await p.screenshot({path:out+'/today-confirmation-phone.png'});
     assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await p.keyboard.press('Escape');await p.locator('#taskConfirmationDialog').waitFor({state:'detached'});
+    await p.waitForFunction(label=>document.activeElement?.matches('.planner-linked-check') && document.activeElement.getAttribute('aria-label')===label,"Mark done: Sister's birthday");
     assert.equal(await check.evaluate(el=>el===document.activeElement),true);
+    await p.evaluate(()=>renderCardsOnly({force:true}));assert.equal(await check.evaluate(el=>el===document.activeElement),true);
     await check.click();await confirm(p);assert.equal(await p.getByRole('checkbox',{name:"Mark open: Sister's birthday",exact:true}).isChecked(),true);
     assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks[0].done),false);
     await p.evaluate(()=>flushDeviceWrites());await p.reload();assert.equal(await p.getByRole('checkbox',{name:"Mark open: Sister's birthday",exact:true}).isChecked(),true);

@@ -3052,6 +3052,7 @@ function renderCardsOnly(options = {}) {
   const feelingFocus = feelingButton && elements.boardGrid.contains(feelingButton)
     ? { cardId: feelingButton.closest(".task-card")?.dataset.id, label: feelingButton.getAttribute("aria-label") }
     : null;
+  const taskFocus=elements.boardGrid.contains(document.activeElement)?captureTaskControlFocus():null;
   closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
@@ -3108,6 +3109,7 @@ function renderCardsOnly(options = {}) {
     const button = Array.from(card?.querySelectorAll(".mood-picker button") || []).find(node => node.getAttribute("aria-label") === feelingFocus.label);
     button?.focus({ preventScroll: true });
   }
+  restoreTaskControlFocus(taskFocus);
 }
 
 function isDraftTextElement(element) {

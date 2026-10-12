@@ -140,21 +140,31 @@ function openTaskSubtasks(item) {
   const key=subtaskKey(taskSubtaskRef(item));(planningSession().subtaskOpen ||= {})[key]=true;
   savePlanningSession();renderCardsOnly({force:true});
 }
+function captureTaskControlFocus(element=document.activeElement) {
+  const taskRef=element?.closest('.planner-linked-item')?.dataset.taskRef;
+  const control=element?.matches('.planner-linked-check')?'.planner-linked-check':element?.matches('.planner-linked-copy')?'.planner-linked-copy':null;
+  return taskRef && control ? {taskRef,control} : null;
+}
+function restoreTaskControlFocus(key) {
+  if(!key || document.querySelector('dialog[open]'))return;
+  const target=[...elements.boardGrid.querySelectorAll('.planner-linked-item')].find(row=>row.dataset.taskRef===key.taskRef)?.querySelector(key.control);
+  if(target && target.getClientRects().length && !target.closest('[hidden], [inert]'))target.focus({preventScroll:true});
+}
 function confirmTaskAction(title,message,actionLabel,{danger=false}={}) {
   if(document.getElementById('taskConfirmationDialog'))return Promise.resolve(false);
   return new Promise(resolve=>{
     const previous=document.activeElement,dialog=planningNode('dialog','daily-dialog task-confirmation');dialog.id='taskConfirmationDialog';
-    const taskRef=previous?.closest('.planner-linked-item')?.dataset.taskRef;
-    const control=previous?.matches('.planner-linked-check')?'.planner-linked-check':previous?.matches('.planner-linked-copy')?'.planner-linked-copy':null;
+    const focus=captureTaskControlFocus(previous);
     dialog.setAttribute('aria-labelledby','taskConfirmationTitle');dialog.setAttribute('aria-describedby','taskConfirmationMessage');
     const heading=planningNode('h2','',title);heading.id='taskConfirmationTitle';const copy=planningNode('p','',message);copy.id='taskConfirmationMessage';
     const actions=planningNode('div','daily-actions'),cancel=planningButton('Cancel',()=>dialog.close('cancelled'));
     const confirm=planningButton(actionLabel,()=>dialog.close('confirmed'),danger?'trash-2':'check');confirm.classList.add(danger?'is-danger':'is-primary');actions.append(cancel,confirm);dialog.append(heading,copy,actions);
     dialog.addEventListener('close',()=>{
       dialog.remove();
-      const replacement=taskRef && control ? [...document.querySelectorAll('.planner-linked-item')].find(row=>row.dataset.taskRef===taskRef)?.querySelector(control) : null;
-      const target=previous?.isConnected?previous:replacement;
-      if(target)target.focus({preventScroll:true});
+      const restore=()=>{if(previous?.isConnected)previous.focus({preventScroll:true});else restoreTaskControlFocus(focus);};
+      restore();
+      // WebKit can restore its own native-dialog focus after the close event.
+      requestAnimationFrame(()=>{if(document.activeElement===document.body)restore();});
       resolve(dialog.returnValue==='confirmed');
     },{once:true});
     document.body.append(dialog);dialog.showModal();cancel.focus();

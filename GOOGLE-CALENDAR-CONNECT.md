@@ -101,5 +101,5 @@ If disconnect reports that Google revocation could not be confirmed, automatic a
 No production database or Google calendar records were accessed/changed during development. Real connection, server permissions and two-device checks are still required.
 # Release Gate
 
-The current published frontend deliberately sets `GOOGLE_CALENDAR_SYNC_READY=false` in `google-calendar.js`. Leave it disabled until the private backend, OAuth consent and test-account acceptance below are complete. Prepared integration tests enable it only inside isolated fixtures; this does not connect the real app. Then change the flag in a reviewed frontend release. No production database deployment is part of the current task/subtask publication.
+This release's frontend deliberately sets `GOOGLE_CALENDAR_SYNC_READY=false` in `google-calendar.js`. Leave it disabled until the private backend, OAuth consent and test-account acceptance below are complete. Prepared integration tests enable it only inside isolated fixtures; this does not connect the real app. Then change the flag in a reviewed frontend release. No production database deployment is part of the current task/subtask publication.
 

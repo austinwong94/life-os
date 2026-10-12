@@ -6,7 +6,9 @@ Updated: 12 October 2026. This is a status of implemented features and verified 
 
 ## October 12: Publication Candidate
 
-Publication requested for build `2026.10.12-task-confirmation`, release `8d3916d75abe5bf0` (21 public assets). Includes subtasks, planner confirmation/saving fixes and the prepared Calendar layout improvements. Publication must wait for the exact-artifact GitHub verification/deployment workflow; this section is not yet a live confirmation.
+Publication requested for build `2026.10.12-task-confirmation`, corrected candidate release `72b93e138b10ee22` (21 public assets). Includes subtasks, planner confirmation/saving fixes and the prepared Calendar layout improvements. Publication must wait for the exact-artifact GitHub verification/deployment workflow; this section is not yet a live confirmation.
+
+The first remote candidate `8d3916d75abe5bf0` was blocked by a Linux-WebKit focus-restoration failure in [workflow 38196879398](https://github.com/austinwong94/life-os/actions/runs/38196879398). Deployment was skipped and the prior live site retained. The correction restores task focus after WebKit's native dialog lifecycle and preserves that focus through subsequent board redraws, without stealing a newer editor's focus. The unchanged requirement still asserts the exact focused checkbox; its test now waits for the focus paint and also forces another redraw. All 13 checklist scenarios pass again in both local engines, plus 123 unit checks. The complete remote gate remains required.
 
 Google Calendar remains explicitly disabled (`GOOGLE_CALENDAR_SYNC_READY=false`). The release makes no automatic Google-integration requests, exposes no connection controls, and retains the setup guide. Prepared backend sources and isolated enabled-mode tests remain in the repository for later work. No function, schema, OAuth grant or secret is deployed or changed. Existing Life OS cloud saving remains separate and unchanged. The disabled-mode regression passes without sending any record to Google.
 
