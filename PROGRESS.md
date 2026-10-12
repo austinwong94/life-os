@@ -2,7 +2,13 @@
 
 Updated: 12 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
 
-## October 12 Planner Archive Repair Candidate
+## October 12 Planner Archive Repair Published
+
+Release `6a5bd7d04a175924` is live. [Workflow 38243935181](https://github.com/austinwong94/life-os/actions/runs/38243935181) passed **545 checks** (147 unit, 398 browser scenarios/repeats), then deployed the exact tested package. All 24 public file hashes and 23 network-loaded startup versions match the package. Includes archive persistence across reload/stale tabs, recoverable competing versions, guarded Restore/Undo, failed-save rollback, and prevention of false conflicts from daily countdown display drift.
+
+No existing personal records, conflict versions or production Supabase settings were reset or deleted. Existing unresolved comparisons are preserved and can still pause cloud sync; this publication does not select them or sign the user in. Save open writing and refresh all older tabs on phone and desktop before continuing. Physical-device/live-account acceptance and a zero-bug guarantee are not claimed. [Open the verified release](https://austinwong94.github.io/life-os/?v=6a5bd7d04a175924).
+
+## October 12 Planner Archive Repair Candidate (Historical)
 
 Reproduced an archive being implicitly restored by a stale tab's rename/completion after queued writes merged. Planner lifecycle conflicts now retain a whole archive/removal version until explicit review, preserve both competing histories, and do not treat an unrelated edit as Restore. Previously stored/cloud active-versus-archive conflicts are excluded from active Planner/Tasks/Calendar views without rewriting the original versions; Archive offers Review versions. Explicit Restore remains available.
 

@@ -4,7 +4,13 @@ Latest assessment: [22 September structure and usability review](PLATFORM-REASSE
 
 Updated: 12 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
 
-## October 12: Planner Archive Repair Candidate
+## October 12: Planner Archive Publication Confirmed
+
+Published build `2026.10.12-planner-archive`, release `6a5bd7d04a175924`, source commit `bee32fd0196ff88774dafe24031a2f8103583e0d`. [Workflow 38243935181](https://github.com/austinwong94/life-os/actions/runs/38243935181) passed **545 checks** (147 unit, 398 browser scenarios/repeats); verification and Pages deployment succeeded. The live manifest, 24 public file hashes and 23 startup cache versions match the exact package. [Open this verified release](https://austinwong94.github.io/life-os/?v=6a5bd7d04a175924).
+
+Archive/removal now survives competing stale-task edits without an implicit Restore, and old active-versus-archive comparisons remain recoverable in Archive/Recovery without rewriting their original payloads. Restore/Undo is board/version-guarded; failed saves roll back. Clock-only automatic daily countdown differences no longer create record conflicts, while real checkmarks, history, manual timers and nested user records remain protected. No personal records, conflict versions, Supabase schema, owner policies or secrets were cleared, migrated or changed. Existing unresolved comparisons still require review and can pause cloud sync; this release does not choose a user's record versions or sign them in. Save open writing and refresh older tabs on both devices. Physical-device/live-account and wider structural/security acceptance remain open; this is not a zero-bug guarantee.
+
+## October 12: Planner Archive Repair Candidate (Historical)
 
 Build `2026.10.12-planner-archive`. A reproduced stale-tab edit could reactivate an archived task during snapshot conflict merging. Lifecycle-changing Planner versions now remain coherent and archived/removed pending explicit review. Existing saved/cloud conflicts are read without changing their payloads; pending removals no longer leak into active task, day, upcoming or Calendar views, and remain discoverable in Archive. Explicit whole-version review can intentionally retain either version; nothing automatically deletes competing notes or completion histories.
 
