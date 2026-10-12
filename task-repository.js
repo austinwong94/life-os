@@ -10,7 +10,7 @@
   };
   const eligible = (card,includeArchived=false) => card && Object.hasOwn(kinds,card.type) && (includeArchived || !card.archivedAt) && !card.dailyWorkspaceStore && !card.coachingStore && !card.plannerSourceOnly;
   const usableId = id => typeof id === "string" && id.trim().length>0;
-  const completionKeys=['taskCompletion','taskCompletionEvents'];
+  const completionKeys=['taskCompletion','taskCompletionEvents','subtasks'];
   const snapshot = (card,item) => card.type === "single" ? {...{title:card.title,done:Boolean(card.done)},...Object.fromEntries(completionKeys.filter(key=>Object.hasOwn(card,key)).map(key=>[key,copy(card[key])]))} : copy(item);
   const validDate = day => /^\d{4}-\d{2}-\d{2}$/.test(day || '') && Number.isFinite(Date.parse(day+'T00:00:00Z')) && new Date(day+'T00:00:00Z').toISOString().slice(0,10)===day;
   const dateOf = now => {const d=new Date(now);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};

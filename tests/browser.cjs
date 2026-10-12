@@ -20,14 +20,14 @@ const results=[];
   console.log(JSON.stringify(results.at(-1)));await ctx.close();
  }
  await run('planner late completion, independent duplicate, rename and history',async p=>{
-  const result=await p.evaluate(()=>{
+  const result=await p.evaluate(async()=>{
    const view=state.cards.find(c=>c.type==='planlist');const day=getTodayKey();const yesterday=getTodayKey(addDays(new Date(),-1));
    addPlannerTaskFromPlannerView(view,yesterday,'Send proposal');addPlannerTaskFromPlannerView(view,yesterday,'Buy groceries');
    const get=()=>getPlannerViewData('today','Personal',{},day).items;
-   togglePlannerTaskDone(get().find(x=>x.title==='Send proposal'));
+   await togglePlannerTaskDone(get().find(x=>x.title==='Send proposal'));
    const late=get().map(x=>[x.title,x.done]);
    const unfinished=get().find(x=>x.title==='Buy groceries');updatePlannerTask(unfinished,'Buy fruit',yesterday);
-   addPlannerTaskFromPlannerView(view,day,'Duplicate');addPlannerTaskFromPlannerView(view,day,'Duplicate');togglePlannerTaskDone(get().filter(x=>x.title==='Duplicate')[0]);
+   addPlannerTaskFromPlannerView(view,day,'Duplicate');addPlannerTaskFromPlannerView(view,day,'Duplicate');await togglePlannerTaskDone(get().filter(x=>x.title==='Duplicate')[0]);
    renderCardsOnly({force:true});saveState();
    return {late,names:get().map(x=>x.title),duplicates:get().filter(x=>x.title==='Duplicate').map(x=>x.done),sourceCount:getPlannerSourceCards().length};
   });

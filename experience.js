@@ -318,6 +318,13 @@ function renderConflictReview() {
   for(const conflict of state.syncConflicts) {
     const row=document.createElement('article');row.className='conflict-item';
     const title=document.createElement('h4');title.textContent=getConflictLabel(conflict);row.append(title);
+    if(conflict.kind==='subtask'){
+      row.append(renderRecordConflictForm(conflict,()=>{row.replaceChildren(title,planningNode('p','','Subtask version saved. Other checklist steps were kept.'));status.textContent=state.syncConflicts.length+' unresolved';},{
+        noun:'subtask',currentLabel:'Current subtask',scope:'subtask',className:'planner-conflict-form',inspect:LifeStateMerge.inspectSubtaskConflict,
+        render:child=>{const node=planningNode('div','planner-conflict-version');node.append(planningNode('strong','',child.title),planningNode('p','',child.deletedAt?'Removed':child.done?'Completed':'Incomplete'));const completion=LifeTaskRepository.knownCompletion(child);if(completion)node.append(planningNode('p','','Completed '+formatReadableDateKey(completion.on)));return node;},
+        apply:(c,expected,selected)=>applyConflictChoice(c,expected,selected,LifeStateMerge.resolveSubtaskConflict),introduction:'Choose one complete version of this checklist step. Other subtasks and the parent task stay unchanged.',unavailable:'This subtask cannot be identified safely. Its recovery copy was kept.'
+      }));section.append(row);continue;
+    }
     if(conflict.kind==='task-completion'){
       row.append(renderRecordConflictForm(conflict,()=>{row.replaceChildren(title,planningNode('p','','Completion version saved. Both recorded actions remain in history.'));status.textContent=state.syncConflicts.length+' unresolved';},{
         noun:'completion',currentLabel:'Current completion',scope:'completion',className:'planner-conflict-form',inspect:LifeStateMerge.inspectCompletionConflict,
@@ -455,6 +462,7 @@ function renderPlannerTaskVersion(task) {
   if(task.status)add(dates,'Workflow',task.status);
   if(task.deadline)add(dates,'Deadline',dateLabel(task.deadline));
   if(task.notes)add(dates,'Notes',task.notes);
+  if(Array.isArray(task.subtasks) && task.subtasks.length)add(dates,'Checklist',task.subtasks.map(child=>`${child.done?'[x]':'[ ]'} ${child.title}${child.deletedAt?' (removed)':''}`).join('\n'));
   const history=document.createElement('details');history.className='planner-conflict-history';
   const summary=document.createElement('summary');summary.textContent='Full timestamps';
   const details=document.createElement('dl');

@@ -1,5 +1,9 @@
 # Google Calendar: Connection Plan
 
+## 11 October 2026 Update
+
+The private backend and frontend connection controls are now prepared in source. They are not deployed or connected yet. Follow [the exact connection guide](GOOGLE-CALENDAR-CONNECT.md) rather than the older preparation-only plan below. This first implementation exports confirmed cloud tasks/activities to a dedicated calendar, checks conflicts, and does not import Google edits or delete events automatically.
+
 Status: 10 September 2026. Live Google synchronization is **not configured** in this release. Life OS Calendar works independently. Its **Add to Google Calendar** action opens a prefilled Google event for your review. Saving it creates a separate copy. Editing either copy does not update the other, and repeating the action may create another event.
 
 ## 21 September Follow-up

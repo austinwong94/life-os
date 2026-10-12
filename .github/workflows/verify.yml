@@ -17,6 +17,11 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm test
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.5.4
+      - name: Type-check the private Calendar backend without secrets
+        run: deno check --no-config --node-modules-dir=none supabase/functions/google-calendar/index.ts
       - name: Build complete public artifact
         run: npm run build
       - name: Start isolated preview
@@ -62,6 +67,14 @@ jobs:
       - run: npm run test:planning
         env:
           TEST_OUTPUT: test-results
+      - run: npm run test:google-calendar
+        env:
+          TEST_OUTPUT: test-results/google-calendar
+      - name: Check Google connection controls in WebKit
+        run: npm run test:google-calendar
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/google-calendar-webkit
       - name: Check task and calendar flows in WebKit
         run: npm run test:planning
         env:
@@ -89,6 +102,14 @@ jobs:
       - run: npm run test:task-sources
         env:
           TEST_OUTPUT: test-results/task-sources
+      - run: npm run test:subtasks
+        env:
+          TEST_OUTPUT: test-results/subtasks
+      - name: Check subtasks in WebKit
+        run: npm run test:subtasks
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/subtasks-webkit
       - run: npm run test:preview-isolation
         env:
           TEST_OUTPUT: test-results/preview-isolation

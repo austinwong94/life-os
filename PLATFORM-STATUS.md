@@ -2,7 +2,45 @@
 
 Latest assessment: [22 September structure and usability review](PLATFORM-REASSESSMENT-2026-09-22.md). Its follow-up distinguishes implemented fixes from the remaining structural and live-service checks.
 
-Updated: 11 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
+Updated: 12 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
+
+## October 12: Publication Candidate
+
+Publication requested for build `2026.10.12-task-confirmation`, release `8d3916d75abe5bf0` (21 public assets). Includes subtasks, planner confirmation/saving fixes and the prepared Calendar layout improvements. Publication must wait for the exact-artifact GitHub verification/deployment workflow; this section is not yet a live confirmation.
+
+Google Calendar remains explicitly disabled (`GOOGLE_CALENDAR_SYNC_READY=false`). The release makes no automatic Google-integration requests, exposes no connection controls, and retains the setup guide. Prepared backend sources and isolated enabled-mode tests remain in the repository for later work. No function, schema, OAuth grant or secret is deployed or changed. Existing Life OS cloud saving remains separate and unchanged. The disabled-mode regression passes without sending any record to Google.
+
+## October 12: Planner Checkbox Follow-Up
+
+Local build `2026.10.12-task-confirmation`, packaged release `ff57dc649eb1376b` (21 public assets). Not published. The native unfinished-subtask confirmation could leave the Codex preview unresponsive; the previous headless tests accepted that native dialog and did not cover this embedded-browser failure.
+
+- Replaced parent completion, planner deletion and subtask deletion prompts with labelled in-app dialogs and explicit Cancel/Confirm actions. Escape cancels; keyboard focus returns to the original task, including responsive redraws and WebKit clicks. Parent checkboxes retain their saved state until confirmation. Children are not automatically completed or discarded.
+- Revalidated board, source and full parent snapshots after waiting for confirmation. Changed/moved/archived records are refused, and failed completion or deletion saves restore the original task. Focus sessions now await confirmation rather than closing prematurely.
+- Validation: 123 unit checks; 13 checklist/confirmation scenarios in each browser engine; 13 daily, 11 source-task, 12 follow-through, 18 planning, 11 existing browser and 14 card-feature scenarios; 13 packaged-release repeats: **241 passing checks/repeats**. Screenshots at phone/portrait widths were inspected. The original Codex tab remained blocked during control attempts; a fresh tab loaded the new build and retained the original preview records, but embedded-browser click acceptance still requires cancelling the old popup and reloading. These tests do not certify every browser or every possible bug.
+
+No production records, database schema or account policies were changed. Existing preview tasks were not confirmed complete or deleted during inspection. Local preview is available on port 5180. Save open writing before refreshing; cancel the old native confirmation first if it is blocking the browser.
+
+## October 12: Task Checklists
+
+Local build `2026.10.12-subtasks`, packaged release `3947998d75a17990` (21 public assets). Not published. The prior Google connection preparation is retained; its deployment and consent are still separate outstanding steps.
+
+- Tasks, Today, date-based Planner views, and original To-Do/Project cards share optional one-level subtasks on the original parent record. Empty checklists are available through the task menu (or a disclosure on the source card); populated checklists show completed/total and percentage. Children inherit the parent's area and schedule; they do not become duplicate cards, tasks, calendar events or independently counted goal outcomes.
+- Inline Enter-to-add, retained tab-local drafts, explicit child editing, removal confirmation, recoverable deletion and guarded Undo. Finishing children does not silently finish their parent. Completing a parent with unfinished children requires confirmation and retains every step unchanged. Historical child completion uses the selected planner day, with actual recorded timestamps retained.
+- Board/source/child IDs bind every operation. Independent child edits merge by stable ID; conflicting versions of the same child are retained and can be reviewed as one coherent record. Stale edits and Undo refuse to replace newer records. Failed device writes roll back checklist changes and keep the typed draft for retry.
+- Source-card metadata edits preserve checklists; bulk edits that would discard a task containing saved subtasks are refused. Readable downloads and full JSON backups include children and their history. No database migration or existing-record conversion is needed, and no production/private records were modified.
+
+Validation: 123 unit checks; 8 new browser scenarios in Chromium and WebKit; 18 existing planning, 11 source-task, 4 design, 19 sync, 13 daily and 12 follow-through scenarios in Chromium; 8 additional checklist scenarios against the packaged artifact: **224 passing checks/repeats**. Phone/portrait screenshots were inspected. A rapid-reload disclosure-state issue was corrected; the current build test now checks the actual build ID rather than a historical constant. Physical phones and authenticated live two-device acceptance are not certified by these synthetic checks. Publication remains pending.
+
+## October 11: Google Connection Preparation and Calendar Design
+
+Local source changes only; not published or connected. [Exact setup guide](GOOGLE-CALENDAR-CONNECT.md). The user has not created the Google project yet. No production records, OAuth grants or database settings were changed.
+
+- Added private Supabase function/migration source: user-validated requests, single-use expiring OAuth state, PKCE via Google's official library, verified Google identity, encrypted server-only tokens, browser-denied integration tables, owner locks and conditional Google writes. Original `user_states` data is read-only to this integration.
+- Added reviewed per-board outward sync to a dedicated app-created calendar, deterministic event IDs and durable receipts for lost-response recovery. Tasks retain original dates and identity; no carryover event copies. Diaries, notes and health records are not exported. Full two-way sync and primary-calendar reading are not implemented. Google-side edits/deletions pause affected items; local removal/moves retain Google events for manual review. Existing manually made Google copies are not deduplicated by title.
+- Added connection, preview, pause, disconnect, error/revocation states and an in-app setup guide. Preview/file/local URLs cannot access Google. Automatic sync waits for confirmed cloud records and only runs while the live site is open on enrolled boards. Disconnect retains mapping receipts for the same Google account.
+- Calendar uses flatter agenda rows, consistent type/spacing, visible selected dates, responsive filters and 44px phone controls. Task density, three-column placement, diary writing and one-row feelings remain covered. The local dev server now rereads its public asset manifest, preventing new modules from becoming missing-file errors until a restart.
+
+Validation: 116 unit checks; 18 planning scenarios in each browser engine; 4 design scenarios in each engine across five widths; 9 simulated Google-control scenarios in each engine; 67 saving/daily/preview/responsive scenarios. Deno type checking and public-only release packaging pass. Bounded sync resumes across a 500-record test history rather than starving newer entries. These checks do not certify a deployed Google connection, live RLS or physical phones. Backend deployment, Google consent, staging two-account/two-device acceptance, and verified frontend publication remain required.
 
 ## October 11: Follow-Through Upgrade
 

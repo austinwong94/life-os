@@ -1,0 +1,4 @@
+[functions.google-calendar]
+# Google cannot provide a Supabase JWT at the OAuth callback.
+# All non-callback actions explicitly validate the user's JWT in the function.
+verify_jwt = false

@@ -266,7 +266,7 @@ const results=[];
      hits:[...menu.querySelectorAll('button')].map(button=>{const b=button.getBoundingClientRect();return button.contains(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2));})};
    });
    assert.equal(visible.position,'fixed');assert.ok(visible.top>=0&&visible.bottom<=visible.limit,JSON.stringify({width,...visible}));
-   assert.deepEqual(visible.hits,[true,true,true,true]);
+   assert.deepEqual(visible.hits,[true,true,true,true,true]);
    await p.screenshot({path:out+'/task-menu-scrolled-'+width+'.png'});
    await p.getByRole('button',{name:'Edit planner task: Menu sample 9',exact:true}).click();
    await p.getByLabel('Task notes',{exact:true}).fill('A draft must not disappear');

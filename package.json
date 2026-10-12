@@ -18,10 +18,12 @@
     "test:conflicts": "node tests/conflicts.cjs",
     "test:restore": "node tests/restore.cjs",
     "test:planning": "node tests/planning.cjs",
+    "test:google-calendar": "node tests/google-calendar.cjs",
     "test:coaching": "node tests/coaching.cjs",
     "test:daily": "node tests/daily-workspace.cjs",
     "test:refinements": "node tests/refinements.cjs",
     "test:task-sources": "node tests/task-sources.cjs",
+    "test:subtasks": "node tests/subtasks.cjs",
     "test:preview-isolation": "node tests/preview-isolation.cjs",
     "test:design": "node tests/design.cjs",
     "test:follow-through": "node tests/follow-through.cjs"

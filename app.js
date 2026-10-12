@@ -14,7 +14,7 @@ const AUTO_SAVE_INTERVAL_MS = 30000;
 const CLOUD_SAVE_DEBOUNCE_MS = 1400;
 const CLOUD_CONFLICT_TOLERANCE_MS = 1000;
 const LOCAL_DEV_RELOAD_POLL_MS = 1500;
-const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "coaching.css", "daily-workspace.js", "daily-workspace.css", "app.js", "experience.js", "planning.js", "coaching.js", "storage-scope.js", "planner-store.js", "task-repository.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
+const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "coaching.css", "daily-workspace.js", "daily-workspace.css", "app.js", "experience.js", "planning.js", "calendar-sync-core.js", "google-calendar.js", "coaching.js", "storage-scope.js", "planner-store.js", "task-repository.js", "subtask-store.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
 const DIARY_BACKUP_KEY = LifeStorageScope.key("life-os-diary-entry-backups");
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
 const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food"];
@@ -2021,7 +2021,7 @@ async function saveCardFromForm() {
 
   const card = buildCardFromForm({ preview: false });
   if (editingCardId) {
-    updateExistingCard(card);
+    if(updateExistingCard(card)===false)return;
   } else {
     state.cards.push(card);
   }
@@ -2235,6 +2235,14 @@ function updateExistingCard(nextCard) {
 
   const current = state.cards[index];
   const sameType = current.type === nextCard.type;
+  const protectedItems=(current.items || []).filter(item=>Array.isArray(item.subtasks) && item.subtasks.length);
+  if(!sameType && (Array.isArray(current.subtasks) && current.subtasks.length || (current.plannerTasks || []).some(task=>Array.isArray(task.subtasks) && task.subtasks.length))){
+    window.alert('This task has saved subtasks. Keep its card type, or archive the card to retain its checklist.');return false;
+  }
+  if(protectedItems.length && (!sameType || protectedItems.some(item=>(current.items || []).filter(old=>old.text===item.text).length>(nextCard.items || []).filter(next=>next.text===item.text).length))){
+    window.alert('This edit would remove a task with saved subtasks. Edit that task individually, or archive its card instead. Your saved checklist was kept.');
+    return false;
+  }
   if (sameType && ["checklist", "daily", "routine"].includes(current.type)) {
     const used = new Set();
     nextCard.items = nextCard.items.map(item => {
@@ -2275,7 +2283,7 @@ function updateExistingCard(nextCard) {
   if (sameType && current.type === "routine") { nextCard.history = current.history; nextCard.lastResetDate = current.lastResetDate; }
   if (sameType && ["scheduled", "weekly", "monthly", "annual"].includes(current.type)) nextCard.checks = current.checks;
   if (sameType && current.type === "minutes") nextCard.currentValue = current.currentValue;
-  if (sameType && current.type === "single") nextCard.done = current.done;
+  if (sameType && current.type === "single") {nextCard.done = current.done;if(Object.hasOwn(current,'subtasks'))nextCard.subtasks=current.subtasks;}
   const mergedDiaryEntries =
     current.type === "diary" && nextCard.type === "diary"
       ? { ...(current.diaryEntries || {}), ...(nextCard.diaryEntries || {}) }
@@ -3946,6 +3954,7 @@ function renderPlannerLinkedItem(item) {
 
   const row = document.createElement("div");
   row.className = "planner-linked-item";
+  row.dataset.taskRef=subtaskKey(taskSubtaskRef(item));
   row.classList.toggle("is-done", Boolean(item.done));
 
   const check = document.createElement("input");
@@ -3954,7 +3963,7 @@ function renderPlannerLinkedItem(item) {
   check.checked = Boolean(item.done);
   check.title = item.done ? "Mark as open" : "Mark as done";
   check.setAttribute("aria-label", `${item.done ? "Mark open" : "Mark done"}: ${item.title}`);
-  check.addEventListener("change", () => togglePlannerTaskDone(item));
+  check.addEventListener("change", () => {check.checked=Boolean(item.done);check.focus({preventScroll:true});togglePlannerTaskDone(item);});
 
   const date = document.createElement("button");
   date.type = "button";
@@ -3978,7 +3987,7 @@ function renderPlannerLinkedItem(item) {
   copy.className = "planner-linked-copy";
   copy.title = item.done ? "Mark as open" : "Mark as done";
   copy.setAttribute("aria-label", `${item.done ? "Mark open" : "Mark done"}: ${item.title}`);
-  copy.addEventListener("click", () => togglePlannerTaskDone(item));
+  copy.addEventListener("click", () => {copy.focus({preventScroll:true});togglePlannerTaskDone(item);});
   if (item.isCarryover && !item.done) {
     const badge = document.createElement("span");
     badge.className = "planner-linked-carryover";
@@ -4041,7 +4050,8 @@ function renderPlannerLinkedItem(item) {
   edit.classList.remove("planner-linked-edit-button");
   edit.addEventListener("click", () => closeCardActionMenus());
   const history=document.createElement('button');history.type='button';history.innerHTML=ICONS.calendar+'<span>Completion history</span>';history.onclick=event=>{event.stopPropagation();openTaskHistory(item);};
-  menu.append(edit, archive, remove,history);
+  const subtasks=document.createElement('button');subtasks.type='button';subtasks.innerHTML=ICONS.list+'<span>Subtasks</span>';subtasks.onclick=event=>{event.stopPropagation();closeCardActionMenus();openTaskSubtasks(item);};
+  menu.append(subtasks,edit, archive, remove,history);
   menuToggle.addEventListener("click", (event) => {
     event.stopPropagation();
     const willOpen = !menuShell.classList.contains("is-open");
@@ -4061,8 +4071,9 @@ function renderPlannerLinkedItem(item) {
   actions.className = "planner-linked-actions";
   actions.append(menuShell);
 
-  main.append(meta, copy);
-  row.append(check, main, actions);
+  const taskSubtasks=renderTaskSubtasks(item);main.append(meta, copy);
+  row.classList.toggle('has-subtasks',!taskSubtasks.hidden && taskSubtasks.matches('details'));
+  row.append(check, main, actions, taskSubtasks);
   return row;
 }
 
@@ -5944,7 +5955,7 @@ function renderChecklist(card) {
     input.type = "checkbox";
     input.checked = item.done;
     input.addEventListener("change", () => {
-      if(card.type==='checklist'){saveSourceTaskCompletion(card,item,input.checked);return;}else item.done = input.checked;
+      if(card.type==='checklist'){const done=input.checked;input.checked=Boolean(item.done);saveSourceTaskCompletion(card,item,done);return;}else item.done = input.checked;
       if (card.type === "routine") {
         syncRoutineTodayHistory(card);
       }
@@ -5955,6 +5966,10 @@ function renderChecklist(card) {
     span.textContent = item.text;
     label.append(input, span);
     wrapper.append(label);
+    if(card.type==='checklist'){
+      const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.cardId===card.id && task.ref.itemId===item.id && task.editable);
+      if(task)wrapper.append(renderTaskSubtasks(task,{offerEmpty:true}));
+    }
   });
   if (items.length > limit) {
     const more = document.createElement("p");
@@ -6041,7 +6056,7 @@ function renderDailyList(card) {
     input.type = "checkbox";
     input.checked = item.done;
     input.addEventListener("change", () => {
-      saveSourceTaskCompletion(card,item,input.checked);
+      const done=input.checked;input.checked=Boolean(item.done);saveSourceTaskCompletion(card,item,done);
     });
     const count = document.createElement("span");
     count.className = "daily-index";
@@ -6050,6 +6065,8 @@ function renderDailyList(card) {
     text.textContent = item.text;
     label.append(input, count, text);
     wrapper.append(label);
+    const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.cardId===card.id && task.ref.itemId===item.id && task.editable);
+    if(task)wrapper.append(renderTaskSubtasks(task,{offerEmpty:true}));
   });
   if (card.type === "daily") {
     const plannerLinks = renderDailyPlannerLinks(card);
@@ -6262,7 +6279,7 @@ function renderSingleTask(card) {
   input.type = "checkbox";
   input.checked = card.done;
   input.addEventListener("change", () => {
-    saveSourceTaskCompletion(card,null,input.checked);
+    const done=input.checked;input.checked=Boolean(card.done);saveSourceTaskCompletion(card,null,done);
   });
   const span = document.createElement("span");
   span.textContent = "Complete";
@@ -6270,11 +6287,17 @@ function renderSingleTask(card) {
   wrapper.append(label);
   return wrapper;
 }
-function saveSourceTaskCompletion(card,item,done) {
-  const target=item || card,keys=['done','taskCompletion','taskCompletionEvents'],before=Object.fromEntries(keys.filter(key=>Object.hasOwn(target,key)).map(key=>[key,LifeStateMerge.copy(target[key])]));
-  try{LifeTaskRepository.complete(target,done,getTodayKey());}catch(error){renderCardsOnly({force:true});setSaveStatus(error.message,'error');return;}
+async function saveSourceTaskCompletion(card,item,done) {
+  const boardId=state.activeBoardId,expected=LifeStateMerge.copy(item || card);
+  if(!await confirmParentTaskCompletion(expected,done))return false;
+  const cards=state.cards.filter(c=>c.id===card.id),live=cards.length===1?cards[0]:null;
+  const targets=item ? (live?.items || []).filter(t=>item.id?t.id===item.id:t===item) : live?[live]:[];
+  if(boardId!==state.activeBoardId || !live || targets.length!==1 || !LifeStateMerge.equal(targets[0],expected)){setSaveStatus('This task changed or moved. Review it before completing.','error');renderCardsOnly({force:true});return false;}
+  const target=targets[0],keys=['done','taskCompletion','taskCompletionEvents'],before=Object.fromEntries(keys.filter(key=>Object.hasOwn(target,key)).map(key=>[key,LifeStateMerge.copy(target[key])]));
+  try{LifeTaskRepository.complete(target,done,getTodayKey());}catch(error){renderCardsOnly({force:true});setSaveStatus(error.message,'error');return false;}
   if(!saveState()){for(const key of keys)delete target[key];Object.assign(target,before);syncActiveBoard({touchBoard:false});}
   renderCardsOnly({force:true});
+  return lastLocalSaveOk;
 }
 
 function renderTracker(card) {
@@ -6647,17 +6670,23 @@ function updatePlannerEntry(card, dateKey, updates, options = {}) {
 }
 
 
-function togglePlannerTaskDone(item) {
-  if (!item?.card || !item.taskId) return;
-  const card = resolveLiveCard(item.card);
-  const task = LifePlanner.ensure(card).find(task => task.id === item.taskId);
-  if (!task) return;
-  const before = LifeStateMerge.copy(task);
-  try{LifePlanner.complete(card,item.taskId,item.dateKey);}catch(error){renderCardsOnly({force:true});setSaveStatus(error.message,'error');return;}
+async function togglePlannerTaskDone(item) {
+  if (!item?.card || !item.taskId) return false;
+  let card,task;
+  try{card=resolveSubtaskParent(taskSubtaskRef(item)).card;task=LifePlanner.ensure(card).find(task=>task.id===item.taskId);}
+  catch(error){setSaveStatus(error.message,'error');return false;}
+  if (!task) return false;
+  const boardId=state.activeBoardId,before=LifeStateMerge.copy(task);
+  if(!await confirmParentTaskCompletion(before,!before.done))return false;
+  const sources=getPlannerSourceCards().filter(source=>source.id===item.card.id);card=sources.length===1?sources[0]:null;
+  const matches=card?LifePlanner.ensure(card).filter(t=>t.id===item.taskId && LifePlanner.active(t)):[];
+  if(boardId!==state.activeBoardId || matches.length!==1 || !LifeStateMerge.equal(matches[0],before)){setSaveStatus('This task changed or moved. Review it before completing.','error');renderCardsOnly({force:true});return false;}
+  task=matches[0];
+  try{LifePlanner.complete(card,item.taskId,item.dateKey);}catch(error){renderCardsOnly({force:true});setSaveStatus(error.message,'error');return false;}
   LifePlanner.project(card);
   card.updatedAt = Date.now();
   if(!saveState()){
-    const tasks=LifePlanner.ensure(card);tasks.splice(tasks.findIndex(t=>t.id===task.id),1,before);LifePlanner.project(card);syncActiveBoard({touchBoard:false});renderCardsOnly({force:true});return;
+    const tasks=LifePlanner.ensure(card);tasks.splice(tasks.findIndex(t=>t.id===task.id),1,before);LifePlanner.project(card);syncActiveBoard({touchBoard:false});renderCardsOnly({force:true});return false;
   }
   const after=LifeStateMerge.copy(task);
   renderCardsOnly({force: true});
@@ -6670,14 +6699,22 @@ function togglePlannerTaskDone(item) {
     if(!saveState()){tasks.splice(index,1,LifeStateMerge.copy(after));LifePlanner.project(live);syncActiveBoard({touchBoard:false});}
     renderCardsOnly({force: true});
   }});
+  return true;
 }
 
-function deletePlannerTask(item) {
+async function deletePlannerTask(item) {
   if (!item?.card || !item.dateKey) return;
-  if (!confirmPlannerTaskDelete(item)) return;
+  let ref,before,card;
+  try{ref=taskSubtaskRef(item);before=LifeStateMerge.copy(resolveSubtaskParent(ref).target);}
+  catch(error){setSaveStatus(error.message,'error');return;}
+  if (!await confirmPlannerTaskDelete(item)) return;
+  try{const live=resolveSubtaskParent(ref);card=live.card;if(!LifeStateMerge.equal(live.target,before))throw new Error('This task changed while you were confirming. Review it before deleting.');}catch(error){setSaveStatus(error.message,'error');return;}
   const result = removePlannerTaskAcrossEntries(item);
   if (!result) return;
-  saveState();
+  if(!saveState()){
+    const tasks=LifePlanner.ensure(card),index=tasks.findIndex(task=>task.id===item.taskId);
+    tasks.splice(index,1,before);LifePlanner.project(card);syncActiveBoard({touchBoard:false});
+  }
   renderCardsOnly({ force: true });
 }
 
@@ -6711,7 +6748,7 @@ function confirmPlannerTaskDelete(item) {
   const extra = item?.isCarryover && sourceDate && sourceDate !== currentDate
     ? `This also removes its carried-over copies from ${sourceLabel}.`
     : `This removes it from ${sourceLabel}.`;
-  return window.confirm(`Delete "${title}"?\n\n${extra}\n\nIt will not be marked as complete.`);
+  return confirmTaskAction('Delete this task?',`"${title}"\n\n${extra}\n\nIt will not be marked as complete.`,'Delete task',{danger:true});
 }
 
 
@@ -12525,6 +12562,7 @@ function renderReadableCardContent(card) {
   if (card.type === "weekly" || card.type === "monthly" || card.type === "annual") blocks.push(renderReadableChecks(card));
   if (card.type === "single") blocks.push(renderReadableKeyValues("Status", [["Done", card.done ? "Yes" : "No"]]));
   if (card.type === "single") blocks.push(renderReadableTextBlock('Completion history',readableCompletionHistory(card)));
+  if (card.type === "single" && Array.isArray(card.subtasks)) blocks.push(renderReadableChecklist(card.subtasks,'Subtasks',true));
   return blocks.filter(Boolean).join("") || `<p class="text">No extra saved content.</p>`;
 }
 
@@ -12549,7 +12587,11 @@ function readableCompletionHistory(target) {
 function renderReadableChecklist(items, label, includeCompletion=false) {
   const normalizedItems = (Array.isArray(items) ? items : []).filter((item) => getReadableItemTitle(item));
   if (!normalizedItems.length) return "";
-  return `<section class="block"><h5>${escapeHtml(label)}</h5><ul class="clean">${normalizedItems.map((item) => renderReadableItem(getReadableItemTitle(item), Boolean(item.done), [item.note || item.prescription || item.deliverable || "",includeCompletion?readableCompletionHistory(item):''].filter(Boolean).join('\n'))).join("")}</ul></section>`;
+  return `<section class="block"><h5>${escapeHtml(label)}</h5><ul class="clean">${normalizedItems.map((item) => renderReadableItem(getReadableItemTitle(item), Boolean(item.done), [item.note || item.prescription || item.deliverable || "",includeCompletion?readableCompletionHistory(item):'',readableSubtasks(item)].filter(Boolean).join('\n'))).join("")}</ul></section>`;
+}
+
+function readableSubtasks(target) {
+  return (Array.isArray(target.subtasks)?target.subtasks:[]).map(child=>`${child.done?'[x]':'[ ]'} ${child.title}${child.deletedAt?' (removed)':''}${readableCompletionHistory(child)?' · '+readableCompletionHistory(child):''}`).join('\n');
 }
 
 function renderReadableItem(title, done = false, note = "") {
@@ -12632,7 +12674,7 @@ function renderReadablePlanner(card) {
         !task.done && task.status ? 'Status: '+task.status : '',
         task.deadline ? 'Deadline: '+task.deadline : '', task.notes || '',
         task.nextAction ? 'Next action: '+task.nextAction : '',task.estimatedMinutes ? 'Estimate: '+task.estimatedMinutes+' minutes' : '',task.startTime ? 'Start: '+task.startTime : '',
-        readableCompletionHistory(task),
+        readableCompletionHistory(task), readableSubtasks(task),
         task.deletedAt ? 'Removed (recoverable)' : task.archivedAt ? 'Archived' : ''
       ].filter(Boolean).join(' · ');
       return renderReadableItem(task.title,task.done,details);
@@ -13332,6 +13374,7 @@ async function pushCloudState(options = {}) {
       const changedDuringSave = !LifeStateMerge.equal(snapshot, getStateForStorage());
       setSaveStatus(changedDuringSave ? "Saving latest changes" : lastLocalSaveOk ? "Saved to cloud" : "Cloud saved - device storage full", lastLocalSaveOk ? "saved" : "error");
       renderCloudStatus("Cloud saved " + formatRecordDateTime(cloudUpdatedAt));
+      if(!changedDuringSave)window.setTimeout(googleCalendarAutoSync,2000);
       if (changedDuringSave) cloudPushAgain = true;
     });
   } catch (error) {

@@ -1,6 +1,28 @@
 # Life OS Reliability and Usability Progress
 
-Updated: 11 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
+Updated: 12 October 2026. The earlier milestones below are historical. Release status must be checked against the workflow and live release identity, not inferred from local feature counts.
+
+## October 12 Publication Candidate
+
+The user requested publication of the latest frontend while deferring Google Calendar. Release `8d3916d75abe5bf0` keeps Google sync explicitly disabled with no automatic backend probes; the existing tasks/activity Calendar and Life OS cloud saving remain available. No Supabase configuration or personal data migration is part of publication. Exact-artifact CI and live-release verification are required before marking this release live.
+
+## October 12 Checkbox Follow-Up
+
+Replaced native task confirmations with in-app Cancel/Confirm dialogs after the Codex preview checkbox exposed an embedded-browser blocking issue not covered by the earlier headless tests. Added responsive/WebKit focus restoration, pending-confirmation stale-record protection, failed-delete rollback, and awaited focus-session completion. Checklists and completion dates remain on their original records.
+
+Build `2026.10.12-task-confirmation`, packaged release `ff57dc649eb1376b`; **241 passing local checks/repeats**, including 13 checklist scenarios in Chromium and WebKit and 13 packaged repeats. Not published. The old preview tab's native popup still needed user cancellation; source and packaged regressions passed, but a loaded fresh Codex tab is not proof of embedded-browser click acceptance. No existing personal records or production services were deleted or changed. See [current status](PLATFORM-STATUS.md).
+
+## October 12 Subtasks
+
+Implemented expandable checklists on existing tasks: quick entry, individual completion, count/percentage, retained drafts, edit/delete confirmation and Undo. A birthday task can hold cake, food, invitations and gifts without separate cards or duplicated Planner records. Parent completion remains explicit; unfinished children are never automatically ticked. Checklists share the parent's board/source and survive parent renaming, scheduling, metadata edits and readable downloads.
+
+Stable child IDs support independent multi-tab edits, with coherent same-child conflict review, stale-write protection and failed-save rollback. **224 passing local checks/repeats**, including Chromium/WebKit interaction tests and packaged-artifact validation. Source build `2026.10.12-subtasks`, release `3947998d75a17990`. Original personal data and production services were untouched. This upgrade is local only, not published; physical-phone and live-account acceptance remain open. See [current status](PLATFORM-STATUS.md) for precise coverage and limitations.
+
+## October 11 Calendar Preparation
+
+Prepared an additive private Google connection backend and reviewed per-board outward sync controls, plus a calmer responsive Calendar design. Original records and production database settings are unchanged. Google OAuth project, secrets/function/migration deployment, real test-account acceptance and frontend publication are still pending. [Exact connection steps and limitations](GOOGLE-CALENDAR-CONNECT.md). This is not full two-way Calendar sync or a live connection.
+
+Synthetic coverage includes retry idempotency, lost responses, stale Google versions, cancelled events, independent owner/board IDs, retained private source records, denied/invalid consent, unconfigured backend, reviewed cloud receipts and pausing with unsaved changes. Existing task/diary/multi-tab suites remain in the release gate. See current status for verification counts and release boundaries.
 
 ## October 11 Follow-Through
 

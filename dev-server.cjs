@@ -3,11 +3,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = process.env.LIFE_OS_SERVE_RELEASE==='1'?path.resolve(process.env.LIFE_OS_RELEASE_DIR || path.join(__dirname,'dist')):__dirname;
 const port = Number(process.env.PORT || 5180);
-const allowed = new Set(require('./release-files.json'));
-if(process.env.LIFE_OS_SERVE_RELEASE==='1')allowed.add('release.json');
+function allowedFiles() {
+  // Refresh the manifest so newly added modules do not require a server restart.
+  const files=JSON.parse(fs.readFileSync(path.join(__dirname,'release-files.json'),'utf8'));
+  if(!Array.isArray(files) || files.some(file=>typeof file!=='string' || !/^[a-z0-9-]+\.(html|js|css)$/.test(file)))throw new Error('Invalid public manifest');
+  const allowed=new Set(files);if(process.env.LIFE_OS_SERVE_RELEASE==='1')allowed.add('release.json');return allowed;
+}
 const mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'};
 http.createServer((req, res) => {
   const file = new URL(req.url, 'http://localhost').pathname.slice(1) || 'index.html';
+  let allowed;try {allowed=allowedFiles();}catch {res.writeHead(503);res.end('Public manifest unavailable');return;}
   if (!allowed.has(file)) {res.writeHead(404); res.end('Not found'); return;}
   fs.readFile(path.join(root, file), (error, bytes) => {
     if (error) {res.writeHead(404); res.end('Not found'); return;}

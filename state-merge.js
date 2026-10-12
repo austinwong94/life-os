@@ -9,7 +9,7 @@
     ['cards','archivedCards'].includes(path[2]) && path[4] === 'plannerTasks' &&
     path.every(key => typeof key === 'string' && key && !unsafeKeys.has(key));
   const taskContent = task => object(task) ? Object.fromEntries(Object.entries(task).filter(([key]) => key !== 'updatedAt')) : task;
-  const taskStructure = task => object(task) ? Object.fromEntries(Object.entries(taskContent(task)).filter(([key]) => key !== 'title')) : task;
+  const taskStructure = task => object(task) ? Object.fromEntries(Object.entries(taskContent(task)).filter(([key]) => !['title','subtasks'].includes(key))) : task;
   function healthRecordType(path) {
     if (!Array.isArray(path) || path[0]!=='boards' || !['cards','archivedCards'].includes(path[2]) ||
         path.some(key=>typeof key!=='string' || !key || unsafeKeys.has(key))) return null;
@@ -29,6 +29,10 @@
       if (equal(l, r) || equal(b, r)) return copy(l);
       if (equal(b, l)) return copy(r);
       const field = path.at(-1);
+      if (path.at(-2)==='subtasks' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]) && object(l) && object(r)) {
+        conflicts.push({kind:'subtask',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
+        return copy(l);
+      }
       if(field==='taskCompletion' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]) && object(l) && object(r)){
         conflicts.push({kind:'task-completion',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});return copy(l);
       }
@@ -166,6 +170,39 @@
     return index<0?null:{...collection,index,task:collection.value[index]};
   }
 
+  function locateSubtask(snapshot,parts) {
+    if(!Array.isArray(parts) || ![6,8].includes(parts.length) || parts[0]!=='boards' || !['cards','archivedCards'].includes(parts[2]) || parts.at(-2)!=='subtasks' || parts.some(key=>typeof key!=='string' || !key || unsafeKeys.has(key)))return null;
+    if(parts.length===8 && !['items','plannerTasks'].includes(parts[4]))return null;
+    const cards=locate(snapshot,parts.slice(0,3));
+    if(!cards || !keyed(cards.value))return null;
+    const card=cards.value.find(card=>card.id===parts[3]);
+    if(!card || (parts.length===6 ? card.type!=='single' : parts[4]==='plannerTasks' ? card.type!=='planner' : !['daily','checklist'].includes(card.type)))return null;
+    const collection=locate(snapshot,parts.slice(0,-1));
+    if(!collection || !keyed(collection.value))return null;
+    const index=collection.value.findIndex(child=>child.id===parts.at(-1));
+    return index<0?null:{card,parent:collection.value,key:index,value:collection.value[index]};
+  }
+  function reviewableSubtask(child,id) {
+    return object(child) && child.id===id && typeof child.title==='string' && child.title.trim() && typeof child.done==='boolean' && !Object.keys(child).some(key=>unsafeKeys.has(key)) && ['createdAt','updatedAt'].every(key=>Number.isSafeInteger(child[key]) && child[key]>0) && (!Object.hasOwn(child,'deletedAt') || Number.isSafeInteger(child.deletedAt) && child.deletedAt>=0);
+  }
+  function inspectSubtaskConflict(snapshot,conflict) {
+    const location=locateSubtask(snapshot,conflict?.segments);
+    return {editable:Boolean(conflict?.kind==='subtask' && location && [location.value,conflict.local,conflict.remote].every(child=>reviewableSubtask(child,conflict.segments.at(-1)))),current:copy(location?.value)};
+  }
+  function resolveSubtaskConflict(snapshot,conflict,expected,selected,now=Date.now()) {
+    const live=(snapshot.syncConflicts || []).find(item=>item.id===conflict.id);
+    if(!live || !equal(live,conflict))throw new Error('This comparison changed. Refresh it before saving.');
+    const inspection=inspectSubtaskConflict(snapshot,live);
+    if(!inspection.editable || !equal(inspection.current,expected))throw new Error('This subtask changed or moved. Keep the recovery copy and review it again.');
+    if(![expected,live.local,live.remote].some(child=>equal(child,selected)))throw new Error('Choose one of the displayed subtask versions.');
+    const next=copy(snapshot),location=locateSubtask(next,live.segments);
+    location.parent[location.key]={...copy(selected),updatedAt:now};location.card.updatedAt=now;
+    next.boards.find(board=>board.id===live.segments[1]).updatedAt=now;next.updatedAt=now;next.hasUserChanges=true;
+    next.syncConflicts=next.syncConflicts.filter(item=>item.id!==live.id);
+    next.conflictResolutions={...(next.conflictResolutions || {}),[live.id]:{kind:'subtask',resolvedAt:now,source:live.source || 'device',ownerId:live.ownerId,segments:live.segments,base:live.base,remote:live.remote,baseDigest:live.baseDigest}};
+    return next;
+  }
+
   function validTaskDate(value) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const date=new Date(value+'T00:00:00Z');
@@ -285,6 +322,11 @@
     const next=copy(snapshot);
     for(const receipt of Object.values(object(resolutions)?resolutions:{}).filter(object).sort((a,b)=>a.resolvedAt-b.resolvedAt)) {
       if (receipt?.source!=='cloud' || receipt.ownerId!==ownerId || !baseDigest || receipt.baseDigest!==baseDigest) continue;
+      if(receipt.kind==='subtask'){
+        const location=locateSubtask(next,receipt.segments);
+        if(location && reviewableSubtask(receipt.remote,receipt.segments.at(-1)) && equal(location.value,receipt.base))location.parent[location.key]=copy(receipt.remote);
+        continue;
+      }
       if (receipt.kind==='activity') {
         const field=locate(next,receipt.segments);
         if (field && validActivity(receipt.remote) && equal(field.value,receipt.base)) field.parent[field.key]=copy(receipt.remote);
@@ -346,7 +388,7 @@
     return next;
   }
 
-  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,validActivity,reviewedCloudBaseline,fingerprint};
+  const api = {merge,copy,equal,registerConflicts,inspectTextConflict,resolveTextConflict,inspectPlannerTaskConflict,resolvePlannerTaskConflict,inspectSubtaskConflict,resolveSubtaskConflict,inspectHealthConflict,resolveHealthConflict,inspectActivityConflict,resolveActivityConflict,inspectCompletionConflict,resolveCompletionConflict,validActivity,reviewedCloudBaseline,fingerprint};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.LifeStateMerge = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

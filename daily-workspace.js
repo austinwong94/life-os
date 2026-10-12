@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.11-follow-through';
+const LIFE_OS_BUILD = '2026.10.12-task-confirmation';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 
@@ -272,9 +272,24 @@ function openDailyStart(item,plan={}) {
   const display=planningNode('output','daily-focus-clock'),actions=planningNode('div','daily-actions'),message=planningNode('p','daily-message');message.setAttribute('role','status');dialog.append(display,actions,message);
   const render=()=>{const timer=session.focusTimer?.key===key?session.focusTimer:null,seconds=timer?Math.max(0,Math.ceil((timer.endAt?timer.endAt-Date.now():timer.remaining)/1000)):0;display.textContent=timer?(seconds?String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0'):'Session finished'):'Ready to begin';};
   actions.append(planningButton('Start 5 minutes',()=>{session.focusTimer={key,endAt:Date.now()+300000};saveDailyDraft();render();},'play'),planningButton('Pause / resume',()=>{const timer=session.focusTimer;if(timer?.key!==key)return;if(timer.endAt){timer.remaining=Math.max(0,timer.endAt-Date.now());delete timer.endAt;}else{timer.endAt=Date.now()+timer.remaining;delete timer.remaining;}saveDailyDraft();render();},'pause'));
-  actions.append(planningButton('Mark done',()=>{
-    try{if(item.sourceKind==='card')saveCardTaskChange(item.ref,item.base,{done:true});else{const task=LifePlanner.ensure(resolveLiveCard(item.card)).find(t=>t.id===item.taskId);if(!LifeStateMerge.equal(task,expected))throw new Error('This task changed elsewhere. Reopen the current task before completing.');if(task.done)throw new Error('This task is already completed. It has not been reopened.');togglePlannerTaskDone({...item,dateKey:getTodayKey()});if(!lastLocalSaveOk)throw new Error('Completion was not saved. Please retry.');}dialog.close();renderCardsOnly({force:true});}catch(error){message.textContent=error.message;}
-  },'check'));
+  const complete=planningButton('Mark done',async()=>{
+    complete.disabled=true;
+    try{
+      if(item.sourceKind==='card'){
+        if(!await confirmParentTaskCompletion(item.base,true))return;
+        saveCardTaskChange(item.ref,item.base,{done:true});
+      }else{
+        const task=LifePlanner.ensure(resolveLiveCard(item.card)).find(t=>t.id===item.taskId);
+        if(!LifeStateMerge.equal(task,expected))throw new Error('This task changed elsewhere. Reopen the current task before completing.');
+        if(task.done)throw new Error('This task is already completed. It has not been reopened.');
+        if(!await togglePlannerTaskDone({...item,dateKey:getTodayKey()})){
+          message.textContent=lastLocalSaveOk?'':'Completion was not saved. Please retry.';return;
+        }
+      }
+      dialog.close();renderCardsOnly({force:true});
+    }catch(error){message.textContent=error.message;}
+    finally{complete.disabled=false;}
+  },'check');actions.append(complete);
   render();const interval=setInterval(render,500);dialog.addEventListener('close',()=>clearInterval(interval),{once:true});
 }
 function openDailyStepOptions(item) {
