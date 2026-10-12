@@ -45,6 +45,19 @@ const results=[];
    await p.getByRole('button',{name:'Resolve automatic countdowns',exact:true}).click();await p.getByText('The retained comparisons could not be saved. Nothing was resolved.',{exact:true}).waitFor();
    assert.deepEqual(await p.evaluate(()=>({comparisons:state.syncConflicts,recovery:localStorage.getItem(CLOUD_RECOVERY_KEY)})),{comparisons:before.comparisons,recovery:before.recovery});
  });
+ await run('removed-board clock review retains every complete comparison and current diary across refresh',async p=>{
+   const before=await p.evaluate(async()=>{
+     updateDiaryEntry(state.cards.find(c=>c.type==='diary'),getTodayKey(),{thoughts:'Keep this complete current entry.\n第二行'});await flushDeviceWrites();
+     const routine=makeCard({type:'routine',title:'Removed routine'}),removed=createBoardRecord({id:'removed-clock-board',name:'Removed board',cards:[routine]});
+     const remote=LifeStateMerge.copy(removed);remote.cards[0].remaining-=1;
+     state.deletedBoardIds={...(state.deletedBoardIds || {}),[removed.id]:Date.now()};
+     state.syncConflicts=[{id:'removed-clock',source:'device',segments:['boards',removed.id],base:removed,remote}];
+     saveState({skipCloud:true});await flushDeviceWrites();openRecovery();return {boards:JSON.stringify(getStateForStorage().boards),comparison:LifeStateMerge.copy(state.syncConflicts[0])};
+   });
+   await p.getByRole('button',{name:'Resolve automatic countdowns',exact:true}).click();await p.getByText('Retained countdown comparisons (1)',{exact:true}).waitFor();await p.reload();
+   const after=await p.evaluate(()=>({boards:JSON.stringify(getStateForStorage().boards),comparison:state.conflictResolutions['removed-clock'].comparison,unresolved:state.syncConflicts.length}));
+   assert.equal(after.boards,before.boards);assert.deepEqual(after.comparison,before.comparison);assert.equal(after.unresolved,0);
+ });
  await run('review keeps both versions, applies one text field, and preserves other boards',async p=>{
   await seed(p);assert.equal(await p.getByRole('button',{name:'Save choice',exact:true}).isDisabled(),true);
   await p.getByText('Other tab version',{exact:true}).click();await p.getByRole('button',{name:'Save choice',exact:true}).click();await p.getByText(/Choice saved\./).waitFor();

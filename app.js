@@ -38,6 +38,7 @@ let cloudSession = PREVIEW_MODE ? null : loadCloudSession();
 let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
 let cloudStatusMessage = "";
+let cloudEmailLinkPending = false;
 let localStateSource = "default";
 // Set when the stored board JSON was present but unreadable (corrupt/truncated).
 // While true, automatic cloud pushes are blocked so a bad local load can never
@@ -1314,6 +1315,7 @@ const elements = {
   cloudSignInButton: document.querySelector("#cloudSignInButton"),
   cloudSignUpButton: document.querySelector("#cloudSignUpButton"),
   cloudResendButton: document.querySelector("#cloudResendButton"),
+  cloudEmailLinkButton: document.querySelector("#cloudEmailLinkButton"),
   cloudPullButton: document.querySelector("#cloudPullButton"),
   cloudPushButton: document.querySelector("#cloudPushButton"),
   cloudSignOutButton: document.querySelector("#cloudSignOutButton"),
@@ -1828,6 +1830,7 @@ function bindEvents() {
   elements.cloudSignInButton.addEventListener("click", () => signInToCloud());
   elements.cloudSignUpButton.addEventListener("click", () => signUpForCloud());
   elements.cloudResendButton.addEventListener("click", () => resendCloudConfirmation());
+  elements.cloudEmailLinkButton.addEventListener("click", () => sendCloudSignInLink());
   elements.cloudCheckButton.addEventListener("click", () => checkCloudSetup());
   elements.cloudPullButton.addEventListener("click", () => pullCloudState({ confirmReplace: true }));
   elements.cloudPushButton.addEventListener("click", () => pushCloudState({ manual: true }));
@@ -12914,16 +12917,18 @@ function saveCloudSession(session) {
     cloudSession?.user?.id && session?.user?.id && cloudSession.user.id === session.user.id
       ? cloudSession.cloud_updated_at
       : "";
-  cloudSession = session;
   if (session) {
     if (previousCloudStamp && !session.cloud_updated_at) {
-      cloudSession.cloud_updated_at = previousCloudStamp;
+      session.cloud_updated_at = previousCloudStamp;
     }
-    writeLocalJson(CLOUD_SESSION_KEY, session, { silent: true });
+    if(!writeLocalJson(CLOUD_SESSION_KEY, session, {silent:true}) || !LifeStateMerge.equal(loadCloudSession(),session)) {
+      throw new Error('Sign-in could not be saved on this browser. Your records are unchanged. Do not clear browser data; download your information before retrying.');
+    }
     if (elements.cloudPassword) elements.cloudPassword.value = "";
   } else {
     try {localStorage.removeItem(CLOUD_SESSION_KEY);} catch {}
   }
+  cloudSession = session;
   cloudSaveEnabled = Boolean(session?.access_token) && !isRestoreSyncPaused();
   renderCloudStatus();
 }
@@ -12977,14 +12982,17 @@ function renderCloudStatus(message) {
   }
   if (message) cloudStatusMessage = message;
   const isSignedIn = Boolean(cloudSession?.access_token);
-  elements.cloudStatus.textContent = isRestoreSyncPaused() ? "Paused" : isSignedIn ? "Cloud" : "Local";
+  const needsSignIn=/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '');
+  elements.cloudStatus.textContent = isRestoreSyncPaused() ? "Paused" : isSignedIn && needsSignIn ? "Sign-in needed" : isSignedIn ? "Cloud" : "Local";
   elements.cloudEmail.value = cloudSession?.user?.email || elements.cloudEmail.value || "";
   elements.cloudPullButton.disabled = !isSignedIn;
   elements.cloudPushButton.disabled = !isSignedIn;
   elements.cloudSignOutButton.hidden = !isSignedIn;
-  elements.cloudPassword.closest(".field").hidden = isSignedIn;
-  elements.cloudSignInButton.disabled = isSignedIn;
+  elements.cloudPassword.closest(".field").hidden = isSignedIn && !needsSignIn;
+  elements.cloudSignInButton.disabled = isSignedIn && !needsSignIn;
   elements.cloudSignUpButton.disabled = isSignedIn;
+  elements.cloudEmailLinkButton.hidden = isSignedIn && !needsSignIn;
+  elements.cloudEmailLinkButton.disabled = cloudEmailLinkPending || isSignedIn && !needsSignIn;
   elements.cloudResendButton.hidden = isSignedIn;
   elements.cloudResendButton.disabled = isSignedIn;
   const localSavedAt = getStateUpdatedAt(state);
@@ -13110,7 +13118,7 @@ async function fetchCloudUser(accessToken) {
 
 function normalizeCloudError(message) {
   if (/invalid login credentials/i.test(message)) {
-    return "Invalid login. Use Create login first, or confirm this email in Supabase Auth.";
+    return "Sign-in failed: the email or password was not accepted. Use your existing Life OS login; do not create another account to recover your records.";
   }
   if (/PGRST205|Could not find the table/i.test(message)) {
     return CLOUD_TABLE_MISSING_MESSAGE;
@@ -13187,6 +13195,23 @@ async function resendCloudConfirmation() {
   }
 }
 
+async function sendCloudSignInLink() {
+  if(PREVIEW_MODE || cloudEmailLinkPending)return;
+  try {
+    const email=getCloudEmail();
+    cloudEmailLinkPending=true;
+    renderCloudStatus('Requesting a sign-in email for your existing Life OS account...');
+    elements.cloudEmailLinkButton.disabled=true;
+    await cloudAuthRequest(withCloudRedirect('/auth/v1/otp'),{email,create_user:false});
+    renderCloudStatus('Sign-in email requested. Check your inbox and spam, then open the latest link in this Chrome profile. No new account was created; your device records are unchanged.');
+  } catch(error) {
+    renderCloudStatus(normalizeCloudError(error.message || 'The sign-in email could not be requested. Your records are unchanged.'));
+  } finally {
+    cloudEmailLinkPending=false;
+    renderCloudStatus();
+  }
+}
+
 async function signInToCloud() {
   try {
     const { email, password } = getCloudCredentials();
@@ -13254,6 +13279,8 @@ function normalizeCloudSession(result) {
 async function ensureCloudSession() {
   if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   if (!cloudSession?.access_token) throw new Error("Sign in to cloud sync first.");
+  const stored=loadCloudSession();
+  if(stored?.access_token && stored.user?.id===cloudSession.user?.id)cloudSession=stored;
   if (!cloudSession.refresh_token || Date.now() < Number(cloudSession.expires_at || 0)) {
     return cloudSession;
   }
@@ -13390,7 +13417,8 @@ async function pushCloudState(options = {}) {
       if (plan.noop) {
         if (options.manual && !clearRestoreSyncPause()) throw new Error('Cloud is current, but the restore safety setting could not be updated. Automatic sync remains paused.');
         cloudSaveEnabled = !isRestoreSyncPaused();
-        setSaveStatus(lastLocalSaveOk ? "Saved to cloud" : "Cloud saved - device storage full", lastLocalSaveOk ? "saved" : "error"); renderCloudStatus(); return;
+        setSaveStatus(lastLocalSaveOk ? "Saved to cloud" : "Cloud saved - device storage full", lastLocalSaveOk ? "saved" : "error");
+        renderCloudStatus("Cloud copy verified current " + formatRecordDateTime(plan.expectedUpdatedAt)); return;
       }
       state.cloudOwnerId = session.user.id;
       saveState({skipCloud:true,touch:false});

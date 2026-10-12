@@ -5,6 +5,40 @@
   const object = value => value && typeof value === "object" && !Array.isArray(value);
   const keyed = value => Array.isArray(value) && value.every(item => object(item) && typeof item.id === "string") && new Set(value.map(item => item.id)).size === value.length;
   const unsafeKeys = new Set(["__proto__", "prototype", "constructor"]);
+  const dailyClockKeys=['targetAt','duration','remaining','runningSince'];
+  function validDailyClock(key,value) {
+    return key==='targetAt'?typeof value==='string' && Number.isFinite(Date.parse(value)):
+      key==='runningSince'?value===null || Number.isFinite(value) && value>=0:
+      Number.isFinite(value) && value>=0;
+  }
+  function equalWithoutDailyClock(a,b,path) {
+    if(!object(a) || !object(b) || a.id!==b.id || !Array.isArray(path) || a.id!==path.at(-1) || path[0]!=='boards' || path.some(k=>typeof k!=='string' || unsafeKeys.has(k)) || equal(a,b))return false;
+    const clean=(left,right)=>{
+      if(!object(left) || !object(right) || left.id!==right.id || left.type!==right.type || left.timerMode!==right.timerMode)return null;
+      if(!(left.type==='routine' || left.timerMode==='daily'))return [left,right];
+      const l=copy(left),r=copy(right);
+      for(const key of dailyClockKeys){
+        if(!Object.hasOwn(l,key) && !Object.hasOwn(r,key))continue;
+        if(!Object.hasOwn(l,key) || !Object.hasOwn(r,key) || !validDailyClock(key,l[key]) || !validDailyClock(key,r[key]))return null;
+        delete l[key];delete r[key];
+      }
+      return [l,r];
+    };
+    if(path.length===4 && ['cards','archivedCards'].includes(path[2])){
+      const pair=clean(a,b);return Boolean(pair && equal(...pair));
+    }
+    if(path.length!==2)return false;
+    const l=copy(a),r=copy(b);
+    for(const key of ['cards','archivedCards']){
+      if(!Object.hasOwn(l,key) && !Object.hasOwn(r,key))continue;
+      if(!keyed(l[key]) || !keyed(r[key]) || l[key].length!==r[key].length)return false;
+      for(let i=0;i<l[key].length;i++){
+        const pair=clean(l[key][i],r[key][i]);if(!pair)return false;
+        [l[key][i],r[key][i]]=pair;
+      }
+    }
+    return equal(l,r);
+  }
   const plannerPath = path => Array.isArray(path) && path.length === 6 && path[0] === 'boards' &&
     ['cards','archivedCards'].includes(path[2]) && path[4] === 'plannerTasks' &&
     path.every(key => typeof key === 'string' && key && !unsafeKeys.has(key));
@@ -39,6 +73,10 @@
     function value(b, l, r, path) {
       if (equal(l, r) || equal(b, r)) return copy(l);
       if (equal(b, l)) return copy(r);
+      // A deleted board/card must not conflict merely because a stale tab's
+      // automatic daily countdown continued ticking. Real record edits remain conflicts.
+      if(l===undefined && equalWithoutDailyClock(b,r,path))return undefined;
+      if(r===undefined && equalWithoutDailyClock(b,l,path))return undefined;
       const field = path.at(-1);
       // A card's summary view is presentation, not account ownership.
       if(field==='moneyOwner' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]))return copy(l);
@@ -145,13 +183,15 @@
   const textFields=new Set(['name','title','description','thoughts','sentence','text','note','quoteAuthor']);
   function inspectAutomaticTimerConflict(snapshot,conflict) {
     const parts=conflict?.segments,field=locate(snapshot,parts);
+    if(Array.isArray(parts) && parts.length===2 && parts[0]==='boards' && typeof parts[1]==='string' && !unsafeKeys.has(parts[1])) {
+      const removed=conflict.local===undefined && conflict.remote || conflict.remote===undefined && conflict.local;
+      const absent=!(snapshot.boards || []).some(b=>b.id===parts[1]);
+      return {editable:Boolean(!conflict.kind && absent && Number(snapshot.deletedBoardIds?.[parts[1]])>0 && equalWithoutDailyClock(conflict.base,removed,parts)),current:undefined,field:'automatic countdowns on removed board'};
+    }
     const scoped=Array.isArray(parts) && parts.length===5 && parts[0]==='boards' && ['cards','archivedCards'].includes(parts[2]);
     const automatic=field && (field.parent.type==='routine' || field.parent.timerMode==='daily');
     const key=parts?.at(-1),values=[field?.value,conflict?.base,conflict?.local,conflict?.remote];
-    const valid=value=>key==='targetAt'?typeof value==='string' && Number.isFinite(Date.parse(value)):
-      key==='runningSince'?value===null || Number.isFinite(value) && value>=0:
-      Number.isFinite(value) && value>=0;
-    return {editable:Boolean(scoped && automatic && !conflict.kind && ['targetAt','duration','remaining','runningSince'].includes(key) && values.every(valid)),current:copy(field?.value),field:key};
+    return {editable:Boolean(scoped && automatic && !conflict.kind && dailyClockKeys.includes(key) && values.every(value=>validDailyClock(key,value))),current:copy(field?.value),field:key};
   }
 
   function resolveAutomaticTimerConflicts(snapshot,expected,now=Date.now()) {

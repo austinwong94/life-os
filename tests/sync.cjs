@@ -1,4 +1,4 @@
-const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const URL=process.env.TEST_URL || 'http://127.0.0.1:5180/';
@@ -8,7 +8,7 @@ const results=[];
 const user='11111111-1111-4111-8111-111111111111';
 const clone=x=>JSON.parse(JSON.stringify(x));
 (async()=>{
- const browser=await chromium.launch({headless:true});
+ const browser=await (process.env.TEST_BROWSER==='webkit'?webkit:chromium).launch({headless:true});
  async function run(name,fn){
   const contexts=[];
   async function context(){const c=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});contexts.push(c);return c;}
@@ -51,6 +51,66 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   }
   return {a,b,base,backend};
  }
+ await run('email sign-in targets only existing accounts and never changes or uploads local records',async context=>{
+  const p=await fresh(await context());let calls=0,request;
+  await p.route('https://**supabase.co/auth/v1/otp**',r=>{calls++;request={url:r.request().url(),body:r.request().postDataJSON()};return r.fulfill({json:{}});});
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  await p.locator('#railSettingsButton').click();await p.locator('#cloudEmail').fill('synthetic@example.com');await p.getByRole('button',{name:'Email me a sign-in link',exact:true}).click();
+  await p.getByText(/Sign-in email requested/).waitFor();assert.equal(calls,1);assert.equal(request.body.create_user,false);assert.equal(request.body.email,'synthetic@example.com');assert.ok(!Object.hasOwn(request.body,'password'));
+  assert.equal(new globalThis.URL(request.url).searchParams.get('redirect_to'),'https://austinwong94.github.io/life-os/');
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);assert.equal(await p.evaluate(()=>loadCloudSession()),null);
+  await p.route('https://**supabase.co/auth/v1/otp**',r=>r.fulfill({status:429,json:{msg:'Email rate limit exceeded'}}));
+  await p.getByRole('button',{name:'Email me a sign-in link',exact:true}).click();await p.getByText(/Email rate limit exceeded/).waitFor();
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);assert.equal(await p.getByRole('button',{name:'Email me a sign-in link',exact:true}).isEnabled(),true);
+ });
+ await run('rejected login preserves current records and keeps retry available without suggesting another account',async context=>{
+  const p=await fresh(await context());
+  await p.locator('.diary-thoughts').fill('Every current word remains.\n第二行');await p.evaluate(()=>flushDeviceWrites());
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  await p.route('https://**supabase.co/auth/v1/token**',r=>r.fulfill({status:400,json:{code:'invalid_credentials',msg:'Invalid login credentials'}}));
+  await p.locator('#railSettingsButton').click();await p.locator('#cloudEmail').fill('synthetic@example.com');await p.locator('#cloudPassword').fill('synthetic-password');await p.getByRole('button',{name:'Sign in',exact:true}).click();
+  await p.getByText(/Sign-in failed: the email or password/).waitFor();assert.equal(await p.locator('#cloudSignInButton').isEnabled(),true);
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);assert.equal(await p.evaluate(()=>loadCloudSession()),null);
+ });
+ await run('a failed session storage write cannot report successful login or replace a previous token',async context=>{
+  const p=await fresh(await context());
+  const result=await p.evaluate(()=>{
+   const original={user:{id:'synthetic-owner'},access_token:'synthetic-old',expires_at:1};saveCloudSession(original);
+   const before=JSON.stringify(getStateForStorage().boards),write=Storage.prototype.setItem;
+   Storage.prototype.setItem=function(k,v){if(k===CLOUD_SESSION_KEY)throw new DOMException('Full','QuotaExceededError');return write.call(this,k,v);};
+   let error='';try{saveCloudSession({...original,access_token:'synthetic-new'});}catch(e){error=e.message;}
+   Storage.prototype.setItem=write;renderCloudStatus(error);
+   return {error,oldRetained:cloudSession.access_token==='synthetic-old' && loadCloudSession().access_token==='synthetic-old',unchanged:before===JSON.stringify(getStateForStorage().boards)};
+  });
+  assert.match(result.error,/Sign-in could not be saved/);assert.equal(result.oldRetained,true);assert.equal(result.unchanged,true);
+  await p.locator('#railSettingsButton').click();assert.equal(await p.locator('#cloudSignInButton').isEnabled(),true);assert.equal(await p.locator('#cloudPassword').isVisible(),true);
+ });
+ await run('an already-renewed same-owner session is adopted before refreshing a stale cached token',async context=>{
+  const p=await fresh(await context());let authCalls=0;
+  await p.route('https://**supabase.co/auth/**',r=>{authCalls++;return r.fulfill({status:400,json:{msg:'Old refresh token must not be used'}});});
+  const result=await p.evaluate(async()=>{
+   const old={user:{id:'same-owner'},access_token:'synthetic-old',refresh_token:'old-refresh',expires_at:1};saveCloudSession(old);
+   const newer={...old,access_token:'synthetic-new',refresh_token:'new-refresh',expires_at:Date.now()+3600000};localStorage.setItem(CLOUD_SESSION_KEY,JSON.stringify(newer));
+   const before=JSON.stringify(getStateForStorage().boards),session=await ensureCloudSession();return {adopted:session.access_token==='synthetic-new',unchanged:before===JSON.stringify(getStateForStorage().boards)};
+  });
+  assert.equal(authCalls,0);assert.equal(result.adopted,true);assert.equal(result.unchanged,true);
+ });
+ await run('cloud readback verifies complete diary notes and tasks without another write',async context=>{
+  const {a,backend}=await setup(context,{planner:true});
+  await a.evaluate(()=>{
+   const diary=state.cards.find(card=>card.type==='diary');diary.diaryEntries[getTodayKey()]={thoughts:'Complete private diary.\n第二行\nLast line remains.',highlight:'Current reflection',feeling:'neutral'};
+   state.cards.push(makeCard({type:'motivation',title:'Current notes',description:'First line.\nSecond line.'}));saveState({skipCloud:true});
+  });
+  await a.evaluate(()=>pushCloudState({manual:true}));
+  const uploaded=clone(backend.state),writes=backend.writes;
+  await a.evaluate(()=>pushCloudState({manual:true}));
+  assert.match(await a.locator('#cloudNote').innerText(),/Cloud copy verified current/);
+  assert.equal(backend.writes,writes);assert.deepEqual(backend.state,uploaded);
+  assert.equal(await a.evaluate(cloud=>doesCloudStateMatchLocal(cloud),uploaded),true);
+  await a.evaluate(()=>{state.cards.find(card=>card.type==='diary').diaryEntries[getTodayKey()].thoughts+='\nNew writing';saveState({skipCloud:true});});
+  await a.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,writes+1);
+  assert.match(await a.locator('#cloudNote').innerText(),/^Cloud saved /);
+ });
  await run('computer and phone merge changes to different boards',async context=>{
   const {a,b,backend}=await setup(context);
   await a.evaluate(()=>{state.board.name='Computer personal board';saveState({skipCloud:true});});

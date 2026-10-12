@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.13-timer-review';
+const LIFE_OS_BUILD = '2026.10.13-board-clock-review';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 let publishedReleaseCheckAt=0,publishedReleaseCheckInFlight=false;
@@ -157,7 +157,7 @@ function openSaveDetails() {
       if(lastDeviceSaveError)add('Last device save issue',deviceSaveFailureReason()+' '+formatRecordDateTime(lastDeviceSaveError.at));
     }catch{add('Browser storage','Access unavailable');}
     const signedIn=Boolean(cloudSession?.user?.id);
-    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':cloudConflictPending?'Paused - review conflicting changes':isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled':'Sync paused');
+    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '')?'Sign-in needed':cloudConflictPending?'Paused - review conflicting changes':isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled (not a save receipt)':'Sync paused');
     add('Last known cloud version',getKnownCloudUpdatedAt()?formatRecordDateTime(getKnownCloudUpdatedAt()):'No cloud version confirmed');
     if(signedIn && cloudMergeBase?.ownerId===cloudSession.user.id){
       const local=getStateForStorage(),base=cloudMergeBase.state;

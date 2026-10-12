@@ -4,6 +4,16 @@ Latest assessment: [22 September structure and usability review](PLATFORM-REASSE
 
 Updated: 13 October 2026. This is a status of implemented features and verified boundaries, not a claim that the platform is bug-free. Dated milestones below are historical; use the latest section and the release workflow for current status.
 
+## October 13: Existing Account Recovery And Save Verification Candidate
+
+Build `2026.10.13-board-clock-review`. Publication and authenticated production readback are pending; a Supabase dashboard GitHub login is not a Life OS app session.
+
+- Existing-account email-link sign-in requests use `create_user:false`, the configured public Life OS redirect, and the existing account-confirmation callback. Requests do not create a session, change local records, upload data, or change a password. Failed requests and rejected credentials keep retry available. Session persistence is checked before reporting sign-in success; an already-renewed same-owner session is adopted before refreshing a stale cached token.
+- A second cloud save that fetches a valid, exactly matching complete current snapshot now explicitly reports `Cloud copy verified current`. Automatic sync enabled is distinguished from a save receipt. This is not a claim that an upload occurred without authentication.
+- Intentional board/card deletion no longer conflicts solely with valid automatic daily clock changes. A retained whole-board clock-only deletion comparison can be acknowledged only when the current board is absent and an explicit deletion marker exists; the complete original comparison remains recoverable. Real diary, checkmark, task, history or manual-clock changes still require review.
+- Additional local WebKit stress testing exposed a pre-existing false-conflict race under 600 rapid writes from three tabs on different boards. The original synthetic writing was retained, but the no-false-conflicts assertion failed. A candidate storage guard stalled pending commits and was removed before release. The race remains open; this release does not claim certified Safari multi-tab stress safety or a completed storage migration. No regression assertion was weakened.
+- No production diary/task content, authentication token or recovery file is included in the repository. No Supabase schema, owner policy, secret or function is changed. Existing-account email delivery, authenticated upload/readback, real two-device acceptance, finite local storage and the Safari race remain explicit acceptance boundaries.
+
 ## October 13: Retained Countdown Conflict Resolution Confirmed
 
 Published build `2026.10.13-timer-review`, release `d240f2d47ecdbd92`, source commit `d441ecb55bda6ace7a057ee824b2d11483c24b70`. [Workflow 38295334781](https://github.com/austinwong94/life-os/actions/runs/38295334781) passed verification and Pages deployment. All 25 public file hashes and 24 startup cache versions match the tested package. [Open the verified version](https://austinwong94.github.io/life-os/?v=d240f2d47ecdbd92).
