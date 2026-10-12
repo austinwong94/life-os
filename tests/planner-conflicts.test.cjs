@@ -51,6 +51,17 @@ test('unreviewable or mismatched archive conflicts never hide a task by guessing
   const f=fixture();P.change(source(f.local),'task.with.dots',{title:'Stale'},now);P.change(source(f.remote),'task.with.dots',{archivedAt:now+1},now+1);
   const conflict=M.merge(f.base,f.local,f.remote).conflicts[0],task=source(f.local).plannerTasks[0];
   for(const bad of [null,{...conflict,base:undefined},{...conflict,remote:{...conflict.remote,legacyNeedsReview:true}},{...conflict,segments:['boards','__proto__']},{...conflict,remote:{...conflict.remote,id:'different'}}])assert.equal(M.pendingPlannerRemoval({...f.local,syncConflicts:[bad]},'personal.with.dots','planner.with.dots',task),undefined);
+  for(const syncConflicts of [null,{},'invalid'])assert.equal(M.pendingPlannerRemoval({...f.local,syncConflicts},'personal.with.dots','planner.with.dots',task),undefined);
+});
+test('clock-derived daily countdown differences never create conflicts, while user checkmarks and manual timers remain protected',()=>{
+  for(const mode of ['routine','daily-timer']){
+    const base={boards:[{id:'clock-board',cards:[{id:'clock',type:mode==='routine'?'routine':'single',timerMode:'daily',remaining:6000,duration:86400,targetAt:'2026-10-13T00:00:00',runningSince:null,items:[{id:'tick',text:'Rest',done:false}]}],archivedCards:[]}]};
+    const local=M.copy(base),remote=M.copy(base);local.boards[0].cards[0].remaining=5900;remote.boards[0].cards[0].remaining=5800;
+    local.boards[0].cards[0].items[0].done=true;remote.boards[0].name='Other tab changed board name';
+    const merged=M.merge(base,local,remote);assert.equal(merged.conflicts.length,0);assert.equal(merged.boards[0].cards[0].items[0].done,true);assert.equal(merged.boards[0].name,'Other tab changed board name');
+    for(const s of [base,local,remote])s.boards[0].cards[0].type='single',s.boards[0].cards[0].timerMode='hours';
+    assert.ok(M.merge(base,local,remote).conflicts.some(c=>c.segments.at(-1)==='remaining'));
+  }
 });
 function conflicting(f) {
   P.complete(source(f.local),'task.with.dots','2026-09-07',now);

@@ -100,5 +100,18 @@ async function absent(page) {
     }
     await archive(page);await flush(page);await page.reload();await absent(page);
   });
+  await run('Routine countdown drift in simultaneous tabs creates no false conflicts or lost checkmarks',async(page,context)=>{
+    await seed(page);await page.evaluate(async()=>{
+      const c=makeCard({type:'routine',title:'Synthetic routine',items:['Rest']});c.id='clock-routine';state.cards.push(c);syncRoutineTodayHistory(c);saveState({skipCloud:true});await flushDeviceWrites();render();
+    });
+    const other=await context.newPage();await other.goto(URL+'?preview=1');
+    for(const p of [page,other])await p.evaluate(()=>LifeDeviceStore.configure(()=>false));
+    for(const [p,offset] of [[page,60000],[other,120000]])await p.evaluate(offset=>{const NativeDate=Date,fixed=new NativeDate(getTodayKey()+'T12:00:00+08:00').getTime()+offset;globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[fixed]));}static now(){return fixed;}};},offset);
+    await page.evaluate(()=>{const c=state.cards.find(c=>c.id==='clock-routine');c.items[0].done=true;syncRoutineTodayHistory(c);saveState({skipCloud:true});});
+    await other.evaluate(()=>saveState({skipCloud:true}));
+    const clocks=await page.evaluate(()=>LifeDeviceStore.pending().map(({entry})=>entry.state.boards[0].cards.find(c=>c.id==='clock-routine').remaining));assert.ok(new Set(clocks).size>1);
+    await flush(page);await page.reload();const conflicts=await page.evaluate(()=>state.syncConflicts);assert.equal(conflicts.length,0,JSON.stringify(conflicts));
+    assert.equal(await page.evaluate(()=>state.cards.find(c=>c.id==='clock-routine').items[0].done),true);
+  });
   fs.writeFileSync(out+'/planner-archive-results.json',JSON.stringify(results,null,2));await browser.close();if(results.some(r=>!r.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exit(1);});

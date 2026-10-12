@@ -86,8 +86,13 @@
       }
       if (object(l) && object(r) && (b === undefined || object(b))) {
         const result = {};
+        const automaticDaily=path.length===4 && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]) &&
+          ((l.type==='routine' && r.type==='routine') || (l.timerMode==='daily' && r.timerMode==='daily'));
         for (const k of new Set([...Object.keys(b || {}), ...Object.keys(l), ...Object.keys(r)])) {
           if (unsafeKeys.has(k)) continue;
+          // Clock-derived daily countdowns are rebuilt on hydration, not user records.
+          // Their passage of time must not pause saving with a record conflict.
+          if(automaticDaily && ['targetAt','duration','remaining','runningSince'].includes(k)){result[k]=copy(l[k]);continue;}
           if (l.type==='event' && r.type==='event' && validActivity(l.activity) && validActivity(r.activity) && ['title','category','targetAt'].includes(k)) continue;
           // These are compatibility projections, not a second task database.
           if (l.plannerSchemaVersion === 2 && r.plannerSchemaVersion === 2 && ["plannerEntries", "plannerArchivedTasks"].includes(k)) { result[k] = copy(l[k]); continue; }
@@ -242,7 +247,7 @@
   }
 
   function pendingPlannerRemoval(snapshot,boardId,cardId,task) {
-    for(const conflict of snapshot.syncConflicts || []) {
+    for(const conflict of Array.isArray(snapshot?.syncConflicts)?snapshot.syncConflicts:[]) {
       const parts=conflict?.segments;
       if(conflict?.kind!=='planner-task' || !plannerPath(parts) || parts[1]!==boardId || parts[3]!==cardId || parts[5]!==task.id ||
         ![conflict.base,conflict.local,conflict.remote].every(record=>reviewableTask(record,task.id)) ||
