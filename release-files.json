@@ -15,6 +15,7 @@
   "lz-string.js",
   "device-store.js",
   "restore-review.js",
+  "cloud-copies.js",
   "note-actions.js",
   "planning.js",
   "calendar-sync-core.js",

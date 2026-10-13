@@ -13485,7 +13485,7 @@ function isRemoteNewerThanKnown(remoteUpdatedAt) {
 
 function doesCloudStateMatchLocal(cloudState) {
   try {
-    return JSON.stringify(resetBoardViewState(JSON.parse(JSON.stringify(cloudState)))) === JSON.stringify(getStateForStorage());
+    return LifeCloudCopies.equal(resetBoardViewState(JSON.parse(JSON.stringify(cloudState))), getStateForStorage());
   } catch {
     return false;
   }
@@ -13497,7 +13497,7 @@ async function getCloudSavePlan(session, options = {}) {
   if (!row) return {allowed:true, expectedUpdatedAt:""};
   if (!isValidBackup(row.state)) throw new Error("Cloud data is invalid. No data was replaced.");
   if (doesCloudStateMatchLocal(row.state)) {
-    rememberCloudBase(row.state,session.user.id);
+    if (!rememberCloudBase(row.state,session.user.id)) throw new Error('Cloud is current, but the sync history could not be saved on this device. Download your information before freeing browser storage.');
     setKnownCloudUpdatedAt(row.updated_at);
     return {allowed:true,noop:true,expectedUpdatedAt:row.updated_at};
   }
@@ -13508,7 +13508,8 @@ async function getCloudSavePlan(session, options = {}) {
   if (!baseline) {
     saveCloudRecoveryPoint("cloud-copy-for-review",row.state);
     cloudConflictPending=true;
-    renderCloudStatus("This device and cloud have different information. Both remain available. Download the current information, then Load cloud to review the other copy.");
+    renderCloudStatus("Device and cloud differ with no shared sync history. Choose Save cloud to compare both copies and preserve the older cloud records without replacing your current writing.");
+    if (options.manual) return reviewCloudCopies(session,row);
     return {allowed:false,conflict:true};
   }
   const merged=LifeStateMerge.merge(baseline,state,rehydrateState(row.state));
@@ -13563,7 +13564,7 @@ async function pushCloudState(options = {}) {
         if (!window.confirm('Sync the restored device copy? Cloud differences will be checked first. Conflicting edits will still need review.')) return;
       }
       if (!await flushDeviceWrites()) return;
-      const session = await ensureCloudSession();
+      let session = await ensureCloudSession();
       if (state.cloudOwnerId && state.cloudOwnerId !== session.user.id) throw new Error("This local copy belongs to another account. Load your cloud copy before saving.");
       syncActiveBoard({touchBoard: false});
       const plan = await getCloudSavePlan(session, options);
@@ -13571,22 +13572,30 @@ async function pushCloudState(options = {}) {
       if (plan.noop) {
         if (options.manual && !clearRestoreSyncPause()) throw new Error('Cloud is current, but the restore safety setting could not be updated. Automatic sync remains paused.');
         cloudSaveEnabled = !isRestoreSyncPaused();
+        cloudConflictPending = false;
         setSaveStatus(lastLocalSaveOk ? "Saved to cloud" : "Cloud saved - device storage full", lastLocalSaveOk ? "saved" : "error");
         renderCloudStatus("Cloud copy verified current " + formatRecordDateTime(plan.expectedUpdatedAt)); return;
       }
+      const writingSession = await ensureCloudSession();
+      if (writingSession.user.id !== session.user.id) throw new Error('The account changed before saving. Nothing was uploaded.');
+      session = writingSession;
       state.cloudOwnerId = session.user.id;
       saveState({skipCloud:true,touch:false});
       if (!await flushDeviceWrites() || cloudConflictPending) return;
       const snapshot = getStateForStorage();
       const cloudUpdatedAt = await writeCloudState(session, {owner_id: session.user.id, state: snapshot}, plan);
+      const verifiedSession = await ensureCloudSession();
+      if (verifiedSession.user.id !== session.user.id || cloudSession?.user.id !== session.user.id) throw new Error('The account changed during saving. Cloud verification is paused; your device records remain available.');
+      const verifiedRow = await fetchCloudStateRow(verifiedSession);
+      if (!verifiedRow || verifiedRow.updated_at !== cloudUpdatedAt || !LifeCloudCopies.equal(verifiedRow.state, snapshot)) {cloudConflictPending = true; throw new Error('Cloud readback did not match this save. Your device records remain available; retry to compare the current cloud copy.');}
+      if (!rememberCloudBase(snapshot, session.user.id)) {cloudConflictPending = true; throw new Error('Cloud readback matched, but the sync history could not be saved on this device. Automatic sync is paused; download your information before freeing browser storage.');}
       setKnownCloudUpdatedAt(cloudUpdatedAt);
-      rememberCloudBase(snapshot, session.user.id);
       if (options.manual && !clearRestoreSyncPause()) throw new Error('The cloud save succeeded, but the restore safety setting could not be updated. Automatic sync remains paused.');
       cloudSaveEnabled = !isRestoreSyncPaused();
       cloudConflictPending = false;
       const changedDuringSave = !LifeStateMerge.equal(snapshot, getStateForStorage());
       setSaveStatus(changedDuringSave ? "Saving latest changes" : lastLocalSaveOk ? "Saved to cloud" : "Cloud saved - device storage full", lastLocalSaveOk ? "saved" : "error");
-      renderCloudStatus("Cloud saved " + formatRecordDateTime(cloudUpdatedAt));
+      renderCloudStatus("Cloud saved and readback verified " + formatRecordDateTime(cloudUpdatedAt));
       if(!changedDuringSave)window.setTimeout(googleCalendarAutoSync,2000);
       if (changedDuringSave) cloudPushAgain = true;
     });

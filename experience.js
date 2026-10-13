@@ -177,8 +177,10 @@ function setSaveStatus(message, kind = "local") {
 }
 
 function rememberCloudBase(snapshot, ownerId) {
-  cloudMergeBase = {ownerId, state: JSON.parse(JSON.stringify(snapshot))};
-  writeLocalJson(CLOUD_BASE_KEY, cloudMergeBase, {silent: true});
+  const next = {ownerId, state: JSON.parse(JSON.stringify(snapshot))};
+  if (!writeLocalJson(CLOUD_BASE_KEY, next, {silent: true})) return false;
+  cloudMergeBase = next;
+  return true;
 }
 
 function isValidBackup(parsed) {
@@ -260,6 +262,7 @@ function openRecovery() {
   close.setAttribute("aria-label", "Close recovery"); close.onclick = () => {modal.remove(); syncModalOpenState(); document.getElementById("headerSaveStatus").focus();};
   header.append(title, close); dialog.append(header);
   const body = document.createElement("div"); body.className = "recovery-body";
+  appendPreservedCloudCopies(body);
   const review = renderConflictReview();
   if (review) body.append(review);
   const retainedTimers=Object.values(state.conflictResolutions || {}).filter(receipt=>receipt.kind==='automatic-timer' && receipt.comparison);

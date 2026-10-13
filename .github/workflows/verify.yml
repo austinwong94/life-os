@@ -48,6 +48,12 @@ jobs:
       - run: npm run test:sync
         env:
           TEST_OUTPUT: test-results
+      - name: Check cloud copy preservation in WebKit
+        run: npm run test:sync
+        env:
+          TEST_BROWSER: webkit
+          TEST_CASE_PATTERN: "missing|changes during|quota failure prevents|cloud readback truncation|baseline storage failure|cancelled cloud comparison"
+          TEST_OUTPUT: test-results/cloud-copies-webkit
       - run: npm run test:features
         env:
           TEST_OUTPUT: test-results

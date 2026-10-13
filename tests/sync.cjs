@@ -463,5 +463,72 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   const item=backend.state.boards[0].cards.find(c=>c.id==='sync-food').foodEntries['2026-09-08'].meals[0].items[0];assert.equal(item.amount,300);assert.equal(item.unit,'g');
   assert.equal(await b.evaluate(()=>state.syncConflicts[0].remote.amount),300);
  });
+ async function missingHistory(context) {
+  const f=await setup(context,{planner:true});
+  f.backend.state.boards[0].cards.find(c=>c.type==='diary').diaryEntries={'2026-05-19':{thoughts:'Earlier cloud-only writing',sentence:'',feeling:'',updatedAt:10}};
+  const old=clone(f.backend.state);
+  await f.a.evaluate(async()=>{
+   cloudMergeBase=null;localStorage.removeItem(CLOUD_BASE_KEY);
+   updateDiaryEntry(state.cards.find(c=>c.type==='diary'),'2026-10-13',{thoughts:'Latest full diary.\nKeep every character.'});
+   const c=getPlannerSourceCards().find(c=>c.id==='sync-review-source');LifePlanner.change(c,'sync-review-task',{title:'Current renamed task',done:true,completedOn:'2026-10-13',archivedAt:2000});LifePlanner.project(c);
+   saveState({skipCloud:true});await flushDeviceWrites();
+   window.copySaveFinished=false;pushCloudState({manual:true}).then(()=>window.copySaveFinished=true);
+  });
+  await f.a.getByRole('dialog',{name:'Compare device and cloud'}).waitFor();
+  return {...f,old,before:await f.a.evaluate(()=>getStateForStorage())};
+ }
+ await run('missing sync history preserves old cloud privately without replacing diary or resurrecting archived tasks, then verifies full readback',async context=>{
+  const {a,backend,old,before}=await missingHistory(context);
+  await a.getByRole('button',{name:'Keep device + preserve cloud',exact:true}).click();
+  await a.waitForFunction(()=>window.copySaveFinished);
+  assert.equal(backend.writes,1);assert.match(await a.locator('#cloudNote').innerText(),/readback verified/);
+  assert.deepEqual(backend.state.boards[0].cards,before.boards[0].cards);
+  const copy=backend.state.boards.flatMap(b=>b.archivedCards).find(c=>c.preservedCloudSnapshot)?.preservedCloudSnapshot;
+  assert.deepEqual(copy.state,old);assert.equal(backend.state.boards[0].cards.find(c=>c.id==='sync-review-source').plannerTasks[0].archivedAt,2000);
+  await a.reload();assert.deepEqual(await a.evaluate(()=>LifeCloudCopies.retained(getStateForStorage())[0].state),old);
+  assert.equal(await a.evaluate(()=>cloudMergeBase?.ownerId),user);
+  await a.evaluate(()=>openRecovery());assert.equal(await a.getByRole('button',{name:'Read preserved cloud history',exact:true}).count(),1);
+ });
+ await run('cancelled cloud comparison changes neither copy',async context=>{
+  const {a,backend,before}=await missingHistory(context);
+  await a.getByRole('button',{name:'Cancel comparison',exact:true}).click();await a.waitForFunction(()=>window.copySaveFinished);
+  assert.equal(backend.writes,0);assert.deepEqual(await a.evaluate(()=>getStateForStorage()),before);
+ });
+ for(const changed of ['device','cloud','owner'])await run(changed+' changes during missing-history review prevent cloud replacement',async context=>{
+  const {a,backend}=await missingHistory(context);
+  if(changed==='cloud'){backend.state.boards[0].name='Changed elsewhere';backend.updated_at='2026-10-14T00:00:00Z';}
+  if(changed==='device')await a.evaluate(async()=>{state.board.name='A new device edit';saveState({skipCloud:true});await flushDeviceWrites();});
+  if(changed==='owner')await a.evaluate(()=>{saveCloudSession({user:{id:'wrong-owner'},access_token:'synthetic-wrong',expires_at:Date.now()+3600000});});
+  await a.getByRole('button',{name:'Keep device + preserve cloud',exact:true}).click();
+  await a.locator('#cloudCopiesReview .conflict-message').filter({hasText:/changed/}).waitFor();
+  assert.equal(backend.writes,0);await a.getByRole('button',{name:'Cancel comparison',exact:true}).click();
+ });
+ await run('recovery quota failure prevents missing-history upload rather than dropping either copy',async context=>{
+  const {a,backend,before}=await missingHistory(context);
+  await a.evaluate(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key===CLOUD_RECOVERY_KEY)throw new DOMException('Full','QuotaExceededError');return original.call(this,key,value);};});
+  await a.getByRole('button',{name:'Keep device + preserve cloud',exact:true}).click();
+  await a.getByText(/device backup could not be saved/).waitFor();assert.equal(backend.writes,0);
+  assert.deepEqual(await a.evaluate(()=>getStateForStorage().boards),before.boards);
+  await a.getByRole('button',{name:'Cancel comparison',exact:true}).click();
+ });
+ await run('cloud readback truncation is not reported as saved and leaves the full latest writing on device',async context=>{
+  const {a,backend}=await missingHistory(context);
+  await a.route('https://**supabase.co/rest/v1/user_states**',async route=>{
+   if(route.request().method()==='PATCH'){const data=route.request().postDataJSON();backend.state=data.state;backend.updated_at=data.updated_at;backend.writes++;return route.fulfill({json:[{updated_at:backend.updated_at}]});}
+   const snapshot=clone(backend.state);if(backend.writes)snapshot.boards[0].cards.find(c=>c.type==='diary').diaryEntries['2026-10-13'].thoughts='L';
+   return route.fulfill({json:[{state:snapshot,updated_at:backend.updated_at}]});
+  });
+  await a.getByRole('button',{name:'Keep device + preserve cloud',exact:true}).click();await a.waitForFunction(()=>window.copySaveFinished);
+  assert.match(await a.locator('#cloudNote').innerText(),/readback did not match/);assert.equal(await a.evaluate(()=>cloudConflictPending),true);
+  assert.equal(await a.evaluate(()=>state.cards.find(c=>c.type==='diary').diaryEntries['2026-10-13'].thoughts),'Latest full diary.\nKeep every character.');
+ });
+ await run('baseline storage failure after verified upload stays paused and can safely retry without another overwrite',async context=>{
+  const {a,backend}=await missingHistory(context);
+  await a.evaluate(()=>{window.originalStorageSet=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key===CLOUD_BASE_KEY)throw new DOMException('Full','QuotaExceededError');return window.originalStorageSet.call(this,key,value);};});
+  await a.getByRole('button',{name:'Keep device + preserve cloud',exact:true}).click();await a.waitForFunction(()=>window.copySaveFinished);
+  assert.equal(backend.writes,1);assert.equal(await a.evaluate(()=>cloudConflictPending),true);assert.match(await a.locator('#cloudNote').innerText(),/sync history could not be saved/);
+  await a.evaluate(async()=>{Storage.prototype.setItem=window.originalStorageSet;await pushCloudState({manual:true});});
+  assert.equal(backend.writes,1);assert.equal(await a.evaluate(()=>cloudConflictPending),false);assert.match(await a.locator('#cloudNote').innerText(),/verified current/);
+ });
  fs.writeFileSync(output+'/sync-results.json',JSON.stringify(results,null,2));await browser.close();if(results.some(x=>!x.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});
