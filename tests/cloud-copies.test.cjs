@@ -2,6 +2,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const copies=require('../cloud-copies.js');
 const merge=require('../state-merge.js');
+const codec=require('../lz-string.js');
 const current={activeBoardId:'home',boards:[{id:'home',cards:[{id:'diary',type:'diary',diaryEntries:{'2026-10-13':{thoughts:'Every line.\n第二行',updatedAt:100}}},{id:'planner',type:'planner',plannerSchemaVersion:2,plannerTasks:[{id:'new-id',title:'Changed task',done:true,completedOn:'2026-10-13',archivedAt:100,deletedAt:0}]}],archivedCards:[]}],deletedBoardIds:{removed:90},syncConflicts:[]};
 const remote={boards:[{id:'home',cards:[{id:'diary',type:'diary',diaryEntries:{'2026-05-19':{thoughts:'Earlier writing',updatedAt:10}}},{id:'planner',type:'planner',plannerEntries:{'2026-05-19':{items:[{id:'old-id',text:'Old task',done:false}]}}}],archivedCards:[]},{id:'removed',cards:[{id:'private-old-note',type:'quote',description:'Retain history, do not restore the board'}],archivedCards:[]}]};
 const options={ownerId:'owner',cloudUpdatedAt:'2026-05-19T00:00:00Z',digest:'digest',now:1000};
@@ -38,4 +39,18 @@ test('valid archived daily clock changes are not record edits, while diary, tick
   const changed=structuredClone(b);mutation(changed.boards[0].archivedCards[0]);assert.equal(copies.equal(copies.records(a),copies.records(changed)),false);
  }
  const changed=structuredClone(b);changed.boards[0].cards[0].diaryEntries['2026-10-13'].thoughts='Different writing';assert.equal(copies.equal(copies.records(a),copies.records(changed)),false);
+});
+test('sync baseline compression is lossless, keeps original owner/fingerprint order and cannot be misread by older clients as a usable baseline',()=>{
+ const base={ownerId:'original-owner',state:structuredClone(current)};base.state.boards[0].cards[0].diaryEntries['2026-10-13'].thoughts=('完整日记\nEvery character, every line.\n').repeat(8000);
+ const encoded=copies.encodeBase(base,codec);
+ assert.equal(encoded.ownerId,undefined);assert.equal(encoded.state,undefined);assert.equal(JSON.stringify(copies.decodeBase(encoded,codec)),JSON.stringify(base));
+ assert(JSON.stringify(encoded).length<JSON.stringify(base).length/3);
+ assert.deepEqual(copies.decodeBase(base,codec),base);
+});
+test('damaged compressed sync history is refused without touching its original bytes',()=>{
+ const encoded=copies.encodeBase({ownerId:'owner',state:current},codec);
+ for(const field of ['length','checksum','payload']){
+  const broken=structuredClone(encoded);broken[field]=field==='length'?encoded.length+1:field==='payload'?'invalid compressed history':encoded[field]+'broken';const before=JSON.stringify(broken);
+  assert.throws(()=>copies.decodeBase(broken,codec),/integrity|recovery/);assert.equal(JSON.stringify(broken),before);
+ }
 });

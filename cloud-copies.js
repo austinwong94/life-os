@@ -1,6 +1,27 @@
 (function(root) {
   'use strict';
   const copy=value=>JSON.parse(JSON.stringify(value));
+  function checksum(text) {
+    let hash=2166136261;
+    for(let i=0;i<text.length;i++)hash=Math.imul(hash^text.charCodeAt(i),16777619);
+    return (hash>>>0).toString(16);
+  }
+  function encodeBase(base,codec) {
+    const text=JSON.stringify(base),payload=codec.compressToUTF16(text);
+    const encoded={format:'life-os-cloud-base-lz-v1',length:text.length,checksum:checksum(text),payload};
+    if(JSON.stringify(decodeBase(encoded,codec))!==text)throw new Error('Sync history compression failed its integrity check.');
+    return encoded;
+  }
+  function decodeBase(value,codec) {
+    if(!value)return null;
+    if(value.format!=='life-os-cloud-base-lz-v1')return value;
+    if(typeof value.payload!=='string' || !Number.isSafeInteger(value.length) || value.length<0)throw new Error('Saved sync history needs recovery. It has not been removed.');
+    const text=codec.decompressFromUTF16(value.payload);
+    if(typeof text!=='string' || text.length!==value.length || checksum(text)!==value.checksum)throw new Error('Saved sync history failed its integrity check. It has not been removed.');
+    const base=JSON.parse(text);
+    if(typeof base?.ownerId!=='string' || !base.ownerId || !Array.isArray(base.state?.boards))throw new Error('Saved sync history is invalid. It has not been removed.');
+    return base;
+  }
   function canonical(value) {
     if(Array.isArray(value))return value.map(canonical);
     if(value && typeof value==='object')return Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])]));
@@ -40,7 +61,7 @@
     next.cloudOwnerId=ownerId;
     return next;
   }
-  const api={canonical,equal,records,counts,retained,preserve};
+  const api={canonical,equal,records,counts,retained,preserve,encodeBase,decodeBase};
   if(typeof module==='object' && module.exports)module.exports=api;
   else root.LifeCloudCopies=api;
 })(typeof window==='object'?window:globalThis);

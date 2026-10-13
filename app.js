@@ -1413,6 +1413,10 @@ window.addEventListener("storage", (event) => {
   if (event.key === CLOUD_SESSION_KEY) {
     adoptCloudSessionFromAnotherTab();
   }
+  if (event.key === CLOUD_BASE_KEY && event.newValue) {
+    // Recompact an older client's cache without adopting its merge baseline.
+    LifeDeviceStore.cloudLocked(() => loadCloudMergeBase()).catch(() => {});
+  }
 });
 
 setInterval(() => {
@@ -12394,6 +12398,7 @@ async function exportBoardBackup() {
     localRecovery: {
       diaryEntryBackups: readDiaryBackups(),
       cloudRecoveryPoints: readLocalJsonValue(CLOUD_RECOVERY_KEY, []),
+      cloudSyncHistory: readLocalJsonValue(CLOUD_BASE_KEY, null),
       pendingDeviceWrites: (()=>{try{return LifeDeviceStore.pending().map(item=>item.entry);}catch{return [];}})(),
       preUpgradeCopy: readLocalJsonValue(PRE_UPGRADE_KEY, null)
     }

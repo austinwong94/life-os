@@ -539,5 +539,36 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   await a.evaluate(async()=>{Storage.prototype.setItem=window.originalStorageSet;await pushCloudState({manual:true});});
   assert.equal(backend.writes,1);assert.equal(await a.evaluate(()=>cloudConflictPending),false);assert.match(await a.locator('#cloudNote').innerText(),/verified current/);
  });
+ await run('native storage quota reopens with a lossless compact sync baseline and keeps diary, recovery and unrelated padding intact',async context=>{
+  const c=await context(),p=await fresh(c);
+  const original=await p.evaluate(async user=>{
+   const diary=state.cards.find(card=>card.type==='diary');
+   diary.diaryEntries={};for(let n=1;n<=28;n++)diary.diaryEntries['2026-09-'+String(n).padStart(2,'0')]={thoughts:('Every original line '+n+'\n').repeat(1800),sentence:'',feeling:'',updatedAt:n};
+   saveState({skipCloud:true});await flushDeviceWrites();const base=getStateForStorage();
+   localStorage.setItem(CLOUD_BASE_KEY,JSON.stringify({ownerId:user,state:base}));saveCloudRecoveryPoint('quota-recovery',base);
+   const before=localStorage.getItem(STORAGE_KEY),recovery=localStorage.getItem(CLOUD_RECOVERY_KEY);
+   let padding='';for(let n=0;n<1000;n++){try{const next=padding+'x'.repeat(16384);localStorage.setItem('native-quota-padding',next);padding=next;}catch{break;}}
+   let oldJournalRejected=false;try{localStorage.setItem('old-full-journal',JSON.stringify({base,state:base}));}catch{oldJournalRejected=true;}
+   return {base,before,recovery,padding,oldJournalRejected,legacyBaseBytes:localStorage.getItem(CLOUD_BASE_KEY).length};
+  },user);
+  assert.equal(original.oldJournalRejected,true);
+  const reopen=new globalThis.URL(URL);reopen.searchParams.set('liveReload','0');await p.goto(reopen.href);
+  await p.evaluate(()=>flushDeviceWrites());
+  const result=await p.evaluate(()=>({base:cloudMergeBase,encoded:JSON.parse(localStorage.getItem(CLOUD_BASE_KEY)),recovery:localStorage.getItem(CLOUD_RECOVERY_KEY),padding:localStorage.getItem('native-quota-padding'),saved:lastLocalSaveOk,diary:state.cards.find(c=>c.type==='diary').diaryEntries}));
+  assert.equal(result.encoded.format,'life-os-cloud-base-lz-v1');assert.equal(result.encoded.ownerId,undefined);assert.deepEqual(result.base,{ownerId:user,state:original.base});
+  assert.deepEqual(result.diary,original.base.boards[0].cards.find(c=>c.type==='diary').diaryEntries);assert.equal(result.recovery,original.recovery);assert.equal(result.padding,original.padding);assert.equal(result.saved,true);
+  assert(JSON.stringify(result.encoded).length<original.legacyBaseBytes/3);
+  await p.locator('.diary-thoughts').fill('A new complete entry after migration.\nThe second line stays.');assert.equal(await p.evaluate(()=>flushDeviceWrites()),true);
+  await p.reload();assert.equal(await p.locator('.diary-thoughts').inputValue(),'A new complete entry after migration.\nThe second line stays.');
+ });
+ await run('an older tab rewriting legacy sync history is re-compacted without changing the current tab common baseline or records',async context=>{
+  const c=await context(),p=await fresh(c),other=await fresh(c);
+  const current=await p.evaluate(async user=>{const base=getStateForStorage();rememberCloudBase(base,user);return {ownerId:user,state:base};},user);
+  const legacy=clone(current);legacy.state.boards[0].name='Another tab baseline';
+  await other.evaluate(value=>localStorage.setItem(CLOUD_BASE_KEY,JSON.stringify(value)),legacy);
+  await p.waitForFunction(()=>JSON.parse(localStorage.getItem(CLOUD_BASE_KEY)).format==='life-os-cloud-base-lz-v1');
+  assert.deepEqual(await p.evaluate(()=>cloudMergeBase),current);assert.equal(await p.evaluate(()=>state.board.name),current.state.boards[0].name);
+  assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.decodeBase(JSON.parse(localStorage.getItem(CLOUD_BASE_KEY)),LZString)),legacy);
+ });
  fs.writeFileSync(output+'/sync-results.json',JSON.stringify(results,null,2));await browser.close();if(results.some(x=>!x.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});

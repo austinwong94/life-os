@@ -33,6 +33,7 @@ jobs:
         run: npm run test:planner-archive
         env:
           TEST_BROWSER: webkit
+          TEST_URL: http://127.0.0.1:5180/?liveReload=0
           TEST_OUTPUT: test-results/planner-archive-webkit
       - run: npm run test:money
         env:
@@ -52,7 +53,7 @@ jobs:
         run: npm run test:sync
         env:
           TEST_BROWSER: webkit
-          TEST_CASE_PATTERN: "missing|changes during|quota failure prevents|cloud readback truncation|baseline storage failure|cancelled cloud comparison"
+          TEST_CASE_PATTERN: "missing|changes during|quota failure prevents|cloud readback truncation|baseline storage failure|cancelled cloud comparison|native storage quota|older tab rewriting legacy"
           TEST_OUTPUT: test-results/cloud-copies-webkit
       - run: npm run test:features
         env:

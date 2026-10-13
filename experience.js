@@ -178,9 +178,27 @@ function setSaveStatus(message, kind = "local") {
 
 function rememberCloudBase(snapshot, ownerId) {
   const next = {ownerId, state: JSON.parse(JSON.stringify(snapshot))};
-  if (!writeLocalJson(CLOUD_BASE_KEY, next, {silent: true})) return false;
+  let encoded;
+  try {encoded=LifeCloudCopies.encodeBase(next,LZString);} catch {return false;}
+  if (!writeLocalJson(CLOUD_BASE_KEY, encoded, {silent: true})) return false;
+  try {if(!LifeCloudCopies.equal(LifeCloudCopies.decodeBase(readLocalJsonValue(CLOUD_BASE_KEY,null),LZString),next))return false;} catch {return false;}
   cloudMergeBase = next;
   return true;
+}
+
+function loadCloudMergeBase() {
+  const stored=readLocalJsonValue(CLOUD_BASE_KEY,null);
+  try {
+    const base=LifeCloudCopies.decodeBase(stored,LZString);
+    if(!base || typeof base.ownerId!=='string' || !base.ownerId || !isValidBackup(base.state))return null;
+    // Replacing this derived cache atomically frees quota before staging edits.
+    // The complete baseline survives; main records and recovery are untouched.
+    if(stored.format!=='life-os-cloud-base-lz-v1') {
+      const encoded=LifeCloudCopies.encodeBase(base,LZString);
+      writeLocalJson(CLOUD_BASE_KEY,encoded,{silent:true});
+    }
+    return base;
+  } catch {return null;}
 }
 
 function isValidBackup(parsed) {
@@ -649,10 +667,10 @@ function initializeExperience() {
   initializeQuickBoardPicker();
   mountResponsiveComposer();
   restoreTabBoardSelection();
+  cloudMergeBase = loadCloudMergeBase();
   LifeDeviceStore.configure(commitDeviceWrites);
   if (!corruptLocalStateDetected) flushDeviceWrites();
   cloudConflictPending = Boolean(state.syncConflicts?.length);
-  cloudMergeBase = readLocalJsonValue(CLOUD_BASE_KEY, null);
   if (isRestoreSyncPaused()) {cloudSaveEnabled = false; window.clearTimeout(cloudSaveTimer);}
   const status = document.getElementById("headerSaveStatus");
   status.onclick = () => cloudConflictPending || corruptLocalStateDetected ? openRecovery() : openSettingsModal();
