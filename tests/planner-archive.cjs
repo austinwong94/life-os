@@ -87,6 +87,8 @@ async function absent(page) {
     await workspace(page,'tasks');await page.getByRole('group',{name:'Task view'}).getByRole('button',{name:'All tasks',exact:true}).click();
     await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Archive',exact:true}).click();
     assert.ok((await task(page)).archivedAt);await flush(page);await page.reload();await absent(page);
+    // Startup replay is asynchronous; verify its completed commit, not timing.
+    assert.equal(await page.evaluate(()=>flushDeviceWrites()),true,'The replayed archive must finish committing under native quota pressure');
     const after=await page.evaluate(()=>({diary:JSON.stringify(state.cards.find(c=>c.id==='quota-diary').diaryEntries),recovery:localStorage.getItem(CLOUD_RECOVERY_KEY),paddingLength:localStorage.getItem(LifeStorageScope.key('quota-test-other-records')).length,pending:LifeDeviceStore.pending().length}));
     assert.deepEqual({...after,pending:undefined},{...before,pending:undefined});assert.equal(after.pending,0);
     assert.equal(await page.evaluate(()=>restorePlannerTask('archive-source','archive-task')),true);await flush(page);await page.reload();assert.equal((await task(page)).archivedAt,0);
