@@ -165,7 +165,9 @@ const results=[];
   });
   const measurements=[];
   for(const [width,height] of [[320,740],[390,844],[768,1024],[1080,1920],[1440,900]]){
-   await p.setViewportSize({width,height});await p.evaluate(()=>scrollTo(0,0));
+   await p.setViewportSize({width,height});
+   await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   await p.evaluate(()=>scrollTo(0,0));
    const m=await p.locator('.workspace-task-list').evaluate(list=>{
     const rows=[...list.children],first=rows[0].getBoundingClientRect();
     const overlaps=[...list.querySelectorAll('.planner-linked-meta')].some(meta=>{
@@ -176,7 +178,9 @@ const results=[];
     return {top:first.top,rowHeight:first.height,count:rows.length,overlaps,overflow:document.documentElement.scrollWidth-innerWidth,innerOverflow:workspace.scrollWidth-workspace.clientWidth,
      font:parseFloat(getComputedStyle(list.querySelector('.planner-linked-copy')).fontSize),
      menuHeight:list.querySelector('.planner-task-menu-toggle').getBoundingClientRect().height,
-     captureHeights:[...document.querySelectorAll('.task-capture input,.task-capture select,.task-capture-submit')].map(e=>e.getBoundingClientRect().height)};
+     captureHeights:[...document.querySelectorAll('.task-capture input,.task-capture select,.task-capture-submit')].map(e=>e.getBoundingClientRect().height),
+     captureMessage:document.querySelector('.task-capture .planning-message')?.textContent || '',
+     headerHeights:Object.fromEntries(['.workspace-header','.workspace-navigation','.plan-view-switch','.task-heading','.task-toolbar','.task-capture','.task-results-heading'].map(selector=>[selector,document.querySelector(selector)?.getBoundingClientRect().height || 0]))};
    });measurements.push({width,...m});
    assert.equal(m.count,12);assert.equal(m.overlaps,false);assert.ok(m.overflow<=1&&m.innerOverflow<=1,JSON.stringify({width,...m}));
    assert.ok(m.top<=(width<=380?620:width<=700?535:width<=900?530:410),JSON.stringify({width,...m}));
