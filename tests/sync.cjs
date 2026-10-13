@@ -463,17 +463,18 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   const item=backend.state.boards[0].cards.find(c=>c.id==='sync-food').foodEntries['2026-09-08'].meals[0].items[0];assert.equal(item.amount,300);assert.equal(item.unit,'g');
   assert.equal(await b.evaluate(()=>state.syncConflicts[0].remote.amount),300);
  });
- async function missingHistory(context) {
+ async function missingHistory(context,{archivedRoutine=false}={}) {
   const f=await setup(context,{planner:true});
   f.backend.state.boards[0].cards.find(c=>c.type==='diary').diaryEntries={'2026-05-19':{thoughts:'Earlier cloud-only writing',sentence:'',feeling:'',updatedAt:10}};
   const old=clone(f.backend.state);
-  await f.a.evaluate(async()=>{
+  await f.a.evaluate(async archivedRoutine=>{
    cloudMergeBase=null;localStorage.removeItem(CLOUD_BASE_KEY);
    updateDiaryEntry(state.cards.find(c=>c.type==='diary'),'2026-10-13',{thoughts:'Latest full diary.\nKeep every character.'});
    const c=getPlannerSourceCards().find(c=>c.id==='sync-review-source');LifePlanner.change(c,'sync-review-task',{title:'Current renamed task',done:true,completedOn:'2026-10-13',archivedAt:2000});LifePlanner.project(c);
+   if(archivedRoutine)state.archivedCards.push(normalizeArchivedCard({...makeCard({type:'routine',title:'Archived daily routine'}),id:'archived-daily-routine',archivedAt:2000}));
    saveState({skipCloud:true});await flushDeviceWrites();
    window.copySaveFinished=false;pushCloudState({manual:true}).then(()=>window.copySaveFinished=true);
-  });
+  },archivedRoutine);
   await f.a.getByRole('dialog',{name:'Compare device and cloud'}).waitFor();
   return {...f,old,before:await f.a.evaluate(()=>getStateForStorage())};
  }
@@ -493,6 +494,14 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   const {a,backend,before}=await missingHistory(context);
   await a.getByRole('button',{name:'Cancel comparison',exact:true}).click();await a.waitForFunction(()=>window.copySaveFinished);
   assert.equal(backend.writes,0);assert.deepEqual(await a.evaluate(()=>getStateForStorage()),before);
+ });
+ await run('archived daily countdown advancing during missing-history review does not block saving or change its ticks and history',async context=>{
+  const {a,backend,before}=await missingHistory(context,{archivedRoutine:true});
+  const routine=before.boards[0].archivedCards.find(c=>c.id==='archived-daily-routine');
+  await a.waitForTimeout(1400);
+  await a.getByRole('button',{name:'Keep device + preserve cloud',exact:true}).click();await a.waitForFunction(()=>window.copySaveFinished);
+  assert.equal(backend.writes,1);assert.match(await a.locator('#cloudNote').innerText(),/readback verified/);
+  const saved=backend.state.boards[0].archivedCards.find(c=>c.id==='archived-daily-routine');assert.deepEqual(saved.items,routine.items);assert.deepEqual(saved.history,routine.history);
  });
  for(const changed of ['device','cloud','owner'])await run(changed+' changes during missing-history review prevent cloud replacement',async context=>{
   const {a,backend}=await missingHistory(context);

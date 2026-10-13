@@ -30,3 +30,12 @@ test('JSONB object key order does not cause a false readback mismatch, but missi
  assert.equal(copies.equal({done:true},{done:false}),false);
  assert.equal(copies.equal({a:1},{a:1,b:2}),false);
 });
+test('valid archived daily clock changes are not record edits, while diary, ticks, history and manual clocks remain guarded',()=>{
+ const a=structuredClone(current);a.boards[0].archivedCards.push({id:'routine',type:'routine',timerMode:'daily',targetAt:'2026-10-15T00:00:00Z',duration:100,remaining:100,runningSince:null,items:[{id:'tick',done:false}],history:[]});
+ const b=structuredClone(a);Object.assign(b.boards[0].archivedCards[0],{duration:98,remaining:98});
+ assert.equal(copies.equal(copies.records(a),copies.records(b)),true);assert.equal(a.boards[0].archivedCards[0].duration,100);
+ for(const mutation of [c=>c.items[0].done=true,c=>c.history.push({date:'2026-10-13'}),c=>c.timerMode='hours',c=>c.duration='invalid']){
+  const changed=structuredClone(b);mutation(changed.boards[0].archivedCards[0]);assert.equal(copies.equal(copies.records(a),copies.records(changed)),false);
+ }
+ const changed=structuredClone(b);changed.boards[0].cards[0].diaryEntries['2026-10-13'].thoughts='Different writing';assert.equal(copies.equal(copies.records(a),copies.records(changed)),false);
+});

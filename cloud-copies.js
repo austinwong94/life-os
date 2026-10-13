@@ -8,7 +8,17 @@
   }
   const equal=(a,b)=>JSON.stringify(canonical(a))===JSON.stringify(canonical(b));
   const cards=board=>[...(board.cards || []),...(board.archivedCards || [])];
-  const records=snapshot=>({boards:snapshot?.boards,deletedBoardIds:snapshot?.deletedBoardIds || {},cloudOwnerId:snapshot?.cloudOwnerId || '',syncConflicts:snapshot?.syncConflicts || [],conflictResolutions:snapshot?.conflictResolutions || {}});
+  function records(snapshot) {
+    const boards=copy(snapshot?.boards || []);
+    for(const board of boards)for(const card of cards(board)) {
+      // Automatic daily clocks advance during review, including archived cards.
+      // Exclude only valid derived clocks; writing, history and ticks stay exact.
+      if((card.type==='routine' || card.timerMode==='daily') && card.timerMode==='daily' && typeof card.targetAt==='string' && Number.isFinite(Date.parse(card.targetAt)) && ['duration','remaining'].every(k=>Number.isFinite(card[k]) && card[k]>=0) && (card.runningSince===null || Number.isFinite(card.runningSince) && card.runningSince>=0)) {
+        for(const key of ['targetAt','duration','remaining','runningSince'])delete card[key];
+      }
+    }
+    return {boards,deletedBoardIds:snapshot?.deletedBoardIds || {},cloudOwnerId:snapshot?.cloudOwnerId || '',syncConflicts:snapshot?.syncConflicts || [],conflictResolutions:snapshot?.conflictResolutions || {}};
+  }
   function retained(snapshot) {
     return (snapshot.boards || []).flatMap(board=>cards(board).filter(card=>card.preservedCloudSnapshot?.format==='life-os-preserved-cloud-v1').map(card=>card.preservedCloudSnapshot));
   }
@@ -79,8 +89,9 @@ async function reviewCloudCopies(session,row) {
           const stored=readStoredStateSnapshot();
           if(cloudSession?.user.id!==ownerId)throw new Error('The signed-in account changed. Cancel and compare again.');
           if(state.syncConflicts?.length || !LifeCloudCopies.equal(LifeCloudCopies.records(current),LifeCloudCopies.records(getStateForStorage())) || !LifeCloudCopies.equal(LifeCloudCopies.records(current),LifeCloudCopies.records(stored)))throw new Error('Device records changed during review. Cancel and compare again.');
-          if(!saveCloudRecoveryPoint('before-cloud-reconciliation',current))throw new Error('The device backup could not be saved. No cloud records were replaced.');
-          const candidate=LifeCloudCopies.preserve(current,row.state,{ownerId,cloudUpdatedAt:row.updated_at,digest,now:Date.now()});
+          const latest=getStateForStorage();
+          if(!saveCloudRecoveryPoint('before-cloud-reconciliation',latest))throw new Error('The device backup could not be saved. No cloud records were replaced.');
+          const candidate=LifeCloudCopies.preserve(latest,row.state,{ownerId,cloudUpdatedAt:row.updated_at,digest,now:Date.now()});
           state.boards=candidate.boards.map(createBoardRecord);state.cloudOwnerId=ownerId;reconcileActiveBoard();
           if(!saveState({skipCloud:true,touch:false}))throw new Error('The preserved copy could not be staged. No cloud records were replaced.');
         });
