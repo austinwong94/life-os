@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.13-board-clock-review';
+const LIFE_OS_BUILD = '2026.10.14-persistent-github';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 let publishedReleaseCheckAt=0,publishedReleaseCheckInFlight=false;

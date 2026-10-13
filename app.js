@@ -39,6 +39,11 @@ let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
 let cloudStatusMessage = "";
 let cloudEmailLinkPending = false;
+let cloudGithubPending = false;
+let cloudGithubAuthorizeUrl = '';
+let cloudSessionMaintenancePending = false;
+let cloudSessionRetryAfter = 0;
+let cloudSessionReauthRequired = false;
 let localStateSource = "default";
 // Set when the stored board JSON was present but unreadable (corrupt/truncated).
 // While true, automatic cloud pushes are blocked so a bad local load can never
@@ -1316,6 +1321,7 @@ const elements = {
   cloudSignUpButton: document.querySelector("#cloudSignUpButton"),
   cloudResendButton: document.querySelector("#cloudResendButton"),
   cloudEmailLinkButton: document.querySelector("#cloudEmailLinkButton"),
+  cloudGithubButton: document.querySelector("#cloudGithubButton"),
   cloudPullButton: document.querySelector("#cloudPullButton"),
   cloudPushButton: document.querySelector("#cloudPushButton"),
   cloudSignOutButton: document.querySelector("#cloudSignOutButton"),
@@ -1378,6 +1384,7 @@ resetFormState();
 render();
 initializeExperience();
 handleCloudAuthRedirect();
+window.setTimeout(maintainCloudSession, 0);
 clearStartupBoardSearch();
 [100, 400, 900].forEach((delay) => window.setTimeout(clearStartupBoardSearch, delay));
 startLocalDevAutoReload();
@@ -1404,14 +1411,7 @@ window.addEventListener("storage", (event) => {
     applyExternalStorageState(event.newValue);
   }
   if (event.key === CLOUD_SESSION_KEY) {
-    const session = loadCloudSession();
-    if (!session || session.user?.id !== cloudSession?.user?.id) {
-      window.clearTimeout(cloudSaveTimer);
-      cloudSaveEnabled = false;
-      cloudSession = null;
-      setSaveStatus("Account changed - sign in again", "error");
-      renderCloudStatus("The account changed in another tab. Your local work is kept. Sign in again before syncing.");
-    } else { cloudSession = session; }
+    adoptCloudSessionFromAnotherTab();
   }
 });
 
@@ -1438,6 +1438,7 @@ setInterval(() => {
 
 setInterval(() => {
   saveState({ quiet: true, touch: false });
+  maintainCloudSession();
 }, AUTO_SAVE_INTERVAL_MS);
 
 window.addEventListener("pagehide", () => {
@@ -1455,6 +1456,7 @@ document.addEventListener("visibilitychange", () => {
   if (cloudSaveEnabled) {
     queueCloudSave({ immediate: true, silent: true });
   }
+  maintainCloudSession();
 });
 
 function mountSettingsPanels() {
@@ -1831,6 +1833,7 @@ function bindEvents() {
   elements.cloudSignUpButton.addEventListener("click", () => signUpForCloud());
   elements.cloudResendButton.addEventListener("click", () => resendCloudConfirmation());
   elements.cloudEmailLinkButton.addEventListener("click", () => sendCloudSignInLink());
+  elements.cloudGithubButton.addEventListener("click", () => signInWithGithub());
   elements.cloudCheckButton.addEventListener("click", () => checkCloudSetup());
   elements.cloudPullButton.addEventListener("click", () => pullCloudState({ confirmReplace: true }));
   elements.cloudPushButton.addEventListener("click", () => pushCloudState({ manual: true }));
@@ -12929,12 +12932,20 @@ function saveCloudSession(session) {
     try {localStorage.removeItem(CLOUD_SESSION_KEY);} catch {}
   }
   cloudSession = session;
+  cloudSessionReauthRequired = false;
+  cloudSessionRetryAfter = 0;
   cloudSaveEnabled = Boolean(session?.access_token) && !isRestoreSyncPaused();
   renderCloudStatus();
 }
 
 function persistCloudSession() {
   if (PREVIEW_MODE || !cloudSession) return;
+  const stored = loadCloudSession();
+  if (!stored || stored.user?.id !== cloudSession.user?.id) return;
+  // A save receipt must not put cached credentials back over a rotated token.
+  const stamp = cloudSession.cloud_updated_at;
+  cloudSession = {...stored};
+  if (stamp && (!stored.cloud_updated_at || normalizeTimestamp(stamp) >= normalizeTimestamp(stored.cloud_updated_at))) cloudSession.cloud_updated_at = stamp;
   writeLocalJson(CLOUD_SESSION_KEY, cloudSession, {silent: true});
 }
 
@@ -12980,7 +12991,7 @@ function renderCloudStatus(message) {
     elements.cloudPanel.querySelectorAll("button,input").forEach(node=>node.disabled=true);
     return;
   }
-  if (message) cloudStatusMessage = message;
+  if (message) {cloudStatusMessage = message; cloudGithubAuthorizeUrl = '';}
   const isSignedIn = Boolean(cloudSession?.access_token);
   const needsSignIn=/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '');
   elements.cloudStatus.textContent = isRestoreSyncPaused() ? "Paused" : isSignedIn && needsSignIn ? "Sign-in needed" : isSignedIn ? "Cloud" : "Local";
@@ -12993,6 +13004,8 @@ function renderCloudStatus(message) {
   elements.cloudSignUpButton.disabled = isSignedIn;
   elements.cloudEmailLinkButton.hidden = isSignedIn && !needsSignIn;
   elements.cloudEmailLinkButton.disabled = cloudEmailLinkPending || isSignedIn && !needsSignIn;
+  elements.cloudGithubButton.hidden = isSignedIn && !needsSignIn;
+  elements.cloudGithubButton.disabled = cloudGithubPending || isSignedIn && !needsSignIn;
   elements.cloudResendButton.hidden = isSignedIn;
   elements.cloudResendButton.disabled = isSignedIn;
   const localSavedAt = getStateUpdatedAt(state);
@@ -13005,6 +13018,14 @@ function renderCloudStatus(message) {
     (isSignedIn
       ? `Signed in as ${cloudSession.user?.email || "your account"}. ${savedDetail}`
       : "Local browser storage is active.");
+  if (cloudGithubAuthorizeUrl && (!isSignedIn || needsSignIn)) {
+    const link = document.createElement('a');
+    link.href = cloudGithubAuthorizeUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = 'Open GitHub sign-in';
+    elements.cloudNote.append(document.createTextNode(' '), link);
+  }
 }
 
 function getCloudCredentials() {
@@ -13034,6 +13055,80 @@ function getCloudRedirectUrl() {
 function withCloudRedirect(path) {
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}redirect_to=${encodeURIComponent(getCloudRedirectUrl())}`;
+}
+
+function getExpectedCloudOwnerId() {
+  return state.cloudOwnerId || cloudMergeBase?.ownerId || cloudSession?.user?.id || '';
+}
+
+function assertCloudSignInOwner(user) {
+  const expected = getExpectedCloudOwnerId();
+  if (!user?.id || expected && user.id !== expected) {
+    throw new Error('This sign-in is not the owner of this browser\'s Life OS records. No records were uploaded or replaced. Use the original account or a separate browser profile.');
+  }
+}
+
+async function adoptCloudSessionFromAnotherTab() {
+  if (PREVIEW_MODE) return;
+  const session = loadCloudSession();
+  if (session?.access_token && session.user?.id === cloudSession?.user?.id) {
+    cloudSession = session;
+    cloudSessionReauthRequired = false;
+    cloudSessionRetryAfter = 0;
+    if (/Cloud session expired|Sign-in failed:/.test(cloudStatusMessage)) cloudStatusMessage = '';
+    renderCloudStatus();
+    return;
+  }
+  window.clearTimeout(cloudSaveTimer);
+  cloudSaveEnabled = false;
+  const expected = getExpectedCloudOwnerId();
+  if (session?.access_token && expected && session.user?.id === expected) {
+    try {
+      const user = await fetchCloudUser(session.access_token);
+      assertCloudSignInOwner(user);
+      const current = loadCloudSession();
+      if (current?.access_token !== session.access_token || current?.user?.id !== user.id) return;
+      cloudSession = {...current, user};
+      cloudSessionReauthRequired = false;
+      cloudSessionRetryAfter = 0;
+      cloudSaveEnabled = !isRestoreSyncPaused();
+      setSaveStatus(lastLocalSaveOk ? 'Saved on device' : 'Not saved - export now', lastLocalSaveOk ? 'local' : 'error');
+      renderCloudStatus('Your existing Life OS account signed in in another tab. Local writing is kept. Save cloud to verify the latest cloud copy.');
+      return;
+    } catch (error) {
+      if (loadCloudSession()?.access_token !== session.access_token) return;
+      cloudSession = null;
+      renderCloudStatus(normalizeCloudError(error.message || 'Cloud sign-in could not be verified. Your local work is kept.'));
+      return;
+    }
+  }
+  cloudSession = null;
+  setSaveStatus('Account changed - sync paused', 'error');
+  renderCloudStatus('The cloud account changed or signed out in another tab. Your local work is kept. Sign in to the original account before syncing.');
+}
+
+async function signInWithGithub() {
+  if (PREVIEW_MODE || cloudGithubPending) return;
+  try {
+    cloudGithubPending = true;
+    renderCloudStatus('Checking the Life OS GitHub sign-in connection...');
+    const response = await fetch(`${SUPABASE_CONFIG.url}/auth/v1/settings`, {headers:getCloudHeaders()});
+    if (!response.ok) throw new Error(await getCloudResponseError(response, 'The sign-in service could not be reached. Your records are unchanged.'));
+    const settings = await response.json();
+    if (settings.external?.github !== true) throw new Error('GitHub sign-in is not enabled for Life OS yet. Its OAuth app must be connected in the Life OS Supabase project. Do not enter a Supabase dashboard password here. Your records are unchanged.');
+    if (!await flushDeviceWrites()) throw new Error('Your latest device save needs attention. GitHub sign-in has not opened; your writing is kept.');
+    const url = new URL(`${SUPABASE_CONFIG.url}/auth/v1/authorize`);
+    url.searchParams.set('provider', 'github');
+    url.searchParams.set('redirect_to', getCloudRedirectUrl());
+    url.searchParams.set('scopes', 'user:email');
+    renderCloudStatus('Device save checked. Sign in in a separate tab; this tab and its unfinished fields will stay open.');
+    cloudGithubAuthorizeUrl = url.href;
+  } catch (error) {
+    renderCloudStatus(normalizeCloudError(error.message || 'GitHub sign-in could not be started. Your records are unchanged.'));
+  } finally {
+    cloudGithubPending = false;
+    renderCloudStatus();
+  }
 }
 
 function getCloudHeaders(session) {
@@ -13068,6 +13163,7 @@ async function handleCloudAuthRedirect() {
   try {
     renderCloudStatus("Confirming cloud login...");
     const user = await fetchCloudUser(accessToken);
+    assertCloudSignInOwner(user);
     // Defeat silent session fixation. A token in the URL fragment (whether from a
     // real confirmation email or a crafted #access_token=... link an attacker
     // sent) is NEVER adopted silently. Require the user to explicitly confirm,
@@ -13117,6 +13213,9 @@ async function fetchCloudUser(accessToken) {
 }
 
 function normalizeCloudError(message) {
+  if (/Unable to exchange external code/i.test(message)) {
+    return 'GitHub sign-in failed at the server token exchange. Check the Life OS OAuth Client ID and Client Secret in its private Supabase settings. Your device records were not replaced.';
+  }
   if (/invalid login credentials/i.test(message)) {
     return "Sign-in failed: the email or password was not accepted. Use your existing Life OS login; do not create another account to recover your records.";
   }
@@ -13127,7 +13226,7 @@ function normalizeCloudError(message) {
     return "Access denied. Check the signed-in account and Supabase row-level permissions. No cloud data was changed.";
   }
   if (/JWT|token|expired/i.test(message)) {
-    return "Cloud session expired. Sign out, sign in again, then save cloud.";
+    return "Cloud session expired or was revoked. Sign in once to reconnect; your device records are kept.";
   }
   return message;
 }
@@ -13222,6 +13321,7 @@ async function signInToCloud() {
     });
     const session = normalizeCloudSession(result);
     if (!session) throw new Error("Sign in failed.");
+    assertCloudSignInOwner(session.user);
     saveCloudSession(session);
     await syncCloudAfterSignIn();
   } catch (error) {
@@ -13246,20 +13346,24 @@ function signOutCloud() {
   renderCloudStatus("Signed out. Local browser storage is active.");
 }
 
-async function cloudAuthRequest(path, body) {
+async function cloudAuthRequest(path, body, options = {}) {
   if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
-  const response = await fetch(`${SUPABASE_CONFIG.url}${path}`, {
-    method: "POST",
-    headers: {
-      ...getCloudHeaders(),
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
-  if (!response.ok) {
-    throw new Error(await getCloudResponseError(response, "Supabase auth failed."));
-  }
-  return response.json().catch(() => ({}));
+  const controller = options.timeoutMs ? new AbortController() : null;
+  const timeout = controller ? window.setTimeout(() => controller.abort(), options.timeoutMs) : null;
+  try {
+    const response = await fetch(`${SUPABASE_CONFIG.url}${path}`, {
+      method: "POST",
+      headers: {...getCloudHeaders(), "Content-Type": "application/json"},
+      body: JSON.stringify(body),
+      ...(controller ? {signal:controller.signal} : {})
+    });
+    if (!response.ok) {
+      const error = new Error(await getCloudResponseError(response, "Supabase auth failed."));
+      error.status = response.status;
+      throw error;
+    }
+    return await response.json();
+  } finally {if (timeout !== null) window.clearTimeout(timeout);}
 }
 
 function normalizeCloudSession(result) {
@@ -13281,16 +13385,59 @@ async function ensureCloudSession() {
   if (!cloudSession?.access_token) throw new Error("Sign in to cloud sync first.");
   const stored=loadCloudSession();
   if(stored?.access_token && stored.user?.id===cloudSession.user?.id)cloudSession=stored;
-  if (!cloudSession.refresh_token || Date.now() < Number(cloudSession.expires_at || 0)) {
+  const expires = Number(cloudSession.expires_at || 0);
+  if (Date.now() < expires && (!cloudSession.refresh_token || Date.now() < expires - 60000)) {
     return cloudSession;
   }
-  const result = await cloudAuthRequest("/auth/v1/token?grant_type=refresh_token", {
-    refresh_token: cloudSession.refresh_token
+  if (!navigator.locks?.request) throw new Error('This browser cannot coordinate safe sign-in renewal. Your local records are kept. Use an up-to-date browser over HTTPS.');
+  const owner = cloudSession.user?.id;
+  return navigator.locks.request(LifeStorageScope.key('life-os-auth-refresh-v1'), async () => {
+    const current = loadCloudSession();
+    if (!current?.access_token || current.user?.id !== owner) throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
+    assertCloudSignInOwner(current.user);
+    cloudSession = current;
+    if (Date.now() < Number(current.expires_at || 0) - 60000) return current;
+    if (!current.refresh_token) {
+      if (Date.now() < Number(current.expires_at || 0)) return current;
+      throw new Error('Cloud session expired. This older sign-in has no renewal token; sign in once to restore automatic renewal.');
+    }
+    let session;
+    try {
+      const result = await cloudAuthRequest('/auth/v1/token?grant_type=refresh_token', {refresh_token:current.refresh_token}, {timeoutMs:15000});
+      session = normalizeCloudSession(result);
+    } catch (error) {
+      const latest = loadCloudSession();
+      if (latest?.user?.id === owner && latest.access_token !== current.access_token && Date.now() < Number(latest.expires_at || 0)) {cloudSession = latest; return latest;}
+      if (error.status === 429 || error.status >= 500 || error instanceof TypeError || error.name === 'AbortError' || error instanceof SyntaxError) {
+        throw new Error('Cloud connection is temporarily unavailable. Your sign-in and local records are kept; renewal will retry automatically.');
+      }
+      throw error;
+    }
+    const latest = loadCloudSession();
+    if (!latest || latest.user?.id !== owner) throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
+    if (latest.access_token !== current.access_token || latest.refresh_token !== current.refresh_token) {
+      if (Date.now() < Number(latest.expires_at || 0)) {cloudSession = latest; return latest;}
+      throw new Error('Cloud sign-in changed during renewal. Your local records are kept; retry using the current session.');
+    }
+    if (!session || session.user.id !== owner || !session.refresh_token) throw new Error('Cloud session expired. Sign in again; your local records are kept.');
+    saveCloudSession(session);
+    return session;
   });
-  const session = normalizeCloudSession(result);
-  if (!session) throw new Error("Cloud session expired. Sign in again.");
-  saveCloudSession(session);
-  return session;
+}
+
+async function maintainCloudSession() {
+  if (PREVIEW_MODE || cloudSessionMaintenancePending || cloudSessionReauthRequired || !cloudSession?.access_token || navigator.onLine === false || document.visibilityState === 'hidden' || Date.now() < cloudSessionRetryAfter) return;
+  if (Date.now() < Number(cloudSession.expires_at || 0) - 60000) return;
+  cloudSessionMaintenancePending = true;
+  try {
+    await ensureCloudSession();
+    cloudSessionRetryAfter = 0;
+    if (cloudStatusMessage.startsWith('Cloud connection is temporarily unavailable')) {cloudStatusMessage = ''; renderCloudStatus();}
+  } catch (error) {
+    cloudSessionRetryAfter = Date.now() + 60000;
+    cloudSessionReauthRequired = /Cloud session expired/.test(error.message);
+    renderCloudStatus(normalizeCloudError(error.message || 'Cloud renewal is waiting. Your local records are kept.'));
+  } finally {cloudSessionMaintenancePending = false;}
 }
 
 async function fetchCloudStateRow(session) {

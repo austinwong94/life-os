@@ -10,6 +10,7 @@ const clone=x=>JSON.parse(JSON.stringify(x));
 (async()=>{
  const browser=await (process.env.TEST_BROWSER==='webkit'?webkit:chromium).launch({headless:true});
  async function run(name,fn){
+  if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
   const contexts=[];
   async function context(){const c=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});contexts.push(c);return c;}
   try{await fn(context);results.push({name,pass:true});}catch(e){results.push({name,pass:false,error:e.stack});}
@@ -21,6 +22,7 @@ const clone=x=>JSON.parse(JSON.stringify(x));
  }
  async function connect(page,base,stamp){await page.evaluate(({base,stamp,user})=>{
    state=rehydrateState(base);cloudSession={user:{id:user},access_token:'synthetic-test-token',expires_at:Date.now()+3600000,cloud_updated_at:stamp};
+   saveCloudSession(cloudSession);
    cloudSaveEnabled=false;cloudMergeBase={ownerId:user,state:JSON.parse(JSON.stringify(base))};localMergeBase=JSON.parse(JSON.stringify(state));cloudConflictPending=false;
    render();saveState({skipCloud:true,touch:false});
   },{base,stamp,user});await page.evaluate(()=>flushDeviceWrites());}
@@ -51,6 +53,132 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   }
   return {a,b,base,backend};
  }
+ await run('GitHub sign-in checks provider readiness and keeps credentials and unfinished writing out of navigation',async context=>{
+  const p=await fresh(await context());
+  await p.locator('.diary-thoughts').fill('Private multiline writing stays here.\n第二行');await p.evaluate(()=>flushDeviceWrites());
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  await p.locator('#railSettingsButton').click();
+  await p.route('https://**supabase.co/auth/v1/settings',r=>r.fulfill({json:{external:{github:false}}}));
+  await p.getByRole('button',{name:'Continue with GitHub',exact:true}).click();
+  await p.getByText(/GitHub sign-in is not enabled for Life OS yet/).waitFor();
+  assert.equal(await p.getByRole('link',{name:'Open GitHub sign-in',exact:true}).count(),0);
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
+  await p.route('https://**supabase.co/auth/v1/settings',r=>r.fulfill({json:{external:{github:true}}}));
+  await p.getByRole('button',{name:'Continue with GitHub',exact:true}).click();
+  const link=p.getByRole('link',{name:'Open GitHub sign-in',exact:true});await link.waitFor();
+  const destination=new globalThis.URL(await link.getAttribute('href'));
+  assert.equal(destination.origin,'https://shrmhjulhfuodtrsqhpu.supabase.co');assert.equal(destination.pathname,'/auth/v1/authorize');
+  assert.equal(destination.searchParams.get('provider'),'github');assert.equal(destination.searchParams.get('scopes'),'user:email');
+  assert.equal(destination.searchParams.get('redirect_to'),'https://austinwong94.github.io/life-os/');
+  assert.equal(await link.getAttribute('target'),'_blank');assert.equal(await link.getAttribute('rel'),'noopener noreferrer');
+  await p.evaluate(()=>render());assert.equal(await link.isVisible(),true);
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);assert.equal(await p.evaluate(()=>loadCloudSession()),null);
+ });
+ await run('sign-in in another tab verifies the existing owner and enables saving without replacing paused writing',async context=>{
+  const c=await context(),p=await fresh(c),other=await fresh(c);
+  await p.locator('.diary-thoughts').fill('This draft remains while another tab signs in.');await p.evaluate(()=>flushDeviceWrites());
+  await p.evaluate(user=>{state.cloudOwnerId=user;saveState({skipCloud:true});},user);await p.evaluate(()=>flushDeviceWrites());
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  await p.route('https://**supabase.co/auth/v1/user',r=>r.fulfill({json:{id:user,email:'synthetic@example.com'}}));
+  await p.locator('#railSettingsButton').click();
+  await other.evaluate(user=>localStorage.setItem(CLOUD_SESSION_KEY,JSON.stringify({access_token:'synthetic-new-login',user:{id:user},expires_at:Date.now()+3600000})),user);
+  await p.getByText(/Your existing Life OS account signed in in another tab/).waitFor();
+  assert.equal(await p.locator('#cloudPushButton').isEnabled(),true);assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
+  assert.equal(await p.locator('.diary-thoughts').inputValue(),'This draft remains while another tab signs in.');
+  await other.evaluate(()=>localStorage.setItem(CLOUD_SESSION_KEY,JSON.stringify({access_token:'synthetic-other-owner',user:{id:'other-owner'},expires_at:Date.now()+3600000})));
+  await p.getByText(/cloud account changed or signed out in another tab/).waitFor();assert.equal(await p.locator('#cloudPushButton').isEnabled(),false);
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
+ });
+ await run('a wrong-owner callback refuses session adoption before any cloud read or write',async context=>{
+  const p=await fresh(await context());await p.evaluate(user=>{state.cloudOwnerId=user;saveState({skipCloud:true});},user);await p.evaluate(()=>flushDeviceWrites());
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));let dataCalls=0;
+  await p.route('https://**supabase.co/rest/**',r=>{dataCalls++;return r.fulfill({status:500,body:'No private requests permitted'});});
+  await p.route('https://**supabase.co/auth/v1/user',r=>r.fulfill({json:{id:'wrong-owner',email:'wrong@example.com'}}));
+  await p.evaluate(async()=>{history.replaceState({},'',location.pathname+'#access_token=synthetic-callback&refresh_token=synthetic-refresh');await handleCloudAuthRedirect();});
+  await p.getByText(/This sign-in is not the owner/).waitFor();assert.equal(dataCalls,0);assert.equal(await p.evaluate(()=>loadCloudSession()),null);
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);assert.equal(new globalThis.URL(p.url()).hash,'');
+ });
+ await run('a delayed verification cannot restore a session after another tab signs out',async context=>{
+  const c=await context(),p=await fresh(c),other=await fresh(c);let respond,requested;
+  const requestSeen=new Promise(resolve=>requested=resolve);
+  await p.evaluate(user=>{state.cloudOwnerId=user;saveState({skipCloud:true});},user);await p.evaluate(()=>flushDeviceWrites());
+  await p.route('https://**supabase.co/auth/v1/user',async r=>{requested();await new Promise(resolve=>respond=resolve);await r.fulfill({json:{id:user,email:'synthetic@example.com'}});});
+  await p.locator('#railSettingsButton').click();
+  await other.evaluate(user=>localStorage.setItem(CLOUD_SESSION_KEY,JSON.stringify({access_token:'synthetic-delayed',user:{id:user},expires_at:Date.now()+3600000})),user);
+  await requestSeen;await other.evaluate(()=>localStorage.removeItem(CLOUD_SESSION_KEY));
+  await p.getByText(/cloud account changed or signed out in another tab/).waitFor();respond();
+  await p.waitForTimeout(100);assert.equal(await p.evaluate(()=>cloudSession),null);assert.equal(await p.locator('#cloudPushButton').isEnabled(),false);
+ });
+ await run('parallel session renewal across two tabs rotates once and retains all original writing',async context=>{
+  const c=await context(),a=await fresh(c),b=await fresh(c);let calls=0;
+  await c.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',async r=>{
+   calls++;assert.equal(r.request().postDataJSON().refresh_token,'synthetic-refresh-old');await new Promise(resolve=>setTimeout(resolve,75));
+   await r.fulfill({json:{access_token:'synthetic-renewed',refresh_token:'synthetic-refresh-new',expires_in:3600,user:{id:user}}});
+  });
+  for(const p of [a,b])await p.evaluate(user=>{state.cloudOwnerId=user;saveState({skipCloud:true});saveCloudSession({access_token:'synthetic-expired',refresh_token:'synthetic-refresh-old',expires_at:1,user:{id:user}});cloudSaveEnabled=false;},user);
+  await a.evaluate(()=>flushDeviceWrites());await b.evaluate(()=>flushDeviceWrites());
+  const before=await a.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  const values=await Promise.all([a,b,a,b].map(p=>p.evaluate(async()=>{const s=await ensureCloudSession();return s.access_token;})));
+  assert.deepEqual(values,Array(4).fill('synthetic-renewed'));assert.equal(calls,1);
+  assert.equal(await a.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
+  await a.reload();assert.equal(await a.evaluate(()=>cloudSession.access_token),'synthetic-renewed');assert.equal(calls,1);
+ });
+ await run('temporary renewal outages keep the session and retry without another login',async context=>{
+  const p=await fresh(await context());
+  await p.evaluate(user=>{state.cloudOwnerId=user;saveCloudSession({access_token:'synthetic-expired',refresh_token:'synthetic-refresh',expires_at:1,user:{id:user}});cloudSaveEnabled=false;},user);
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  await p.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',r=>r.fulfill({status:503,json:{msg:'Token server temporarily unavailable'}}));
+  await p.evaluate(()=>maintainCloudSession());await p.locator('#railSettingsButton').click();
+  await p.getByText(/Cloud connection is temporarily unavailable/).waitFor();
+  assert.equal(await p.evaluate(()=>loadCloudSession().refresh_token),'synthetic-refresh');assert.equal(await p.evaluate(()=>cloudSessionReauthRequired),false);
+  await p.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',r=>r.fulfill({json:{access_token:'synthetic-online',refresh_token:'synthetic-next',expires_in:3600,user:{id:user}}}));
+  await p.evaluate(async()=>{cloudSessionRetryAfter=0;await maintainCloudSession();});
+  assert.equal(await p.evaluate(()=>cloudSession.access_token),'synthetic-online');assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
+  assert.doesNotMatch(await p.locator('#cloudNote').innerText(),/temporarily unavailable|Sign in once/);
+ });
+ await run('a delayed renewal cannot sign the user back in after a deliberate sign-out',async context=>{
+  const c=await context(),p=await fresh(c),other=await fresh(c);let respond,seen;
+  const requested=new Promise(resolve=>seen=resolve);
+  await p.evaluate(user=>{state.cloudOwnerId=user;saveCloudSession({access_token:'synthetic-expired',refresh_token:'synthetic-refresh',expires_at:1,user:{id:user}});cloudSaveEnabled=false;},user);
+  await p.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',async r=>{seen();await new Promise(resolve=>respond=resolve);await r.fulfill({json:{access_token:'synthetic-too-late',refresh_token:'synthetic-next',expires_in:3600,user:{id:user}}});});
+  const renewing=p.evaluate(async()=>{try{await ensureCloudSession();return '';}catch(e){return e.message;}});
+  await requested;await other.evaluate(()=>localStorage.removeItem(CLOUD_SESSION_KEY));respond();
+  assert.match(await renewing,/signed out during renewal/);assert.equal(await p.evaluate(()=>loadCloudSession()),null);
+ });
+ await run('saving a cloud receipt never overwrites newer rotated credentials',async context=>{
+  const p=await fresh(await context());
+  const result=await p.evaluate(user=>{
+   const old={access_token:'synthetic-cached',refresh_token:'synthetic-cached-refresh',expires_at:Date.now()+3600000,user:{id:user}};saveCloudSession(old);
+   const next={...old,access_token:'synthetic-current',refresh_token:'synthetic-current-refresh'};localStorage.setItem(CLOUD_SESSION_KEY,JSON.stringify(next));
+   setKnownCloudUpdatedAt('2026-10-14T00:00:00.000Z');
+   return {token:loadCloudSession().access_token,refresh:loadCloudSession().refresh_token,stamp:loadCloudSession().cloud_updated_at};
+  },user);
+  assert.equal(result.token,'synthetic-current');assert.equal(result.refresh,'synthetic-current-refresh');assert.equal(result.stamp,'2026-10-14T00:00:00.000Z');
+ });
+ await run('renewal refuses a wrong owner without changing the stored session or private records',async context=>{
+  const p=await fresh(await context());
+  await p.evaluate(user=>{state.cloudOwnerId=user;saveCloudSession({access_token:'synthetic-expired',refresh_token:'synthetic-original',expires_at:1,user:{id:user}});cloudSaveEnabled=false;},user);
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  await p.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',r=>r.fulfill({json:{access_token:'synthetic-wrong',refresh_token:'synthetic-wrong-refresh',expires_in:3600,user:{id:'other-owner'}}}));
+  const error=await p.evaluate(async()=>{try{await ensureCloudSession();return '';}catch(e){return e.message;}});
+  assert.match(error,/Cloud session expired/);assert.equal(await p.evaluate(()=>loadCloudSession().refresh_token),'synthetic-original');assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
+ });
+ await run('stalled renewal releases its lock after timeout and preserves credentials for retry',async context=>{
+  const p=await fresh(await context());
+  await p.evaluate(user=>{state.cloudOwnerId=user;saveCloudSession({access_token:'synthetic-expired',refresh_token:'synthetic-stalled',expires_at:1,user:{id:user}});cloudSaveEnabled=false;},user);
+  await p.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',async r=>{await new Promise(resolve=>setTimeout(resolve,100));await r.fulfill({json:{}}).catch(()=>{});});
+  await p.evaluate(async()=>{const request=cloudAuthRequest;cloudAuthRequest=(path,body,options)=>request(path,body,{...options,timeoutMs:20});try{await maintainCloudSession();}finally{cloudAuthRequest=request;}});
+  assert.equal(await p.evaluate(()=>loadCloudSession().refresh_token),'synthetic-stalled');assert.equal(await p.evaluate(()=>cloudSessionReauthRequired),false);
+  assert.equal(await p.evaluate(()=>navigator.locks.request(LifeStorageScope.key('life-os-auth-refresh-v1'),{ifAvailable:true},lock=>Boolean(lock))),true);
+ });
+ await run('revoked session pauses repeated renewal without discarding saved information',async context=>{
+  const p=await fresh(await context());let calls=0;
+  await p.evaluate(user=>{state.cloudOwnerId=user;saveCloudSession({access_token:'synthetic-expired',refresh_token:'synthetic-revoked',expires_at:1,user:{id:user}});cloudSaveEnabled=false;},user);
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  await p.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',r=>{calls++;return r.fulfill({status:400,json:{msg:'Invalid refresh token'}});});
+  await p.evaluate(async()=>{await maintainCloudSession();cloudSessionRetryAfter=0;await maintainCloudSession();});
+  assert.equal(calls,1);assert.equal(await p.evaluate(()=>cloudSessionReauthRequired),true);assert.equal(await p.evaluate(()=>loadCloudSession().refresh_token),'synthetic-revoked');assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
+ });
  await run('email sign-in targets only existing accounts and never changes or uploads local records',async context=>{
   const p=await fresh(await context());let calls=0,request;
   await p.route('https://**supabase.co/auth/v1/otp**',r=>{calls++;request={url:r.request().url(),body:r.request().postDataJSON()};return r.fulfill({json:{}});});
