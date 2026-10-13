@@ -1,7 +1,18 @@
 (function(root) {
   "use strict";
   const copy = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
-  const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function equalJson(a,b) {
+    if(a===b)return true;
+    if(!a || !b || typeof a!=='object' || typeof b!=='object')return false;
+    if(Array.isArray(a) || Array.isArray(b))return Array.isArray(a) && Array.isArray(b) && a.length===b.length && a.every((value,index)=>equalJson(value,b[index]));
+    const keys=Object.keys(a);
+    return keys.length===Object.keys(b).length && keys.every(key=>Object.hasOwn(b,key) && equalJson(a[key],b[key]));
+  }
+  function equal(a,b) {
+    const left=JSON.stringify(a),right=JSON.stringify(b);
+    // JSONB may reorder object keys. Array order and every stored value matter.
+    return left===right || left!==undefined && right!==undefined && equalJson(JSON.parse(left),JSON.parse(right));
+  }
   const object = value => value && typeof value === "object" && !Array.isArray(value);
   const keyed = value => Array.isArray(value) && value.every(item => object(item) && typeof item.id === "string") && new Set(value.map(item => item.id)).size === value.length;
   const unsafeKeys = new Set(["__proto__", "prototype", "constructor"]);

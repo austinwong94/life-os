@@ -570,5 +570,13 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   assert.deepEqual(await p.evaluate(()=>cloudMergeBase),current);assert.equal(await p.evaluate(()=>state.board.name),current.state.boards[0].name);
   assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.decodeBase(JSON.parse(localStorage.getItem(CLOUD_BASE_KEY)),LZString)),legacy);
  });
+ await run('JSONB-reordered cloud objects do not create a false conflict when a synced task is renamed on one device',async context=>{
+  const {a,backend}=await setup(context,{planner:true});
+  const reorder=value=>Array.isArray(value)?value.map(reorder):value && typeof value==='object'?Object.fromEntries(Object.keys(value).reverse().map(key=>[key,reorder(value[key])])):value;
+  await a.route('https://**supabase.co/rest/v1/user_states**',async r=>r.request().method()==='GET'?r.fulfill({json:[{state:reorder(backend.state),updated_at:backend.updated_at}]}):r.fallback());
+  await a.evaluate(async()=>{const source=getPlannerSourceCards().find(c=>c.id==='sync-review-source');LifePlanner.change(source,'sync-review-task',{title:'Renamed after the initial save'});LifePlanner.project(source);saveState({skipCloud:true});await flushDeviceWrites();await pushCloudState({manual:true});});
+  assert.equal(backend.writes,1);assert.equal(await a.evaluate(()=>state.syncConflicts.length),0);
+  assert.equal(backend.state.boards[0].cards.find(c=>c.id==='sync-review-source').plannerTasks[0].title,'Renamed after the initial save');assert.match(await a.locator('#cloudNote').innerText(),/readback verified/);
+ });
  fs.writeFileSync(output+'/sync-results.json',JSON.stringify(results,null,2));await browser.close();if(results.some(x=>!x.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});
