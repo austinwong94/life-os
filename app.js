@@ -2675,7 +2675,14 @@ function renderBoardMeta() {
   renderBoardControls();
   elements.boardName.value = state.board.name;
   elements.boardTitle.textContent = state.board.name;
-  elements.todayLine.textContent = formatTodayLine();
+  const dateFull = document.createElement("span");
+  dateFull.className = "today-line-full";
+  dateFull.textContent = formatTodayLine();
+  const dateCompact = document.createElement("span");
+  dateCompact.className = "today-line-compact";
+  dateCompact.textContent = formatTodayLine(true);
+  elements.todayLine.replaceChildren(dateFull, dateCompact);
+  elements.todayLine.title = dateFull.textContent;
   elements.restoreLayoutButton.disabled = !Array.isArray(state.board.savedLayout) || !state.board.savedLayout.length;
   elements.boardSearch.value = state.searchQuery || "";
   elements.clearSearchButton.hidden = !normalizeLabel(state.searchQuery || "");
@@ -9273,11 +9280,11 @@ function getRecentDateLabel(value) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function formatTodayLine() {
+function formatTodayLine(compact = false) {
   return new Date().toLocaleDateString(undefined, {
-    weekday: "long",
+    weekday: compact ? "short" : "long",
     year: "numeric",
-    month: "long",
+    month: compact ? "short" : "long",
     day: "numeric"
   });
 }

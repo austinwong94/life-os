@@ -182,6 +182,9 @@ const results=[];
      captureMessage:document.querySelector('.task-capture .planning-message')?.textContent || '',
      headerHeights:Object.fromEntries(['.workspace-header','.workspace-navigation','.plan-view-switch','.task-heading','.task-toolbar','.task-capture','.task-results-heading'].map(selector=>[selector,document.querySelector(selector)?.getBoundingClientRect().height || 0]))};
    });measurements.push({width,...m});
+   const expectedDate=await p.evaluate(compact=>formatTodayLine(compact),width<=980);
+   assert.equal((await p.locator('#todayLine').innerText()).trim().toLocaleLowerCase(),expectedDate.toLocaleLowerCase());
+   assert.equal(await p.locator('#todayLine').getAttribute('title'),await p.evaluate(()=>formatTodayLine()));
    assert.equal(m.count,12);assert.equal(m.overlaps,false);assert.ok(m.overflow<=1&&m.innerOverflow<=1,JSON.stringify({width,...m}));
    assert.ok(m.top<=(width<=380?620:width<=700?535:width<=900?530:410),JSON.stringify({width,...m}));
    assert.ok(m.rowHeight<=70,JSON.stringify({width,...m}));
