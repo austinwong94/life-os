@@ -49,6 +49,15 @@ jobs:
       - run: npm run test:sync
         env:
           TEST_OUTPUT: test-results
+      - name: Check existing-account password setup
+        run: node tests/password.cjs
+        env:
+          TEST_OUTPUT: test-results/password
+      - name: Check existing-account password setup in WebKit
+        run: node tests/password.cjs
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/password-webkit
       - name: Check cloud copy preservation in WebKit
         run: npm run test:sync
         env:

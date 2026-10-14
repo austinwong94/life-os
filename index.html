@@ -147,6 +147,33 @@
             <button type="button" class="secondary-action" id="cloudPushButton">Save cloud</button>
           </div>
           <button type="button" class="template-open-button" id="cloudSignOutButton" hidden>Sign out</button>
+          <details id="accountPasswordDetails" hidden>
+            <summary>Set password</summary>
+            <form id="accountPasswordForm" class="card-form">
+              <p class="data-note">Account: <strong id="accountPasswordEmail"></strong></p>
+              <label class="field">
+                <span>New Life OS password (12 or more characters)</span>
+                <input id="accountNewPassword" type="password" minlength="12" maxlength="80" autocomplete="new-password" required />
+              </label>
+              <label class="field">
+                <span>Confirm new password</span>
+                <input id="accountConfirmPassword" type="password" minlength="12" maxlength="80" autocomplete="new-password" required />
+              </label>
+              <label class="field">
+                <span>Current Life OS password (if already set)</span>
+                <input id="accountCurrentPassword" type="password" maxlength="80" autocomplete="current-password" />
+              </label>
+              <div id="accountPasswordVerification" hidden>
+                <button type="button" class="template-open-button" id="accountPasswordCodeButton">Send verification code</button>
+                <label class="field">
+                  <span>Email verification code</span>
+                  <input id="accountPasswordCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="20" />
+                </label>
+              </div>
+              <button type="submit" class="secondary-action" id="accountPasswordSaveButton">Save password</button>
+            </form>
+            <p class="cloud-note" id="accountPasswordNote" role="status" aria-live="polite"></p>
+          </details>
           <p class="cloud-note" id="cloudNote">Local browser storage is active.</p>
         </section>
 

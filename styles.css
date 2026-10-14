@@ -1012,6 +1012,22 @@ textarea:focus {
   margin-bottom: 8px;
 }
 
+#accountPasswordDetails > summary {
+  min-height: 44px;
+  padding: 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#accountPasswordDetails .card-form {
+  min-width: 0;
+}
+
+#accountPasswordDetails .data-note {
+  overflow-wrap: anywhere;
+}
+
 .data-download-button {
   min-height: 40px;
   margin: 0 0 10px;

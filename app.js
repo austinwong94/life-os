@@ -41,6 +41,7 @@ let cloudStatusMessage = "";
 let cloudEmailLinkPending = false;
 let cloudGithubPending = false;
 let cloudGithubAuthorizeUrl = '';
+let accountPasswordPending = false;
 let cloudSessionMaintenancePending = false;
 let cloudSessionRetryAfter = 0;
 let cloudSessionReauthRequired = false;
@@ -1326,6 +1327,16 @@ const elements = {
   cloudPushButton: document.querySelector("#cloudPushButton"),
   cloudSignOutButton: document.querySelector("#cloudSignOutButton"),
   cloudNote: document.querySelector("#cloudNote"),
+  accountPasswordDetails: document.querySelector("#accountPasswordDetails"),
+  accountPasswordForm: document.querySelector("#accountPasswordForm"),
+  accountPasswordEmail: document.querySelector("#accountPasswordEmail"),
+  accountNewPassword: document.querySelector("#accountNewPassword"),
+  accountConfirmPassword: document.querySelector("#accountConfirmPassword"),
+  accountCurrentPassword: document.querySelector("#accountCurrentPassword"),
+  accountPasswordVerification: document.querySelector("#accountPasswordVerification"),
+  accountPasswordCode: document.querySelector("#accountPasswordCode"),
+  accountPasswordCodeButton: document.querySelector("#accountPasswordCodeButton"),
+  accountPasswordNote: document.querySelector("#accountPasswordNote"),
   templateModal: document.querySelector("#templateModal"),
   templateModalCloseButton: document.querySelector("#templateModalCloseButton"),
   templateList: document.querySelector("#templateList"),
@@ -1842,6 +1853,11 @@ function bindEvents() {
   elements.cloudPullButton.addEventListener("click", () => pullCloudState({ confirmReplace: true }));
   elements.cloudPushButton.addEventListener("click", () => pushCloudState({ manual: true }));
   elements.cloudSignOutButton.addEventListener("click", signOutCloud);
+  elements.accountPasswordForm.addEventListener("submit", event => {event.preventDefault();setAccountPassword();});
+  elements.accountPasswordCodeButton.addEventListener("click", () => sendAccountPasswordCode());
+  elements.accountPasswordDetails.addEventListener("toggle", () => {
+    if (!elements.accountPasswordDetails.open) clearAccountPasswordFields();
+  });
 
   elements.templateModalCloseButton.addEventListener("click", closeTemplateModal);
   elements.settingsModalCloseButton.addEventListener("click", closeSettingsModal);
@@ -7862,6 +7878,8 @@ function openSettingsModal() {
 }
 
 function closeSettingsModal() {
+  clearAccountPasswordFields();
+  elements.accountPasswordDetails.open = false;
   elements.settingsModal.hidden = true;
   syncModalOpenState();
   renderShell();
@@ -13020,6 +13038,12 @@ function renderCloudStatus(message) {
   elements.cloudGithubButton.disabled = cloudGithubPending || isSignedIn && !needsSignIn;
   elements.cloudResendButton.hidden = isSignedIn;
   elements.cloudResendButton.disabled = isSignedIn;
+  elements.accountPasswordDetails.hidden = !isSignedIn || needsSignIn;
+  elements.accountPasswordEmail.textContent = cloudSession?.user?.email || '';
+  if (elements.accountPasswordDetails.hidden) {
+    clearAccountPasswordFields();
+    elements.accountPasswordDetails.open = false;
+  }
   const localSavedAt = getStateUpdatedAt(state);
   const cloudSavedAt = getKnownCloudUpdatedAt();
   const savedDetail = cloudSavedAt
@@ -13047,6 +13071,103 @@ function getCloudCredentials() {
     throw new Error("Enter email and password first.");
   }
   return { email, password };
+}
+
+function clearAccountPasswordFields() {
+  elements.accountPasswordForm.reset();
+  elements.accountPasswordVerification.hidden = true;
+}
+
+function renderAccountPasswordStatus(message) {
+  elements.accountPasswordNote.textContent = message;
+}
+
+async function accountPasswordRequest(body) {
+  if (PREVIEW_MODE) throw new Error('Password changes are disabled in preview. Open the live Life OS website.');
+  const session = await ensureCloudSession();
+  const owner = session.user?.id;
+  const email = session.user?.email;
+  if (!owner || !email) throw new Error('Sign in to your existing Life OS account with GitHub first.');
+  assertCloudSignInOwner(session.user);
+  if (!navigator.locks?.request) throw new Error('Use an up-to-date browser over HTTPS to safely update your password.');
+  // Share the token-renewal lock, and recheck the account before sending credentials.
+  return navigator.locks.request(LifeStorageScope.key('life-os-auth-refresh-v1'), async () => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 15000);
+    try {
+      const current = loadCloudSession();
+      if (!current?.access_token || current.user?.id !== owner) throw new Error('The account signed out or changed. Sign in again before setting a password.');
+      const verification = await fetch(`${SUPABASE_CONFIG.url}/auth/v1/user`, {headers:getCloudHeaders(current),signal:controller.signal});
+      if (!verification.ok) throw new Error('Your account could not be verified. Sign in again with GitHub before setting a password.');
+      const user = await verification.json();
+      assertCloudSignInOwner(user);
+      if (user.id !== owner || user.email !== email) throw new Error('The account changed. No password update was sent.');
+      const latest = loadCloudSession();
+      if (!latest || latest.user?.id !== owner || latest.access_token !== current.access_token) throw new Error('The sign-in changed. Reopen Set password and retry.');
+      const response = await fetch(`${SUPABASE_CONFIG.url}/auth/v1/${body ? 'user' : 'reauthenticate'}`, {
+        method: body ? 'PUT' : 'GET',
+        headers: {...getCloudHeaders(current), 'Content-Type':'application/json'},
+        ...(body ? {body:JSON.stringify(body)} : {}),
+        signal:controller.signal
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const code = result.code || result.error_code || '';
+        if (/reauthentication/.test(code)) {
+          elements.accountPasswordVerification.hidden = false;
+          throw new Error('Email verification is required. Send a verification code, enter it here, and save again.');
+        }
+        if (/current_password/.test(code)) throw new Error('Enter your current Life OS password, or sign in again with GitHub and retry.');
+        if (code === 'same_password') throw new Error('That password is already set. You can use it to sign in to Life OS.');
+        if (code === 'weak_password') throw new Error('The password was rejected by the security policy. Use a longer, unique password with upper and lowercase letters, a number and a symbol.');
+        if (response.status === 401 || response.status === 403) throw new Error('Your sign-in needs verification. Sign in again with GitHub, then retry Set password.');
+        if (response.status === 429) throw new Error('Too many attempts. Wait a few minutes before retrying.');
+        throw new Error('The account service could not confirm the request. Your records are unchanged. Please retry.');
+      }
+      if (body && (result.id !== owner || result.email !== email)) throw new Error('The password response could not be verified for your account. Sign in again with GitHub to check.');
+      if (loadCloudSession()?.user?.id !== owner) throw new Error('The account signed out while the request was running. Sign in again to check its result.');
+      return user;
+    } finally {window.clearTimeout(timer);}
+  });
+}
+
+async function setAccountPassword() {
+  if (accountPasswordPending) return;
+  let password = elements.accountNewPassword.value;
+  const confirmation = elements.accountConfirmPassword.value;
+  if (password.length < 12 || password.length > 80) {renderAccountPasswordStatus('Use a password of 12 to 80 characters.');return;}
+  if (password !== confirmation) {renderAccountPasswordStatus('The two new passwords do not match.');return;}
+  const body = {password};
+  if (elements.accountCurrentPassword.value) body.current_password = elements.accountCurrentPassword.value;
+  if (elements.accountPasswordCode.value.trim()) body.nonce = elements.accountPasswordCode.value.trim();
+  accountPasswordPending = true;
+  elements.accountPasswordForm.querySelectorAll('button,input').forEach(node => node.disabled = true);
+  renderAccountPasswordStatus('Saving password for your existing account...');
+  try {
+    const user = await accountPasswordRequest(body);
+    clearAccountPasswordFields();
+    renderAccountPasswordStatus(`Password saved for ${user.email}. Use this email and your new Life OS password on your other devices. Your existing account and records are unchanged.`);
+  } catch (error) {
+    renderAccountPasswordStatus(error.name === 'AbortError' || error instanceof TypeError
+      ? 'The connection was interrupted; the password change is not confirmed. Your records are unchanged. Retry, or sign in with GitHub.'
+      : error.message);
+  } finally {
+    password = '';body.password = '';delete body.current_password;delete body.nonce;
+    accountPasswordPending = false;
+    elements.accountPasswordForm.querySelectorAll('button,input').forEach(node => node.disabled = false);
+  }
+}
+
+async function sendAccountPasswordCode() {
+  if (accountPasswordPending) return;
+  accountPasswordPending = true;
+  elements.accountPasswordCodeButton.disabled = true;
+  try {
+    const user = await accountPasswordRequest(null);
+    renderAccountPasswordStatus(`Verification code requested for ${user.email}. Check your inbox and spam, then enter the latest code here.`);
+  } catch (error) {
+    renderAccountPasswordStatus(error.name === 'AbortError' || error instanceof TypeError ? 'The verification request could not be confirmed. Please retry.' : error.message);
+  } finally {accountPasswordPending = false;elements.accountPasswordCodeButton.disabled = false;}
 }
 
 function getCloudEmail() {
