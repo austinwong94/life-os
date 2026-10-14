@@ -86,7 +86,13 @@ const results=[];
  });
  await run('archived completions remain in weekly history and Today checklist records do not invent goal outcomes',async p=>{
   await seed(p);await p.evaluate(()=>{const source=getPlannerSourceCards()[0];LifePlanner.complete(source,'sample-task-0',getTodayKey());LifePlanner.change(source,'sample-task-0',{archivedAt:Date.now()});saveState();});
-  await workspace(p,'today');assert.match(await p.locator('.daily-completed').innerText(),/Completed this week \(1\)/);await p.getByRole('checkbox',{name:'Programme week: Rest',exact:true}).check();assert.equal(await p.getByRole('checkbox',{name:'Programme week: Rest',exact:true}).isChecked(),true);
+  await workspace(p,'today');assert.match(await p.locator('.daily-completed').innerText(),/Completed this week \(1\)/);
+  // The onchange handler can replace the checkbox; verify the fresh control and saved record.
+  await p.getByRole('checkbox',{name:'Programme week: Rest',exact:true}).click();
+  await p.waitForFunction(()=>document.querySelector('input[aria-label="Programme week: Rest"]')?.checked && LifeCoaching.latestWeeks(coachingProgram(),getTodayKey()).some(e=>e.rest));
+  await p.evaluate(()=>flushDeviceWrites());await p.reload();await workspace(p,'today');
+  assert.equal(await p.getByRole('checkbox',{name:'Programme week: Rest',exact:true}).isChecked(),true);
+  assert.equal(await p.evaluate(()=>LifeCoaching.latestWeeks(coachingProgram(),getTodayKey()).some(e=>e.rest)),true);
   await p.locator('#weeklyReviewButton').click();assert.match(await p.locator('#dailyDialog').innerText(),/Next step 0/);assert.equal(await p.evaluate(()=>coachingProgram().entries.filter(e=>e.kind==='measurement').length),0);
  });
  await run('Today chooses between diary cards without rewriting either diary and remembers hidden sections',async p=>{
