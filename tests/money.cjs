@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),browsers=require('playwright');
 const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_OUTPUT || '/private/tmp/life-os-money';fs.mkdirSync(out,{recursive:true});
 const results=[];
-const pageName=(p,label)=>p.getByRole('group',{name:'Money pages'}).getByRole('button',{name:label,exact:true});
+const pageName=(p,label)=>({click:async()=>{const button=p.getByRole('group',{name:'Money pages'}).getByRole('button',{name:label,exact:true});if(await button.isVisible())await button.click();else await p.getByLabel('Money page',{exact:true}).selectOption({label});}});
 const save=async p=>{await p.locator('#dailyDialog').getByRole('button',{name:'Save',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});};
 const expense=async(p,title,amount)=>{await p.getByRole('button',{name:'Add entry',exact:true}).click();await p.getByLabel('Entry name',{exact:true}).fill(title);await p.getByLabel('Amount (RM)',{exact:true}).fill(amount);await save(p);};
 (async()=>{
@@ -74,5 +74,70 @@ const expense=async(p,title,amount)=>{await p.getByRole('button',{name:'Add entr
     await p.getByRole('button',{name:'Close recovery',exact:true}).click();await p.evaluate(()=>{const e=moneyLedger().entries[0];commitMoney(state.activeBoardId,l=>LifeMoney.change(l,'entries',{...e,title:'=HYPERLINK("https://invalid.test")'},e));});
     const downloaded=p.waitForEvent('download');await p.getByRole('button',{name:'Download money records',exact:true}).click();const download=await downloaded;await download.saveAs(out+'/money-export.csv');const csv=fs.readFileSync(out+'/money-export.csv','utf8');assert.match(csv,/'=HYPERLINK/);assert.doesNotMatch(csv,/Private text/);assert.equal(await p.evaluate(()=>moneyLedger().entries.length),1);
   });
-  await browser.close();if(results.some(r=>!r.pass))process.exitCode=1;
+  async function addLoan(p,{name='Car loan',remaining='12',finalMonth='',finalAmount=''}={}){
+    await pageName(p,'Loans').click();await p.getByRole('button',{name:'Add loan',exact:true}).click();
+    await p.getByLabel('Loan name',{exact:true}).fill(name);await p.getByLabel('Bank / lender',{exact:true}).fill('Sample Bank');await p.getByLabel('Balance shown by bank (RM)',{exact:true}).fill('2800.00');await p.getByLabel('Monthly instalment (RM)',{exact:true}).fill('250.55');await p.getByLabel('First tracked due date',{exact:true}).fill('2026-10-15');
+    if(finalMonth){await p.getByLabel('Remaining term',{exact:true}).selectOption('end');await p.getByLabel('Final repayment month',{exact:true}).fill(finalMonth);}else await p.getByLabel('Repayments left',{exact:true}).fill(remaining);
+    if(finalAmount)await p.getByLabel('Final instalment (RM, if different)',{exact:true}).fill(finalAmount);
+    await save(p);
+  }
+  await run('loans and planned spending share cash forecasts, survive reload, and never estimate principal from full payments',async p=>{
+    await account(p);const diary=await p.evaluate(()=>JSON.stringify(state.cards[0].diaryEntries));await addLoan(p);
+    assert.equal(await p.evaluate(()=>LifeMoney.loanDetail(moneyLedger(),moneyLedger().entries.find(e=>e.loan).id,getTodayKey()).remaining),12);
+    assert.equal(await p.evaluate(()=>LifeMoney.summary(moneyLedger(),getTodayKey(),moneyEnd(moneySession())).actualCents),100000);
+    await pageName(p,'Planned spending').click();await p.getByRole('button',{name:'Plan spending',exact:true}).click();await p.getByLabel('Item or payment',{exact:true}).fill('New laptop');await p.getByLabel('Expected amount (RM)',{exact:true}).fill('500.00');await p.getByLabel('Expected payment date',{exact:true}).fill('2026-10-20');await save(p);
+    assert.equal(await p.evaluate(()=>LifeMoney.summary(moneyLedger(),getTodayKey(),moneyEnd(moneySession())).committedCents),75055);
+    await p.evaluate(()=>flushDeviceWrites());await p.reload();await pageName(p,'Loans').click();await p.getByRole('button',{name:'Loan options: Car loan',exact:true}).click();await p.getByRole('button',{name:'Record instalment',exact:true}).click();await p.getByLabel('Bank balance after payment (RM, optional)',{exact:true}).fill('2600.10');await save(p);
+    const data=await p.evaluate(()=>{const l=moneyLedger(),d=LifeMoney.loanDetail(l,l.entries.find(e=>e.loan).id,getTodayKey()),s=LifeMoney.summary(l,getTodayKey(),moneyEnd(moneySession()));return {left:d.remaining,next:d.nextDate,balance:d.balanceCents,stale:d.balanceNeedsUpdate,cash:s.actualCents,available:s.availableCents};});
+    assert.deepEqual(data,{left:11,next:'2026-11-15',balance:260010,stale:false,cash:74945,available:14945});assert.equal(await p.evaluate(()=>JSON.stringify(state.cards[0].diaryEntries)),diary);
+    const readable=await p.evaluate(()=>buildReadableDataArchive(getStateForStorage()));assert.match(readable,/Sample Bank/);assert.match(readable,/2,600\.10/);assert.match(readable,/New laptop/);assert.doesNotMatch(readable,/\[object Object\]/);
+    await p.evaluate(()=>flushDeviceWrites());await p.reload();await pageName(p,'Loans').click();assert.match(await p.locator('.money-loan').innerText(),/11/);assert.match(await p.locator('.money-loan').innerText(),/2,600\.10/);
+    await pageName(p,'Overview').click();await p.getByRole('button',{name:'Add summary card',exact:true}).click();assert.match(await p.locator('.money-card').innerText(),/bank loan balances/);
+  });
+  await run('final repayment month, final balloon amount and later purchases do not hide future spending',async p=>{
+    await account(p);await addLoan(p,{finalMonth:'2026-12',finalAmount:'500.55'});
+    assert.equal(await p.evaluate(()=>LifeMoney.loans(moneyLedger(),getTodayKey())[0].remaining),3);assert.equal(await p.evaluate(()=>LifeMoney.loans(moneyLedger(),getTodayKey())[0].scheduledCents),100165);
+    await pageName(p,'Due & expected').click();await p.getByLabel('Forecast through',{exact:true}).selectOption('90');assert.equal(await p.evaluate(()=>LifeMoney.summary(moneyLedger(),getTodayKey(),moneyEnd(moneySession())).committedCents),100165);
+    await pageName(p,'Planned spending').click();await p.getByRole('button',{name:'Plan spending',exact:true}).click();await p.getByLabel('Item or payment',{exact:true}).fill('Next year trip');await p.getByLabel('Expected amount (RM)',{exact:true}).fill('1500.00');await p.getByLabel('Expected payment date',{exact:true}).fill('2027-06-01');await save(p);
+    assert.match(await p.locator('.money-content').innerText(),/Later planned spending/);assert.match(await p.locator('.money-content').innerText(),/Next year trip/);assert.equal(await p.evaluate(()=>LifeMoney.summary(moneyLedger(),getTodayKey(),moneyEnd(moneySession())).committedCents),100165);
+  });
+  await run('loan validation and a failed device save keep all old records and the complete retry draft',async p=>{
+    await account(p);await pageName(p,'Loans').click();await p.getByRole('button',{name:'Add loan',exact:true}).click();await p.getByLabel('Loan name',{exact:true}).fill('My full loan name');await p.getByLabel('Bank / lender',{exact:true}).fill('Sample Bank');await p.getByLabel('Balance shown by bank (RM)',{exact:true}).fill('2800.00');await p.getByLabel('Monthly instalment (RM)',{exact:true}).fill('250.55');await p.getByLabel('Repayments left',{exact:true}).fill('1.5');
+    await p.locator('#dailyDialog').getByRole('button',{name:'Save',exact:true}).click();await p.getByText(/whole number of repayments/).waitFor();assert.equal(await p.evaluate(()=>moneyLedger().entries.length),0);
+    await p.getByLabel('Repayments left',{exact:true}).fill('12');await p.evaluate(()=>{window.previousMoneyStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw new Error('Synthetic full storage');};});
+    await p.locator('#dailyDialog').getByRole('button',{name:'Save',exact:true}).click();await p.getByText(/previous records were kept/).waitFor();assert.equal(await p.getByLabel('Loan name',{exact:true}).inputValue(),'My full loan name');assert.equal(await p.evaluate(()=>moneyLedger().entries.length),0);
+    await p.evaluate(()=>LifeDeviceStore.stage=window.previousMoneyStage);await save(p);assert.equal(await p.evaluate(()=>moneyLedger().entries.filter(e=>e.loan).length),1);
+  });
+  await run('linking an existing repayment schedule retains its identity and previous cash payments without duplicating forecasts',async p=>{
+    await account(p);await p.evaluate(()=>{
+      const l=moneyLedger(),a=l.accounts[0],entry={id:'old-schedule',title:'Existing bank payment',kind:'expense',status:'planned',repeat:'monthly',accountId:a.id,amountCents:25000,date:'2026-10-05',dueDate:'2026-10-05',category:'Housing',note:'Keep original history'};
+      commitMoney(state.activeBoardId,x=>{let next=LifeMoney.change(x,'entries',entry,undefined);return LifeMoney.settle(next,LifeMoney.upcoming(next,'2026-10-05')[0],25000,'2026-10-05',getTodayKey());});
+    });
+    const cash=await p.evaluate(()=>LifeMoney.balance(moneyLedger(),moneyLedger().accounts[0].id,getTodayKey()));
+    await pageName(p,'Loans').click();await p.getByRole('button',{name:'Use existing payment',exact:true}).click();await p.locator('#dailyDialog').getByRole('button',{name:'Save',exact:true}).click();await p.getByLabel('Bank / lender',{exact:true}).fill('Sample Bank');await p.getByLabel('Balance shown by bank (RM)',{exact:true}).fill('5000.00');await p.getByLabel('Repayments left',{exact:true}).fill('24');await save(p);
+    const data=await p.evaluate(()=>{const l=moneyLedger();return {schedules:l.entries.filter(e=>e.repeat==='monthly').length,id:l.entries.find(e=>e.loan).id,start:l.entries.find(e=>e.loan).loan.startDate,cash:LifeMoney.balance(l,l.accounts[0].id,getTodayKey()),remaining:LifeMoney.loans(l,getTodayKey())[0].remaining,rows:LifeMoney.upcoming(l,'2026-11-30').length};});
+    assert.deepEqual(data,{schedules:1,id:'old-schedule',start:'2026-11-05',cash,remaining:24,rows:1});
+  });
+  await run('a repayment received while editing a loan blocks a stale remaining-term save instead of extending it',async p=>{
+    await account(p);await addLoan(p);await p.getByRole('button',{name:'Loan options: Car loan',exact:true}).click();await p.getByRole('button',{name:'Edit loan',exact:true}).click();await p.getByLabel('Loan name',{exact:true}).fill('Changed name');
+    await p.evaluate(()=>{const l=moneyLedger(),source=l.entries.find(e=>e.loan),due=LifeMoney.upcoming(l,source.dueDate).find(e=>e.scheduleId===source.id);commitMoney(state.activeBoardId,x=>LifeMoney.settle(x,due,due.amountCents,getTodayKey(),getTodayKey()));});
+    await p.locator('#dailyDialog').getByRole('button',{name:'Save',exact:true}).click();await p.getByText(/Repayment records changed while this form was open/).waitFor();assert.equal(await p.evaluate(()=>LifeMoney.loans(moneyLedger(),getTodayKey())[0].remaining),11);assert.equal(await p.evaluate(()=>moneyLedger().entries.find(e=>e.loan).title),'Car loan');assert.equal(await p.getByLabel('Loan name',{exact:true}).inputValue(),'Changed name');
+  });
+  await run('loan controls and planned spending fit phone and portrait screens with reachable menu and save controls',async p=>{
+    await account(p);await addLoan(p,{name:'Sunrise Villa home and renovation loan'});
+    for(const width of [320,390,768,1080,1440]){
+      await p.setViewportSize({width,height:width<700?844:1600});await p.waitForTimeout(500);
+      assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert(await p.locator('.money-loan').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
+      await p.getByRole('button',{name:'Loan options: Sunrise Villa home and renovation loan',exact:true}).click();await p.getByRole('button',{name:'Edit loan',exact:true}).click();assert(await p.locator('#dailyDialog').evaluate(e=>e.scrollWidth<=e.clientWidth+1));await p.getByLabel('Monthly instalment (RM)',{exact:true}).fill('250.55');await save(p);
+      await p.screenshot({path:out+'/loans-'+width+'.png',fullPage:true});
+    }
+    await p.setViewportSize({width:390,height:844});await pageName(p,'Planned spending').click();await p.getByRole('button',{name:'Plan spending',exact:true}).click();await p.getByLabel('Item or payment',{exact:true}).fill('Home repairs');await p.getByLabel('Expected amount (RM)',{exact:true}).fill('120.50');await save(p);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await p.screenshot({path:out+'/planned-spending-phone.png',fullPage:true});
+  });
+  await run('removing a loan requires confirmation, survives reload and can restore the original repayment schedule',async p=>{
+    await account(p);await addLoan(p);const before=await p.evaluate(()=>JSON.stringify(state.cards[0].diaryEntries));
+    await p.getByRole('button',{name:'Loan options: Car loan',exact:true}).click();await p.getByRole('button',{name:'Remove loan',exact:true}).click();await p.locator('#taskConfirmationDialog').getByRole('button',{name:'Cancel',exact:true}).click();assert.equal(await p.evaluate(()=>LifeMoney.loanTotals(moneyLedger(),getTodayKey()).rows.length),1);
+    await p.getByRole('button',{name:'Remove loan',exact:true}).click();await p.locator('#taskConfirmationDialog').getByRole('button',{name:'Remove loan',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});await p.evaluate(()=>flushDeviceWrites());await p.reload();await pageName(p,'Loans').click();assert.equal(await p.evaluate(()=>LifeMoney.loanTotals(moneyLedger(),getTodayKey()).rows.length),0);assert.equal(await p.evaluate(()=>LifeMoney.summary(moneyLedger(),getTodayKey(),moneyEnd(moneySession())).committedCents),0);
+    await p.getByText('Removed loans (1)',{exact:true}).click();await p.getByRole('button',{name:'Loan options: Car loan',exact:true}).click();await p.getByRole('button',{name:'Restore loan',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});assert.equal(await p.evaluate(()=>LifeMoney.loans(moneyLedger(),getTodayKey())[0].remaining),12);assert.equal(await p.evaluate(()=>LifeMoney.summary(moneyLedger(),getTodayKey(),moneyEnd(moneySession())).committedCents),25055);assert.equal(await p.evaluate(()=>JSON.stringify(state.cards[0].diaryEntries)),before);
+  });
+  await browser.close();fs.writeFileSync(out+'/money-results.json',JSON.stringify(results,null,2));if(results.some(r=>!r.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});

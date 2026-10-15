@@ -46,6 +46,14 @@
         const schedule=ledger.entries.find(record=>record.id===entry.scheduleId);
         if(!schedule || schedule.repeat!=='monthly' || !validDate(entry.occurrenceDate) || entry.id!==occurrenceId(schedule.id,entry.occurrenceDate) || entry.repeat!=='none')throw new Error('This recurring payment cannot be identified safely.');
       }
+      if(entry.loan) {
+        const loan=entry.loan;
+        if(entry.kind!=='expense' || (entry.repeat!=='monthly' && !entry.scheduleId) || typeof loan.bank!=='string' || !loan.bank.trim() || !amount(loan.balanceCents) || loan.balanceCents<0 || !validDate(loan.balanceDate) || !Number.isSafeInteger(loan.installments) || loan.installments<0 || loan.installments>1200)throw new Error('Check the bank, statement balance, statement date and number of loan repayments.');
+        if(loan.startDate!==undefined && !validDate(loan.startDate))throw new Error('Check the first tracked loan due date.');
+        if(loan.finalCents!==undefined && (!amount(loan.finalCents) || loan.finalCents<=0))throw new Error('The final instalment must be a positive amount.');
+        if(loan.balancePaymentIds!==undefined && (!Array.isArray(loan.balancePaymentIds) || !loan.balancePaymentIds.every(safeId)))throw new Error('Check the statement payment references.');
+        if(entry.repeat==='monthly' && (!validDate(entry.endDate) || entry.endDate!==monthDate(loan.startDate || entry.dueDate,Math.max(0,loan.installments-1)) || entry.status!=='planned'))throw new Error('The loan repayment schedule and remaining term do not match.');
+      }
     }
     for(const budget of ledger.budgets)if(!owners.includes(budget.owner) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(budget.month) || !amount(budget.limitCents) || budget.limitCents<0 || typeof budget.category!=='string' || budget.id!==budgetId(budget.owner,budget.month,budget.category))throw new Error('Check the monthly budget.');
     return copy(ledger);
@@ -64,17 +72,26 @@
     for(const entry of ledger.entries) {
       if(entry.voidedAt || entry.status==='cancelled')continue;
       if(entry.repeat==='monthly') {
-        const [ey,em]=end.split('-').map(Number),[sy,sm]=entry.dueDate.split('-').map(Number),count=(ey-sy)*12+em-sm;
+        const anchor=entry.loan?.startDate || entry.dueDate;
+        const [ey,em]=end.split('-').map(Number),[sy,sm]=anchor.split('-').map(Number),count=(ey-sy)*12+em-sm;
         if(count>1200)throw new Error('Choose a forecast within 100 years of the recurring payment.');
-        for(let index=0;index<=count;index++) {
-          const day=monthDate(entry.dueDate,index);if(!day || day>end || entry.endDate && day>entry.endDate)break;
+        for(let index=0;index<=count && (!entry.loan || index<entry.loan.installments);index++) {
+          const day=monthDate(anchor,index);if(!day || day>end || entry.endDate && day>entry.endDate)break;
           const id=occurrenceId(entry.id,day);
           // Settled, cancelled and voided occurrences suppress the same bill;
           // a recurring template is never a second financial transaction.
-          if(existing.has(id))continue;
-          rows.push({...copy(entry),id,scheduleId:entry.id,occurrenceDate:day,dueDate:day,date:day,repeat:'none',virtual:true});
+          const recorded=existing.get(id);
+          if(recorded && (!entry.loan || !recorded.voidedAt && recorded.status!=='cancelled'))continue;
+          const row={...copy(entry),id,scheduleId:entry.id,occurrenceDate:day,dueDate:day,date:day,repeat:'none',virtual:true};
+          if(entry.loan && index===entry.loan.installments-1 && entry.loan.finalCents!==undefined)row.amountCents=entry.loan.finalCents;
+          delete row.loan;
+          rows.push(row);
         }
-      } else if(['planned','released'].includes(entry.status) && entry.dueDate<=end)rows.push(copy(entry));
+      } else if(['planned','released'].includes(entry.status) && entry.dueDate<=end) {
+        const schedule=entry.scheduleId && existing.get(entry.scheduleId);
+        if(schedule?.loan && (schedule.voidedAt || schedule.status==='cancelled' || entry.occurrenceDate<(schedule.loan.startDate || schedule.dueDate) || entry.occurrenceDate>schedule.endDate || schedule.loan.installments===0))continue;
+        rows.push(copy(entry));
+      }
     }
     return rows.sort((a,b)=>a.dueDate.localeCompare(b.dueDate)||a.id.localeCompare(b.id));
   }
@@ -113,16 +130,51 @@
     if(index<0)ledger[collection].push(next);else ledger[collection][index]=next;
     return validate(ledger);
   }
+  function loanDetail(input,id,today) {
+    const ledger=validate(input),entry=ledger.entries.find(e=>e.id===id && e.repeat==='monthly' && e.loan);
+    if(!entry || !validDate(today))throw new Error('Choose an existing loan and a valid date.');
+    const payments=ledger.entries.filter(e=>e.scheduleId===id && !e.voidedAt && e.status==='settled' && e.date<=today);
+    const paid=new Set(payments.map(e=>e.occurrenceDate));
+    const dates=Array.from({length:entry.loan.installments},(_,index)=>monthDate(entry.loan.startDate || entry.dueDate,index));
+    const remainingDates=dates.filter(date=>!paid.has(date));
+    const scheduled=remainingDates.map(date=>ledger.entries.find(e=>e.id===occurrenceId(id,date) && !e.voidedAt && e.status==='planned')?.amountCents ?? (date===dates.at(-1)?entry.loan.finalCents ?? entry.amountCents:entry.amountCents));
+    const balanceNeedsUpdate=payments.some(e=>e.date>entry.loan.balanceDate || e.date===entry.loan.balanceDate && ((e.updatedAt || 0)>(entry.loan.balanceUpdatedAt || 0) || Array.isArray(entry.loan.balancePaymentIds) && !entry.loan.balancePaymentIds.includes(e.id)));
+    return {id,entry,paid:dates.filter(date=>paid.has(date)).length,remaining:remainingDates.length,overdue:remainingDates.filter(date=>date<today).length,nextDate:remainingDates[0] || '',finishDate:remainingDates.at(-1) || '',scheduledCents:checkedSum(scheduled),balanceCents:entry.loan.balanceCents,balanceDate:entry.loan.balanceDate,balanceNeedsUpdate};
+  }
+  function loans(input,today,owner='all') {
+    const ledger=validate(input);
+    if(!validDate(today) || ![...owners,'all'].includes(owner))throw new Error('Choose a valid loan view.');
+    return ledger.entries.filter(e=>e.loan && e.repeat==='monthly' && (owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===owner)).map(e=>loanDetail(ledger,e.id,today));
+  }
+  function loanTotals(input,today,owner='all') {
+    const rows=loans(input,today,owner).filter(item=>!item.entry.voidedAt);
+    return {rows,balanceCents:checkedSum(rows.map(item=>item.balanceCents)),monthlyCents:checkedSum(rows.filter(item=>item.remaining).map(item=>item.entry.amountCents)),scheduledCents:checkedSum(rows.map(item=>item.scheduledCents))};
+  }
+  function saveLoan(input,record,expected,remaining,now=Date.now()) {
+    const ledger=validate(input);
+    if(!Number.isSafeInteger(remaining) || remaining<0 || remaining>1200)throw new Error('Enter a whole number of repayments from 0 to 1200.');
+    const children=ledger.entries.filter(e=>e.scheduleId===record.id);
+    const anchor=record.loan?.startDate || record.dueDate;
+    if(expected && children.length && (record.dueDate!==expected.dueDate || record.accountId!==expected.accountId || expected.loan && anchor!==(expected.loan.startDate || expected.dueDate)))throw new Error('The first due date and payment account are fixed after repayment records exist. Existing payments have been kept.');
+    const paid=children.filter(e=>!e.voidedAt && e.status==='settled' && e.occurrenceDate>=anchor).length;
+    const installments=remaining+paid;
+    if(installments>1200)throw new Error('The complete repayment schedule cannot exceed 1200 months.');
+    return change(ledger,'entries',{...record,endDate:monthDate(anchor,Math.max(0,installments-1)),loan:{...record.loan,installments}},expected,now);
+  }
   function settle(input,entry,amountCents,date,today,now=Date.now()) {
     if(!validDate(date) || date>today)throw new Error('Received or paid date cannot be in the future.');
+    const parent=input.entries.find(e=>e.id===entry.scheduleId);
+    if(parent?.loan && amountCents!==entry.amountCents)throw new Error('Record a full instalment. For a revised amount, edit the scheduled payment first; partial payments are not treated as a completed month.');
     if(entry.virtual) {
       const current=upcoming(input,entry.dueDate).find(e=>e.id===entry.id);
       if(!equal(current,entry))throw new Error('This scheduled payment changed. Review it before recording.');
       const next={...copy(entry),amountCents,date,status:'settled'};delete next.virtual;
-      return change(input,'entries',next,undefined,now);
+      const previous=input.entries.find(e=>e.id===entry.id);
+      const schedule=input.entries.find(e=>e.id===entry.scheduleId);
+      return change(input,'entries',next,schedule?.loan?previous:undefined,now);
     }
     return change(input,'entries',{...copy(entry),amountCents,date,status:'settled'},entry,now);
   }
-  const api={empty,cents,validate,summary,balance,upcoming,change,settle,validDate,owners,collections,budgetId,occurrenceId,copy,equal};root.LifeMoney=api;
+  const api={empty,cents,validate,summary,balance,upcoming,change,settle,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
   if(typeof module!=='undefined' && module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

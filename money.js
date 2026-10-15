@@ -1,5 +1,5 @@
 const moneyOwners={personal:'Personal',villa:'Sunrise Villa',all:'Combined'};
-const moneyCategories=['Food & drinks','Shopping','Transport','Health','Travel','Housing','Subscriptions','Cleaning','Utilities','Maintenance','Other'];
+const moneyCategories=['Food & drinks','Shopping','Transport','Health','Travel','Housing','Subscriptions','Cleaning','Utilities','Maintenance','Loans','Other'];
 function moneyLedger(boardId=state.activeBoardId) {
   const board=state.boards.find(item=>item.id===boardId);
   if(!board)throw new Error('This board no longer exists.');
@@ -9,7 +9,7 @@ function moneyFormat(cents){return new Intl.NumberFormat('en-MY',{style:'currenc
 function moneySession(boardId=state.activeBoardId) {
   const key=LifeStorageScope.key('life-os-money:'+boardId);
   let saved={};try{saved=JSON.parse(sessionStorage.getItem(key) || '{}');}catch{}
-  return {owner:['personal','villa','all'].includes(saved?.owner)?saved.owner:'personal',view:['overview','transactions','upcoming','accounts','budgets'].includes(saved?.view)?saved.view:'overview',horizon:['month','30','90'].includes(saved?.horizon)?saved.horizon:'month',drafts:saved?.drafts && typeof saved.drafts==='object'?saved.drafts:{}};
+  return {owner:['personal','villa','all'].includes(saved?.owner)?saved.owner:'personal',view:['overview','transactions','upcoming','loans','spending','accounts','budgets'].includes(saved?.view)?saved.view:'overview',horizon:['month','30','90'].includes(saved?.horizon)?saved.horizon:'month',drafts:saved?.drafts && typeof saved.drafts==='object'?saved.drafts:{}};
 }
 function saveMoneySession(session,boardId=state.activeBoardId){sessionStorage.setItem(LifeStorageScope.key('life-os-money:'+boardId),JSON.stringify(session));}
 function moneyEnd(session) {
@@ -44,7 +44,7 @@ function moneyDialogForm(title,key,defaults,build,onSave) {
   const field=(label,property,type='text',options)=>{
     const input=options?moneySelect(options,draft[property],value=>{draft[property]=value;remember();}):type==='textarea'?planningNode('textarea'):planningInput(type,draft[property],value=>{draft[property]=value;remember();});
     if(type==='textarea'){input.value=draft[property] || '';input.oninput=()=>{draft[property]=input.value;remember();};}
-    if(property.toLowerCase().includes('amount') || ['opening','reserve','limit','actual'].includes(property)){input.inputMode='decimal';input.placeholder='0.00';}
+    if(property.toLowerCase().includes('amount') || property.toLowerCase().includes('balance') || ['opening','reserve','limit','actual'].includes(property)){input.inputMode='decimal';input.placeholder='0.00';}
     const wrapper=planningField(label,input);form.append(wrapper);return {input,wrapper};
   };
   build({form,field,draft,remember,dialog});
@@ -104,9 +104,89 @@ function openMoneyEntry(kind='expense',entry) {
   });
 }
 function openMoneySettle(entry) {
-  moneyDialogForm(entry.kind==='income'?'Record received payout':'Record payment','settle-'+entry.id,{amount:(entry.amountCents/100).toFixed(2),date:getTodayKey()},({form,field})=>{field('Actual amount (RM)','amount');field(entry.kind==='income'?'Received date':'Paid date','date','date');form.append(planningNode('p','money-message','This settles the whole entry. For installments, record each installment as a separate upcoming entry.'));},(draft,boardId)=>{
-    commitMoney(boardId,current=>LifeMoney.settle(current,entry,LifeMoney.cents(draft.amount),draft.date,getTodayKey()));
+  const loan=moneyLedger().entries.find(e=>e.id===entry.scheduleId && e.loan);
+  moneyDialogForm(loan?'Record loan instalment':entry.kind==='income'?'Record received payout':'Record payment','settle-'+entry.id,{amount:(entry.amountCents/100).toFixed(2),date:getTodayKey(),bankBalance:''},({form,field})=>{
+    field('Actual amount (RM)','amount');field(entry.kind==='income'?'Received date':'Paid date','date','date');
+    if(loan){field('Bank balance after payment (RM, optional)','bankBalance');form.append(planningNode('p','money-message','Interest does not reduce the loan balance. Leave the bank balance blank unless you have the updated statement.'));}
+    else form.append(planningNode('p','money-message','This settles the whole entry. For installments, record each installment as a separate upcoming entry.'));
+  },(draft,boardId)=>{
+    commitMoney(boardId,current=>{
+      if(loan && !LifeMoney.equal(current.entries.find(e=>e.id===loan.id),loan))throw new Error('The loan changed while this form was open. Reopen the repayment before saving.');
+      const next=LifeMoney.settle(current,entry,LifeMoney.cents(draft.amount),draft.date,getTodayKey());
+      if(!loan || !draft.bankBalance.trim())return next;
+      if(draft.date<loan.loan.balanceDate)throw new Error('This payment predates the latest bank balance. Leave the balance blank to keep the newer statement.');
+      const balancePaymentIds=next.entries.filter(e=>e.scheduleId===loan.id && !e.voidedAt && e.status==='settled' && e.date===draft.date).map(e=>e.id);
+      return LifeMoney.change(next,'entries',{...loan,loan:{...loan.loan,balanceCents:LifeMoney.cents(draft.bankBalance),balanceDate:draft.date,balanceUpdatedAt:Date.now(),balancePaymentIds}},loan);
+    });
   });
+}
+
+function openMoneySpending() {
+  const ledger=moneyLedger(),accounts=ledger.accounts.filter(a=>moneySession().owner==='all' || a.owner===moneySession().owner);
+  if(!accounts.length){openMoneyAccount();return;}
+  const id=createId();
+  moneyDialogForm('Plan spending','spending-new',{title:'',amount:'',accountId:accounts[0].id,dueDate:getTodayKey(),category:'Other',note:''},({field})=>{
+    field('Item or payment','title');field('Expected amount (RM)','amount');field('Expected payment date','dueDate','date');field('Pay from','accountId','text',accounts.map(a=>[a.id,a.name]));field('Category','category','text',moneyCategories.map(c=>[c,c]));field('Notes (optional)','note','textarea');
+  },(draft,boardId)=>commitMoney(boardId,current=>LifeMoney.change(current,'entries',{id,title:draft.title.trim(),amountCents:LifeMoney.cents(draft.amount),accountId:draft.accountId,kind:'expense',status:'planned',repeat:'none',date:draft.dueDate,dueDate:draft.dueDate,category:draft.category,note:draft.note,spendingPlan:true},undefined)));
+}
+
+function openMoneyLoan(entry) {
+  const ledger=moneyLedger(),accounts=ledger.accounts.filter(a=>moneySession().owner==='all' || a.owner===moneySession().owner);
+  if(!accounts.length){openMoneyAccount();return;}
+  const expected=entry?LifeMoney.copy(entry):undefined,id=entry?.id || createId(),detail=entry?.loan?LifeMoney.loanDetail(ledger,id,getTodayKey()):null;
+  const expectedPayments=ledger.entries.filter(e=>e.scheduleId===id);
+  let firstDate=entry?.loan?.startDate || entry?.dueDate || getTodayKey();
+  if(entry && !entry.loan){for(let month=0;month<=1200;month++){const date=LifeMoney.monthDate(entry.dueDate,month);if(!date || date>=getTodayKey()){firstDate=date || entry.dueDate;break;}}}
+  if(entry && !entry.loan){const unpaid=LifeMoney.upcoming(ledger,LifeMoney.monthDate(getTodayKey(),2)).find(e=>e.scheduleId===id);if(unpaid)firstDate=unpaid.dueDate;}
+  moneyDialogForm(entry?.loan?'Edit loan':'Add loan','loan-'+(entry?.id || 'new'),{title:entry?.title || '',bank:entry?.loan?.bank || '',balance:entry?.loan?(entry.loan.balanceCents/100).toFixed(2):'',balanceDate:entry?.loan?.balanceDate || getTodayKey(),amount:entry?(entry.amountCents/100).toFixed(2):'',accountId:entry?.accountId || accounts[0].id,dueDate:firstDate,remaining:detail?String(detail.remaining):'',termMode:'payments',endMonth:entry?.endDate?.slice(0,7) || '',finalAmount:entry?.loan?.finalCents!==undefined?(entry.loan.finalCents/100).toFixed(2):'',note:entry?.note || ''},({form,field,draft})=>{
+    field('Loan name','title');field('Bank / lender','bank');field('Balance shown by bank (RM)','balance');field('Statement date','balanceDate','date');field('Monthly instalment (RM)','amount');
+    const account=field('Pay from','accountId','text',accounts.map(a=>[a.id,a.name]));
+    const first=field('First tracked due date','dueDate','date');const used=Boolean(entry && ledger.entries.some(e=>e.scheduleId===id));account.input.disabled=used;first.input.disabled=used && Boolean(entry.loan);
+    field('Remaining term','termMode','text',[['payments','Number of repayments'],['end','Final repayment month']]);
+    const count=field('Repayments left','remaining'),month=field('Final repayment month','endMonth','month');count.input.inputMode='numeric';
+    const toggle=()=>{count.wrapper.hidden=draft.termMode!=='payments';month.wrapper.hidden=draft.termMode!=='end';};form.addEventListener('change',toggle);toggle();
+    field('Final instalment (RM, if different)','finalAmount');field('Notes (optional)','note','textarea');
+    form.append(planningNode('p','money-message','Bank balance and scheduled repayments are different figures. Neither is an early-settlement quote.'));
+  },(draft,boardId)=>{
+    if(draft.balanceDate>getTodayKey())throw new Error('The statement date cannot be in the future.');
+    const paid=entry?ledger.entries.filter(e=>e.scheduleId===id && !e.voidedAt && e.status==='settled' && e.occurrenceDate>=draft.dueDate).length:0;
+    let remaining;
+    if(draft.termMode==='end'){
+      if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(draft.endMonth))throw new Error('Choose the final repayment month.');
+      const [ey,em]=draft.endMonth.split('-').map(Number),[sy,sm]=draft.dueDate.split('-').map(Number);remaining=(ey-sy)*12+em-sm+1-paid;
+    }else {if(!/^\d+$/.test(draft.remaining))throw new Error('Enter a whole number of repayments.');remaining=Number(draft.remaining);}
+    const now=Date.now(),next={...expected,id,title:draft.title.trim(),kind:'expense',status:'planned',repeat:'monthly',accountId:draft.accountId,amountCents:LifeMoney.cents(draft.amount),date:entry?.date || draft.dueDate,dueDate:entry?.dueDate || draft.dueDate,category:entry?.category || 'Loans',note:draft.note,loan:{...entry?.loan,bank:draft.bank.trim(),balanceCents:LifeMoney.cents(draft.balance),balanceDate:draft.balanceDate,balanceUpdatedAt:now,startDate:draft.dueDate}};
+    if(entry?.loan && next.loan.balanceCents===entry.loan.balanceCents && next.loan.balanceDate===entry.loan.balanceDate)next.loan.balanceUpdatedAt=entry.loan.balanceUpdatedAt || 0;
+    else next.loan.balancePaymentIds=ledger.entries.filter(e=>e.scheduleId===id && !e.voidedAt && e.status==='settled' && e.date===draft.balanceDate).map(e=>e.id);
+    if(draft.finalAmount.trim())next.loan.finalCents=LifeMoney.cents(draft.finalAmount);else delete next.loan.finalCents;
+    commitMoney(boardId,current=>{
+      if(!LifeMoney.equal(current.entries.filter(e=>e.scheduleId===id),expectedPayments))throw new Error('Repayment records changed while this form was open. Reopen the loan before changing its remaining term.');
+      return LifeMoney.saveLoan(current,next,expected,remaining,now);
+    });
+  });
+}
+
+function linkMoneyLoan() {
+  const ledger=moneyLedger(),options=ledger.entries.filter(e=>e.kind==='expense' && e.repeat==='monthly' && !e.loan && !e.voidedAt && (moneySession().owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===moneySession().owner));
+  moneyDialogForm('Use an existing payment','loan-link',{scheduleId:options[0]?.id || ''},({field})=>field('Recurring payment','scheduleId','text',options.map(e=>[e.id,e.title+' · '+moneyFormat(e.amountCents)])),(draft,boardId)=>{
+    const current=moneyLedger().entries.find(e=>e.id===draft.scheduleId);
+    if(!current || current.loan || current.voidedAt)throw new Error('Choose an existing recurring payment without a loan record.');
+    window.setTimeout(()=>{if(state.activeBoardId===boardId)openMoneyLoan(current);},0);
+  });
+}
+
+function openMoneyLoanOptions(entry) {
+  const boardId=state.activeBoardId,dialog=dailyDialog(entry.title),actions=planningNode('div','money-actions');dialog.append(actions);
+  actions.append(planningButton('Edit loan',()=>{dialog.close();openMoneyLoan(entry);},'pencil'));
+  const detail=LifeMoney.loanDetail(moneyLedger(),entry.id,getTodayKey());
+  const next=detail.nextDate && LifeMoney.upcoming(moneyLedger(),detail.nextDate).find(e=>e.scheduleId===entry.id);
+  if(next && !entry.voidedAt)actions.append(planningButton('Record instalment',()=>{dialog.close();openMoneySettle(next);},'check'));
+  actions.append(planningButton(entry.voidedAt?'Restore loan':'Remove loan',async()=>{
+    if(!entry.voidedAt && !await confirmTaskAction('Remove this loan from the tracker?','This stops its forecast payments. It does not pay off the bank. Existing payment history remains available.','Remove loan',{danger:true}))return;
+    try{commitMoney(boardId,current=>{const record={...entry};if(record.voidedAt)delete record.voidedAt;else record.voidedAt=Date.now();return LifeMoney.change(current,'entries',record,entry);});dialog.close();}catch(e){dialog.append(planningNode('p','money-message',e.message));}
+  },entry.voidedAt?'rotate-ccw':'trash-2'));
+  const history=planningNode('details','money-history');history.append(planningNode('summary','','Edit history & timestamps'));
+  for(const version of entry.history || []){const block=moneyVersion(version.record);block.prepend(planningNode('p','',formatRecordDateTime(version.at)));history.append(block);}dialog.append(history);
 }
 function openMoneyReconcile(account) {
   const boardId=state.activeBoardId,expected=LifeMoney.copy(account),openingLedger=moneyLedger(),openingBalance=LifeMoney.balance(openingLedger,account.id,getTodayKey());
@@ -134,13 +214,16 @@ function moneyVersion(record) {
   const node=planningNode('div','planner-conflict-version');
   node.append(planningNode('strong','',record.title || record.name || record.month+' · '+record.category));
   for(const [label,key] of [['Amount','amountCents'],['Opening','openingCents'],['Reserve','reservedCents'],['Budget','limitCents'],['Account','accountId'],['Owner','owner'],['Status','status'],['Recorded date','date'],['Due date','dueDate'],['Repeat','repeat'],['Reference','reference'],['Notes','note']])if(record[key]!==undefined)node.append(planningNode('p','',label+': '+(key.endsWith('Cents')?moneyFormat(record[key]):record[key])));
+  if(record.loan)node.append(planningNode('p','','Bank: '+record.loan.bank),planningNode('p','','Statement balance: '+moneyFormat(record.loan.balanceCents)+' · '+record.loan.balanceDate),planningNode('p','','Tracked repayment count: '+record.loan.installments));
   if(record.voidedAt)node.append(planningNode('p','','Voided'));return node;
 }
 function openMoneyOptions(entry) {
+  if(entry.loan && entry.repeat==='monthly'){openMoneyLoanOptions(entry);return;}
   const boardId=state.activeBoardId,dialog=dailyDialog(entry.title),actions=planningNode('div','money-actions');dialog.append(actions);
   if(entry.voidedAt){actions.append(planningButton('Restore entry',()=>{try{commitMoney(boardId,current=>{const next={...entry};delete next.voidedAt;if(next.scheduleId && next.status==='cancelled')next.status='planned';return LifeMoney.change(current,'entries',next,entry);});dialog.close();}catch(e){dialog.append(planningNode('p','money-message',e.message));}},'rotate-ccw'));}
   else if(entry.kind!=='adjustment')actions.append(planningButton('Edit entry',()=>{dialog.close();openMoneyEntry(entry.kind,entry);},'pencil'));
   if(!entry.voidedAt && ['planned','released'].includes(entry.status))actions.append(planningButton(entry.kind==='income'?'Mark received':'Mark paid',()=>{dialog.close();openMoneySettle(entry);},'check'));
+  if(!entry.voidedAt && entry.kind==='expense' && entry.repeat==='monthly')actions.append(planningButton('Track as loan',()=>{dialog.close();openMoneyLoan(entry);},'plus'));
   if(!entry.virtual){const history=planningNode('details','money-history');history.append(planningNode('summary','','Edit history & timestamps'));for(const version of entry.history || []){const block=moneyVersion(version.record);block.prepend(planningNode('p','',formatRecordDateTime(version.at)));history.append(block);}history.append(planningNode('p','','Created '+formatRecordDateTime(entry.createdAt)),planningNode('p','','Last edited '+formatRecordDateTime(entry.updatedAt)));dialog.append(history);}
   actions.append(planningButton(entry.virtual?'Cancel this occurrence':'Void entry',async()=>{
     const agreed=await confirmTaskAction(entry.virtual?'Cancel this payment?':'Void this money entry?',entry.repeat==='monthly'?'This stops future occurrences. Payments already recorded remain in history.':'This excludes the entry from balances without erasing its history.','Confirm void',{danger:true});
@@ -165,27 +248,67 @@ function renderMoneyRows(root,rows,ledger) {
     row.append(copy,value,planningIcon('Options: '+entry.title,()=>openMoneyOptions(original),'more-vertical'));root.append(row);
   }
 }
+function renderMoneyLoans(root,ledger,owner) {
+  const totals=LifeMoney.loanTotals(ledger,getTodayKey(),owner),actions=planningNode('div','money-actions');
+  if(ledger.entries.some(e=>!e.voidedAt && !e.loan && e.kind==='expense' && e.repeat==='monthly' && (owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===owner)))actions.append(planningButton('Use existing payment',linkMoneyLoan,'link'));
+  if(actions.children.length)root.append(actions);
+  if(totals.rows.length>1 && !moneyConflict()){
+    const stats=planningNode('div','money-stats money-loan-stats');stats.append(moneyStat('Total bank balances',totals.balanceCents,'From your dated bank statements'),moneyStat('Monthly instalments',totals.monthlyCents,'Included once in upcoming payments'));root.append(stats);
+  }else if(!totals.rows.length)root.append(planningNode('p','money-empty','No loans recorded for this money view.'));
+  const render=item=>{
+    const row=planningNode('article','money-loan'),heading=planningNode('div','money-loan-heading'),name=planningNode('div');
+    name.append(planningNode('h3','',item.entry.title),planningNode('small','',item.entry.loan.bank+' · '+(ledger.accounts.find(a=>a.id===item.entry.accountId)?.name || '')));
+    heading.append(name,planningIcon('Loan options: '+item.entry.title,()=>openMoneyLoanOptions(item.entry),'more-vertical'));row.append(heading);
+    const values=planningNode('dl','money-loan-values');
+    for(const [label,value] of [['Bank balance',moneyFormat(item.balanceCents)],['Monthly instalment',moneyFormat(item.entry.amountCents)],['Repayments left',String(item.remaining)],['Next due',item.nextDate?formatReadableDateKey(item.nextDate):'None scheduled'],['Scheduled finish',item.finishDate?formatReadableDateKey(item.finishDate):'No payments left'],['Scheduled total',moneyFormat(item.scheduledCents)]]){
+      const cell=planningNode('div');cell.append(planningNode('dt','',label),planningNode('dd','',value));values.append(cell);
+    }row.append(values,planningNode('p','money-message','Bank balance as of '+formatReadableDateKey(item.balanceDate)));
+    if(item.entry.loan.finalCents!==undefined)row.append(planningNode('p','money-message','Final instalment: '+moneyFormat(item.entry.loan.finalCents)));
+    if(item.overdue && !item.entry.voidedAt)row.append(planningNode('p','money-alert',item.overdue+' overdue repayment'+(item.overdue===1?'':'s')+' still included.'));
+    if(item.balanceNeedsUpdate && !item.entry.voidedAt)row.append(planningNode('p','money-message','Payments recorded since this balance. Update the bank statement balance when available.'));
+    if(!item.remaining && item.balanceCents>0)row.append(planningNode('p','money-alert','No payments scheduled, but the bank balance is not zero. Check the remaining term or settlement amount.'));
+    else if(item.remaining && item.balanceCents>item.scheduledCents)row.append(planningNode('p','money-message','Scheduled repayments are below the bank balance. Check the term and any final or balloon payment.'));
+    return row;
+  };
+  for(const item of totals.rows)root.append(render(item));
+  const removed=LifeMoney.loans(ledger,getTodayKey(),owner).filter(item=>item.entry.voidedAt);
+  if(removed.length){const archive=planningNode('details','money-history');archive.append(planningNode('summary','','Removed loans ('+removed.length+')'));for(const item of removed)archive.append(render(item));root.append(archive);}
+}
 function renderMoneyWorkspace() {
   const root=planningNode('section','money-workspace');root.setAttribute('aria-label','Money');elements.boardGrid.append(root);
   let ledger;try{ledger=moneyLedger();}catch(e){root.append(planningNode('p','money-message',e.message));return;}
   const session=moneySession(),today=getTodayKey(),end=moneyEnd(session);let summary;
   try{summary=LifeMoney.summary(ledger,today,end,session.owner);}catch(e){root.append(planningNode('p','money-alert',e.message),planningButton('Download money records',exportMoneyCsv,'download'));return;}
   const change=(key,value)=>{session[key]=value;try{saveMoneySession(session);}catch{}renderCardsOnly({force:true});};
-  const header=planningNode('header','money-heading'),heading=planningNode('div');heading.append(planningNode('h2','','Money'),planningNode('p','money-subtitle',state.board.name+' · '+formatReadableDateKey(today)));header.append(heading,planningButton('Add entry',()=>openMoneyEntry(),'plus'));root.append(header);
-  const controls=planningNode('div','money-controls');controls.append(planningField('Money view',moneySelect(Object.entries(moneyOwners),session.owner,value=>change('owner',value))),planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))),planningButton('Add summary card',addMoneySummaryCard,'layout-grid'),planningIcon('Download money records',exportMoneyCsv,'download'));root.append(controls);
+  const pages=[['overview','Overview'],['loans','Loans'],['spending','Planned spending'],['transactions','Entries'],['upcoming','Due & expected'],['accounts','Accounts'],['budgets','Budgets']];
+  const header=planningNode('header','money-heading'),heading=planningNode('div');heading.append(planningNode('h2','','Money'),planningNode('p','money-subtitle',state.board.name+' · '+formatReadableDateKey(today)));header.append(heading,session.view==='loans'?planningButton('Add loan',()=>openMoneyLoan(),'plus'):session.view==='spending'?planningButton('Plan spending',openMoneySpending,'plus'):planningButton('Add entry',()=>openMoneyEntry(),'plus'));root.append(header);
+  const controls=planningNode('div','money-controls'),pagePicker=planningField('Money page',moneySelect(pages,session.view,value=>change('view',value)));pagePicker.classList.add('money-page-picker');controls.append(pagePicker,planningField('Money view',moneySelect(Object.entries(moneyOwners),session.owner,value=>change('owner',value))));
+  if(session.view!=='loans')controls.append(planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))));
+  if(!['loans','spending'].includes(session.view))controls.append(planningButton('Add summary card',addMoneySummaryCard,'layout-grid'));
+  controls.append(planningIcon('Download money records',exportMoneyCsv,'download'));root.append(controls);
   if(moneyConflict())root.append(planningNode('p','money-alert','Balances need review: conflicting financial records are not confirmed.'),planningButton('Review changes',openRecovery));
   if(!summary.hasAccounts){root.append(planningNode('p','money-empty','Add a bank or cash account with its opening balance. No income or spending is assumed.'),planningButton('Add account',()=>openMoneyAccount(),'plus'));return;}
-  const stats=planningNode('div','money-stats');stats.append(moneyStat('Recorded balance',summary.actualCents,'Bank / cash records, not a live bank feed',summary.actualCents<0),moneyStat('Upcoming payments',summary.committedCents,'Unpaid commitments through '+formatReadableDateKey(end)),moneyStat('After commitments',summary.availableCents,'Excludes '+moneyFormat(summary.reserveCents)+' protected reserve',summary.availableCents<0),moneyStat('Projected balance',summary.projectedCents,'Includes '+moneyFormat(summary.incomingCents)+' expected receipts; not spendable yet',summary.projectedCents<0));if(!moneyConflict())root.append(stats);
-  const views=planningNode('div','money-tabs');views.setAttribute('role','group');views.setAttribute('aria-label','Money pages');for(const [key,label] of [['overview','Overview'],['transactions','Entries'],['upcoming','Due & expected'],['accounts','Accounts'],['budgets','Budgets']]){const button=planningButton(label,()=>change('view',key));button.setAttribute('aria-pressed',String(session.view===key));views.append(button);}root.append(views);
+  const stats=planningNode('div','money-stats');stats.append(moneyStat('Recorded balance',summary.actualCents,'Bank / cash records, not a live bank feed',summary.actualCents<0),moneyStat('Upcoming payments',summary.committedCents,'Unpaid commitments through '+formatReadableDateKey(end)),moneyStat('After commitments',summary.availableCents,'Excludes '+moneyFormat(summary.reserveCents)+' protected reserve',summary.availableCents<0),moneyStat('Projected balance',summary.projectedCents,'Includes '+moneyFormat(summary.incomingCents)+' expected receipts; not spendable yet',summary.projectedCents<0));if(!moneyConflict() && !['loans','spending'].includes(session.view))root.append(stats);
+  const views=planningNode('div','money-tabs');views.setAttribute('role','group');views.setAttribute('aria-label','Money pages');for(const [key,label] of pages){const button=planningButton(label,()=>change('view',key));button.setAttribute('aria-pressed',String(session.view===key));views.append(button);}root.append(views);
   const body=planningNode('div','money-content');root.append(body);
   if(session.view==='overview') {
     const actions=planningNode('div','money-actions');for(const [label,kind] of [['Expense','expense'],['Income / Airbnb payout','income'],['Upcoming payment','upcoming'],['Transfer','transfer']])actions.append(planningButton(label,()=>openMoneyEntry(kind),'plus'));body.append(actions);
     const monthly=planningNode('div','money-monthly');monthly.append(planningNode('h3','','This month'),planningNode('p','',moneyFormat(summary.spentCents)+' spent · '+moneyFormat(summary.receivedCents)+' received'));body.append(monthly);
+    const loans=LifeMoney.loanTotals(ledger,today,session.owner);
+    if(loans.rows.length){const line=planningNode('div','money-loan-overview');line.append(planningNode('p','',moneyFormat(loans.balanceCents)+' bank loan balances · '+moneyFormat(loans.monthlyCents)+' monthly instalments'),planningButton('View loans',()=>change('view','loans')));body.append(line);}
     if(summary.lowCents<0)body.append(planningNode('p','money-alert','Possible cash shortfall: '+moneyFormat(summary.lowCents)+'. Receipts may arrive after bills; verify dates before spending.'));
     body.append(planningNode('h3','','Cash flow through '+formatReadableDateKey(end)));
     for(const point of summary.timeline){const row=planningNode('div','money-timeline');row.append(planningNode('strong','',formatReadableDateKey(point.date)),planningNode('span','',moneyFormat(point.balanceCents)),planningNode('small','',point.entries.map(e=>e.title+(e.dueDate<today?' (overdue)':'')).join(' · ')));body.append(row);}
     if(!summary.timeline.length)body.append(planningNode('p','money-empty','No upcoming receipts or payments recorded in this period.'));
     body.append(planningNode('h3','','Recent entries'));renderMoneyRows(body,[...ledger.entries].filter(e=>e.repeat==='none' && !e.voidedAt && e.status==='settled' && e.date<=today && (session.owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===session.owner || e.kind==='transfer' && ledger.accounts.find(a=>a.id===e.toAccountId)?.owner===session.owner)).sort((a,b)=>b.date.localeCompare(a.date)||b.updatedAt-a.updatedAt).slice(0,5),ledger);
+  } else if(session.view==='loans') {
+    renderMoneyLoans(body,ledger,session.owner);
+  } else if(session.view==='spending') {
+    const rows=ledger.entries.filter(e=>e.kind==='expense' && e.status==='planned' && e.repeat==='none' && !e.scheduleId && !e.voidedAt && (session.owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===session.owner)).sort((a,b)=>a.dueDate.localeCompare(b.dueDate)||a.id.localeCompare(b.id));
+    const soon=rows.filter(e=>e.dueDate<=end),later=rows.filter(e=>e.dueDate>end);
+    if(!moneyConflict()){const totals=planningNode('div','money-stats money-spending-stats');totals.append(moneyStat('Planned spending',soon.reduce((sum,e)=>sum+e.amountCents,0),'Through '+formatReadableDateKey(end)),moneyStat('After all commitments',summary.availableCents,'Includes loans, bills and protected reserves',summary.availableCents<0));body.append(totals);}
+    body.append(planningNode('h3','','Through '+formatReadableDateKey(end)),planningNode('p','money-message','Included once in upcoming payments and projected balance.'));renderMoneyRows(body,soon,ledger);
+    if(later.length){body.append(planningNode('h3','','Later planned spending'));renderMoneyRows(body,later,ledger);}
   } else if(session.view==='upcoming') {
     body.append(planningButton('Add upcoming payment',()=>openMoneyEntry('upcoming'),'plus'));renderMoneyRows(body,summary.future,ledger);
     const schedules=ledger.entries.filter(e=>e.repeat==='monthly' && !e.voidedAt && (session.owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===session.owner));
@@ -212,6 +335,7 @@ function renderMoneyCard(card,interactive=true) {
     if(moneyConflict())root.append(planningNode('p','money-alert','Balances need review.'));
     else if(!data.hasAccounts)root.append(planningNode('p','','No account recorded yet.'));
     else{root.append(moneyStat('Recorded balance',data.actualCents,'Not a live bank feed'),moneyStat('After commitments',data.availableCents,'After unpaid bills and protected reserves',data.availableCents<0),planningNode('p','',moneyFormat(data.projectedCents)+' projected · includes expected receipts'));}
+    const loans=LifeMoney.loanTotals(ledger,getTodayKey(),owner);if(loans.rows.length && !moneyConflict())root.append(planningNode('p','',moneyFormat(loans.balanceCents)+' bank loan balances · '+moneyFormat(loans.monthlyCents)+' monthly instalments'));
     if(interactive){
       const select=moneySelect(Object.entries(moneyOwners),owner,value=>{const live=state.cards.find(c=>c.id===card.id);if(!live)return;const previous=live.moneyOwner;live.moneyOwner=value;if(!saveState()){if(previous===undefined)delete live.moneyOwner;else live.moneyOwner=previous;}renderCardsOnly({force:true});});select.setAttribute('aria-label','Summary money view');root.append(select);
       root.append(planningButton('Open Money',()=>{const session=moneySession();session.owner=owner;try{saveMoneySession(session);}catch{}setWorkspaceMode('money');},'bar-chart'));
@@ -221,13 +345,16 @@ function renderMoneyCard(card,interactive=true) {
 function moneyReadable(board) {
   if(!board.money)return '';let ledger;try{ledger=LifeMoney.validate(board.money);}catch{return '<h3>Money</h3><p>Money records need review. Keep the JSON backup as well.</p>';}
   const table=(headers,rows)=>'<table><thead><tr>'+headers.map(label=>'<th>'+escapeHtml(label)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(cell=>'<td>'+escapeHtml(cell ?? '')+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
-  return '<section><h3>Money records · MYR</h3>'+table(['Account','Owner','Opening date','Opening balance','Reserve'],ledger.accounts.map(a=>[a.name,moneyOwners[a.owner],a.openingDate,moneyFormat(a.openingCents),moneyFormat(a.reservedCents)]))+table(['Entry','Kind','Amount','Status','Account','Recorded date','Due date','Repeat','Source','Reference','Notes'],ledger.entries.map(e=>[e.title,e.kind,moneyFormat(e.amountCents),e.voidedAt?'Voided':e.status,ledger.accounts.find(a=>a.id===e.accountId)?.name,e.date,e.dueDate,e.repeat,e.source,e.reference,e.note]))+table(['Month','Owner','Category','Budget'],ledger.budgets.map(b=>[b.month,moneyOwners[b.owner],b.category,moneyFormat(b.limitCents)]))+ledger.entries.filter(e=>e.history?.length).map(e=>'<details><summary>'+escapeHtml(e.title)+' · edit history</summary>'+table(['Edited at','Previous record'],e.history.map(h=>[new Date(h.at).toISOString(),Object.entries(h.record).map(([k,v])=>k+': '+v).join('; ')]))+'</details>').join('')+'</section>';
+  const loanTable=table(['Loan','Bank','Bank balance','Statement date','Monthly instalment','Repayments left','Scheduled finish','Remaining scheduled payments','Status'],LifeMoney.loans(ledger,getTodayKey()).map(item=>[item.entry.title,item.entry.loan.bank,moneyFormat(item.balanceCents),item.balanceDate,moneyFormat(item.entry.amountCents),item.remaining,item.finishDate,moneyFormat(item.scheduledCents),item.entry.voidedAt?'Removed from tracker':'Tracked']));
+  const historyText=record=>Object.entries(record).flatMap(([key,value])=>key==='loan' && value?[['Bank',value.bank],['Bank balance',moneyFormat(value.balanceCents)],['Statement date',value.balanceDate],['Tracked repayments',value.installments],['Final instalment',value.finalCents!==undefined?moneyFormat(value.finalCents):'Standard']]:[[key,value]]).map(([key,value])=>key+': '+value).join('; ');
+  return '<section><h3>Money records · MYR</h3>'+table(['Account','Owner','Opening date','Opening balance','Reserve'],ledger.accounts.map(a=>[a.name,moneyOwners[a.owner],a.openingDate,moneyFormat(a.openingCents),moneyFormat(a.reservedCents)]))+table(['Entry','Kind','Amount','Status','Account','Recorded date','Due date','Repeat','Source','Reference','Notes'],ledger.entries.map(e=>[e.title,e.kind,moneyFormat(e.amountCents),e.voidedAt?'Voided':e.status,ledger.accounts.find(a=>a.id===e.accountId)?.name,e.date,e.dueDate,e.repeat,e.source,e.reference,e.note]))+loanTable+table(['Month','Owner','Category','Budget'],ledger.budgets.map(b=>[b.month,moneyOwners[b.owner],b.category,moneyFormat(b.limitCents)]))+ledger.entries.filter(e=>e.history?.length).map(e=>'<details><summary>'+escapeHtml(e.title)+' · edit history</summary>'+table(['Edited at','Previous record'],e.history.map(h=>[new Date(h.at).toISOString(),historyText(h.record)]))+'</details>').join('')+'</section>';
 }
 function exportMoneyCsv() {
-  const ledger=moneyLedger(),rows=[['Record type','Name','Owner / account','Amount (RM)','Status','Recorded / opening date','Due date / budget month','Category','Source','Reference','Notes','Destination account']];
+  const ledger=moneyLedger(),rows=[['Record type','Name','Owner / account','Amount (RM)','Status','Recorded / opening date','Due date / budget month','Category','Source','Reference','Notes','Destination account','Repayments left','Monthly instalment (RM)','Scheduled finish']];
   for(const a of ledger.accounts)rows.push(['Opening balance',a.name,moneyOwners[a.owner],(a.openingCents/100).toFixed(2),'Recorded',a.openingDate,'','','','','','']);
   for(const e of ledger.entries)rows.push([e.kind,e.title,ledger.accounts.find(a=>a.id===e.accountId)?.name,(e.amountCents/100).toFixed(2),e.voidedAt?'Voided':e.status,e.date,e.dueDate,e.category,e.source,e.reference,e.note,ledger.accounts.find(a=>a.id===e.toAccountId)?.name]);
   for(const b of ledger.budgets)rows.push(['Budget',b.category,moneyOwners[b.owner],(b.limitCents/100).toFixed(2),'Budget','',b.month,b.category,'','','','']);
+  for(const item of LifeMoney.loans(ledger,getTodayKey()))rows.push(['Loan balance (not a cash transaction)',item.entry.title,item.entry.loan.bank,(item.balanceCents/100).toFixed(2),item.entry.voidedAt?'Removed':'Tracked',item.balanceDate,'','Loans','','',item.entry.note,'',item.remaining,(item.entry.amountCents/100).toFixed(2),item.finishDate]);
   const safe=value=>{let text=String(value ?? '');if(/^[\s]*[=+\-@]/.test(text) && !/^-?\d+(?:\.\d{1,2})?$/.test(text) || /^[\t\r]/.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';};
-  const blob=new Blob(['\ufeff'+rows.map(row=>row.map(safe).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),link=planningNode('a');link.href=url;link.download='Life-OS-Money-'+getTodayKey()+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
+  const blob=new Blob(['\ufeff'+rows.map(row=>Array.from({length:rows[0].length},(_,i)=>safe(row[i])).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),link=planningNode('a');link.href=url;link.download='Life-OS-Money-'+getTodayKey()+'.csv';link.click();setTimeout(()=>URL.revokeObjectURL(url),30000);
 }
