@@ -34,6 +34,7 @@
       if(!account || !['income','expense','transfer','adjustment'].includes(entry.kind) || !['planned','released','settled','cancelled'].includes(entry.status) || typeof entry.title!=='string' || !entry.title.trim() || typeof entry.note!=='string' || typeof entry.category!=='string' || !amount(entry.amountCents) || (entry.kind!=='adjustment' && entry.amountCents<=0) || !validDate(entry.dueDate) || !validDate(entry.date) || !['none','monthly'].includes(entry.repeat))throw new Error('Check this money entry and its account, amount and dates.');
       if(entry.kind==='adjustment' && (entry.status!=='settled' || entry.repeat!=='none'))throw new Error('A balance adjustment must be recorded, not scheduled.');
       if(entry.status==='released' && entry.kind!=='income')throw new Error('Only income can be released before receipt.');
+      if(entry.purchaseIntent!==undefined && !['considering','committed'].includes(entry.purchaseIntent))throw new Error('Check whether this purchase is considering or committed.');
       if(entry.repeat==='monthly' && (!['income','expense'].includes(entry.kind) || entry.status!=='planned' || entry.scheduleId))throw new Error('Only planned income or payments can repeat monthly.');
       if(entry.endDate && (!validDate(entry.endDate) || entry.endDate<entry.dueDate))throw new Error('Repeat end date must follow its first due date.');
       if(entry.kind==='transfer') {
@@ -71,6 +72,8 @@
     const existing=new Map(ledger.entries.map(entry=>[entry.id,entry])),rows=[];
     for(const entry of ledger.entries) {
       if(entry.voidedAt || entry.status==='cancelled')continue;
+      // Older clients may retain optional metadata when changing an entry type.
+      if(entry.purchaseIntent==='considering' && entry.kind==='expense' && entry.repeat==='none' && !entry.scheduleId && entry.status!=='settled')continue;
       if(entry.repeat==='monthly') {
         const anchor=entry.loan?.startDate || entry.dueDate;
         const [ey,em]=end.split('-').map(Number),[sy,sm]=anchor.split('-').map(Number),count=(ey-sy)*12+em-sm;
@@ -130,6 +133,16 @@
     if(index<0)ledger[collection].push(next);else ledger[collection][index]=next;
     return validate(ledger);
   }
+  function purchases(input,today,owner='all',category='') {
+    const ledger=validate(input);
+    if(!validDate(today) || ![...owners,'all'].includes(owner) || typeof category!=='string')throw new Error('Choose a valid purchase view.');
+    const ids=new Set(ledger.accounts.filter(a=>(owner==='all' || a.owner===owner) && a.openingDate<=today).map(a=>a.id));
+    const rows=ledger.entries.filter(e=>ids.has(e.accountId) && e.kind==='expense' && e.repeat==='none' && !e.scheduleId && !e.voidedAt && (!category || e.category===category));
+    const planned=rows.filter(e=>e.status==='planned').sort((a,b)=>a.dueDate.localeCompare(b.dueDate)||a.id.localeCompare(b.id));
+    const purchased=rows.filter(e=>e.status==='settled' && e.date<=today).sort((a,b)=>b.date.localeCompare(a.date)||a.id.localeCompare(b.id));
+    const categories=[...new Set([...planned,...purchased].map(e=>e.category))].sort((a,b)=>a.localeCompare(b)).map(name=>({name,plannedCents:checkedSum(planned.filter(e=>e.category===name).map(e=>e.amountCents)),purchasedCents:checkedSum(purchased.filter(e=>e.category===name).map(e=>e.amountCents))}));
+    return {planned,purchased,categories,plannedCents:checkedSum(planned.map(e=>e.amountCents)),purchasedCents:checkedSum(purchased.map(e=>e.amountCents)),committedCents:checkedSum(planned.filter(e=>e.purchaseIntent!=='considering').map(e=>e.amountCents))};
+  }
   function loanDetail(input,id,today) {
     const ledger=validate(input),entry=ledger.entries.find(e=>e.id===id && e.repeat==='monthly' && e.loan);
     if(!entry || !validDate(today))throw new Error('Choose an existing loan and a valid date.');
@@ -175,6 +188,6 @@
     }
     return change(input,'entries',{...copy(entry),amountCents,date,status:'settled'},entry,now);
   }
-  const api={empty,cents,validate,summary,balance,upcoming,change,settle,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
+  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
   if(typeof module!=='undefined' && module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

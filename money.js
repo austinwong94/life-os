@@ -1,5 +1,6 @@
 const moneyOwners={personal:'Personal',villa:'Sunrise Villa',all:'Combined'};
-const moneyCategories=['Food & drinks','Shopping','Transport','Health','Travel','Housing','Subscriptions','Cleaning','Utilities','Maintenance','Loans','Other'];
+const moneyCategories=['Sunrise Villa','Personal Spending','Entertainment','Others','Food & drinks','Shopping','Transport','Health','Travel','Housing','Subscriptions','Cleaning','Utilities','Maintenance','Loans','Other'];
+function moneyCategoryOptions(){return [...new Set([...moneyCategories,...moneyLedger().entries.map(e=>e.category),...moneyLedger().budgets.map(b=>b.category)])].filter(c=>c && c!=='All').map(c=>[c,c]);}
 function moneyLedger(boardId=state.activeBoardId) {
   const board=state.boards.find(item=>item.id===boardId);
   if(!board)throw new Error('This board no longer exists.');
@@ -9,7 +10,7 @@ function moneyFormat(cents){return new Intl.NumberFormat('en-MY',{style:'currenc
 function moneySession(boardId=state.activeBoardId) {
   const key=LifeStorageScope.key('life-os-money:'+boardId);
   let saved={};try{saved=JSON.parse(sessionStorage.getItem(key) || '{}');}catch{}
-  return {owner:['personal','villa','all'].includes(saved?.owner)?saved.owner:'personal',view:['overview','transactions','upcoming','loans','spending','accounts','budgets'].includes(saved?.view)?saved.view:'overview',horizon:['month','30','90'].includes(saved?.horizon)?saved.horizon:'month',drafts:saved?.drafts && typeof saved.drafts==='object'?saved.drafts:{}};
+  return {owner:['personal','villa','all'].includes(saved?.owner)?saved.owner:'personal',view:['overview','transactions','upcoming','loans','spending','accounts','budgets'].includes(saved?.view)?saved.view:'overview',horizon:['month','30','90'].includes(saved?.horizon)?saved.horizon:'month',purchaseCategory:typeof saved?.purchaseCategory==='string'?saved.purchaseCategory:'',drafts:saved?.drafts && typeof saved.drafts==='object'?saved.drafts:{}};
 }
 function saveMoneySession(session,boardId=state.activeBoardId){sessionStorage.setItem(LifeStorageScope.key('life-os-money:'+boardId),JSON.stringify(session));}
 function moneyEnd(session) {
@@ -82,12 +83,13 @@ function openMoneyEntry(kind='expense',entry) {
     const destination=field('Destination account','toAccountId','text',accounts.map(a=>[a.id,a.name+' · '+moneyOwners[a.owner]]));
     field('Status','status','text',[['settled',draft.kind==='income'?'Received / recorded':'Paid / recorded'],['planned','Upcoming'],['released','Released, not received'],['cancelled','Cancelled']]);
     const paidDate=field('Payment / receipt date','date','date'),dueDate=field('Expected / due date','dueDate','date');
-    field('Category','category','text',moneyCategories.map(label=>[label,label]));
+    field('Category','category','text',moneyCategoryOptions());
     const repeat=field('Repeat','repeat','text',[['none','Once'],['monthly','Every month']]);repeat.input.disabled=isVirtual || Boolean(entry?.scheduleId);
     const end=field('Stop repeating after (optional)','endDate','date');
     const source=field('Income source (optional)','source','text',[['','Other / not specified'],['Airbnb','Airbnb'],['Direct booking','Direct booking'],['Other','Other']]);
     const reference=field('Reservation / payment reference (optional)','reference');field('Notes (optional)','note','textarea');
-    const update=()=>{destination.wrapper.hidden=draft.kind!=='transfer';source.wrapper.hidden=reference.wrapper.hidden=draft.kind!=='income';repeat.wrapper.hidden=draft.kind==='transfer' || draft.status!=='planned';end.wrapper.hidden=draft.repeat!=='monthly' || draft.status!=='planned';paidDate.wrapper.hidden=draft.status!=='settled';dueDate.wrapper.hidden=draft.status==='settled';};
+    let purchasePlan;if(entry?.purchaseIntent!==undefined){if(draft.purchaseIntent===undefined)draft.purchaseIntent=entry.purchaseIntent;purchasePlan=field('Purchase plan','purchaseIntent','text',[['considering','Considering - budget only'],['committed','Committed - include in forecast']]);}
+    const update=()=>{destination.wrapper.hidden=draft.kind!=='transfer';source.wrapper.hidden=reference.wrapper.hidden=draft.kind!=='income';repeat.wrapper.hidden=draft.kind==='transfer' || draft.status!=='planned';end.wrapper.hidden=draft.repeat!=='monthly' || draft.status!=='planned';paidDate.wrapper.hidden=draft.status!=='settled';dueDate.wrapper.hidden=draft.status==='settled';if(purchasePlan)purchasePlan.wrapper.hidden=draft.kind!=='expense' || draft.repeat!=='none' || draft.status!=='planned';};
     form.addEventListener('change',update);update();
     if(draft.kind==='income')form.append(planningNode('p','money-message','Enter the net amount you expect to receive. Released payouts remain projected until money reaches your account.'));
   },async(draft,boardId)=>{
@@ -96,6 +98,7 @@ function openMoneyEntry(kind='expense',entry) {
     if(draft.repeat==='monthly' && draft.status!=='planned')throw new Error('A recurring bill is a schedule. Choose Upcoming; record each payment from Due & expected.');
     const recordId=!entry && draft.kind==='income' && draft.source==='Airbnb' && draft.reference.trim()?'payout_'+(await LifeStateMerge.fingerprint({account:draft.accountId,reference:draft.reference.trim(),dueDate:draft.dueDate})).slice(0,32):id;
     const next={...expected,id:recordId,kind:draft.kind,title:draft.title.trim(),amountCents:LifeMoney.cents(draft.amount),accountId:draft.accountId,toAccountId:draft.kind==='transfer'?draft.toAccountId:undefined,status:draft.status,date:draft.date,dueDate:draft.dueDate,category:draft.category,note:draft.note,source:draft.kind==='income'?draft.source:'',reference:draft.reference.trim(),repeat:draft.kind==='transfer'?'none':draft.repeat,endDate:draft.endDate};delete next.virtual;
+    if(draft.purchaseIntent!==undefined && next.kind==='expense' && next.repeat==='none' && !next.scheduleId)next.purchaseIntent=draft.purchaseIntent;else delete next.purchaseIntent;
     commitMoney(boardId,current=>{
       if(isVirtual && !LifeMoney.equal(LifeMoney.upcoming(current,entry.dueDate).find(e=>e.id===entry.id),expected))throw new Error('This recurring payment changed. Reopen it before editing.');
       if(next.source==='Airbnb' && next.reference && current.entries.some(e=>!e.voidedAt && (!entry || e.id!==recordId) && e.kind==='income' && e.source==='Airbnb' && e.reference===next.reference && e.accountId===next.accountId && e.dueDate===next.dueDate))throw new Error('A payout with this reference, account and expected date already exists. Edit it instead.');
@@ -103,12 +106,12 @@ function openMoneyEntry(kind='expense',entry) {
     });
   });
 }
-function openMoneySettle(entry) {
+function openMoneySettle(entry,{purchase=false}={}) {
   const loan=moneyLedger().entries.find(e=>e.id===entry.scheduleId && e.loan);
-  moneyDialogForm(loan?'Record loan instalment':entry.kind==='income'?'Record received payout':'Record payment','settle-'+entry.id,{amount:(entry.amountCents/100).toFixed(2),date:getTodayKey(),bankBalance:''},({form,field})=>{
+  moneyDialogForm(loan?'Record loan instalment':purchase?'Confirm purchase':entry.kind==='income'?'Record received payout':'Record payment','settle-'+entry.id,{amount:(entry.amountCents/100).toFixed(2),date:getTodayKey(),bankBalance:''},({form,field})=>{
     field('Actual amount (RM)','amount');field(entry.kind==='income'?'Received date':'Paid date','date','date');
     if(loan){field('Bank balance after payment (RM, optional)','bankBalance');form.append(planningNode('p','money-message','Interest does not reduce the loan balance. Leave the bank balance blank unless you have the updated statement.'));}
-    else form.append(planningNode('p','money-message','This settles the whole entry. For installments, record each installment as a separate upcoming entry.'));
+    else form.append(planningNode('p','money-message',purchase?'Save only after payment. This records the actual amount spent and updates the same purchase, not a duplicate.':'This settles the whole entry. For installments, record each installment as a separate upcoming entry.'));
   },(draft,boardId)=>{
     commitMoney(boardId,current=>{
       if(loan && !LifeMoney.equal(current.entries.find(e=>e.id===loan.id),loan))throw new Error('The loan changed while this form was open. Reopen the repayment before saving.');
@@ -121,13 +124,20 @@ function openMoneySettle(entry) {
   });
 }
 
-function openMoneySpending() {
+function openMoneySpending(status='planned') {
+  if(!['planned','settled'].includes(status))status='planned';
   const ledger=moneyLedger(),accounts=ledger.accounts.filter(a=>moneySession().owner==='all' || a.owner===moneySession().owner);
   if(!accounts.length){openMoneyAccount();return;}
   const id=createId();
-  moneyDialogForm('Plan spending','spending-new',{title:'',amount:'',accountId:accounts[0].id,dueDate:getTodayKey(),category:'Other',note:''},({field})=>{
-    field('Item or payment','title');field('Expected amount (RM)','amount');field('Expected payment date','dueDate','date');field('Pay from','accountId','text',accounts.map(a=>[a.id,a.name]));field('Category','category','text',moneyCategories.map(c=>[c,c]));field('Notes (optional)','note','textarea');
-  },(draft,boardId)=>commitMoney(boardId,current=>LifeMoney.change(current,'entries',{id,title:draft.title.trim(),amountCents:LifeMoney.cents(draft.amount),accountId:draft.accountId,kind:'expense',status:'planned',repeat:'none',date:draft.dueDate,dueDate:draft.dueDate,category:draft.category,note:draft.note,spendingPlan:true},undefined)));
+  const paid=status==='settled';
+  moneyDialogForm(paid?'Record purchase':'Plan spending',paid?'spending-new-settled':'spending-new',{title:'',amount:'',accountId:accounts[0].id,dueDate:getTodayKey(),category:moneySession().purchaseCategory || (moneySession().owner==='villa'?'Sunrise Villa':'Personal Spending'),purchaseIntent:'considering',note:''},({form,field})=>{
+    field('Item or payment','title');field(paid?'Actual amount (RM)':'Expected amount (RM)','amount');field(paid?'Paid date':'Expected payment date','dueDate','date');field('Pay from','accountId','text',accounts.map(a=>[a.id,a.name]));field('Category','category','text',moneyCategoryOptions());
+    if(!paid)field('Purchase plan','purchaseIntent','text',[['considering','Considering - budget only'],['committed','Committed - include in forecast']]);
+    field('Notes (optional)','note','textarea');if(paid)form.append(planningNode('p','money-message','For purchases already paid. This is added to actual spending and deducted from the selected account.'));
+  },(draft,boardId)=>{
+    if(paid && draft.dueDate>getTodayKey())throw new Error('Paid date cannot be in the future. Keep this as a planned purchase until paid.');
+    return commitMoney(boardId,current=>LifeMoney.change(current,'entries',{id,title:draft.title.trim(),amountCents:LifeMoney.cents(draft.amount),accountId:draft.accountId,kind:'expense',status,repeat:'none',date:draft.dueDate,dueDate:draft.dueDate,category:draft.category,note:draft.note,spendingPlan:true,purchaseIntent:draft.purchaseIntent},undefined));
+  });
 }
 
 function openMoneyLoan(entry) {
@@ -248,6 +258,46 @@ function renderMoneyRows(root,rows,ledger) {
     row.append(copy,value,planningIcon('Options: '+entry.title,()=>openMoneyOptions(original),'more-vertical'));root.append(row);
   }
 }
+function renderMoneyPurchaseRows(root,rows,ledger,paid=false) {
+  if(!rows.length){root.append(planningNode('p','money-empty',paid?'No confirmed purchases yet.':'No planned purchases in this category.'));return;}
+  for(const entry of rows){
+    const row=planningNode('article','money-purchase-row'+(paid?' is-purchased':'')),copy=planningNode('div','money-purchase-copy');
+    copy.append(planningNode('strong','',entry.title));
+    const meta=planningNode('div','money-purchase-meta');meta.append(planningNode('span','money-category-label',entry.category || 'Others'),planningNode('span','',(paid?'Paid ':'Target ')+formatReadableDateKey(paid?entry.date:entry.dueDate)));
+    if(ledger.accounts.length>1)meta.append(planningNode('span','',ledger.accounts.find(a=>a.id===entry.accountId)?.name || ''));
+    if(!paid && entry.purchaseIntent!=='considering')meta.append(planningNode('span','money-commitment-label','Committed, unpaid'));
+    copy.append(meta);
+    if(entry.note){const notes=planningNode('details','money-purchase-note');notes.append(planningNode('summary','','Notes'),planningNode('p','',entry.note));copy.append(notes);}
+    const actions=planningNode('div','money-purchase-actions');
+    if(!paid)actions.append(planningIcon('Confirm purchase: '+entry.title,()=>openMoneySettle(entry,{purchase:true}),'check'));
+    actions.append(planningIcon('Options: '+entry.title,()=>openMoneyOptions(entry),'more-vertical'));
+    row.append(copy,planningNode('strong','money-purchase-amount',moneyFormat(entry.amountCents)),actions);root.append(row);
+  }
+}
+function renderMoneyPurchases(root,ledger,session,end) {
+  const data=LifeMoney.purchases(ledger,getTodayKey(),session.owner,session.purchaseCategory);
+  if(!moneyConflict()){
+    const stats=planningNode('div','money-stats money-spending-stats');stats.append(moneyStat('Budget needed',data.plannedCents,data.planned.length+' planned item'+(data.planned.length===1?'':'s')+' · '+moneyFormat(data.committedCents)+' committed, unpaid'),moneyStat('Confirmed spent',data.purchasedCents,data.purchased.length+' paid purchase'+(data.purchased.length===1?'':'s')+' · already in actual spending'));root.append(stats);
+  }
+  if(data.categories.length){
+    const categories=planningNode('details','money-category-breakdown');categories.open=innerWidth>700;categories.append(planningNode('summary','','Budget by category'));
+    const table=planningNode('table');table.setAttribute('aria-label','Purchase totals by category');const head=planningNode('thead'),headRow=planningNode('tr');
+    for(const label of ['Category','Budget needed','Spent'])headRow.append(planningNode('th','',label));head.append(headRow);table.append(head);const tbody=planningNode('tbody');
+    for(const cat of data.categories){const row=planningNode('tr');const name=planningNode('th','',cat.name || 'Others');name.scope='row';row.append(name,planningNode('td','',moneyFormat(cat.plannedCents)),planningNode('td','',moneyFormat(cat.purchasedCents)));tbody.append(row);}table.append(tbody);categories.append(table);root.append(categories);
+  }
+  const sections=planningNode('div','money-purchase-sections');
+  for(const paid of [false,true]){
+    const section=planningNode('section','money-purchase-section'),heading=planningNode('header','money-section-heading'),title=planningNode('div');
+    section.setAttribute('aria-label',paid?'Confirmed purchases':'Planned purchases');title.append(planningNode('h3','',paid?'Confirmed purchases':'Planned purchases'),planningNode('p','money-message',paid?'Paid and recorded.':"What you'd like to buy. Not spent yet."));
+    heading.append(title,planningIcon(paid?'Record purchase':'Add planned purchase',()=>openMoneySpending(paid?'settled':'planned'),'plus'));section.append(heading);
+    if(paid)renderMoneyPurchaseRows(section,data.purchased,ledger,true);
+    else {
+      const soon=data.planned.filter(e=>e.dueDate<=end),later=data.planned.filter(e=>e.dueDate>end);
+      if(soon.length || !later.length)renderMoneyPurchaseRows(section,soon,ledger);
+      if(later.length){section.append(planningNode('h4','money-list-divider','Later planned spending'));renderMoneyPurchaseRows(section,later,ledger);}
+    }sections.append(section);
+  }root.append(sections);
+}
 function renderMoneyLoans(root,ledger,owner) {
   const totals=LifeMoney.loanTotals(ledger,getTodayKey(),owner),actions=planningNode('div','money-actions');
   if(ledger.entries.some(e=>!e.voidedAt && !e.loan && e.kind==='expense' && e.repeat==='monthly' && (owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===owner)))actions.append(planningButton('Use existing payment',linkMoneyLoan,'link'));
@@ -279,17 +329,20 @@ function renderMoneyWorkspace() {
   let ledger;try{ledger=moneyLedger();}catch(e){root.append(planningNode('p','money-message',e.message));return;}
   const session=moneySession(),today=getTodayKey(),end=moneyEnd(session);let summary;
   try{summary=LifeMoney.summary(ledger,today,end,session.owner);}catch(e){root.append(planningNode('p','money-alert',e.message),planningButton('Download money records',exportMoneyCsv,'download'));return;}
-  const change=(key,value)=>{session[key]=value;try{saveMoneySession(session);}catch{}renderCardsOnly({force:true});};
-  const pages=[['overview','Overview'],['loans','Loans'],['spending','Planned spending'],['transactions','Entries'],['upcoming','Due & expected'],['accounts','Accounts'],['budgets','Budgets']];
-  const header=planningNode('header','money-heading'),heading=planningNode('div');heading.append(planningNode('h2','','Money'),planningNode('p','money-subtitle',state.board.name+' · '+formatReadableDateKey(today)));header.append(heading,session.view==='loans'?planningButton('Add loan',()=>openMoneyLoan(),'plus'):session.view==='spending'?planningButton('Plan spending',openMoneySpending,'plus'):planningButton('Add entry',()=>openMoneyEntry(),'plus'));root.append(header);
+  const change=(key,value)=>{const current=moneySession();current[key]=value;try{saveMoneySession(current);}catch{}renderCardsOnly({force:true});};
+  const pages=[['overview','Overview'],['loans','Loans'],['spending','Purchases'],['transactions','Entries'],['upcoming','Due & expected'],['accounts','Accounts'],['budgets','Budgets']];
+  const header=planningNode('header','money-heading'),heading=planningNode('div');heading.append(planningNode('h2','','Money'),planningNode('p','money-subtitle',session.view==='spending'?'Purchases · all dates':state.board.name+' · '+formatReadableDateKey(today)));
+  const primary=session.view==='loans'?planningButton('Add loan',()=>openMoneyLoan(),'plus'):session.view==='spending'?planningButton('Plan spending',()=>openMoneySpending(),'plus'):planningButton('Add entry',()=>openMoneyEntry(),'plus');primary.classList.add('money-primary');
+  const headerActions=planningNode('div','money-heading-actions');headerActions.append(planningIcon('Download money records',exportMoneyCsv,'download'),primary);header.append(heading,headerActions);root.append(header);
   const controls=planningNode('div','money-controls'),pagePicker=planningField('Money page',moneySelect(pages,session.view,value=>change('view',value)));pagePicker.classList.add('money-page-picker');controls.append(pagePicker,planningField('Money view',moneySelect(Object.entries(moneyOwners),session.owner,value=>change('owner',value))));
-  if(session.view!=='loans')controls.append(planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))));
+  if(session.view==='spending')controls.append(planningField('Purchase category',moneySelect([['','All categories'],...moneyCategoryOptions()],session.purchaseCategory,value=>change('purchaseCategory',value))));
+  if(['overview','upcoming'].includes(session.view))controls.append(planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))));
   if(!['loans','spending'].includes(session.view))controls.append(planningButton('Add summary card',addMoneySummaryCard,'layout-grid'));
-  controls.append(planningIcon('Download money records',exportMoneyCsv,'download'));root.append(controls);
+  root.append(controls);
   if(moneyConflict())root.append(planningNode('p','money-alert','Balances need review: conflicting financial records are not confirmed.'),planningButton('Review changes',openRecovery));
   if(!summary.hasAccounts){root.append(planningNode('p','money-empty','Add a bank or cash account with its opening balance. No income or spending is assumed.'),planningButton('Add account',()=>openMoneyAccount(),'plus'));return;}
   const stats=planningNode('div','money-stats');stats.append(moneyStat('Recorded balance',summary.actualCents,'Bank / cash records, not a live bank feed',summary.actualCents<0),moneyStat('Upcoming payments',summary.committedCents,'Unpaid commitments through '+formatReadableDateKey(end)),moneyStat('After commitments',summary.availableCents,'Excludes '+moneyFormat(summary.reserveCents)+' protected reserve',summary.availableCents<0),moneyStat('Projected balance',summary.projectedCents,'Includes '+moneyFormat(summary.incomingCents)+' expected receipts; not spendable yet',summary.projectedCents<0));if(!moneyConflict() && !['loans','spending'].includes(session.view))root.append(stats);
-  const views=planningNode('div','money-tabs');views.setAttribute('role','group');views.setAttribute('aria-label','Money pages');for(const [key,label] of pages){const button=planningButton(label,()=>change('view',key));button.setAttribute('aria-pressed',String(session.view===key));views.append(button);}root.append(views);
+  const views=planningNode('div','money-tabs');views.setAttribute('role','group');views.setAttribute('aria-label','Money pages');for(const [key,label] of pages){const button=planningButton(label,()=>change('view',key));button.setAttribute('aria-pressed',String(session.view===key));views.append(button);}root.insertBefore(views,controls);
   const body=planningNode('div','money-content');root.append(body);
   if(session.view==='overview') {
     const actions=planningNode('div','money-actions');for(const [label,kind] of [['Expense','expense'],['Income / Airbnb payout','income'],['Upcoming payment','upcoming'],['Transfer','transfer']])actions.append(planningButton(label,()=>openMoneyEntry(kind),'plus'));body.append(actions);
@@ -304,11 +357,7 @@ function renderMoneyWorkspace() {
   } else if(session.view==='loans') {
     renderMoneyLoans(body,ledger,session.owner);
   } else if(session.view==='spending') {
-    const rows=ledger.entries.filter(e=>e.kind==='expense' && e.status==='planned' && e.repeat==='none' && !e.scheduleId && !e.voidedAt && (session.owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===session.owner)).sort((a,b)=>a.dueDate.localeCompare(b.dueDate)||a.id.localeCompare(b.id));
-    const soon=rows.filter(e=>e.dueDate<=end),later=rows.filter(e=>e.dueDate>end);
-    if(!moneyConflict()){const totals=planningNode('div','money-stats money-spending-stats');totals.append(moneyStat('Planned spending',soon.reduce((sum,e)=>sum+e.amountCents,0),'Through '+formatReadableDateKey(end)),moneyStat('After all commitments',summary.availableCents,'Includes loans, bills and protected reserves',summary.availableCents<0));body.append(totals);}
-    body.append(planningNode('h3','','Through '+formatReadableDateKey(end)),planningNode('p','money-message','Included once in upcoming payments and projected balance.'));renderMoneyRows(body,soon,ledger);
-    if(later.length){body.append(planningNode('h3','','Later planned spending'));renderMoneyRows(body,later,ledger);}
+    renderMoneyPurchases(body,ledger,session,end);
   } else if(session.view==='upcoming') {
     body.append(planningButton('Add upcoming payment',()=>openMoneyEntry('upcoming'),'plus'));renderMoneyRows(body,summary.future,ledger);
     const schedules=ledger.entries.filter(e=>e.repeat==='monthly' && !e.voidedAt && (session.owner==='all' || ledger.accounts.find(a=>a.id===e.accountId)?.owner===session.owner));
@@ -347,12 +396,12 @@ function moneyReadable(board) {
   const table=(headers,rows)=>'<table><thead><tr>'+headers.map(label=>'<th>'+escapeHtml(label)+'</th>').join('')+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(cell=>'<td>'+escapeHtml(cell ?? '')+'</td>').join('')+'</tr>').join('')+'</tbody></table>';
   const loanTable=table(['Loan','Bank','Bank balance','Statement date','Monthly instalment','Repayments left','Scheduled finish','Remaining scheduled payments','Status'],LifeMoney.loans(ledger,getTodayKey()).map(item=>[item.entry.title,item.entry.loan.bank,moneyFormat(item.balanceCents),item.balanceDate,moneyFormat(item.entry.amountCents),item.remaining,item.finishDate,moneyFormat(item.scheduledCents),item.entry.voidedAt?'Removed from tracker':'Tracked']));
   const historyText=record=>Object.entries(record).flatMap(([key,value])=>key==='loan' && value?[['Bank',value.bank],['Bank balance',moneyFormat(value.balanceCents)],['Statement date',value.balanceDate],['Tracked repayments',value.installments],['Final instalment',value.finalCents!==undefined?moneyFormat(value.finalCents):'Standard']]:[[key,value]]).map(([key,value])=>key+': '+value).join('; ');
-  return '<section><h3>Money records · MYR</h3>'+table(['Account','Owner','Opening date','Opening balance','Reserve'],ledger.accounts.map(a=>[a.name,moneyOwners[a.owner],a.openingDate,moneyFormat(a.openingCents),moneyFormat(a.reservedCents)]))+table(['Entry','Kind','Amount','Status','Account','Recorded date','Due date','Repeat','Source','Reference','Notes'],ledger.entries.map(e=>[e.title,e.kind,moneyFormat(e.amountCents),e.voidedAt?'Voided':e.status,ledger.accounts.find(a=>a.id===e.accountId)?.name,e.date,e.dueDate,e.repeat,e.source,e.reference,e.note]))+loanTable+table(['Month','Owner','Category','Budget'],ledger.budgets.map(b=>[b.month,moneyOwners[b.owner],b.category,moneyFormat(b.limitCents)]))+ledger.entries.filter(e=>e.history?.length).map(e=>'<details><summary>'+escapeHtml(e.title)+' · edit history</summary>'+table(['Edited at','Previous record'],e.history.map(h=>[new Date(h.at).toISOString(),historyText(h.record)]))+'</details>').join('')+'</section>';
+  return '<section><h3>Money records · MYR</h3>'+table(['Account','Owner','Opening date','Opening balance','Reserve'],ledger.accounts.map(a=>[a.name,moneyOwners[a.owner],a.openingDate,moneyFormat(a.openingCents),moneyFormat(a.reservedCents)]))+table(['Entry','Kind','Amount','Status','Account','Recorded date','Due date','Category','Purchase plan','Repeat','Source','Reference','Notes'],ledger.entries.map(e=>[e.title,e.kind,moneyFormat(e.amountCents),e.voidedAt?'Voided':e.status,ledger.accounts.find(a=>a.id===e.accountId)?.name,e.date,e.dueDate,e.category,e.purchaseIntent==='considering'?'Considering - budget only':e.purchaseIntent==='committed'?'Committed':'',e.repeat,e.source,e.reference,e.note]))+loanTable+table(['Month','Owner','Category','Budget'],ledger.budgets.map(b=>[b.month,moneyOwners[b.owner],b.category,moneyFormat(b.limitCents)]))+ledger.entries.filter(e=>e.history?.length).map(e=>'<details><summary>'+escapeHtml(e.title)+' · edit history</summary>'+table(['Edited at','Previous record'],e.history.map(h=>[new Date(h.at).toISOString(),historyText(h.record)]))+'</details>').join('')+'</section>';
 }
 function exportMoneyCsv() {
-  const ledger=moneyLedger(),rows=[['Record type','Name','Owner / account','Amount (RM)','Status','Recorded / opening date','Due date / budget month','Category','Source','Reference','Notes','Destination account','Repayments left','Monthly instalment (RM)','Scheduled finish']];
+  const ledger=moneyLedger(),rows=[['Record type','Name','Owner / account','Amount (RM)','Status','Recorded / opening date','Due date / budget month','Category','Source','Reference','Notes','Destination account','Repayments left','Monthly instalment (RM)','Scheduled finish','Purchase plan']];
   for(const a of ledger.accounts)rows.push(['Opening balance',a.name,moneyOwners[a.owner],(a.openingCents/100).toFixed(2),'Recorded',a.openingDate,'','','','','','']);
-  for(const e of ledger.entries)rows.push([e.kind,e.title,ledger.accounts.find(a=>a.id===e.accountId)?.name,(e.amountCents/100).toFixed(2),e.voidedAt?'Voided':e.status,e.date,e.dueDate,e.category,e.source,e.reference,e.note,ledger.accounts.find(a=>a.id===e.toAccountId)?.name]);
+  for(const e of ledger.entries)rows.push([e.kind,e.title,ledger.accounts.find(a=>a.id===e.accountId)?.name,(e.amountCents/100).toFixed(2),e.voidedAt?'Voided':e.status,e.date,e.dueDate,e.category,e.source,e.reference,e.note,ledger.accounts.find(a=>a.id===e.toAccountId)?.name,'','','',e.purchaseIntent==='considering'?'Considering - budget only':e.purchaseIntent==='committed'?'Committed':'']);
   for(const b of ledger.budgets)rows.push(['Budget',b.category,moneyOwners[b.owner],(b.limitCents/100).toFixed(2),'Budget','',b.month,b.category,'','','','']);
   for(const item of LifeMoney.loans(ledger,getTodayKey()))rows.push(['Loan balance (not a cash transaction)',item.entry.title,item.entry.loan.bank,(item.balanceCents/100).toFixed(2),item.entry.voidedAt?'Removed':'Tracked',item.balanceDate,'','Loans','','',item.entry.note,'',item.remaining,(item.entry.amountCents/100).toFixed(2),item.finishDate]);
   const safe=value=>{let text=String(value ?? '');if(/^[\s]*[=+\-@]/.test(text) && !/^-?\d+(?:\.\d{1,2})?$/.test(text) || /^[\t\r]/.test(text))text="'"+text;return '"'+text.replaceAll('"','""')+'"';};
