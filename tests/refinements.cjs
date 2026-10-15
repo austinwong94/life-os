@@ -34,7 +34,7 @@ const results=[];
   });
   await run('Recovery can replace Settings and native capture can follow it without leaving the app inert',async p=>{
     await p.locator('#railSettingsButton').click();await p.locator('#recoveryButton').click();
-    assert.equal(await p.locator('#recoveryModal').isVisible(),true);
+    await p.locator('#recoveryModal').waitFor({state:'visible'});assert.equal(await p.locator('#recoveryModal').isVisible(),true);
     await p.keyboard.press('Escape');assert.equal(await p.locator('#recoveryModal').count(),0);
     assert.equal(await p.locator('#appShell').evaluate(e=>e.inert),false);
     await p.locator('#railAddButton').click();await p.getByLabel('What is on your mind?').fill('Complete retained thought.');
