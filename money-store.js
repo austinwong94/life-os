@@ -68,6 +68,7 @@
       if(entry.coveredPaymentIds!==undefined && (!entry.monthBill || !Array.isArray(entry.coveredPaymentIds) || !entry.coveredPaymentIds.every(safeId) || new Set(entry.coveredPaymentIds).size!==entry.coveredPaymentIds.length))throw new Error('Check the scheduled repayments covered by this card bill.');
       if(entry.billTotalCents!==undefined && (!entry.monthBill || !amount(entry.billTotalCents) || entry.billTotalCents<=0))throw new Error('Check the original card bill amount.');
       if(entry.billId!==undefined && (!safeId(entry.billId) || !ledger.entries.some(b=>b.id===entry.billId && b.monthBill && b.accountId===entry.accountId && b.toAccountId===entry.toAccountId) || entry.kind!=='transfer' || entry.status!=='settled' || entry.repeat!=='none'))throw new Error('This partial card payment needs its original bill.');
+      if(entry.status==='settled' && !entry.voidedAt && coveringBill(ledger,entry))throw new Error('This repayment is already included in a card bill. Record payment on that bill, not both.');
     }
     const bills=ledger.entries.filter(e=>e.monthBill && !e.voidedAt && e.status!=='cancelled');
     if(new Set(bills.map(e=>e.toAccountId+'|'+e.monthBill)).size!==bills.length)throw new Error('A bill for this credit card and payment month already exists. Edit that bill instead.');
@@ -86,6 +87,9 @@
     if(!entry.monthBill)return entry.amountCents;
     const paid=checkedSum(ledger.entries.filter(e=>e.billId===entry.id && !e.voidedAt && e.status==='settled').map(e=>e.amountCents));
     return Math.max(0,(entry.billTotalCents ?? entry.amountCents)-paid-(entry.status==='settled'?entry.amountCents:0));
+  }
+  function coveringBill(ledger,entry) {
+    return entry.kind==='transfer' && !entry.monthBill && ledger.entries.find(b=>b.monthBill && !b.voidedAt && b.status!=='cancelled' && b.toAccountId===entry.toAccountId && b.coveredPaymentIds?.includes(entry.id));
   }
   function upcoming(ledger,end) {
     validate(ledger);if(!validDate(end))throw new Error('Choose a valid forecast date.');
@@ -120,8 +124,7 @@
         else rows.push(copy(entry));
       }
     }
-    const bills=ledger.entries.filter(e=>e.monthBill && !e.voidedAt && e.status!=='cancelled');
-    return rows.filter(e=>!(!e.monthBill && e.kind==='transfer' && bills.some(b=>b.toAccountId===e.toAccountId && b.coveredPaymentIds?.includes(e.id)))).sort((a,b)=>a.dueDate.localeCompare(b.dueDate)||a.id.localeCompare(b.id));
+    return rows.filter(e=>!coveringBill(ledger,e)).sort((a,b)=>a.dueDate.localeCompare(b.dueDate)||a.id.localeCompare(b.id));
   }
   function balance(ledger,accountId,today) {
     const account=ledger.accounts.find(item=>item.id===accountId);if(!account || account.openingDate>today)return null;
@@ -235,6 +238,7 @@
   }
   function settle(input,entry,amountCents,date,today,now=Date.now()) {
     if(!validDate(date) || date>today)throw new Error('Received or paid date cannot be in the future.');
+    if(coveringBill(input,entry))throw new Error('This repayment is already included in a card bill. Record payment on that bill, not both.');
     const parent=input.entries.find(e=>e.id===entry.scheduleId);
     if(parent?.loan && amountCents!==entry.amountCents)throw new Error('Record a full instalment. For a revised amount, edit the scheduled payment first; partial payments are not treated as a completed month.');
     if((parent?.paymentPlan || entry.monthBill) && amountCents!==entry.amountCents)throw new Error('Record the full scheduled amount. Use partial payment on the card bill to keep its unpaid remainder due.');
@@ -248,6 +252,6 @@
     }
     return change(input,'entries',{...copy(entry),amountCents,date,status:'settled'},entry,now);
   }
-  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,monthly,cardPlans,payBill,billRemaining,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
+  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,monthly,cardPlans,payBill,billRemaining,coveringBill,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
   if(typeof module!=='undefined' && module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

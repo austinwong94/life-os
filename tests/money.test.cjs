@@ -21,6 +21,8 @@ test('total card bill replaces explicitly covered instalments, partial payment k
   let l=creditLedger();l.entries=[cardPlan()];const due=M.upcoming(l,end)[0];
   const bill=entry('bill',{kind:'transfer',toAccountId:'card',status:'planned',amountCents:30000,dueDate:'2026-10-20',monthBill:'2026-10',coveredPaymentIds:[due.id]});l=M.change(l,'entries',bill,undefined);
   assert.equal(M.summary(l,today,end).committedCents,30000);assert.deepEqual(M.upcoming(l,end).map(e=>e.id),['bill']);
+  assert.throws(()=>M.settle(l,due,10000,today,today),/already included/,'a stale occurrence cannot be paid separately after a total bill covers it');
+  const manual={...due,status:'settled',date:today};delete manual.virtual;assert.throws(()=>M.change(l,'entries',manual,undefined),/already included/,'editing status cannot bypass the bill coverage guard');
   l=M.payBill(l,l.entries.find(e=>e.id==='bill'),10000,today,today,'partial');assert.equal(M.balance(l,'bank',today),90000);assert.equal(M.summary(l,today,end).committedCents,20000);assert.equal(M.cardPlans(l,today)[0].remaining,3);
   const remaining=l.entries.find(e=>e.id==='bill');assert.throws(()=>M.payBill(l,bill,1000,today,today,'stale'));assert.throws(()=>M.payBill(l,remaining,20001,today,today,'over'));
   l=M.payBill(l,remaining,20000,today,today,'final');assert.equal(M.balance(l,'bank',today),70000);assert.equal(M.balance(l,'card',today),-90000);assert.equal(M.summary(l,today,end).spentCents,0);assert.equal(M.upcoming(l,end).length,0);assert.equal(M.cardPlans(l,today)[0].remaining,2);assert.equal(M.monthly(l,'2026-10',today).repaymentsCents,30000);
