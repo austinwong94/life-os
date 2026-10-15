@@ -4,6 +4,55 @@ const today='2026-10-12',end='2026-10-31';
 const account=(id,owner='personal',opening=100000)=>({id,name:id,owner,openingCents:opening,openingDate:'2026-10-01',reservedCents:10000});
 const entry=(id,patch={})=>({id,kind:'expense',title:id,amountCents:10000,accountId:'bank',status:'settled',date:today,dueDate:today,repeat:'none',category:'Food & drinks',note:'',...patch});
 const ledger=()=>({...M.empty(),accounts:[account('bank'),account('villa','villa',500000)]});
+const creditLedger=()=>({...ledger(),accounts:[...ledger().accounts,{...account('card','personal',120000),type:'credit',reservedCents:0}]});
+const cardPlan=(patch={})=>entry('phone_plan',{kind:'transfer',toAccountId:'card',status:'planned',repeat:'monthly',dueDate:'2026-10-15',date:'2026-10-15',endDate:'2026-12-15',paymentPlan:{count:3,finalCents:9000},...patch});
+test('credit debt is not cash; purchases count once and bank-to-card repayments are not expenses',()=>{
+  const l=creditLedger(),before=M.copy(l);l.entries=[entry('purchase',{accountId:'card',amountCents:5000}),entry('repayment',{kind:'transfer',toAccountId:'card',amountCents:20000})];
+  const s=M.summary(l,today,end);assert.equal(s.actualCents,80000);assert.equal(s.creditOwedCents,105000);assert.equal(s.spentCents,5000);assert.equal(s.availableCents,-35000);assert.equal(s.receivedCents,0);
+  assert.equal(M.balance(l,'card',today),-105000);assert.deepEqual(M.validate(before),before);assert.equal(M.monthly(l,'2026-10',today,'personal').repaymentsCents,20000);
+});
+test('card instalment dates, final amounts and payments left survive a paid month and void',()=>{
+  let l=creditLedger();l.entries=[cardPlan()];assert.deepEqual(M.upcoming(l,'2027-01-31').map(e=>e.amountCents),[10000,10000,9000]);
+  const due=M.upcoming(l,end)[0];l=M.settle(l,due,10000,today,today);assert.equal(M.cardPlans(l,today)[0].remaining,2);assert.equal(M.cardPlans(l,today)[0].remainingCents,19000);assert.equal(M.summary(l,today,end).spentCents,0);
+  const paid=l.entries.find(e=>e.scheduleId);l=M.change(l,'entries',{...paid,voidedAt:1},paid);assert.equal(M.cardPlans(l,today)[0].remaining,3);assert.equal(M.upcoming(l,end).length,1);l=M.settle(l,M.upcoming(l,end)[0],10000,today,today);assert.equal(M.cardPlans(l,today)[0].remaining,2);assert.equal(l.entries.length,2);
+  assert.throws(()=>M.settle(l,M.upcoming(l,'2026-11-30')[0],5000,today,today));
+});
+test('total card bill replaces explicitly covered instalments, partial payment keeps remainder and full payment covers the month',()=>{
+  let l=creditLedger();l.entries=[cardPlan()];const due=M.upcoming(l,end)[0];
+  const bill=entry('bill',{kind:'transfer',toAccountId:'card',status:'planned',amountCents:30000,dueDate:'2026-10-20',monthBill:'2026-10',coveredPaymentIds:[due.id]});l=M.change(l,'entries',bill,undefined);
+  assert.equal(M.summary(l,today,end).committedCents,30000);assert.deepEqual(M.upcoming(l,end).map(e=>e.id),['bill']);
+  l=M.payBill(l,l.entries.find(e=>e.id==='bill'),10000,today,today,'partial');assert.equal(M.balance(l,'bank',today),90000);assert.equal(M.summary(l,today,end).committedCents,20000);assert.equal(M.cardPlans(l,today)[0].remaining,3);
+  const remaining=l.entries.find(e=>e.id==='bill');assert.throws(()=>M.payBill(l,bill,1000,today,today,'stale'));assert.throws(()=>M.payBill(l,remaining,20001,today,today,'over'));
+  l=M.payBill(l,remaining,20000,today,today,'final');assert.equal(M.balance(l,'bank',today),70000);assert.equal(M.balance(l,'card',today),-90000);assert.equal(M.summary(l,today,end).spentCents,0);assert.equal(M.upcoming(l,end).length,0);assert.equal(M.cardPlans(l,today)[0].remaining,2);assert.equal(M.monthly(l,'2026-10',today).repaymentsCents,30000);
+  l=M.change(l,'entries',cardPlan({id:'new_plan'}),undefined);assert.equal(M.upcoming(l,end).length,1,'a later-added plan is not silently paid by an old bill');
+});
+test('card debt reserve and scheduled payments are not subtracted twice; cash forecasts do not assume future receipts are available',()=>{
+  const l=creditLedger();l.entries=[cardPlan(),entry('airbnb',{kind:'income',status:'planned',amountCents:50000,dueDate:'2026-10-30'})];
+  const s=M.summary(l,today,end);assert.equal(s.actualCents,100000);assert.equal(s.committedCents,10000);assert.equal(s.unscheduledCardCents,110000);assert.equal(s.availableCents,-30000);assert.equal(s.projectedCents,140000);
+  assert.equal(M.summary(l,today,end,'villa').creditOwedCents,0);assert.equal(M.summary(l,today,end,'villa').actualCents,500000);
+});
+test('historical month and category totals include card charges but exclude opening debt, transfers, expected income and future dates',()=>{
+  const l=creditLedger();l.entries=[entry('card_food',{accountId:'card',date:'2026-10-02'}),entry('cash_food',{amountCents:5000}),entry('older',{date:'2026-10-01',category:'Other'}),entry('repay',{kind:'transfer',toAccountId:'card'}),entry('expected',{kind:'income',status:'planned'})];
+  const monthly=M.monthly(l,'2026-10',today,'personal');assert.equal(monthly.spentCents,25000);assert.equal(monthly.receivedCents,0);assert.equal(monthly.categories.find(c=>c.name==='Food & drinks').spentCents,15000);assert.equal(M.monthly(l,'2026-09',today).spentCents,0);assert.throws(()=>M.monthly(l,'2026-13',today));
+});
+test('duplicate bills, invalid card types, cash reserves on debt and invalid finite terms are refused without changing records',()=>{
+  const l=creditLedger(),before=M.copy(l);assert.throws(()=>M.change(l,'accounts',{...l.accounts[2],reservedCents:1},l.accounts[2]));assert.throws(()=>M.change(l,'accounts',{...l.accounts[2],type:'unknown'},l.accounts[2]));
+  assert.throws(()=>M.change(l,'entries',cardPlan({paymentPlan:{count:2.5}}),undefined));assert.throws(()=>M.change(l,'entries',entry('card_income',{kind:'income',accountId:'card'}),undefined));
+  const bill=entry('bill',{kind:'transfer',toAccountId:'card',status:'planned',monthBill:'2026-10'});const next=M.change(l,'entries',bill,undefined);assert.throws(()=>M.change(next,'entries',{...bill,id:'another'},undefined));assert.deepEqual(l,before);
+});
+test('competing partial bill payments trigger whole-record conflict; independent board money still merges without data loss',()=>{
+  const l=creditLedger();l.entries=[entry('bill',{kind:'transfer',toAccountId:'card',status:'planned',monthBill:'2026-10'})];
+  const base={boards:[{id:'one',money:l},{id:'two',money:ledger()}]},a=M.copy(base),b=M.copy(base);
+  a.boards[0].money=M.payBill(l,l.entries[0],1000,today,today,'pay_a',1);b.boards[0].money=M.payBill(l,l.entries[0],2000,today,today,'pay_b',2);
+  const r=merge.merge(base,a,b);assert(r.conflicts.some(c=>c.kind==='money-record'));assert.equal(r.boards[0].money.entries.filter(e=>e.billId==='bill').length,2);assert.deepEqual(r.boards[1],base.boards[1]);
+  assert.equal(M.billRemaining(r.boards[0].money,r.boards[0].money.entries.find(e=>e.id==='bill')),7000,'both real payments reduce the remainder even while their record conflict needs review');
+});
+test('scheduled card charges reserve cash without pretending they are bank payments or already spent',()=>{
+  const l=creditLedger();l.entries=[entry('subscription',{accountId:'card',status:'planned',repeat:'monthly',dueDate:'2026-10-18'})];const s=M.summary(l,today,end);assert.equal(s.actualCents,100000);assert.equal(s.spentCents,0);assert.equal(s.committedCents,0);assert.equal(s.futureCardChargesCents,10000);assert.equal(s.unscheduledCardCents,130000);assert.equal(s.availableCents,-40000);
+});
+test('JSONB property reordering does not refuse a valid financial edit but a changed value still does',()=>{
+  const l=creditLedger();l.entries=[entry('food')];const expected=Object.fromEntries(Object.entries(l.entries[0]).reverse());assert.equal(M.change(l,'entries',{...expected,title:'Lunch'},expected).entries[0].title,'Lunch');assert.throws(()=>M.change(l,'entries',{...expected,title:'Lunch'},{...expected,amountCents:1}));
+});
 test('decimal money parsing is exact, rejects exponent, commas, overflow and three decimals',()=>{
   assert.equal(M.cents('0.29'),29);assert.equal(M.cents('123.45'),12345);assert.equal(M.cents('-0.50',{signed:true}),-50);
   for(const value of ['1e2','1,000','0.001','-1','Infinity','100000000000'])assert.throws(()=>M.cents(value));
