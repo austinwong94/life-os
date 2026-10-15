@@ -19,6 +19,8 @@ test('release contains exactly the allowed assets and hashes every public file',
   assert.equal(Object.keys(result.files).length,files.length);
   const html=fs.readFileSync(path.join(output,'index.html'),'utf8');
   for(const file of ['coaching.js','daily-workspace.js','coaching.css','daily-workspace.css'])assert.ok(html.includes(file+'?v='+result.id));
+  const repair=fs.readFileSync(path.join(output,'storage-repair.html'),'utf8');
+  for(const file of ['storage-scope.js','recovery-vault.js','storage-repair.js'])assert.ok(repair.includes(file+'?v='+result.id));
 });
 test('release identity is deterministic and changes with a changed public module',t=>{
   const root=fixture(t),a=buildRelease({root,output:path.join(root,'a')}),b=buildRelease({root,output:path.join(root,'b')});assert.equal(a.id,b.id);

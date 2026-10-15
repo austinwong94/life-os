@@ -20,10 +20,9 @@ function buildRelease({root=__dirname,output=path.join(root,'dist')}={}) {
     if(!contents.has(file))throw new Error('Startup asset is missing from release manifest: '+file);
     return file;
   };
-  const html=contents.get('index.html');
-  for(const match of html.matchAll(references))localAsset(match[1]);
+  for(const [file,html] of contents)if(file.endsWith('.html'))for(const match of html.matchAll(references))localAsset(match[1]);
   const id=digest(JSON.stringify([...contents].map(([file,text])=>[file,digest(text)]))).slice(0,16);
-  contents.set('index.html',html.replace(references,(tag,ref)=>{
+  for(const [file,html] of contents)if(file.endsWith('.html'))contents.set(file,html.replace(references,(tag,ref)=>{
     const file=localAsset(ref);return file?tag.replace(ref,file+'?v='+id):tag;
   }));
   if(fs.existsSync(output) && fs.readdirSync(output).length)throw new Error('Release output must be empty: '+output);

@@ -12403,8 +12403,9 @@ function downloadTextFile(filename, content, mimeType) {
 
 async function exportBoardBackup() {
   if (corruptLocalStateDetected) {openRecovery(); return;}
-  await flushDeviceWrites();
   const snapshot = getExportSnapshot();
+  let recoveryArchiveError='';
+  try{if(typeof recoveryVault!=='undefined' && recoveryVault)await recoveryVault.refresh();}catch(error){recoveryArchiveError=error.message;}
   const backup = {
     app: "Life OS",
     format: "life-os-full-backup-v2",
@@ -12414,6 +12415,8 @@ async function exportBoardBackup() {
     counts: getBackupDataCounts(snapshot),
     state: snapshot,
     localRecovery: {
+      recoveryArchiveError,
+      originalRecoveryCache: localStorage.getItem(CLOUD_RECOVERY_KEY),
       diaryEntryBackups: readDiaryBackups(),
       cloudRecoveryPoints: readLocalJsonValue(CLOUD_RECOVERY_KEY, []),
       cloudSyncHistory: readLocalJsonValue(CLOUD_BASE_KEY, null),
@@ -12422,12 +12425,11 @@ async function exportBoardBackup() {
     }
   };
   downloadTextFile(`life-os-restore-backup-${getTodayKey()}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
-  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = "Backup ready";
+  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = recoveryArchiveError?"Current backup ready - recovery archive unavailable":"Backup ready";
 }
 
 async function exportReadableDataArchive() {
   if (corruptLocalStateDetected) {openRecovery(); return;}
-  await flushDeviceWrites();
   const snapshot = getExportSnapshot();
   const html = buildReadableDataArchive(snapshot);
   downloadTextFile(`life-os-readable-archive-${getTodayKey()}.html`, html, "text/html;charset=utf-8");
@@ -12904,7 +12906,8 @@ function renderReadableLab(card) {
 function readLocalJsonValue(key, fallback) {
   try {
     const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : fallback;
+    const value=stored ? JSON.parse(stored) : fallback;
+    return key===CLOUD_RECOVERY_KEY && typeof recoveryVault!=='undefined' && recoveryVault?recoveryVault.all(value):value;
   } catch {
     return fallback;
   }
@@ -12991,9 +12994,12 @@ function getKnownCloudUpdatedAt() {
 
 function saveCloudRecoveryPoint(reason, snapshot = state) {
   try {
-    const existing = readLocalJsonValue(CLOUD_RECOVERY_KEY, []);
+    const existing = JSON.parse(localStorage.getItem(CLOUD_RECOVERY_KEY) || '[]');
     const recovery = {id: createId(), reason, savedAt: new Date().toISOString(), state: JSON.parse(JSON.stringify(snapshot))};
-    const saved = writeLocalJson(CLOUD_RECOVERY_KEY, [recovery, ...(Array.isArray(existing) ? existing : [])].slice(0, 5), {silent: true});
+    if(!Array.isArray(existing))throw new Error('Recovery copies need review.');
+    const archived=typeof recoveryVault!=='undefined' && recoveryVault?.canReplace(existing);
+    const saved = writeLocalJson(CLOUD_RECOVERY_KEY, [recovery, ...(archived?[]:existing)], {silent: true});
+    if(saved && typeof scheduleRecoveryVault==='function')scheduleRecoveryVault();
     if (!saved) setSaveStatus("Backup failed - download your data", "error");
     return saved;
   } catch { setSaveStatus("Backup failed - download your data", "error"); return false; }
@@ -13790,7 +13796,10 @@ function saveState(options = {}) {
     if(touched) deviceSavedAt = Date.now();
     localStateSource = "stored";
     flushDeviceWrites();
-  } catch (error) {lastLocalSaveOk = false;lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};}
+  } catch (error) {
+    lastLocalSaveOk = false;lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};
+    if(error.name==='QuotaExceededError' && typeof scheduleRecoveryVault==='function')scheduleRecoveryVault();
+  }
   if (!lastLocalSaveOk) setSaveStatus("Not saved on device - "+deviceSaveFailureReason(), "error");
   else if (cloudConflictPending) setSaveStatus("Changes need review", "error");
   else if (isRestoreSyncPaused()) setSaveStatus('Saved on device - cloud paused', 'local');

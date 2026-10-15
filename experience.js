@@ -267,7 +267,9 @@ function renderArchivedPlannerTasks() {
   return section;
 }
 
-function openRecovery() {
+async function openRecovery() {
+  let archiveError='';
+  try{if(typeof recoveryVault!=='undefined' && recoveryVault)await recoveryVault.refresh();}catch(error){archiveError=error.message;}
   closeOtherOverlays();
   let modal = document.getElementById("recoveryModal");
   if (modal) modal.remove();
@@ -280,6 +282,7 @@ function openRecovery() {
   close.setAttribute("aria-label", "Close recovery"); close.onclick = () => {modal.remove(); syncModalOpenState(); document.getElementById("headerSaveStatus").focus();};
   header.append(title, close); dialog.append(header);
   const body = document.createElement("div"); body.className = "recovery-body";
+  if(archiveError){const warning=document.createElement('p');warning.setAttribute('role','alert');warning.textContent='Recovery archive could not be read. Original copies have not been removed. '+archiveError;body.append(warning);}
   appendPreservedCloudCopies(body);
   const review = renderConflictReview();
   if (review) body.append(review);
@@ -669,6 +672,7 @@ function initializeExperience() {
   restoreTabBoardSelection();
   cloudMergeBase = loadCloudMergeBase();
   LifeDeviceStore.configure(commitDeviceWrites);
+  if(typeof initializeRecoveryVault==='function')initializeRecoveryVault();
   if (!corruptLocalStateDetected) flushDeviceWrites();
   cloudConflictPending = Boolean(state.syncConflicts?.length);
   if (isRestoreSyncPaused()) {cloudSaveEnabled = false; window.clearTimeout(cloudSaveTimer);}

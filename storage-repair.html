@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Life OS - Device storage recovery</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f5f7f6;color:#192721;font:16px/1.5 system-ui,sans-serif}main{max-width:720px;margin:auto;padding:48px 24px}h1{font-size:24px;margin:0 0 12px}p{color:#53645b}dl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;padding:24px 0;border-block:1px solid #d5dfd9}dt,dd{margin:0;overflow-wrap:anywhere}dd{text-align:right;font-weight:600}.actions{display:flex;flex-wrap:wrap;gap:12px}button,a{font:inherit}button{border:1px solid #b7c8bd;border-radius:6px;background:#fff;padding:12px 16px;cursor:pointer}button:disabled{opacity:.6;cursor:wait}#repairButton{background:#267349;color:#fff;border-color:#267349}#status{white-space:pre-wrap;color:#192721}a{color:#267349}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Device storage recovery</h1>
+    <p>Keep your original Life OS tab open. This page does not load or upload cloud information, replace active records, or change your sign-in.</p>
+    <dl id="details"></dl>
+    <div class="actions">
+      <button type="button" id="backupButton">Download device recovery backup</button>
+      <button type="button" id="repairButton">Preserve copies and free save space</button>
+    </div>
+    <p id="status" role="status" aria-live="polite">Your original recovery copies remain untouched until their complete archive is verified.</p>
+    <p><a href="./">Return to Life OS</a></p>
+  </main>
+  <script src="storage-scope.js"></script>
+  <script src="recovery-vault.js"></script>
+  <script src="storage-repair.js"></script>
+</body>
+</html>

@@ -53,6 +53,107 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   }
   return {a,b,base,backend};
  }
+ async function vaultPage(context){
+  const c=await context();await c.route('https://**',r=>r.abort());
+  await c.route(URL+'vault-fixture',r=>r.fulfill({contentType:'text/html',body:'<!doctype html><script src="recovery-vault.js"></script>'}));
+  const p=await c.newPage();await p.goto(URL+'vault-fixture');return p;
+ }
+ await run('recovery vault reclaims full native storage without losing one byte of any recovery or active record',async context=>{
+  const p=await vaultPage(context);
+  const result=await p.evaluate(async()=>{
+   const key='synthetic-recovery',active=JSON.stringify({diary:'Full thoughts\n第二行',tasks:[{id:'task',archivedAt:123,done:true}]}),copies=Array.from({length:5},(_,i)=>({id:'copy-'+i,savedAt:'2026-10-'+(10+i),state:{text:('original-'+i+'\n').repeat(70000)}}));
+   localStorage.setItem('active',active);localStorage.setItem(key,JSON.stringify(copies));
+   let full=false;for(let i=0;i<200;i++){try{localStorage.setItem('padding-'+i,'x'.repeat(32768));}catch(e){full=e.name==='QuotaExceededError';break;}}
+   const before=JSON.stringify(copies),vault=LifeRecoveryVault.create({name:'synthetic-vault',key,locked:fn=>navigator.locks.request('synthetic-vault',fn)});
+   let refused=false;try{localStorage.setItem('new-writing','x'.repeat(200000));}catch{refused=true;}
+   const repair=await vault.initialize();localStorage.setItem('new-writing','x'.repeat(200000));
+   const restarted=LifeRecoveryVault.create({name:'synthetic-vault',key,locked:fn=>navigator.locks.request('synthetic-vault',fn)});await restarted.refresh();
+   return {full,refused,bytes:repair.movedBytes,cache:JSON.parse(localStorage.getItem(key)).length,active:localStorage.getItem('active')===active,all:JSON.stringify(restarted.all([]).sort((a,b)=>a.id.localeCompare(b.id)))===before};
+  });
+  assert.equal(result.full,true);assert.equal(result.refused,true);assert.ok(result.bytes>4000000);assert.equal(result.cache,1);assert.equal(result.active,true);assert.equal(result.all,true);
+ });
+ await run('recovery vault aborts preserve the original cache and active records unchanged',async context=>{
+  const p=await vaultPage(context);
+  const result=await p.evaluate(async()=>{
+   const key='recovery',raw=JSON.stringify([{id:'a',state:{diary:'Do not lose this'}},{id:'b',rawState:'untouched'}]);localStorage.setItem(key,raw);localStorage.setItem('active','original');
+   const transaction=IDBDatabase.prototype.transaction;
+   IDBDatabase.prototype.transaction=function(...args){const tx=transaction.apply(this,args);if(args[1]==='readwrite')queueMicrotask(()=>tx.abort());return tx;};
+   const vault=LifeRecoveryVault.create({name:'aborted-vault',key,locked:fn=>fn()});let failed=false;
+   try{await vault.initialize();}catch{failed=true;}finally{IDBDatabase.prototype.transaction=transaction;}
+   return {failed,unchanged:localStorage.getItem(key)===raw,active:localStorage.getItem('active')};
+  });assert.deepEqual(result,{failed:true,unchanged:true,active:'original'});
+ });
+ await run('recovery vault detects concurrent legacy writes and reloads other tabs complete archives',async context=>{
+  const p=await vaultPage(context);
+  const result=await p.evaluate(async()=>{
+   const key='recovery',rows=[{id:'a',savedAt:'2026-10-01',state:{diary:'a'}},{id:'b',savedAt:'2026-10-02',state:{diary:'b'}}];localStorage.setItem(key,JSON.stringify(rows));
+   const options={name:'concurrent-vault',key,locked:fn=>navigator.locks.request('vault',fn)},first=LifeRecoveryVault.create(options);await first.initialize();
+   const second=LifeRecoveryVault.create(options);await second.initialize();
+   localStorage.setItem(key,JSON.stringify([{id:'c',savedAt:'2026-10-03',state:{diary:'c'}}]));await first.compact();
+   await second.compact();const ids=second.all(JSON.parse(localStorage.getItem(key))).map(x=>x.id).sort();
+   const original=localStorage.getItem(key),next=JSON.stringify([{id:'d',state:{diary:'never overwrite'}}]);let digests=0;
+   const subtle={digest:async(...args)=>{if(++digests===4)localStorage.setItem(key,next);return crypto.subtle.digest(...args);}};
+   const legacyRace=LifeRecoveryVault.create({...options,subtle});const result=await legacyRace.compact();
+   return {ids,changed:result.changed,retained:localStorage.getItem(key)===next,prior:original!==next};
+  });assert.deepEqual(result,{ids:['a','b','c'],changed:true,retained:true,prior:true});
+ });
+ await run('recovery vault rejects corrupted IndexedDB readback without reducing original copies',async context=>{
+  const p=await vaultPage(context);
+  const result=await p.evaluate(async()=>{
+   const key='recovery',initial=[{id:'a',state:{diary:'a'}},{id:'b',state:{diary:'b'}}],options={name:'corrupt-vault',key,locked:fn=>fn()};localStorage.setItem(key,JSON.stringify(initial));
+   await LifeRecoveryVault.create(options).initialize();localStorage.setItem(key,JSON.stringify(initial));const raw=localStorage.getItem(key);
+   const db=await new Promise(resolve=>{const req=indexedDB.open(options.name);req.onsuccess=()=>resolve(req.result);});
+   await new Promise((resolve,reject)=>{const tx=db.transaction('copies','readwrite'),req=tx.objectStore('copies').getAll();req.onsuccess=()=>{const row=req.result[0];row.raw='corrupt';tx.objectStore('copies').put(row);};tx.oncomplete=resolve;tx.onabort=reject;});db.close();
+   let failed=false;try{await LifeRecoveryVault.create(options).initialize();}catch{failed=true;}
+   return {failed,unchanged:localStorage.getItem(key)===raw};
+  });assert.deepEqual(result,{failed:true,unchanged:true});
+ });
+ await run('emergency downloads retain full unstaged writing even when device flushing cannot finish',async context=>{
+  const p=await fresh(await context());
+  const writing='Latest private thoughts\n第二行 '.repeat(100);
+  await p.evaluate(writing=>{const card=state.cards.find(c=>c.type==='diary');card.diaryEntries[getTodayKey()]={thoughts:writing,sentence:'Full text',updatedAt:Date.now()};LifeDeviceStore.flush=()=>new Promise(()=>{});lastLocalSaveOk=false;},writing);
+  const jsonDownload=p.waitForEvent('download');await p.evaluate(()=>exportBoardBackup());const json=await jsonDownload;
+  const data=JSON.parse(fs.readFileSync(await json.path(),'utf8'));
+  assert.ok(data.state.boards.some(b=>b.cards.some(c=>Object.values(c.diaryEntries || {}).some(e=>e.thoughts===writing))));assert.equal(data.includesAuthSession,false);
+  const htmlDownload=p.waitForEvent('download');await p.evaluate(()=>exportReadableDataArchive());const html=await htmlDownload;
+  assert.ok(fs.readFileSync(await html.path(),'utf8').includes('Latest private thoughts'));
+ });
+ await run('automatic capacity repair retains full new diary text, archive access and verified cloud readback',async context=>{
+  const {a,base,backend}=await setup(context);
+  await a.evaluate(base=>{
+   const copies=Array.from({length:5},(_,i)=>({id:'synthetic-large-'+i,reason:'synthetic-capacity-test',savedAt:'2026-10-'+(10+i),state:base,padding:('Complete recovery '+i+'\n').repeat(25000)}));
+   localStorage.setItem(CLOUD_RECOVERY_KEY,JSON.stringify(copies));
+   for(let i=0;i<200;i++){try{localStorage.setItem('synthetic-padding-'+i,'x'.repeat(32768));}catch{break;}}
+   cloudSaveEnabled=true;
+  },base);
+  const writing='Every character of this latest diary remains.\n第二行 '.repeat(150);
+  await a.locator('.diary-thoughts').fill(writing);
+  await a.waitForFunction(()=>lastLocalSaveOk && recoveryVault.diagnostics().archivedCopies>=5);
+  assert.equal(await a.evaluate(()=>flushDeviceWrites()),true);
+  await a.evaluate(()=>pushCloudState({silent:true}));
+  await a.waitForFunction(()=>cloudStatusMessage.startsWith('Cloud saved and readback verified'));
+  assert.ok(backend.writes>0);
+  assert.ok(backend.state.boards.some(b=>b.cards.some(c=>Object.values(c.diaryEntries || {}).some(e=>e.thoughts===writing))));
+  await a.reload();assert.equal(await a.locator('.diary-thoughts').inputValue(),writing);
+  await a.evaluate(()=>openRecovery());assert.ok(await a.getByRole('button',{name:'Read / download',exact:true}).count()>=5);
+  const originals=await a.evaluate(()=>readLocalJsonValue(CLOUD_RECOVERY_KEY,[]).filter(c=>c.reason==='synthetic-capacity-test').map(c=>c.padding));
+  assert.equal(originals.length,5);assert.ok(originals.every(s=>s.length>400000));
+ });
+ await run('recovery vault standalone repair leaves the original open app intact and never contacts cloud',async context=>{
+  const c=await context(),p=await fresh(c);let externalCalls=0;
+  await c.route('https://**',r=>{externalCalls++;return r.abort();});
+  const before=await p.evaluate(()=>{
+   const raw=localStorage.getItem(STORAGE_KEY),base=JSON.parse(raw);localStorage.setItem(CLOUD_RECOVERY_KEY,JSON.stringify(Array.from({length:5},(_,i)=>({id:'standalone-'+i,savedAt:'2026-10-'+(10+i),state:base}))));return raw;
+  });
+  const repair=await c.newPage();await repair.goto(URL+'storage-repair.html');
+  const download=repair.waitForEvent('download');await repair.getByRole('button',{name:'Download device recovery backup',exact:true}).click();
+  const backup=JSON.parse(fs.readFileSync(await (await download).path(),'utf8'));assert.equal(backup.includesAuthSession,false);assert.equal(backup.archivedCopies.length,5);
+  await repair.getByRole('button',{name:'Preserve copies and free save space',exact:true}).click();
+  await repair.getByText(/Recovery archive verified/).waitFor();
+  assert.equal(await p.evaluate(()=>localStorage.getItem(STORAGE_KEY)),before);assert.equal(externalCalls,0);
+  await repair.reload();await repair.getByRole('button',{name:'Preserve copies and free save space',exact:true}).click();await repair.getByText(/Recovery archive verified/).waitFor();
+  assert.match(await repair.locator('#details').innerText(),/Verified archived copies\s+5/);
+ });
  await run('GitHub sign-in checks provider readiness and keeps credentials and unfinished writing out of navigation',async context=>{
   const p=await fresh(await context());
   await p.locator('.diary-thoughts').fill('Private multiline writing stays here.\n第二行');await p.evaluate(()=>flushDeviceWrites());

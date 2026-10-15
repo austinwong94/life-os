@@ -1,4 +1,4 @@
-const LIFE_OS_BUILD = '2026.10.14-persistent-github';
+const LIFE_OS_BUILD = '2026.10.15-storage-recovery';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 let publishedReleaseCheckAt=0,publishedReleaseCheckInFlight=false;
@@ -154,6 +154,12 @@ function openSaveDetails() {
       const storage=LifeDeviceStore.diagnostics(),mb=bytes=>(bytes/1048576).toFixed(2)+' MB';
       add('Browser storage used (estimate)',mb(storage.totalBytes));
       add('Pending copy storage',mb(storage.pendingBytes));
+      const labels=[[STORAGE_KEY,'Active information'],[CLOUD_RECOVERY_KEY,'Recent recovery cache'],[DIARY_BACKUP_KEY,'Diary recovery copies'],[PRE_UPGRADE_KEY,'Original pre-upgrade copy'],[CLOUD_BASE_KEY,'Cloud comparison copy']];
+      for(const [key,label] of labels)add(label,mb((localStorage.getItem(key)?.length || 0)*2));
+      if(typeof recoveryVault!=='undefined' && recoveryVault){
+        const archive=recoveryVault.diagnostics();add('Recovery archive',archive.error || (archive.ready?archive.archivedCopies+' verified copies in IndexedDB':'Opening recovery archive'));
+        add('Space reclaimed this tab',mb(archive.movedBytes));
+      }
       if(lastDeviceSaveError)add('Last device save issue',deviceSaveFailureReason()+' '+formatRecordDateTime(lastDeviceSaveError.at));
     }catch{add('Browser storage','Access unavailable');}
     const signedIn=Boolean(cloudSession?.user?.id);
