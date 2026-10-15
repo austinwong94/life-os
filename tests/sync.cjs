@@ -154,6 +154,27 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   await repair.reload();await repair.getByRole('button',{name:'Preserve copies and free save space',exact:true}).click();await repair.getByText(/Recovery archive verified/).waitFor();
   assert.match(await repair.locator('#details').innerText(),/Verified archived copies\s+5/);
  });
+ await run('connected account hides login instructions, preserves writing and still exposes real reauthentication',async context=>{
+  const p=await fresh(await context());let network=0;
+  await p.route('https://**supabase.co/**',r=>{network++;return r.fulfill({status:503,json:{msg:'No production access'}});});
+  await p.locator('#railSettingsButton').click();
+  assert.equal(await p.locator('#cloudSignInFields').isVisible(),true);
+  await p.evaluate(user=>{saveCloudSession({user:{id:user,email:'synthetic@example.com'},access_token:'synthetic-session',refresh_token:'synthetic-refresh',expires_at:Date.now()+3600000});},user);
+  const before=await p.evaluate(()=>JSON.stringify(getStateForStorage().boards));
+  assert.equal(await p.locator('#cloudStatus').innerText(),'Connected');
+  assert.match(await p.locator('#cloudConnectionHelp').innerText(),/Connected as synthetic@example.com\. Automatic sync is on/);
+  for(const id of ['cloudSignInFields','cloudSignInButton','cloudSignUpButton','cloudEmail','cloudGithubButton','cloudCheckButton'])assert.equal(await p.locator('#'+id).isVisible(),false,id);
+  assert.equal(await p.locator('#cloudSignOutButton').isVisible(),true);assert.equal(await p.locator('#accountPasswordDetails').isVisible(),true);
+  await p.evaluate(()=>{cloudSession.user.email='long'.repeat(20)+'@example.com';renderCloudStatus();});
+  for(const width of [320,390,1080]){await p.setViewportSize({width,height:900});assert.equal(await p.locator('.cloud-panel').evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);}
+  await p.evaluate(()=>{cloudSession.user.email='synthetic@example.com';renderCloudStatus();});
+  await p.locator('.cloud-panel').scrollIntoViewIfNeeded();await p.screenshot({path:output+'/connected-account-'+(process.env.TEST_BROWSER || 'chromium')+'.png',fullPage:false});
+  await p.evaluate(()=>{cloudConflictPending=true;renderCloudStatus();});assert.equal(await p.locator('#cloudStatus').innerText(),'Review needed');assert.match(await p.locator('#cloudConnectionHelp').innerText(),/sync is paused/);assert.equal(await p.locator('#cloudSignInFields').isVisible(),false);
+  await p.evaluate(()=>{cloudConflictPending=false;cloudSessionReauthRequired=true;renderCloudStatus('Cloud session expired. Sign in again.');});
+  assert.equal(await p.locator('#cloudStatus').innerText(),'Sign-in needed');assert.equal(await p.locator('#cloudSignInFields').isVisible(),true);assert.equal(await p.locator('#cloudSignInButton').isEnabled(),true);assert.equal(await p.locator('#cloudPassword').isVisible(),true);
+  assert.equal(await p.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);assert.equal(network,0);
+  await p.evaluate(()=>{saveCloudSession(null);cloudStatusMessage='';renderCloudStatus();});assert.equal(await p.locator('#cloudSignInFields').isVisible(),true);assert.equal(await p.locator('#cloudSignOutButton').isVisible(),false);
+ });
  await run('GitHub sign-in checks provider readiness and keeps credentials and unfinished writing out of navigation',async context=>{
   const p=await fresh(await context());
   await p.locator('.diary-thoughts').fill('Private multiline writing stays here.\n第二行');await p.evaluate(()=>flushDeviceWrites());

@@ -1012,7 +1012,7 @@ textarea:focus {
   margin-bottom: 8px;
 }
 
-#accountPasswordDetails > summary {
+.cloud-panel > details > summary {
   min-height: 44px;
   padding: 12px 0;
   font-size: 14px;
@@ -1158,6 +1158,10 @@ textarea:focus {
   font-size: 0.74rem;
   font-weight: 780;
   line-height: 1.35;
+}
+
+#cloudConnectionHelp {
+  overflow-wrap: anywhere;
 }
 
 .cloud-check-button,

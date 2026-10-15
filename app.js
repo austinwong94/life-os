@@ -13021,7 +13021,10 @@ function writeLocalJson(key, value, options = {}) {
 
 function renderCloudStatus(message) {
   if (!elements.cloudStatus) return;
+  const help=document.getElementById('cloudConnectionHelp'),signInFields=document.getElementById('cloudSignInFields');
   if (PREVIEW_MODE) {
+    help.textContent='Preview only. Your saved Life OS account is not used here.';
+    signInFields.hidden=true;
     elements.cloudStatus.textContent="Preview";
     elements.cloudNote.textContent="Separate preview records on this browser. Cloud access is disabled.";
     elements.cloudPanel.querySelectorAll("button,input").forEach(node=>node.disabled=true);
@@ -13029,8 +13032,13 @@ function renderCloudStatus(message) {
   }
   if (message) {cloudStatusMessage = message; cloudGithubAuthorizeUrl = '';}
   const isSignedIn = Boolean(cloudSession?.access_token);
-  const needsSignIn=/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '');
-  elements.cloudStatus.textContent = isRestoreSyncPaused() ? "Paused" : isSignedIn && needsSignIn ? "Sign-in needed" : isSignedIn ? "Cloud" : "Local";
+  const needsSignIn=cloudSessionReauthRequired || /Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '');
+  const connected=isSignedIn && !needsSignIn;
+  signInFields.hidden=connected;
+  help.textContent=connected
+    ? `Connected as ${cloudSession.user?.email || 'your Life OS account'}. ${isRestoreSyncPaused() || cloudConflictPending || !cloudSaveEnabled?'Automatic sync is paused.':!navigator.onLine?'Automatic sync will resume when online.':'Automatic sync is on.'}`
+    : isSignedIn?'Sign in to Life OS again to reconnect. Your device records are unchanged.':'Sign in to Life OS to connect your existing cloud records.';
+  elements.cloudStatus.textContent = isSignedIn && needsSignIn ? "Sign-in needed" : isRestoreSyncPaused() ? "Paused" : connected && cloudConflictPending ? "Review needed" : connected ? "Connected" : "Local";
   elements.cloudEmail.value = cloudSession?.user?.email || elements.cloudEmail.value || "";
   elements.cloudPullButton.disabled = !isSignedIn;
   elements.cloudPushButton.disabled = !isSignedIn;
@@ -13053,7 +13061,7 @@ function renderCloudStatus(message) {
   const localSavedAt = getStateUpdatedAt(state);
   const cloudSavedAt = getKnownCloudUpdatedAt();
   const savedDetail = cloudSavedAt
-    ? `Last local edit: ${formatRecordDateTime(localSavedAt)}. Supabase copy: ${formatRecordDateTime(cloudSavedAt)}.`
+    ? `Last local edit: ${formatRecordDateTime(localSavedAt)}. Last confirmed cloud save: ${formatRecordDateTime(cloudSavedAt)}.`
     : `Last local edit: ${formatRecordDateTime(localSavedAt)}.`;
   elements.cloudNote.textContent =
     message || (isRestoreSyncPaused() ? 'A backup was restored on this device. Automatic cloud sync is paused, including in other tabs and after reload. Choose Save cloud to review syncing, or Load cloud to return to the cloud copy.' : cloudStatusMessage) ||

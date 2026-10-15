@@ -125,9 +125,9 @@
             <h2>Cloud sync</h2>
             <span class="tag" id="cloudStatus">Local</span>
           </div>
-          <p class="data-note">Sign in to your existing Life OS account to sync your boards. GitHub sign-in requires the Life OS connection to be enabled; your Supabase dashboard password is never needed here.</p>
+          <p class="data-note" id="cloudConnectionHelp" aria-live="polite">Sign in to Life OS to connect your existing cloud records.</p>
+          <div id="cloudSignInFields">
           <button type="button" class="template-open-button" id="cloudGithubButton">Continue with GitHub</button>
-          <button type="button" class="template-open-button cloud-check-button" id="cloudCheckButton">Check Supabase setup</button>
           <label class="field">
             <span>Email</span>
             <input id="cloudEmail" type="email" maxlength="120" autocomplete="email" />
@@ -142,6 +142,7 @@
           </div>
           <button type="button" class="template-open-button" id="cloudEmailLinkButton">Email me a sign-in link</button>
           <button type="button" class="template-open-button cloud-resend-button" id="cloudResendButton">Resend email</button>
+          </div>
           <div class="cloud-actions">
             <button type="button" class="secondary-action" id="cloudPullButton">Load cloud</button>
             <button type="button" class="secondary-action" id="cloudPushButton">Save cloud</button>
@@ -175,6 +176,10 @@
             <p class="cloud-note" id="accountPasswordNote" role="status" aria-live="polite"></p>
           </details>
           <p class="cloud-note" id="cloudNote">Local browser storage is active.</p>
+          <details>
+            <summary>Troubleshooting</summary>
+            <button type="button" class="template-open-button cloud-check-button" id="cloudCheckButton">Check connection</button>
+          </details>
         </section>
 
         <section class="panel card-composer-panel" id="cardComposerPanel" aria-label="Card setup" hidden>

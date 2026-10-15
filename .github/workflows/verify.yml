@@ -62,7 +62,7 @@ jobs:
         run: npm run test:sync
         env:
           TEST_BROWSER: webkit
-          TEST_CASE_PATTERN: "missing|changes during|quota failure prevents|cloud readback truncation|baseline storage failure|cancelled cloud comparison|native storage quota|older tab rewriting legacy|JSONB-reordered|recovery vault|emergency downloads|automatic capacity repair"
+          TEST_CASE_PATTERN: "missing|changes during|quota failure prevents|cloud readback truncation|baseline storage failure|cancelled cloud comparison|native storage quota|older tab rewriting legacy|JSONB-reordered|recovery vault|emergency downloads|automatic capacity repair|connected account hides"
           TEST_OUTPUT: test-results/cloud-copies-webkit
       - run: npm run test:features
         env:
