@@ -47,7 +47,7 @@ const thoughts=p=>p.evaluate(()=>state.cards.find(card=>card.type==='diary').dia
     await normal.evaluate(async()=>{LifeDeviceStore.configure(commitDeviceWrites);await flushDeviceWrites();});
     assert.deepEqual(await preview.evaluate(()=>LifeDeviceStore.pending().map(item=>[item.key,item.raw])),previewPending);
     await preview.reload();assert.equal(await thoughts(preview),'Preview pending diary');await preview.evaluate(()=>flushDeviceWrites());
-    await normal.reload();assert.equal(await thoughts(normal),'Normal pending diary');assert.equal(await normal.evaluate(()=>LifeDeviceStore.pending().length),0);
+    await normal.reload();assert.equal(await thoughts(normal),'Normal pending diary');assert.equal(await normal.evaluate(()=>flushDeviceWrites()),true);assert.equal(await normal.evaluate(()=>LifeDeviceStore.pending().length),0);
   });
   await run('Cloud credentials, baselines and restore guards cannot cross through storage events',async({open,external})=>{
     const normal=await open(false);await seed(normal,'NORMAL');
