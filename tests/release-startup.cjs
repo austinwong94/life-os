@@ -67,7 +67,9 @@ const baseline='2c1bf351901a2fed26c01283977e301ca3c2b468';
     await p.goto(url);await ready(p);assert.deepEqual(errors,[]);assert.equal(externalStyles,0);
     assert.equal(await p.locator('link[rel="stylesheet"]').count(),0);
     const styles=await p.locator('style[data-release-style]').evaluateAll(nodes=>nodes.map(node=>({file:node.dataset.releaseStyle,css:node.textContent,sheet:Boolean(node.sheet)})));
-    assert.equal(styles.length,8);
+    const expectedStyles=[...fs.readFileSync(path.join(root,'index.html'),'utf8').matchAll(/<link\s+rel="stylesheet"\s+href="([^"?]+)(?:\?[^\"]*)?"/g)].map(match=>match[1]);
+    assert.deepEqual(styles.map(style=>style.file),expectedStyles);
+    assert.equal(new Set(styles.map(style=>style.file)).size,expectedStyles.length);
     for(const style of styles){assert.equal(style.css,'\n'+files.get(style.file).toString()+'\n');assert.equal(style.sheet,true);}
     assert(await p.locator('#appShell').isVisible());
     assert.equal(await p.evaluate(()=>getComputedStyle(document.body).display==='none'),false);
