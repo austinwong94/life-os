@@ -1,4 +1,4 @@
-const {workspace}=require('./navigation.cjs');
+const {workspace,capture}=require('./navigation.cjs');
 const browsers=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -26,11 +26,11 @@ fs.mkdirSync(out,{recursive:true});const results=[];
    await workspace(page,'today');
    for(const [width,height] of [[1206,866],[1080,1920],[900,1600],[768,1024],[701,1024],[700,1024],[680,1024],[390,844],[320,740],[1440,2560]]){
     await page.setViewportSize({width,height});await page.waitForTimeout(100);
-    const result=await page.evaluate(()=>{const board=document.querySelector('#boardGrid').getBoundingClientRect(),intro=document.querySelector('.daily-head').getBoundingClientRect(),grid=document.querySelector('.today-cards').getBoundingClientRect();return {board:board.width,grid:grid.width,aligned:Math.abs(board.left-grid.left)<2,below:grid.top>=intro.bottom,cards:[...document.querySelectorAll('.today-cards>.task-card')].map(c=>c.getBoundingClientRect().width)};});
+    const result=await page.evaluate(()=>{const board=document.querySelector('#boardGrid').getBoundingClientRect(),intro=document.querySelector('.daily-head').getBoundingClientRect(),grid=document.querySelector('.daily-layout').getBoundingClientRect();return {board:board.width,grid:grid.width,aligned:Math.abs(board.left-grid.left)<2,below:grid.top>=intro.bottom,cards:[...document.querySelectorAll('.today-cards>.task-card')].map(c=>c.getBoundingClientRect().width)};});
     assert.ok(result.aligned&&result.below,JSON.stringify({width,columns,...result}));assert.ok(result.grid>=result.board-2,JSON.stringify(result));
     assert.ok(result.cards.every(w=>w>=Math.min(300,result.board)-2),JSON.stringify({width,columns,...result}));
     if(width<=700)assert.ok(result.cards.every(w=>Math.abs(w-result.board)<2),JSON.stringify({width,...result}));
-    if(width>700&&result.board>=658){const aligned=await page.locator('.today-cards').evaluate(e=>Math.abs(e.children[0].getBoundingClientRect().top-e.children[1].getBoundingClientRect().top)<2);assert.ok(aligned);}
+    if(width>700&&result.board>=658){const aligned=await page.locator('.today-cards').evaluate(e=>{const a=e.children[0].getBoundingClientRect(),b=e.children[1].getBoundingClientRect();return Math.abs(a.top-b.top)<2 || (Math.abs(a.left-b.left)<2 && b.top>=a.bottom);});assert.ok(aligned,'Journal sections must align side by side or stack without overlap');}
    }
   }
  });
@@ -45,7 +45,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   await page.locator('.diary-thoughts').fill('I took a short walk today.\nIt helped to make a little space for myself.');
   await page.getByLabel('Quick note',{exact:true}).fill('An idea to come back to: a quiet weekend by the sea.');
   await page.locator('.side-note-add').click();
-  await page.getByRole('button',{name:'Capture',exact:true}).click();await page.getByLabel('What is on your mind?',{exact:true}).fill('Arrange a short walk and call someone I care about');await page.getByRole('button',{name:'Save capture',exact:true}).click();
+  await capture(page);await page.getByLabel('What is on your mind?',{exact:true}).fill('Arrange a short walk and call someone I care about');await page.getByRole('button',{name:'Save capture',exact:true}).click();
   await page.getByRole('button',{name:'Choose',exact:true}).click();await page.getByRole('checkbox',{name:'Arrange a short walk and call someone I care about',exact:true}).check();await page.getByRole('button',{name:'Keep next steps',exact:true}).click();
   await page.evaluate(()=>flushDeviceWrites());
   for(const [width,height] of [[320,740],[390,844],[680,1024],[700,1024],[701,1024],[768,1024],[900,1600],[1080,1920],[1206,866],[1440,2560]]){
@@ -62,7 +62,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
    assert.equal(feelings.length,7);
    assert.ok(feelings.every(r=>Math.abs(r.top-feelings[0].top)<1&&r.width>=32&&r.width<=45&&r.height===44&&r.inside),JSON.stringify({width,feelings}));
    assert.ok(await page.locator('.side-note-actions .card-menu-toggle svg').evaluate(e=>{const r=e.getBoundingClientRect(),button=e.parentElement.getBoundingClientRect();return r.width>=18&&r.height>=18&&r.left>=button.left&&r.right<=button.right&&r.top>=button.top&&r.bottom<=button.bottom;}));
-   const add=page.getByRole('button',{name:'Capture',exact:true});await add.scrollIntoViewIfNeeded();
+   const add=width<=980?page.getByRole('button',{name:'Capture',exact:true}):page.locator('#railAddButton');await add.scrollIntoViewIfNeeded();
    assert.ok(await add.evaluate(e=>{const r=e.getBoundingClientRect();return r.width>=44&&r.height>=44&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));
    await page.locator('.type-diary .card-menu-toggle').click();const edit=page.locator('.card-menu:not([hidden]) [data-card-action=edit]');await edit.waitFor({state:'visible'});
    assert.ok(await edit.evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));await page.keyboard.press('Escape');
@@ -125,7 +125,8 @@ fs.mkdirSync(out,{recursive:true});const results=[];
    await page.setViewportSize({width,height:width===1080?1920:844});await page.waitForTimeout(150);await page.locator('#boardSwitcherButton').click();
    const menu=page.locator('#boardSwitcherMenu');assert.ok(await menu.evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&e.scrollWidth<=e.clientWidth+1;}));
    await menu.getByRole('menuitemradio',{name:'Board 12',exact:true}).click();assert.equal(await page.evaluate(()=>state.activeBoardId),'extra-11');
-   await page.locator('#boardSwitcherButton').click();await page.keyboard.press('w');await page.keyboard.press('Enter');
+   await page.locator('#boardSwitcherButton').click();await menu.waitFor({state:'visible'});await page.keyboard.press('w');
+   await page.waitForFunction(()=>document.activeElement?.dataset.boardId==='extra-23');await page.keyboard.press('Enter');
    assert.equal(await page.evaluate(()=>state.activeBoardId),'extra-23');assert.equal(await second.evaluate(()=>state.activeBoardId),initial);
    await page.locator('#boardSwitcherButton').click();await page.screenshot({path:out+'/board-picker-'+width+'.png'});await page.keyboard.press('Escape');
   }

@@ -352,7 +352,8 @@ function renderPlanningWorkspace(mode) {
   if(mode==="calendar")root.classList.add("calendar-workspace");
   elements.boardGrid.append(root);
   const nav=planningNode('nav','plan-view-switch');nav.setAttribute('aria-label','Planning view');
-  for(const [key,label] of [['tasks','Tasks'],['calendar','Calendar']]){const button=planningButton(label,()=>setWorkspaceMode(key));button.id='plan'+label+'Button';button.setAttribute('aria-pressed',String(mode===key));nav.append(button);}root.append(nav);
+  for(const [key,label] of [['tasks','Tasks'],['calendar','Calendar']]){const button=planningButton(label,()=>setWorkspaceMode(key));button.id='plan'+label+'Button';button.setAttribute('aria-pressed',String(mode===key));nav.append(button);}
+  const heading=planningNode('header','plan-workspace-heading');heading.append(planningNode('h2','','Plan'),nav);root.append(heading);
   if (mode === "tasks") renderTasksWorkspace(root); else renderCalendarWorkspace(root);
 }
 function planningRefresh() { savePlanningSession(); renderCardsOnly({force:true}); }
@@ -421,10 +422,15 @@ function renderTaskCapture() {
   const add = planningIcon("Add task",null,"plus"); add.type="submit";add.classList.add("is-primary","task-capture-submit");
   const main = planningNode("div","task-capture-main");main.append(title);
   const options = planningNode("div","task-capture-options");
-  const date=planningInput("date",draft.dateKey,value=>{draft.dateKey=value;savePlanningSession();});date.setAttribute("aria-label","Planned day (optional)");
-  options.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{draft.area=value;savePlanningSession();})),
-    planningField("Planned day (optional)",planningOptionalDate(date,"Clear planned day",()=>{draft.dateKey="";savePlanningSession();})));
-  const status=planningNode("p","planning-message");status.setAttribute("role","status");form.append(main,options,add,status);
+  const details=planningNode('details','task-capture-details'),summary=planningNode('summary');summary.setAttribute('aria-label','Task area and date');
+  const updateSummary=()=>{summary.textContent=(draft.area || 'Unsorted')+' · '+(draft.dateKey?formatPlannerOriginDate(draft.dateKey):'No date');};
+  details.open=Boolean(session.captureOptionsExpanded);details.append(summary,options);updateSummary();
+  summary.addEventListener('click',event=>{event.preventDefault();details.open=!details.open;session.captureOptionsExpanded=details.open;savePlanningSession();});
+  details.addEventListener('toggle',()=>{if(!details.isConnected)return;session.captureOptionsExpanded=details.open;savePlanningSession();});
+  const date=planningInput("date",draft.dateKey,value=>{draft.dateKey=value;updateSummary();savePlanningSession();});date.setAttribute("aria-label","Planned day (optional)");
+  options.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{draft.area=value;updateSummary();savePlanningSession();})),
+    planningField("Planned day (optional)",planningOptionalDate(date,"Clear planned day",()=>{draft.dateKey="";updateSummary();savePlanningSession();})));
+  const status=planningNode("p","planning-message");status.setAttribute("role","status");form.append(main,details,add,status);
   form.onsubmit = event => {
     event.preventDefault();
     if (!title.value.trim() || (draft.dateKey && !LifePlanner.validDate(draft.dateKey))) return;
@@ -436,7 +442,7 @@ function renderTaskCapture() {
     LifePlanner.change(source,task.id,{title:title.value.trim(),dateKey:draft.dateKey,area:draft.area,status:"todo",project:"",deadline:"",notes:""});LifePlanner.project(source);
     draft.pendingBase=LifeStateMerge.copy(task);savePlanningSession();
     if(!saveState()){status.textContent="Not saved yet. Your draft is kept; try again when device saving is available.";return;}
-    session.lastArea=draft.area;session.capture={area:draft.area,dateKey:draft.dateKey,title:""};
+    session.lastArea=draft.area;session.capture={area:draft.area,dateKey:draft.dateKey,title:""};session.captureOptionsExpanded=false;
     // Keep the newly captured item visible without silently changing its date.
     if ((session.area!=="*" && session.area!==draft.area)) session.area="*";
     if (session.view==="completed" || !draft.dateKey || (session.view==="today" && draft.dateKey>session.day) || (session.view==="upcoming" && draft.dateKey<getTodayKey())) session.view="all";

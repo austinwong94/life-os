@@ -118,7 +118,26 @@
     const recorded=results.filter(r=>r.recorded).length;
     return {percent:recorded?Math.round(results.reduce((sum,r,i)=>sum+Math.min(1,r.value/core[i].target),0)/core.length*100):null,recorded,total:core.length,met:results.filter(r=>r.met).length};
   }
-  const api={validate,validateEntry,metrics,weekStart,latestWeeks,progress,completion,nextCheckin,overdueCheckins,pace,validDate,shift,days,latest,activeEntries,copy};
+  function outcomeSnapshot(program,asOf) {
+    if(!validDate(asOf))throw new Error('Choose a valid progress date.');
+    validate(program);
+    const records=activeEntries(program,asOf);
+    return {programId:program.id,title:program.title,asOf,priorities:program.priorities.map(priority=>{
+      const measures=priority.krs.flatMap(kr=>kr.metrics);
+      const goals=priority.krs.map(kr=>({id:kr.id,title:kr.title,metrics:kr.metrics.filter(m=>!m.stretch).map(metric=>{
+        const result=progress(program,metric,asOf),checkpoint=pace(program,metric,asOf);
+        const updates=records.filter(entry=>['number','milestone'].includes(metric.kind)?entry.kind==='measurement' && entry.metricId===metric.id:
+          metric.kind==='weekly'?entry.kind==='week':entry.kind==='activity' && entry.source===metric.source);
+        return {id:metric.id,label:metric.label,unit:metric.unit,target:metric.target,kind:metric.kind,
+          value:result.value,recorded:result.recorded,met:result.met,pace:checkpoint,lastDate:latest(updates)?.date || ''};
+      })}));
+      const rows=goals.flatMap(goal=>goal.metrics);
+      return {id:priority.id,title:priority.title,goals,...completion(program,measures,asOf),
+        belowCheckpoint:rows.filter(row=>row.pace.status==='Below planned checkpoint').length,
+        missingCheckpoint:rows.filter(row=>!row.recorded && row.pace.expected!==null).length};
+    })};
+  }
+  const api={validate,validateEntry,metrics,weekStart,latestWeeks,progress,completion,outcomeSnapshot,nextCheckin,overdueCheckins,pace,validDate,shift,days,latest,activeEntries,copy};
   root.LifeCoaching=api;if(typeof module!=="undefined" && module.exports)module.exports=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
 
@@ -405,7 +424,7 @@ function addCoachingCalendar() {
   if(saveState())refreshCoaching();
 }
 function renderCoachingWorkspace() {
-  const root=planningNode("section","coaching-workspace");root.setAttribute("aria-label","Priorities");elements.boardGrid.append(root);
+  const root=planningNode("section","coaching-workspace");root.id='progressGoals';root.hidden=dailySession().progressView!=='goals';root.setAttribute("aria-label","Priorities");elements.boardGrid.append(root);
   const program=coachingProgram(),session=coachingSession(),header=planningNode("header","coaching-heading");header.append(coachingText("h2",program?.title || "Priorities"));root.append(header);
   if(!program){renderCoachingImport(root);return;}
   try{LifeCoaching.validate(program);}catch(error){root.append(coachingText("p","This programme needs review. Its saved records are preserved. "+error.message));return;}
@@ -420,7 +439,7 @@ function renderCoachingWorkspace() {
   if(next)band.append(planningButton("Prepare check-in",()=>{session.tab="checkins";openCoachingCheckin(next);},"pencil"));
   if(session.tab!=="overview")root.append(band);
   const tabs=planningNode("div","coaching-tabs");tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Priorities view");
-  for(const [key,label] of [["overview","Overview"],["weekly","Weekly"],["checkins","Check-ins"],["history","History"]]){const button=planningButton(label,()=>{session.tab=key;refreshCoaching();});button.setAttribute("aria-pressed",String(session.tab===key));tabs.append(button);}root.append(tabs);
+  for(const [key,label] of [["overview","Targets"],["weekly","Weekly"],["checkins","Check-ins"],["history","History"]]){const button=planningButton(label,()=>{session.tab=key;refreshCoaching();});button.setAttribute("aria-pressed",String(session.tab===key));tabs.append(button);}root.append(tabs);
   const feedback=coachingText("p",session.notice || "","coaching-save-feedback");feedback.setAttribute("role","status");root.append(feedback);
   if(session.draft){if(session.draftClosed || session.draft.programId!==program.id)root.append(planningButton("Resume saved draft",()=>{session.programId=session.draft.programId;session.draftClosed=false;refreshCoaching();},"pencil"));else renderCoachingEditor(root);}
   if(session.tab==="weekly")renderCoachingWeekly(root,program);
@@ -438,7 +457,8 @@ function renderCoachingOverview(root,program) {
   for(const [index,item] of program.priorities.entries()){
     const choice=planningButton("",()=>{session.priorityId=item.id;refreshCoaching();});choice.classList.add("coaching-priority-choice");choice.dataset.priority=String(index%3);choice.setAttribute("aria-label","Focus on "+item.title);choice.setAttribute("aria-pressed",String(item.id===priority.id));
     choice.append(coachingText("small","PRIORITY "+(index+1),"coaching-eyebrow"),coachingText("strong",item.title));
-    const result=LifeCoaching.completion(program,item.krs.flatMap(kr=>kr.metrics),getTodayKey());choice.append(coachingText("span",result.percent===null?"Ready when you are":result.percent+"% recorded completion","coaching-muted"));choices.append(choice);
+    const result=LifeCoaching.completion(program,item.krs.flatMap(kr=>kr.metrics),getTodayKey());choice.append(coachingText("span",result.percent===null?"Not recorded yet":result.percent+"% recorded completion","coaching-muted"));
+    const meter=planningNode('progress','coaching-choice-meter');meter.max=100;meter.value=result.percent || 0;meter.setAttribute('aria-label',item.title+': '+(result.percent===null?'Not recorded':result.percent+'% recorded completion'));choice.append(meter,coachingText('small',result.recorded+' / '+result.total+' targets updated','coaching-choice-coverage'));choices.append(choice);
   }root.append(choices);
   const selected=planningNode("section","coaching-focus");selected.dataset.priority=String(program.priorities.indexOf(priority)%3);
   const heading=planningNode("div","coaching-focus-heading");

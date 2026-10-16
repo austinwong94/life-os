@@ -2,6 +2,8 @@ const {chromium,webkit}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const URL=process.env.TEST_URL || 'http://127.0.0.1:5180/';
+const testPageUrl=new globalThis.URL(URL);if(['127.0.0.1','localhost','::1'].includes(testPageUrl.hostname))testPageUrl.searchParams.set('liveReload','0');
+const APP_URL=testPageUrl.href;
 const output=process.env.TEST_OUTPUT || '/private/tmp/life-os-test-results';
 fs.mkdirSync(output,{recursive:true});
 const results=[];
@@ -12,13 +14,20 @@ const clone=x=>JSON.parse(JSON.stringify(x));
  async function run(name,fn){
   if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
   const contexts=[];
-  async function context(){const c=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});contexts.push(c);return c;}
-  try{await fn(context);results.push({name,pass:true});}catch(e){results.push({name,pass:false,error:e.stack});}
+  async function context(){const c=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});await c.route('https://**/*',r=>r.fulfill({status:503,body:'Synthetic sync tests only; external services blocked'}));c.on('page',p=>{p.testErrors=[];p.on('pageerror',e=>p.testErrors.push(e.stack));});contexts.push(c);return c;}
+  try{await fn(context);results.push({name,pass:true});}catch(e){
+   results.push({name,pass:false,error:e.stack});
+   const diagnostics=[];
+   for(const c of contexts)for(const p of c.pages()){
+    diagnostics.push({errors:p.testErrors,view:await p.evaluate(()=>({readyState:document.readyState,starting:document.body?.hasAttribute('data-release-starting'),startup:document.getElementById('releaseStartupMessage')?.textContent,status:document.getElementById('headerSaveStatus')?.textContent,styles:[...document.querySelectorAll('link[rel="stylesheet"]')].map(link=>({href:link.href,loaded:Boolean(link.sheet),disabled:link.disabled}))})).catch(error=>({error:error.message}))});
+   }
+   fs.writeFileSync(output+'/failure-'+results.length+'.json',JSON.stringify(diagnostics,null,2));
+  }
   console.log(JSON.stringify(results.at(-1)));for(const c of contexts)await c.close();
  }
  async function fresh(c){
   await c.route('https://**supabase.co/**',r=>r.fulfill({status:503,body:'No production access'}));
-  const p=await c.newPage();p.on('dialog',d=>d.accept());await p.goto(URL);return p;
+  const p=await c.newPage();p.on('dialog',d=>d.accept());await p.goto(APP_URL);return p;
  }
  async function connect(page,base,stamp){await page.evaluate(({base,stamp,user})=>{
    state=rehydrateState(base);cloudSession={user:{id:user},access_token:'synthetic-test-token',expires_at:Date.now()+3600000,cloud_updated_at:stamp};
@@ -232,16 +241,23 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   await p.waitForTimeout(100);assert.equal(await p.evaluate(()=>cloudSession),null);assert.equal(await p.locator('#cloudPushButton').isEnabled(),false);
  });
  await run('parallel session renewal across two tabs rotates once and retains all original writing',async context=>{
-  const c=await context(),a=await fresh(c),b=await fresh(c);let calls=0;
+  const c=await context(),a=await fresh(c),b=await fresh(c);let calls=0;const requestTimes=[];
+  if(process.env.TEST_AUTH_TRACE)for(const [index,p]of [a,b].entries())await p.evaluate(index=>{
+   window.authTrace=[];
+   const label=session=>!session?'absent':session.access_token==='synthetic-expired'?'original':session.access_token==='synthetic-renewed'?'renewed':'other';
+   const load=loadCloudSession;loadCloudSession=()=>{const value=load();authTrace.push({kind:'read',at:performance.timeOrigin+performance.now(),tab:index,label:label(value)});return value;};
+   const save=saveCloudSession;saveCloudSession=session=>{authTrace.push({kind:'write',at:performance.timeOrigin+performance.now(),tab:index,label:label(session),stack:new Error().stack});return save(session);};
+  },index);
   await c.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',async r=>{
-   calls++;assert.equal(r.request().postDataJSON().refresh_token,'synthetic-refresh-old');await new Promise(resolve=>setTimeout(resolve,75));
+   calls++;requestTimes.push(Date.now());assert.equal(r.request().postDataJSON().refresh_token,'synthetic-refresh-old');await new Promise(resolve=>setTimeout(resolve,75));
    await r.fulfill({json:{access_token:'synthetic-renewed',refresh_token:'synthetic-refresh-new',expires_in:3600,user:{id:user}}});
   });
   for(const p of [a,b])await p.evaluate(user=>{state.cloudOwnerId=user;saveState({skipCloud:true});saveCloudSession({access_token:'synthetic-expired',refresh_token:'synthetic-refresh-old',expires_at:1,user:{id:user}});cloudSaveEnabled=false;},user);
   await a.evaluate(()=>flushDeviceWrites());await b.evaluate(()=>flushDeviceWrites());
   const before=await a.evaluate(()=>JSON.stringify(getStateForStorage().boards));
   const values=await Promise.all([a,b,a,b].map(p=>p.evaluate(async()=>{const s=await ensureCloudSession();return s.access_token;})));
-  assert.deepEqual(values,Array(4).fill('synthetic-renewed'));assert.equal(calls,1);
+  if(process.env.TEST_AUTH_TRACE)fs.writeFileSync(output+'/auth-trace.json',JSON.stringify({calls,requestTimes,traces:await Promise.all([a,b].map(p=>p.evaluate(()=>authTrace)))},null,2));
+  assert.deepEqual(values,Array(4).fill('synthetic-renewed'));assert.equal(calls,1,JSON.stringify({calls,requestTimes}));
   assert.equal(await a.evaluate(()=>JSON.stringify(getStateForStorage().boards)),before);
   await a.reload();assert.equal(await a.evaluate(()=>cloudSession.access_token),'synthetic-renewed');assert.equal(calls,1);
  });
@@ -415,7 +431,8 @@ const clone=x=>JSON.parse(JSON.stringify(x));
  });
  await run('account change cannot send the previous account records to another user',async context=>{
   const {b,backend}=await setup(context);
-  await b.evaluate(()=>{state.cloudOwnerId='different-owner';state.board.name='Never send';});await b.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,0);assert.match(await b.locator('#cloudNote').innerText(),/another account/);
+  let requests=0;b.on('request',request=>{if(request.url().includes('/rest/v1/user_states'))requests++;});
+  await b.evaluate(()=>{state.cloudOwnerId='different-owner';state.board.name='Never send';});await b.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,0);assert.equal(requests,0);assert.match(await b.locator('#cloudNote').innerText(),/not the owner/);
  });
  await run('backup restore keeps automatic cloud sync paused across reload and another tab until explicitly confirmed',async context=>{
   const {b,base,backend}=await setup(context);
@@ -426,7 +443,7 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   },base);
   await b.reload();assert.equal(await b.evaluate(()=>cloudSaveEnabled),false);
   const q=await b.context().newPage();let unexpected=0;
-  await q.route('https://**supabase.co/**',route=>{unexpected++;return route.fulfill({status:503,body:'Auto sync must remain paused'});});await q.goto(URL);
+  await q.route('https://**supabase.co/**',route=>{unexpected++;return route.fulfill({status:503,body:'Auto sync must remain paused'});});await q.goto(APP_URL);
   await q.evaluate(async()=>{switchBoard('work');state.board.name='New local work';saveState();await flushDeviceWrites();await pushCloudState({silent:true});queueCloudSave({immediate:true});});
   await q.waitForTimeout(1600);assert.equal(unexpected,0);assert.equal(backend.writes,0);
   b.removeAllListeners('dialog');b.on('dialog',dialog=>dialog.dismiss());await b.evaluate(()=>pushCloudState({manual:true}));
@@ -466,7 +483,7 @@ const clone=x=>JSON.parse(JSON.stringify(x));
  await run('interrupted device commit recovers full writing after tab closure',async context=>{
   const c=await context(),a=await fresh(c);await a.evaluate(async()=>{saveState();await flushDeviceWrites();LifeDeviceStore.configure(()=>false);});
   await a.locator('.diary-thoughts').fill('Every character survives an interrupted commit.\nIncluding this line.');
-  assert.ok(await a.evaluate(()=>LifeDeviceStore.pending().length));await a.close();const b=await c.newPage();await b.goto(URL);
+  assert.ok(await a.evaluate(()=>LifeDeviceStore.pending().length));await a.close();const b=await c.newPage();await b.goto(APP_URL);
   assert.equal(await b.locator('.diary-thoughts').inputValue(),'Every character survives an interrupted commit.\nIncluding this line.');await b.evaluate(()=>flushDeviceWrites());assert.equal(await b.evaluate(()=>LifeDeviceStore.pending().length),0);
  });
  await run('delayed storage events cannot roll back a newer committed diary',async context=>{
@@ -495,14 +512,53 @@ const clone=x=>JSON.parse(JSON.stringify(x));
  });
  await run('three tabs and 600 near-simultaneous board edits all survive',async context=>{
   const c=await context(),a=await fresh(c);await a.evaluate(async()=>{for(const id of ['two','three'])state.boards.push(createBoardRecord({id,name:id,cards:[makeCard({type:'diary',title:id})]}));saveState();await flushDeviceWrites();});
-  const pages=[a,await c.newPage(),await c.newPage()];for(let i=1;i<3;i++){await pages[i].goto(URL);await pages[i].evaluate(id=>switchBoard(id),['','two','three'][i]);}
+  const pages=[a,await c.newPage(),await c.newPage()];for(let i=1;i<3;i++){await pages[i].goto(APP_URL);await pages[i].evaluate(id=>switchBoard(id),['','two','three'][i]);}
+  if(process.env.TEST_SAVE_TRACE)for(const p of pages)await p.evaluate(()=>{
+   window.stressTrace=[];
+   const pick=s=>({text:s?.boards?.map(b=>b.cards.find(c=>c.type==='diary')?.diaryEntries[getTodayKey()]?.thoughts),heads:s?.deviceWriteHeads});
+   const stage=LifeDeviceStore.stage;LifeDeviceStore.stage=(base,next)=>{stressTrace.push({kind:'stage',at:performance.timeOrigin+performance.now(),base:pick(base),next:pick(next)});return stage(base,next);};
+   LifeDeviceStore.configure(entries=>{const before=pick(JSON.parse(localStorage.getItem(STORAGE_KEY))),queue=entries.map(i=>({writer:i.entry.writerId,sequence:i.entry.sequence,base:pick(i.entry.base),next:pick(i.entry.state)}));
+    const ok=commitDeviceWrites(entries);stressTrace.push({kind:'commit',at:performance.timeOrigin+performance.now(),before,queue,after:pick(JSON.parse(localStorage.getItem(STORAGE_KEY))),visible:pick(getStateForStorage())});return ok;});
+  });
+  try{
   for(let round=0;round<10;round++){
    await Promise.all(pages.map((p,i)=>p.evaluate(async({i,round})=>{for(let n=1;n<=20;n++){const d=state.cards.find(c=>c.type==='diary');updateDiaryEntry(d,getTodayKey(),{thoughts:'Round '+round+' board '+i+' entry '+n});await new Promise(r=>setTimeout(r,3));}await flushDeviceWrites();},{i,round})));
+   const expected=[0,1,2].map(i=>'Round '+round+' board '+i+' entry 20');
+   await a.waitForFunction(expected=>{
+    const rows=JSON.parse(localStorage.getItem(STORAGE_KEY)).boards.map(b=>b.cards.find(c=>c.type==='diary').diaryEntries[getTodayKey()]?.thoughts);
+    return JSON.stringify(rows)===JSON.stringify(expected);
+   },expected,{timeout:10000});
    const records=await a.evaluate(()=>JSON.parse(localStorage.getItem(STORAGE_KEY)).boards.map(b=>b.cards.find(c=>c.type==='diary').diaryEntries[getTodayKey()]?.thoughts));
    assert.deepEqual(records,[0,1,2].map(i=>'Round '+round+' board '+i+' entry 20'));
    for(const p of pages){const result=await p.evaluate(()=>({conflicted:cloudConflictPending,conflicts:state.syncConflicts}));assert.equal(result.conflicted,false,JSON.stringify({round,...result}));}
   }
-  await a.reload();assert.equal(await a.evaluate(()=>state.activeBoardId),'personal-board');await pages[1].reload();assert.equal(await pages[1].evaluate(()=>state.activeBoardId),'two');
+  for(let i=0;i<3;i++){
+   await pages[i].reload();assert.equal(await pages[i].evaluate(()=>state.activeBoardId),['personal-board','two','three'][i]);
+   await pages[i].waitForFunction(i=>state.cards.find(c=>c.type==='diary').diaryEntries[getTodayKey()]?.thoughts==='Round 9 board '+i+' entry 20',i);
+   assert.equal(await pages[i].evaluate(()=>LifeDeviceStore.pending().length),0);
+  }
+  }catch(error){
+   if(process.env.TEST_SAVE_TRACE){
+    const traces=await Promise.all(pages.map(p=>p.evaluate(()=>{
+     const result={events:window.stressTrace || []};
+     const fields={memory:()=>getStateForStorage(),stored:()=>JSON.parse(localStorage.getItem(STORAGE_KEY)),pending:()=>LifeDeviceStore.pending(),checkpoint:()=>LifeDeviceStore.checkpointSnapshot(),lastLocalSaveOk:()=>lastLocalSaveOk,lastDeviceSaveError:()=>lastDeviceSaveError};
+     for(const [key,read] of Object.entries(fields))try{result[key]=read();}catch(error){result[key]={captureError:error.message};}
+     return result;
+    }).catch(error=>({captureError:error.message}))));
+    fs.writeFileSync(output+'/stress-trace.json',JSON.stringify({originalError:error.stack,traces},null,2));
+   }
+   throw error;
+  }
+ });
+ await run('a missing device prerequisite blocks cloud upload until complete diary writing is safely committed',async context=>{
+  const {b,backend}=await setup(context),text='Complete pending diary\nNo character may be discarded.';
+  await b.evaluate(()=>{state.deviceWriteHeads.syntheticParent=1;localMergeBase=getStateForStorage();});await b.locator('.diary-thoughts').fill(text);
+  await b.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,0);assert.equal(await b.evaluate(()=>state.syncConflicts.length),0);
+  assert.equal(await b.locator('.diary-thoughts').inputValue(),text);assert(await b.evaluate(()=>LifeDeviceStore.pending().length>0));
+  assert.match(await b.locator('#savedState').innerText(),/Pending copy kept - waiting for another tab/);
+  assert(await b.evaluate(async()=>{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY));saved.deviceWriteHeads.syntheticParent=1;localStorage.setItem(STORAGE_KEY,JSON.stringify(saved));return flushDeviceWrites();}));
+  await b.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,1);
+  assert.equal(backend.state.boards[0].cards.find(c=>c.type==='diary').diaryEntries[await b.evaluate(()=>getTodayKey())].thoughts,text);
  });
  async function setupPlanner(context){
   const f=await setup(context,{planner:true});

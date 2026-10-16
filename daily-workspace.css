@@ -170,7 +170,7 @@
 }
 body, .workspace { background: var(--page); color: var(--ink); }
 .daily-section, .workspace-task-list, .card-source-task { --card-ink: var(--ink); --card-muted: var(--muted); --card-accent: var(--action); }
-.planning-button.is-primary, .task-capture button, .daily-form button[type=submit] { background: var(--action); color: #fff; border-color: var(--action); }
+.planning-button.is-primary, .task-capture button[type=submit], .daily-form button[type=submit] { background: var(--action); color: #fff; border-color: var(--action); }
 .planning-button:focus-visible, .plan-view-switch button:focus-visible, .rail-button:focus-visible { outline: 2px solid var(--scheduled); outline-offset: 3px; }
 .plan-view-switch { display: flex; gap: 6px; margin-bottom: 0; }
 .task-view-label-short { display: none; }

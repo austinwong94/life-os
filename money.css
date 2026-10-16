@@ -25,6 +25,15 @@
 .money-workspace .money-tabs button[aria-pressed=true] { color: var(--money-ink); border-bottom-color: var(--money-accent); }
 .money-workspace .money-tabs button:hover { color: var(--money-accent); }
 .money-content { width: 100%; }
+.money-overview-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 32px; align-items: start; }
+.money-overview-columns > section { min-width: 0; }
+.money-workspace .money-heading h2 { font-size: 28px; }
+.money-workspace .money-stat strong { font-weight: 600; }
+.money-workspace > .money-stats { padding-block: 16px; border-block: 1px solid var(--money-line); }
+.money-workspace > .money-stats .money-stat { border-bottom: 0; padding: 4px 0; }
+.money-workspace > .money-stats .money-stat:first-child strong { color: #20252d; font-size: 30px; }
+.money-workspace .money-stats .money-stat span { font-size: 12px; }
+.money-workspace .money-stats .money-stat small { font-size: 11px; }
 .money-content h3 { font-size: 16px; line-height: 1.4; margin: 24px 0 12px; font-weight: 600; }
 .money-monthly { margin: 18px 0; }
 .money-monthly h3 { margin-bottom: 4px; }
@@ -131,6 +140,7 @@
 .money-commitment small { display: block; color: var(--money-muted); font-size: 12px; line-height: 1.6; margin-top: 4px; }
 .money-commitment .planning-icon { width: 44px; height: 44px; }
 @media(max-width:700px) {
+  .money-overview-columns { grid-template-columns: minmax(0,1fr); gap: 12px; }
   .money-month-review .money-section-heading { align-items: end; }
   .money-month-review .money-section-heading h3 { max-width: 110px; }
   .money-month-review .planning-field { width: 155px; }

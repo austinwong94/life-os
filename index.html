@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://shrmhjulhfuodtrsqhpu.supabase.co http://127.0.0.1:* http://localhost:*; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://www.instagram.com https://www.facebook.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://shrmhjulhfuodtrsqhpu.supabase.co http://127.0.0.1:* http://localhost:*; frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://www.instagram.com https://www.facebook.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
     />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>Life OS</title>
@@ -16,6 +16,10 @@
   <link rel="stylesheet" href="coaching.css?v=20260920-simple" />
   <link rel="stylesheet" href="daily-workspace.css?v=20260921" />
   <link rel="stylesheet" href="money.css?v=20261012" />
+  <link rel="stylesheet" href="workspace-design.css?v=20261013-redesign" />
+  <link rel="stylesheet" href="workspace-shell.css?v=20261015" />
+  <link rel="stylesheet" href="workspace-momentum.css?v=20261016" />
+  <link rel="stylesheet" href="properties-workspace.css?v=20261017" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -37,6 +41,15 @@
           </button>
         </div>
 
+        <nav class="workspace-modes" aria-label="Workspaces">
+          <button type="button" id="todayModeButton" aria-pressed="false" title="Today"><span data-icon="calendar"></span><span>Today</span></button>
+          <button type="button" id="tasksModeButton" aria-pressed="false" title="Plan"><span data-icon="list"></span><span>Plan</span></button>
+          <button type="button" id="recordsModeButton" aria-pressed="false" title="Records"><span data-icon="pencil"></span><span>Records</span></button>
+          <button type="button" id="boardModeButton" aria-pressed="true" title="My board"><span data-icon="layout-grid"></span><span>My board</span></button>
+          <button type="button" id="prioritiesModeButton" aria-pressed="false" title="Progress"><span data-icon="bar-chart"></span><span>Progress</span></button>
+          <button type="button" id="moneyModeButton" aria-pressed="false" title="Money"><span data-icon="bar-chart"></span><span>Money</span></button>
+          <button type="button" id="calendarModeButton" aria-pressed="false" hidden>Calendar</button>
+        </nav>
         <nav class="rail-nav" aria-label="Board tools">
           <button type="button" class="rail-button rail-primary" id="railAddButton" title="Add card" aria-label="Add card" aria-pressed="false">
             <span data-icon="plus"></span>
@@ -98,6 +111,19 @@
               <button type="button" data-value="custom">Manual</button>
             </div>
           </div>
+          <details class="appearance-settings" id="appearanceSettings">
+            <summary>Appearance</summary>
+            <fieldset>
+              <legend>Accent colour</legend>
+              <div class="appearance-swatches" id="appearanceAccents" role="radiogroup" aria-label="Accent colour"></div>
+              <label class="appearance-custom"><span>Custom accent</span><input id="appearanceCustomAccent" type="color" aria-label="Custom accent colour" /><output id="appearanceAccentValue"></output></label>
+            </fieldset>
+            <fieldset>
+              <legend>Background tint</legend>
+              <div class="appearance-swatches" id="appearanceBackgrounds" role="radiogroup" aria-label="Background tint"></div>
+            </fieldset>
+            <button type="button" class="secondary-action" id="resetAppearanceButton"><span data-icon="rotate-ccw"></span><span>Reset appearance</span></button>
+          </details>
         </section>
 
         <section class="panel safety-panel">
@@ -534,14 +560,6 @@
         </header>
 
         <nav class="workspace-navigation" aria-label="Board views">
-          <div class="workspace-modes" role="group" aria-label="Workspace view">
-            <button type="button" id="boardModeButton" aria-pressed="true">My board</button>
-            <button type="button" id="todayModeButton" aria-pressed="false">Today</button>
-            <button type="button" id="tasksModeButton" aria-pressed="false">Plan</button>
-            <button type="button" id="calendarModeButton" aria-pressed="false" hidden>Calendar</button>
-            <button type="button" id="prioritiesModeButton" aria-pressed="false">Progress</button>
-            <button type="button" id="moneyModeButton" aria-pressed="false">Money</button>
-          </div>
           <div class="column-picker board-column-picker" id="boardColumnQuickControl" role="group" aria-label="Board columns">
             <span>Columns</span>
             <button type="button" data-columns="2" aria-label="2 board columns" title="2 columns; fewer on narrow screens">2</button>
@@ -1012,11 +1030,16 @@
     <script src="storage-scope.js?v=20260922-preview-isolation"></script>
     <script src="planner-store.js?v=20260910-tasks"></script>
     <script src="task-repository.js?v=20260922-card-tasks"></script>
+    <script src="meal-reuse.js?v=20261016-meal-reuse"></script>
+    <script src="exercise-reuse.js?v=20261016-exercise-reuse"></script>
     <script src="subtask-store.js?v=20261012-subtasks"></script>
     <script src="money-store.js?v=20261012"></script>
     <script src="state-merge.js?v=20260910-tasks"></script>
     <script src="lz-string.js?v=1.5.0"></script>
     <script src="device-store.js?v=20261013"></script>
+    <script src="device-checkpoint.js?v=20261016"></script>
+    <script src="cloud-transport.js?v=20261016"></script>
+    <script src="auth-renewal.js?v=20261016"></script>
     <script src="recovery-vault.js?v=20261015"></script>
     <script src="restore-review.js?v=20260908"></script>
     <script src="cloud-copies.js?v=20261014"></script>
@@ -1027,7 +1050,12 @@
   <script src="coaching.js?v=20260921-daily"></script>
   <script src="daily-workspace.js?v=20260921"></script>
   <script src="money.js?v=20261012"></script>
+  <script src="records-workspace.js?v=20261013-redesign"></script>
+  <script src="momentum.js?v=20261016"></script>
     <script src="experience.js?v=20260921-daily"></script>
+  <script src="appearance.js?v=20261016"></script>
   <script src="app.js?v=20260921-daily"></script>
+  <script src="properties-workspace.js?v=20261017"></script>
+  <script src="workspace-shell.js?v=20261015"></script>
   </body>
 </html>

@@ -1,0 +1,21 @@
+// Private, offline browser check. No screenshots, field values or guest names
+// are written to results; all remote traffic is intercepted before fulfillment.
+const fs=require('node:fs'),path=require('node:path'),http=require('node:http'),assert=require('node:assert/strict'),{buildRelease}=require('../build-release.cjs'),{chromium}=require('playwright');
+const input=process.env.PROPERTY_BACKUP;if(!input)throw new Error('Set PROPERTY_BACKUP to the private preservation export.');
+const backup=JSON.parse(fs.readFileSync(input,'utf8')),records=Array.isArray(backup.records)?backup.records.filter(r=>r.resource==='public.app_data').map(r=>JSON.parse(r.payload_text)).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)):[{id:'22222222-2222-4222-8222-222222222222',data_type:'full_app_backup',record_key:'sunrise-villa-main',data:backup,created_at:backup.exportedAt,updated_at:backup.exportedAt}];
+assert(records.length);const source=records[0],owner='11111111-1111-4111-8111-111111111111',out=fs.mkdtempSync('/private/tmp/life-os-private-property-check-');fs.chmodSync(out,0o700);buildRelease({output:path.join(out,'candidate')});
+const token='eyJhbGciOiJIUzI1NiJ9.'+Buffer.from(JSON.stringify({sub:owner,exp:2000000000})).toString('base64url')+'.synthetic-signature';
+(async()=>{
+  const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://test').pathname.slice(1);res.setHeader('content-type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');if(name==='harness.html')return res.end('<iframe id="propertyOperationsFrame" src="property-operations.html"></iframe><script>window.LifePropertiesHost={url:"https://shrmhjulhfuodtrsqhpu.supabase.co",key:"synthetic-key",accepts:w=>document.querySelector("iframe").contentWindow===w,session:async()=>('+JSON.stringify({access_token:token,user:{id:owner,email:'synthetic@example.invalid'}})+'),account(){}};</script>');if(!/^[a-z0-9-]+\.(html|js|css)$/.test(name))return res.writeHead(404).end();res.end(fs.readFileSync(path.join(out,'candidate',name)));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const browser=await chromium.launch({headless:true});
+  try{
+    const context=await browser.newContext(),page=await context.newPage();let writes=0;
+    await context.route('https://**/*',route=>{const req=route.request(),url=new URL(req.url());if(req.method()!=='GET')writes++;const data=url.pathname==='/rest/v1/property_workspaces'?[{...source,user_id:owner,data:{...source.data,ownerId:owner}}]:[];return route.fulfill({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify(data)});});
+    await page.goto('http://127.0.0.1:'+server.address().port+'/harness.html');await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations && !document.querySelector('iframe').contentWindow.document.querySelector('#appShell').hidden,null,{timeout:15000});
+    const actual=await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export()),differences=[];
+    function compare(before,after,key){if(Array.isArray(before)){if(!Array.isArray(after)||before.length!==after.length){differences.push(key+'.length');return;}before.forEach((v,i)=>compare(v,after[i],key+'['+i+']'));}else if(before && typeof before==='object'){for(const k of Object.keys(before))compare(before[k],after?.[k],key+'.'+k);}else if(before!==after)differences.push(key);}
+    for(const key of ['bookings','documents','taxPlan','profitData','appSettings'])compare(source.data[key],actual[key],key);
+    const report={bookings:actual.bookings.length,documents:actual.documents.length,allOriginalFieldsMatch:differences.length===0,changedFieldPaths:differences,writes};
+    console.log(JSON.stringify(report));assert.equal(differences.length,0,'Original stored fields changed during opening. Review structural field paths, not raw private values.');assert.equal(writes,0,'Opening existing records must not save normalization back to cloud.');
+  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));fs.rmSync(out,{recursive:true,force:true});}
+})().catch(error=>{console.error(error.message);process.exitCode=1;});

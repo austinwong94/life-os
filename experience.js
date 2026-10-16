@@ -270,6 +270,7 @@ function renderArchivedPlannerTasks() {
 async function openRecovery() {
   let archiveError='';
   try{if(typeof recoveryVault!=='undefined' && recoveryVault)await recoveryVault.refresh();}catch(error){archiveError=error.message;}
+  try{await LifeDeviceStore.readCheckpoint();}catch(error){archiveError+=(archiveError?' ':'')+error.message;}
   closeOtherOverlays();
   let modal = document.getElementById("recoveryModal");
   if (modal) modal.remove();
@@ -284,6 +285,16 @@ async function openRecovery() {
   const body = document.createElement("div"); body.className = "recovery-body";
   if(archiveError){const warning=document.createElement('p');warning.setAttribute('role','alert');warning.textContent='Recovery archive could not be read. Original copies have not been removed. '+archiveError;body.append(warning);}
   appendPreservedCloudCopies(body);
+  const checkpoint=LifeDeviceStore.checkpointSnapshot();
+  if(checkpoint){
+    const row=document.createElement('div');row.className='recovery-row';
+    const label=document.createElement('strong');label.textContent='Last verified device save';
+    const read=document.createElement('button');read.type='button';read.className='secondary-action';read.textContent='Read verified device copy';
+    read.onclick=()=>downloadTextFile('life-os-verified-device.html',buildReadableDataArchive(checkpoint),'text/html;charset=utf-8');
+    const backup=document.createElement('button');backup.type='button';backup.className='secondary-action';backup.textContent='Download verified backup';
+    backup.onclick=()=>downloadTextFile('life-os-verified-device.json',JSON.stringify({app:'Life OS',state:checkpoint},null,2),'application/json;charset=utf-8');
+    row.append(label,read,backup);body.append(row);
+  }
   const review = renderConflictReview();
   if (review) body.append(review);
   const retainedTimers=Object.values(state.conflictResolutions || {}).filter(receipt=>receipt.kind==='automatic-timer' && receipt.comparison);
@@ -295,7 +306,7 @@ async function openRecovery() {
   }
   const copies = readLocalJsonValue(CLOUD_RECOVERY_KEY, []);
   const info = document.createElement("p");
-  info.textContent = copies.length ? "Saved before a restore, deletion, or conflicting edit. Restoring keeps cloud sync paused." : "No recovery copies yet. Your current information can be downloaded in Settings.";
+  info.textContent = copies.length ? "Saved before a restore, deletion, or conflicting edit. Restoring keeps cloud sync paused." : checkpoint ? "Your last verified device save is available above. It is separate from cloud saving and may not include unfinished writing." : "No recovery copies yet. Your current information can be downloaded in Settings.";
   body.append(info);
   const current = document.createElement("button"); current.className = "secondary-action"; current.textContent = "Download current information";
   current.onclick = exportReadableDataArchive; body.append(current);
@@ -490,6 +501,7 @@ async function applyAutomaticTimerChoices(expected) {
     if(LifeDeviceStore.pending().length)throw new Error('Another edit is still saving. Try again.');
     if(expected.some(c=>c.source==='cloud' && c.ownerId!==cloudSession?.user?.id))throw new Error('Sign in to the account that created these comparisons.');
     const saved=readStoredStateSnapshot();if(!saved)throw new Error('The saved copy could not be read. Nothing was replaced.');
+    LifeDeviceStore.requireOrder(saved,[],localMergeBase);
     const next=LifeStateMerge.resolveAutomaticTimerConflicts(saved,expected);
     if(!LifeStateMerge.equal(saved.boards,next.boards))throw new Error('Record preservation check failed. Nothing was replaced.');
     // The complete original comparisons travel in the same atomic write as
@@ -497,7 +509,11 @@ async function applyAutomaticTimerChoices(expected) {
     if(!writeLocalJson(STORAGE_KEY,next,{silent:true}))throw new Error('The retained comparisons could not be saved. Nothing was resolved.');
   });
   if(!await flushDeviceWrites())throw new Error('Review was stored but saving needs attention. Keep this tab open.');
-  if(!state.syncConflicts.length){setSaveStatus('Saved on device, checking cloud','saving');queueCloudSave({immediate:true});}
+  if(!state.syncConflicts.length){
+    const syncing=Boolean(cloudSession && cloudSaveEnabled && !PREVIEW_MODE && !isRestoreSyncPaused());
+    setSaveStatus(syncing?'Saved on device, checking cloud':'Saved on device',syncing?'saving':'local');
+    if(syncing)queueCloudSave({immediate:true});
+  }
 }
 
 async function applyConflictTextChoice(conflict,expected,text) {
@@ -514,6 +530,7 @@ async function applyConflictChoice(conflict,expected,choice,resolve) {
     if(LifeDeviceStore.pending().length)throw new Error('Another edit is still saving. Try Save choice again.');
     if(conflict.source==='cloud' && cloudSession?.user?.id!==conflict.ownerId)throw new Error('Sign in to the account that created this cloud comparison.');
     const saved=readStoredStateSnapshot();if(!saved)throw new Error('The saved copy could not be read. Nothing was replaced.');
+    LifeDeviceStore.requireOrder(saved,[],localMergeBase);
     const next=resolve(saved,conflict,expected,choice);
     if (conflict.kind==='planner-task') {
       const board=next.boards.find(board=>board.id===conflict.segments[1]);
@@ -671,7 +688,7 @@ function initializeExperience() {
   mountResponsiveComposer();
   restoreTabBoardSelection();
   cloudMergeBase = loadCloudMergeBase();
-  LifeDeviceStore.configure(commitDeviceWrites);
+  LifeDeviceStore.configure(commitDeviceWrites,{readSnapshot:readStoredStateSnapshot,checkpoint:LifeDeviceCheckpoint.create({name:LifeStorageScope.key('life-os-device-checkpoint-v1')})});
   if(typeof initializeRecoveryVault==='function')initializeRecoveryVault();
   if (!corruptLocalStateDetected) flushDeviceWrites();
   cloudConflictPending = Boolean(state.syncConflicts?.length);
@@ -690,6 +707,7 @@ function initializeExperience() {
   document.getElementById("calendarModeButton").onclick = () => setWorkspaceMode("calendar");
   document.getElementById("prioritiesModeButton").onclick = () => setWorkspaceMode("priorities");
   document.getElementById("moneyModeButton").onclick = () => setWorkspaceMode("money");
+  document.getElementById("recordsModeButton").onclick = () => setWorkspaceMode("records");
   document.getElementById("weeklyReviewButton").onclick = () => {activeReportType = "progress"; openReportsModal();};
   elements.visibilityControl.closest(".field").hidden = true;
   elements.visibilityLabel.textContent = "Personal board";
@@ -706,8 +724,8 @@ function initializeExperience() {
   const templates = document.createElement("button"); templates.type = "button"; templates.className = "secondary-action"; templates.textContent = "Browse board templates";
   templates.onclick = () => openTemplateModal(); elements.boardPanel.append(templates);
   setSaveStatus(corruptLocalStateDetected ? "Recovery needed - original protected" : cloudConflictPending ? "Changes need review" : isRestoreSyncPaused() ? "Restored on device - cloud paused" : cloudSession ? "Saved on device - checking cloud" : "Saved on device", corruptLocalStateDetected || cloudConflictPending ? "error" : "local");
-  window.addEventListener("online", () => {if (cloudSaveEnabled) queueCloudSave({immediate: true});});
-  window.addEventListener("offline", () => setSaveStatus(lastLocalSaveOk ? "Offline - saved on device" : "Offline - export your draft", lastLocalSaveOk ? "local" : "error"));
+  window.addEventListener("online", resumeCloudSync);
+  window.addEventListener("offline", pauseCloudRetry);
   initializeDailyWorkspace();
 }
 
@@ -739,7 +757,7 @@ function restoreTabBoardSelection() {
 
 function setWorkspaceMode(mode) {
   if (isProtectedTextEditActive()) document.activeElement?.blur();
-  state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities", "money"].includes(mode) ? mode : "board";
+  state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties"].includes(mode) ? mode : "board";
   state.activeFilter = "all"; state.focusFilter = "all"; state.searchQuery = ""; state.activeCategories = [];
   renderCardsOnly({force: true}); renderBoardMeta(); saveState({touch: false, skipCloud: true});
 }
@@ -770,6 +788,7 @@ function renderProgressReport(range) {
 function commitDeviceWrites(entries) {
   if (corruptLocalStateDetected) return false;
   let saved = readStoredStateSnapshot() || localMergeBase;
+  entries=LifeDeviceStore.requireOrder(saved,entries,localMergeBase);
   const hadTrackedConflicts=Boolean(state.syncConflicts?.length || saved.syncConflicts?.length);
   let resolutions={...(saved.conflictResolutions || {})};
   let conflicts=LifeStateMerge.registerConflicts(saved.syncConflicts || [],resolutions,createId);
@@ -813,5 +832,5 @@ function commitDeviceWrites(entries) {
 
 async function flushDeviceWrites() {
   try {return await LifeDeviceStore.flush() !== false && lastLocalSaveOk;}
-  catch(error) {lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};setSaveStatus("Pending copy kept - saving needs attention", "error"); renderCloudStatus(error.message); return false;}
+  catch(error) {lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};setSaveStatus(error.name==='DeviceCommitPendingError'?"Pending copy kept - waiting for another tab":"Pending copy kept - saving needs attention", "error"); renderCloudStatus(error.message); return false;}
 }

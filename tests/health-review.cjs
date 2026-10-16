@@ -1,11 +1,18 @@
-const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const browsers=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const URL=process.env.TEST_URL || 'http://127.0.0.1:5180/';
+assert(['localhost','127.0.0.1'].includes(new global.URL(URL).hostname),'Recovery fixtures must stay in disposable local profiles');
 const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-test-results';
 fs.mkdirSync(out,{recursive:true});const results=[];
 async function seed(page,{conflict=true,type='food-item',archived=false}={}) {
-  await page.goto(URL+'__test_reset__');await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();});await page.goto(URL+'?preview=1');
+  await page.goto(URL+'__test_reset__');await page.evaluate(async()=>{
+    localStorage.clear();sessionStorage.clear();
+    // A repeated fixture must reset the verified IDB copy as well as localStorage.
+    for(const {name} of await indexedDB.databases())await new Promise((resolve,reject)=>{
+      const request=indexedDB.deleteDatabase(name);request.onsuccess=resolve;request.onerror=()=>reject(request.error);request.onblocked=()=>reject(new Error('Fixture database is still open'));
+    });
+  });await page.goto(URL+'?preview=1&liveReload=0');
   await page.evaluate(async({conflict,type,archived})=>{
     const food=makeCard({type:'food',title:'Meals',category:'Health'});food.id='food';
     const rice=food.foodLibrary.find(f=>f.id==='rice-white-cooked');
@@ -51,7 +58,7 @@ async function choose(page,label='Other tab version') {
   await page.getByRole('button',{name:'Save health version',exact:true}).click();
 }
 (async()=>{
-  const browser=await chromium.launch({headless:true});
+  const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name,fn) {
     const context=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',route=>route.fulfill({status:503,body:'No external services in tests'}));
@@ -84,8 +91,12 @@ async function choose(page,label='Other tab version') {
     }
   });
   await run('A newer quantity blocks stale review; refresh clears old choice and consent',async page=>{
-    await seed(page);await page.evaluate(async()=>{window.healthRecord(state).amount=250;reconcileActiveBoard();saveState({skipCloud:true});await flushDeviceWrites();});
-    await choose(page);await page.getByText(/health record changed after you opened/).waitFor();assert.equal((await current(page)).amount,250);
+    await seed(page);const original=await page.evaluate(()=>{const conflict=LifeStateMerge.copy(state.syncConflicts[0]);return {conflict,expected:LifeStateMerge.inspectHealthConflict(getStateForStorage(),conflict).current};});
+    await page.evaluate(async()=>{const card=state.cards.find(c=>c.id==='food');getFoodItemById(card,'2026-09-08','meal','rice-entry').amount=250;saveFoodCard(card,'2026-09-08');await flushDeviceWrites();});
+    // A device commit may refresh the visible form. Submit the captured old
+    // comparison to verify the write guard, not a newly rendered comparison.
+    const refusal=await page.evaluate(async({conflict,expected})=>{try{await applyConflictChoice(conflict,expected,conflict.remote,LifeStateMerge.resolveHealthConflict);return 'Unexpected success';}catch(error){return error.message;}},original);
+    assert.match(refusal,/health record changed after you opened/);assert.equal((await current(page)).amount,250);
     await page.getByRole('button',{name:'Refresh comparison',exact:true}).click();await page.getByText(/Current entry refreshed/).waitFor();
     assert.equal(await page.getByRole('radio',{checked:true}).count(),0);assert.equal(await page.getByRole('button',{name:'Save health version',exact:true}).isDisabled(),true);
     await choose(page,'Current entry');await page.getByText(/Health version saved/).waitFor();assert.equal((await current(page)).amount,250);
@@ -94,7 +105,7 @@ async function choose(page,label='Other tab version') {
     for(const key of ['recovery','primary']){
       await seed(page);const before=await current(page);
       await page.evaluate(key=>{window.nativeSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(name,value){if(name===(key==='recovery'?CLOUD_RECOVERY_KEY:STORAGE_KEY))throw new DOMException('Injected full storage','QuotaExceededError');return window.nativeSetItem.call(this,name,value);};},key);
-      await choose(page);await page.getByText(key==='recovery'?/recovery copy could not be saved/:/choice could not be saved/).waitFor();assert.deepEqual(await current(page),before);assert.equal(await page.evaluate(()=>state.syncConflicts.length),1);
+      await choose(page);await page.getByText(key==='recovery'?/recovery copy could not be saved/:/choice could not be saved|Saving needs attention/).waitFor();assert.deepEqual(await current(page),before);assert.equal(await page.evaluate(()=>state.syncConflicts.length),1);
       await page.evaluate(()=>Storage.prototype.setItem=window.nativeSetItem);
     }
   });

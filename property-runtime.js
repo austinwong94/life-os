@@ -1,0 +1,10621 @@
+(async function(){
+'use strict';
+try {
+const propertySession=await window.PropertyHost.session();
+const localStorage=await LifePropertyCache.open(propertySession.user.id);
+let propertyOriginalFields={};
+const VillaBackup = (() => {
+  const FORMAT = 'sunrise-villa-encrypted-backup';
+  const ITERATIONS = 600000;
+  const MAX_BYTES = 64 * 1024 * 1024;
+  const MAX_FILE_BYTES = 90 * 1024 * 1024;
+  const encoder = new TextEncoder();
+  const context = encoder.encode('Sunrise Villa encrypted backup v1');
+
+  function cryptoApi() {
+    if (!globalThis.crypto?.subtle) throw new Error('Encryption is unavailable in this browser. Open the HTTPS website in a supported browser. No unencrypted file was created.');
+    return globalThis.crypto;
+  }
+  function base64(bytes) {
+    let result = '';
+    for (let i = 0; i < bytes.length; i += 16384) result += String.fromCharCode(...bytes.subarray(i, i + 16384));
+    return btoa(result);
+  }
+  function unbase64(value) {
+    if (typeof value !== 'string' || value.length > MAX_FILE_BYTES || value.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) throw new Error('Invalid encrypted backup encoding.');
+    const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+    const bytes = new Uint8Array(value.length / 4 * 3 - padding);
+    let offset = 0;
+    for (let i = 0; i < value.length; i += 16384) {
+      const chunk = value.slice(i, i + 16384);
+      const decoded = atob(chunk);
+      if (btoa(decoded) !== chunk) throw new Error('Invalid encrypted backup encoding.');
+      for (let j = 0; j < decoded.length; j += 1) bytes[offset++] = decoded.charCodeAt(j);
+    }
+    return bytes;
+  }
+  function isEncrypted(value) { return value?.format === FORMAT; }
+  function inspect(value) {
+    if (!isEncrypted(value) || value.version !== 1 || value.kdf?.name !== 'PBKDF2' || value.kdf.hash !== 'SHA-256' || value.kdf.iterations !== ITERATIONS
+      || value.cipher?.name !== 'AES-GCM' || value.cipher.bits !== 256 || value.cipher.tagLength !== 128) {
+      throw new Error('Unsupported encrypted backup format. Update the application before opening this file.');
+    }
+    if (value.kdf.salt?.length !== 24 || value.cipher.iv?.length !== 16) throw new Error('Invalid encrypted backup salt or nonce.');
+    const salt = unbase64(value.kdf.salt);
+    const iv = unbase64(value.cipher.iv);
+    if (salt.length !== 16 || iv.length !== 12 || typeof value.ciphertext !== 'string' || value.ciphertext.length > Math.ceil((MAX_BYTES + 16) / 3) * 4) throw new Error('Invalid encrypted backup size or parameters.');
+    return { salt, iv };
+  }
+  async function derive(password, salt, usages) {
+    if (typeof password !== 'string' || !password.length || password.length > 1024) throw new Error('Enter a backup password between 1 and 1,024 characters.');
+    const material = encoder.encode(password);
+    try {
+      const key = await cryptoApi().subtle.importKey('raw', material, 'PBKDF2', false, ['deriveKey']);
+      return await cryptoApi().subtle.deriveKey({ name: 'PBKDF2', salt, iterations: ITERATIONS, hash: 'SHA-256' }, key, { name: 'AES-GCM', length: 256 }, false, usages);
+    } finally { material.fill(0); }
+  }
+  async function encrypt(data, password) {
+    if (typeof password !== 'string' || password.length < 14 || password.length > 1024) throw new Error('Use a backup passphrase of at least 14 characters (up to 1,024).');
+    const api = cryptoApi();
+    const plaintext = encoder.encode(JSON.stringify(data));
+    try {
+      if (plaintext.length > MAX_BYTES) throw new Error('This backup exceeds the 64 MB encryption limit. Use a database backup for larger archives.');
+      const salt = api.getRandomValues(new Uint8Array(16));
+      const iv = api.getRandomValues(new Uint8Array(12));
+      const key = await derive(password, salt, ['encrypt']);
+      const ciphertext = await api.subtle.encrypt({ name: 'AES-GCM', iv, tagLength: 128, additionalData: context }, key, plaintext);
+      return { format: FORMAT, version: 1, kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: ITERATIONS, salt: base64(salt) },
+        cipher: { name: 'AES-GCM', bits: 256, tagLength: 128, iv: base64(iv) }, ciphertext: base64(new Uint8Array(ciphertext)) };
+    } finally { plaintext.fill(0); }
+  }
+  async function decrypt(envelope, password) {
+    const { salt, iv } = inspect(envelope);
+    const ciphertext = unbase64(envelope.ciphertext);
+    if (ciphertext.length < 16 || ciphertext.length > MAX_BYTES + 16) throw new Error('Invalid encrypted backup size.');
+    const key = await derive(password, salt, ['decrypt']);
+    let plaintext;
+    try {
+      plaintext = new Uint8Array(await cryptoApi().subtle.decrypt({ name: 'AES-GCM', iv, tagLength: 128, additionalData: context }, key, ciphertext));
+      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plaintext));
+    } catch { throw new Error('The password is incorrect or this backup is damaged. No records were changed.'); }
+    finally { plaintext?.fill(0); }
+  }
+  return Object.freeze({ encrypt, decrypt, inspect, isEncrypted, MAX_FILE_BYTES });
+})();
+
+if (typeof module !== 'undefined' && module.exports) module.exports = VillaBackup;
+
+;
+/* Pure financial helpers. Legacy totals remain unchanged until explicitly reconciled. */
+const VillaLedger = (() => {
+  const cents = value => Math.round((Number(value) || 0) * 100);
+  const amount = value => value / 100;
+  function normalize(entry) {
+    return {
+      ...entry,
+      id: String(entry.id || crypto.randomUUID()),
+      kind: ['payment', 'opening', 'adjustment'].includes(entry.kind) ? entry.kind : 'payment',
+      amountSen: Number.isSafeInteger(entry.amountSen) ? entry.amountSen : cents(entry.amount),
+      originalAmountSen: Number.isSafeInteger(entry.originalAmountSen) ? entry.originalAmountSen : Number.isSafeInteger(entry.amountSen) ? entry.amountSen : cents(entry.amount),
+      date: String(entry.date || ''),
+      bank: String(entry.bank || ''),
+      mode: String(entry.mode || ''),
+      reference: String(entry.reference || ''),
+      note: String(entry.note || ''),
+      receiptId: String(entry.receiptId || ''),
+      createdAt: String(entry.createdAt || new Date().toISOString()),
+      voidedAt: String(entry.voidedAt || ''),
+    };
+  }
+  function entries(booking) {
+    if (Array.isArray(booking.paymentLedger)) return booking.paymentLedger.map(normalize);
+    return cents(booking.paid) ? [normalize({
+      id: 'legacy-' + booking.id, kind: 'opening', amountSen: cents(booking.paid),
+      note: 'Previously recorded received total; transaction details not yet reconciled',
+    })] : [];
+  }
+  const total = ledger => amount(ledger.reduce((sum, entry) => sum + (entry.voidedAt ? 0 : entry.amountSen), 0));
+  const received = booking => Array.isArray(booking.paymentLedger) ? total(entries(booking)) : amount(cents(booking.paid));
+  function withEntries(booking, ledger) {
+    const normalized = ledger.map(normalize);
+    if (normalized.some(entry => !Number.isSafeInteger(entry.amountSen)) || cents(total(normalized)) < 0) throw new Error('Invalid payment total.');
+    if (new Set(normalized.map(entry => entry.id)).size !== normalized.length) throw new Error('Duplicate payment ID.');
+    return { ...booking, paymentLedger: normalized, paid: total(normalized) };
+  }
+  function setTotal(booking, value, date = '', kind = 'adjustment') {
+    const ledger = entries(booking);
+    const difference = cents(value) - cents(total(ledger));
+    if (difference) ledger.push(normalize({
+      amountSen: difference, kind, date,
+      note: kind === 'payment' ? 'Marked fully received' : 'Manual received-total correction',
+    }));
+    return withEntries(booking, ledger);
+  }
+  function append(booking, payment) {
+    const entry = normalize(payment);
+    if (entry.amountSen <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) throw new Error('Enter a positive payment amount and transaction date.');
+    const ledger = entries(booking);
+    if (ledger.some(item => item.id === entry.id)) throw new Error('This payment is already recorded.');
+    return withEntries(booking, [...ledger, entry]);
+  }
+  function reconcile(booking, payments, receiptId) {
+    const ledger = entries(booking);
+    const incoming = payments.map(payment => normalize({ ...payment, receiptId }));
+    if (incoming.some(entry => entry.amountSen <= 0 || !entry.date)) throw new Error('Every transfer needs an amount and date.');
+    const fresh = incoming.filter(entry => !ledger.some(existing => existing.id === entry.id));
+    const incomingTotal = fresh.reduce((sum, entry) => sum + entry.amountSen, 0);
+    const openingTotal = ledger.filter(entry => !entry.voidedAt && entry.kind === 'opening').reduce((sum, entry) => sum + entry.amountSen, 0);
+    if (incomingTotal > openingTotal) throw new Error('These transfers exceed the unreconciled received total. Record new money separately.');
+    let remaining = incomingTotal;
+    const next = ledger.map(entry => {
+      if (entry.voidedAt || entry.kind !== 'opening' || !remaining) return entry;
+      const used = Math.min(entry.amountSen, remaining);
+      remaining -= used;
+      return { ...entry, amountSen: entry.amountSen - used };
+    });
+    return withEntries(booking, [...next, ...fresh]);
+  }
+  return { cents, amount, normalize, entries, total, received, withEntries, setTotal, append, reconcile };
+})();
+
+;
+let cloudCopyReview = null;
+
+function cloudCopyVersions(rows) {
+  return rows.map(row => ({ id: row.id, updatedAt: row.updated_at }));
+}
+
+function clearCloudCopyReview() {
+  cloudCopyReview = null;
+  const dialog = document.querySelector('#cloudCopiesDialog');
+  if (dialog?.open) dialog.close();
+  dialog?.replaceChildren();
+  renderCloudCopyAction();
+}
+
+function inspectCloudCopies(rows) {
+  if (!Array.isArray(rows)) throw new Error('Unexpected cloud response. Your records were not replaced.');
+  clearCloudCopyReview();
+  if (!rows.length) return null;
+  let selected = null;
+  let lastError;
+  for (const row of rows) {
+    if (row?.data?.ownerId && row.data.ownerId !== cloudUser.id) {
+      throw Object.assign(new Error('The cloud workspace owner does not match this account. Nothing was replaced.'), { pauseSaving: true });
+    }
+    try {
+      if (!row?.id || typeof row.updated_at !== 'string' || !row.updated_at) throw new Error('The cloud record has no valid save version. Nothing was replaced.');
+      if (!row.data) throw new Error('The cloud record has no workspace data. Nothing was replaced.');
+      prepareRestoreData(row.data);
+      if (!selected) selected = row;
+    } catch (error) { lastError = error; }
+  }
+  if (!selected) throw Object.assign(lastError || new Error('No valid saved workspace was found.'), { pauseSaving: true });
+  if (rows.length > 1) {
+    const otherRows = cloudCopyVersions(rows.filter(row => row.id !== selected.id));
+    const choice = selected.data.appSettings?.cloudWorkspaceSelection;
+    const approved = choice?.rowId === selected.id && JSON.stringify(choice.otherRows) === JSON.stringify(otherRows);
+    cloudCopyReview = { ownerId: cloudUser.id, generation: authGeneration, activeId: selected.id,
+      rows: JSON.parse(JSON.stringify(rows)), needsReview: !approved };
+  }
+  return selected;
+}
+
+function renderCloudCopyAction() {
+  const button = document.querySelector('#reviewCloudCopies');
+  if (button) button.hidden = !cloudCopyReview?.needsReview || !cloudReady || cloudCopyReview.ownerId !== cloudUser?.id;
+}
+
+function openCloudCopyReview() {
+  const review = cloudCopyReview;
+  if (!review || !cloudReady || review.ownerId !== cloudUser?.id) return;
+  const dialog = document.querySelector('#cloudCopiesDialog');
+  dialog.innerHTML = `<header class="booking-workspace-head"><div><h2 id="cloudCopiesTitle">Review saved copies</h2><p>Your two most recent cloud copies</p></div><button type="button" class="ghost-button" data-copies-close>Close</button></header>
+    <p class="workspace-notice">The latest valid cloud copy is marked below. Pending local edits are kept. No copies have been deleted or merged. Download each copy before confirming; older copies remain in Supabase.</p>
+    <div class="workspace-table-scroll"><table class="workspace-table"><thead><tr><th>Saved copy</th><th>Last updated</th><th>Bookings</th><th>Documents</th><th>Expenses</th><th>Backup</th></tr></thead><tbody>${review.rows.map((row, index) => {
+      const counts = recoveryCounts(row.data || {});
+      return `<tr><th scope="row">${row.id === review.activeId ? 'Latest valid copy' : 'Other saved copy'}</th><td data-label="Updated">${escapeHtml(shortDateTimeLabel(row.updated_at))}</td><td data-label="Bookings">${counts.bookings}</td><td data-label="Documents">${counts.documents}</td><td data-label="Expenses">${counts.expenses}</td><td><button type="button" class="ghost-button compact" data-copy-download="${index}">Download copy</button></td></tr>`;
+    }).join('')}</tbody></table></div>
+    <p class="recovery-fineprint">Downloads contain private records and receipt files. Store them securely. Confirming saves future changes to the open workspace only; it does not combine any records from the other copy.</p>
+    <label class="recovery-option"><input type="checkbox" id="cloudCopiesConfirmed" /> I have checked the open workspace and want to continue with this copy</label>
+    <p id="cloudCopiesStatus" role="status"></p><div class="workspace-actions"><button type="button" class="ghost-button" data-copies-close>Not now</button><button type="button" class="primary-button" id="confirmCloudCopy" disabled>Use this workspace</button></div>`;
+  if (!dialog.open) dialog.showModal();
+}
+
+async function confirmCloudCopy() {
+  const review = cloudCopyReview;
+  const status = document.querySelector('#cloudCopiesStatus');
+  const button = document.querySelector('#confirmCloudCopy');
+  if (!review || !document.querySelector('#cloudCopiesConfirmed')?.checked || button?.disabled) return;
+  button.disabled = true;
+  const stillCurrent = () => cloudCopyReview === review && cloudReady && cloudUser?.id === review.ownerId && authGeneration === review.generation;
+  try {
+    if (cloudLoadPromise || cloudSavePromise) throw new Error('Wait for the current cloud request to finish, then try again.');
+    const active = review.rows.find(row => row.id === review.activeId);
+    if (!stillCurrent()) return;
+    if (cloudRecordId !== active.id || cloudKnownUpdatedAt !== active.updated_at) throw new Error('This device also has unsaved changes from a different version. Download your current backup, then use Load cloud copy before confirming.');
+    status.textContent = 'Checking that neither saved copy has changed...';
+    const { data, error } = await supabaseClient.from('app_data').select('id, updated_at')
+      .eq('data_type', CLOUD_DATA_TYPE).eq('record_key', CLOUD_RECORD_KEY).eq('user_id', review.ownerId)
+      .order('updated_at', { ascending: false }).order('id', { ascending: false }).limit(2);
+    if (!stillCurrent()) return;
+    if (error) throw error;
+    if (!Array.isArray(data) || JSON.stringify(cloudCopyVersions(data)) !== JSON.stringify(cloudCopyVersions(review.rows))) {
+      throw new Error('The cloud copies changed while you were reviewing. Close this window and use Load cloud copy to review the latest versions.');
+    }
+    appSettings = { ...appSettings, cloudWorkspaceSelection: { rowId: active.id, otherRows: cloudCopyVersions(review.rows.filter(row => row.id !== active.id)) } };
+    review.needsReview = false;
+    cloudConflict = false;
+    saveAppSettings();
+    const saved = await saveCloudSnapshot();
+    if (!stillCurrent()) return;
+    if (!saved) {
+      status.textContent = 'Your selection has not reached the cloud yet. Keep this page open and use Retry saving. Other copies have not been changed.';
+      return;
+    }
+    document.querySelector('#cloudCopiesDialog').close();
+    renderAll();
+  } catch (error) {
+    if (stillCurrent()) status.textContent = error.message || 'Could not check the saved copies. Nothing was replaced.';
+  } finally {
+    if (stillCurrent()) button.disabled = false;
+    renderCloudCopyAction();
+  }
+}
+
+function initializeCloudCopyReview() {
+  const action = document.createElement('button');
+  action.type = 'button';
+  action.id = 'reviewCloudCopies';
+  action.className = 'primary-button compact';
+  action.textContent = 'Review saved copies';
+  action.hidden = true;
+  action.addEventListener('click', openCloudCopyReview);
+  document.querySelector('#syncNotice .heading-actions')?.prepend(action);
+  const dialog = document.createElement('dialog');
+  dialog.id = 'cloudCopiesDialog';
+  dialog.className = 'booking-workspace restore-preview';
+  dialog.setAttribute('aria-labelledby', 'cloudCopiesTitle');
+  document.body.append(dialog);
+  dialog.addEventListener('change', () => { document.querySelector('#confirmCloudCopy').disabled = !document.querySelector('#cloudCopiesConfirmed').checked; });
+  dialog.addEventListener('click', event => {
+    if (event.target.closest('[data-copies-close]')) dialog.close();
+    if (event.target.closest('#confirmCloudCopy')) confirmCloudCopy();
+    const download = event.target.closest('[data-copy-download]');
+    if (download && cloudReady && cloudCopyReview?.ownerId === cloudUser?.id) {
+      const row = cloudCopyReview.rows[Number(download.dataset.copyDownload)];
+      if (row?.data) downloadJsonFile('sunrise-villa-cloud-copy-' + (Number(download.dataset.copyDownload) + 1) + '-' + isoDate(new Date()) + '.json', row.data);
+    }
+  });
+}
+
+initializeCloudCopyReview();
+
+;
+const STORAGE_KEY = "sunrise-villa-bookings-v1";
+const TAX_PLAN_KEY = "sunrise-villa-tax-plan-v1";
+const DOCUMENTS_KEY = "sunrise-villa-documents-v1";
+const PROFIT_KEY = "sunrise-villa-profit-v1";
+const SETTINGS_KEY = "sunrise-villa-settings-v1";
+const RECOVERY_KEY = "sunrise-villa-recovery-v1";
+const RECOVERY_SESSION_KEY = "sunrise-villa-recovery-session-v1";
+const MAX_RECOVERY_SNAPSHOTS = 8;
+const SUPABASE_URL = window.PropertyHost.url;
+const SUPABASE_PUBLISHABLE_KEY = window.PropertyHost.key;
+const CLOUD_DATA_TYPE = "full_app_backup";
+const CLOUD_RECORD_KEY = "sunrise-villa-main";
+const APP_VERSION = "2026.09.24";
+
+// --- "Keep me signed in" storage adapter (the only user-approved edit to the frozen auth layer) ---
+// Routes the Supabase session token to localStorage (persists across browser restarts) when the
+// "keep me signed in" box is checked, or sessionStorage (clears on browser close) when not.
+// No new storage key is introduced: the default is inferred from where an existing token already lives.
+let svRememberSession = true;
+try {
+  const svInLocal = Object.keys(window.localStorage).some((k) => k.includes("-auth-token"));
+  const svInSession = Object.keys(window.sessionStorage).some((k) => k.includes("-auth-token"));
+  if (svInSession && !svInLocal) svRememberSession = false;
+} catch (_) {}
+const svAuthStorage = {
+  getItem(key) {
+    try {
+      return window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  },
+  setItem(key, value) {
+    try {
+      const primary = svRememberSession ? window.localStorage : window.sessionStorage;
+      const secondary = svRememberSession ? window.sessionStorage : window.localStorage;
+      primary.setItem(key, value);
+      secondary.removeItem(key);
+    } catch (_) {}
+  },
+  removeItem(key) {
+    try {
+      window.localStorage.removeItem(key);
+      window.sessionStorage.removeItem(key);
+    } catch (_) {}
+  },
+};
+
+let supabaseClient = null;
+let cloudUser = null;
+let cloudRecordId = "";
+let cloudKnownUpdatedAt = ""; // last updated_at we loaded/saved — used for optimistic-lock conflict detection
+let cloudSaveTimer = null;
+let isRestoringCloudData = false;
+let cloudReady = false;
+let cloudStatusMode = "offline";
+let cloudStatusMessage = "";
+let cloudSavePromise = null;
+let cloudLoadPromise = null;
+let cloudRevision = 0;
+let cloudDirty = false;
+let cloudConflict = false;
+let authGeneration = 0;
+const SYNC_STATE_KEY = "sunrise-villa-sync-state-v1";
+
+const issuers = {
+  "Sunrise Villa Ventures": {
+    code: "SVV",
+    registration: "IP0601606-K (202403277555)",
+    address: "59, Jalan Rimba 2, Taman Puncak Rimba, 28750 Bentong, Pahang.",
+    contact: "+6016-2461128",
+    email: "sunrisevilla28@gmail.com",
+  },
+  "Windmill Villa Ventures": {
+    code: "WVV",
+    registration: "",
+    address: "",
+    contact: "",
+    email: "",
+  },
+};
+
+// Booking and commitment records load from the signed-in owner's saved data.
+// Never embed guest details or private loan amounts in the public site bundle.
+const defaultCommitments = [];
+
+const GUIDE_LINK = "https://bit.ly/sunrisevilla-guest-guide";
+const taxExpenseCategories = [
+  // Operating (revenue) — deductible under s33(1). These match the AI scanner + TAX_RULES.
+  "Housekeeping/Cleaning",
+  "Laundry",
+  "Consumables/Supplies",
+  "Utilities",
+  "Internet/WiFi",
+  "Repairs & Maintenance",
+  "OTA/Agent Commission",
+  "Payment/Bank Fees",
+  "Software Subscription",
+  "Marketing/Advertising",
+  "Insurance",
+  "Quit Rent & Assessment",
+  "Professional Fees",
+  "Loan Interest",
+  // Capital — these become a Capital Asset (claim capital allowance over years, not a deduction).
+  "Furniture & Fittings",
+  "Appliances/Electronics",
+  "Computer/ICT",
+  "Smart Lock/Security",
+  "Improvement/Renovation",
+  // Restricted / not deductible
+  "Entertainment",
+  "Vehicle/Transport",
+  "Legal Fees",
+  "Loan Principal",
+  "Pre-commencement/Setup",
+  "Private/Domestic",
+  "Other",
+  // Legacy labels — kept so older records keep their saved category (do not remove).
+  "Housekeeping",
+  "Maintenance",
+  "Electricity & Water",
+  "Groceries",
+  "Gas",
+  "Supplies",
+  "Repairs",
+  "Credit Card / Loans",
+  "Bank Charges",
+  "Marketing",
+  "Accounting & Tax",
+  "Licences & Fees",
+];
+
+// =============================================================================
+// MALAYSIAN TAX ENGINE (deterministic — sourced from LHDN Public Rulings + ITA
+// 1967; see tax/MALAYSIAN-TAX-RULES.md). The AI scanner only extracts + suggests
+// a category; THIS table decides the treatment. The built-in AI review pass
+// (Year Summary tab) checks the compiled year before filing, so we suggest
+// treatments and FLAG grey areas rather than guessing.
+// =============================================================================
+
+// Capital-allowance rate classes (Schedule 3). ia = initial allowance (once, in
+// acquisition YA), aa = annual allowance (each YA on original cost until written
+// off). All percentages of qualifying expenditure (QE).
+const MY_CA_RATES = {
+  "computer-ict": { ia: 40, aa: 20, label: "Computer / ICT / software", confirm: true, note: "Accelerated ICT allowance: IA 40% + AA 20% (gazette P.U.(A) 156/2018 → 328/2024 from YA2024). Confirm the split + whether a YA2027 sunset applies — the gazette is open-ended." },
+  "furniture-office": { ia: 20, aa: 10, label: "Furniture, fittings & office equipment" },
+  "plant": { ia: 20, aa: 14, label: "Plant, machinery & appliances" },
+  "motor": { ia: 20, aa: 20, label: "Motor vehicle (non-commercial)", motorCap: true, note: "QE capped: RM100k (new & cost ≤ RM150k) else RM50k." },
+  "small-value": { ia: 0, aa: 100, sva: true, label: "Small value asset (≤ RM2,000)", note: "100% in the acquisition year. Sole-proprietor aggregate cap RM20,000 per YA (PR 3/2021) — the engine flags if a year exceeds it." },
+};
+const MY_CA_CLASS_KEYS = Object.keys(MY_CA_RATES);
+
+// Expense treatment table. treatment: deduct | partial | capital | no | ask.
+//   deduct  = revenue expense, deductible (restricted to business-use %)
+//   partial = deductible but statutorily restricted (pct = % allowed, then × business-use %)
+//   capital = not a deduction; should be recorded as a Capital Asset → capital allowance
+//   no      = not deductible and no relief
+//   ask     = judgement call — excluded from the auto total, listed for the agent
+// capitalClass points at MY_CA_RATES. flag = grey-area note surfaced in the UI.
+const TAX_RULES = {
+  "Housekeeping/Cleaning": { treatment: "deduct", rule: "Operating expense — s33(1).", source: "PR 12/2018" },
+  "Laundry": { treatment: "deduct", rule: "Operating expense — s33(1).", source: "ITA s33(1)" },
+  "Consumables/Supplies": { treatment: "deduct", rule: "Consumed in earning rental income — s33(1).", source: "ITA s33(1)" },
+  "Utilities": { treatment: "deduct", rule: "Electricity / water / gas for the let property — s33(1).", source: "PR 12/2018" },
+  "Internet/WiFi": { treatment: "deduct", rule: "Guest internet — s33(1).", source: "ITA s33(1)" },
+  "Repairs & Maintenance": { treatment: "deduct", rule: "Like-for-like repair, no improvement — s33(1)(c).", source: "PR 6/2019", flag: "Deductible ONLY as a genuine repair. An upgrade/improvement, or fixing a newly-bought asset (initial repair), is capital — re-tag it." },
+  "OTA/Agent Commission": { treatment: "deduct", rule: "Cost of securing the booking — s33(1).", source: "ITA s33(1)" },
+  "Payment/Bank Fees": { treatment: "deduct", rule: "Bank / payment-gateway charges — s33(1).", source: "ITA s33(1)" },
+  "Software Subscription": { treatment: "deduct", rule: "Recurring SaaS used for the business — s33(1).", source: "ITA s33(1)" },
+  "Marketing/Advertising": { treatment: "deduct", rule: "Advertising the let — s33(1).", source: "ITA s33(1)", flag: "Allowed only if the villa is taxed as a business (Form B) and after it opened — pre-opening marketing is not deductible." },
+  "Insurance": { treatment: "deduct", rule: "Insurance on the income-producing property — s33(1).", source: "PR 12/2018" },
+  "Quit Rent & Assessment": { treatment: "deduct", rule: "Property outgoings — s33(1).", source: "PR 12/2018" },
+  "Professional Fees": { treatment: "deduct", rule: "Accounting / secretarial / tax-filing — s33(1).", source: "P.U.(A) 162/2022", flag: "Secretarial + tax-filing fees share a combined cap of RM15,000 per YA." },
+  "Loan Interest": { treatment: "deduct", rule: "Interest on borrowings used for the business — s33(1)(a).", source: "PR 2/2011", flag: "Only the INTEREST portion. Split interest vs principal from the bank statement." },
+  "Furniture & Fittings": { treatment: "capital", capitalClass: "furniture-office", rule: "Durable asset → capital allowance (or 100% if ≤ RM2,000 each).", source: "Sch 3; PR 3/2021" },
+  "Appliances/Electronics": { treatment: "capital", capitalClass: "plant", rule: "Plant → capital allowance (or 100% if ≤ RM2,000 each).", source: "Sch 3; PR 12/2014" },
+  "Computer/ICT": { treatment: "capital", capitalClass: "computer-ict", rule: "ICT → accelerated CA, IA 40% + AA 20%. Confirm the split + any YA2027 sunset against the gazette.", source: "P.U.(A) 328/2024 (was 156/2018)" },
+  "Smart Lock/Security": { treatment: "capital", capitalClass: "plant", rule: "Durable security equipment → capital allowance (or 100% if ≤ RM2,000).", source: "Sch 3; PR 3/2021", flag: "Capital-vs-revenue is grey for cheap units — confirm before you claim it." },
+  "Improvement/Renovation": { treatment: "no", rule: "Capital improvement; ordinary accommodation building gets NO capital allowance.", source: "PR 6/2019; s39", flag: "No relief at all. Confirm repair-vs-improvement — a genuine repair would instead be deductible." },
+  "Entertainment": { treatment: "partial", pct: 50, rule: "Entertainment restricted to 50% — s39(1)(l).", source: "PR 4/2015", flag: "50% for existing customers · 100% for staff or logo gifts · 0% for potential customers. Adjust if not the default 50%." },
+  "Vehicle/Transport": { treatment: "ask", rule: "Apportion running costs to business use; commuting is private; a vehicle purchase is a capital asset.", source: "PR 5/2014", flag: "Set the business-use %. To capitalise a vehicle purchase, add it under Capital Assets as a Motor vehicle." },
+  "Legal Fees": { treatment: "ask", rule: "Recurring/trade legal = deductible; acquisition / S&P / loan-agreement legal = capital.", source: "PR 6/2006", flag: "Setup & acquisition legal fees are capital (no deduction). Confirm which this is." },
+  "Loan Principal": { treatment: "no", rule: "Capital repayment — only the interest is deductible.", source: "s39" },
+  "Pre-commencement/Setup": { treatment: "no", rule: "Pre-commencement expenditure — not deductible.", source: "PR 11/2013", flag: "Costs incurred before the villa first opened for letting are generally not deductible." },
+  "Private/Domestic": { treatment: "no", rule: "Private / domestic expense — prohibited by s39(1)(a).", source: "ITA s39(1)(a)" },
+  "Other": { treatment: "ask", rule: "Uncategorised — classify manually.", source: "—" },
+  // ---- Legacy labels (existing records) mapped to the same rules ----
+  "Housekeeping": { treatment: "deduct", rule: "Operating expense — s33(1).", source: "PR 12/2018" },
+  "Maintenance": { treatment: "deduct", rule: "Like-for-like repair, no improvement — s33(1)(c).", source: "PR 6/2019", flag: "Deductible only as a genuine repair; an improvement is capital." },
+  "Electricity & Water": { treatment: "deduct", rule: "Utilities for the let — s33(1).", source: "PR 12/2018" },
+  "Groceries": { treatment: "ask", rule: "Guest consumables = deductible; your own food = private.", source: "ITA s33(1)/s39(1)(a)", flag: "Split guest-provisioning from personal groceries — only the guest portion is deductible." },
+  "Gas": { treatment: "deduct", rule: "Utility for the let — s33(1).", source: "PR 12/2018" },
+  "Supplies": { treatment: "deduct", rule: "Consumed in earning income — s33(1).", source: "ITA s33(1)" },
+  "Repairs": { treatment: "deduct", rule: "Like-for-like repair — s33(1)(c).", source: "PR 6/2019", flag: "Deductible only as a genuine repair; improvements/initial repairs are capital." },
+  "Credit Card / Loans": { treatment: "ask", rule: "Interest deductible; principal repayment is not.", source: "s33(1)(a)/s39", flag: "Only finance INTEREST is deductible — principal is capital. Split them." },
+  "Bank Charges": { treatment: "deduct", rule: "Bank / payment charges — s33(1).", source: "ITA s33(1)" },
+  "Marketing": { treatment: "deduct", rule: "Advertising the let — s33(1).", source: "ITA s33(1)", flag: "Only post-opening, business-taxed letting." },
+  "Accounting & Tax": { treatment: "deduct", rule: "Accounting / secretarial / tax-filing — s33(1).", source: "P.U.(A) 162/2022", flag: "Secretarial + tax-filing share a combined RM15,000/YA cap." },
+  "Licences & Fees": { treatment: "deduct", rule: "Business licences, quit rent & assessment — s33(1).", source: "PR 12/2018", flag: "Government fines/penalties are NOT deductible — exclude those." },
+};
+
+function taxRuleFor(category) {
+  return TAX_RULES[category] || TAX_RULES.Other;
+}
+
+// Human label for a treatment code.
+const TREATMENT_LABEL = {
+  deduct: "Deductible",
+  partial: "Partially deductible",
+  capital: "Capital → allowance",
+  no: "Not deductible",
+  ask: "Needs review",
+};
+
+// =============================================================================
+// PER-YEAR LHDN FACT BASE (sourced; see tax/MALAYSIAN-TAX-YEARS.md). Each year's
+// rules apply to THAT YA only. Every value carries a source + confidence; values
+// with mustConfirm:true are NOT primary-confirmed and must be checked against the
+// year's own LHDN document (or his uploaded document overrides them). The engine
+// must never apply one year's rate to another year.
+// =============================================================================
+const F_ = (value, source, confidence = "high", mustConfirm = false) => ({ value, source, confidence, mustConfirm });
+
+// Things that are CONSTANT across YA2022–2027 (research engineYearSensitivity).
+const MY_TAX_CONSTANTS = {
+  normalCa: F_("IA 20%; AA general 14% / furniture & office 10% / vehicles 20%", "ITA 1967 Sch 3; PR 6/2022"),
+  smallValue: F_("RM2,000 per asset; RM20,000 aggregate per YA (sole-proprietor non-SMC cap)", "PR 3/2021; Sch 3 para 19A"),
+  secretarialCap: F_("Secretarial + tax-filing fees combined RM15,000/YA, 'incurred' basis (never the old RM5k+RM10k split)", "P.U.(A) 162/2020; 471/2021"),
+  selfRelief: F_("RM9,000 self & dependent relatives (automatic)", "LHDN reliefs"),
+  sstThreshold: F_("RM500,000 accommodation turnover (Group A) — under this you are not registered and charge no service tax", "RMCD Guide on Accommodation V3"),
+  recordRetention: F_("Keep records 7 years", "s82A ITA 1967"),
+  carryForward: F_("Unabsorbed capital allowances carry forward indefinitely; business losses 10 YAs (from YA2019)", "Sch 3 para 75; s44(5F); PR 1/2022"),
+  basis: F_("Calendar-year basis; Form B due 30 Jun (manual) / 15 Jul (e-file)", "ITA 1967"),
+  scopeGuard: F_("Sole proprietor is taxed at INDIVIDUAL graduated rates — never company SME rates (15%/17%), LLP or dividend taxes", "ITA 1967 s4(a)"),
+};
+
+// Year-VARYING values.
+const MY_YEAR_FACTBASE = {
+  2022: {
+    sstRate: F_("6% (only if SST-registered)", "P.U.(A) 213/2018"),
+    ictAca: { ia: 40, aa: 20, citation: "P.U.(A) 156/2018", ...F_("ICT accelerated: IA 40% + AA 20%", "P.U.(A) 156/2018") },
+    einvoice: F_("Exempt (regime not yet in force; sub-RM1m)", "LHDN e-Invoice FAQs"),
+    rateBands: F_("OLD individual bands (8/13/21 mid) — apply to YA2022 ONLY", "LHDN tax-rate page"),
+    reliefs: F_("Self RM9,000; lifestyle RM2,500 (incl sports); medical cap ~RM8,000; COVID extra-lifestyle RM2,500 + domestic-travel RM1,000 (LAST year)", "LHDN reliefs; Budget commentaries", "medium", true),
+    notable: F_("Last year for COVID extra-lifestyle, domestic-travel reliefs and the RM300k COVID renovation deduction (QE to 31 Dec 2022). SST 6%. OLD rate bands.", "P.U.(A) 481/2021"),
+    traps: ["RM300k COVID renovation deduction is claimable only through YA2022."],
+  },
+  2023: {
+    sstRate: F_("6% (only if SST-registered)", "P.U.(A) 213/2018"),
+    ictAca: { ia: 40, aa: 20, citation: "P.U.(A) 156/2018", ...F_("ICT accelerated: IA 40% + AA 20%", "P.U.(A) 156/2018") },
+    einvoice: F_("Exempt (sub-RM1m)", "LHDN e-Invoice FAQs"),
+    rateBands: F_("RESTRUCTURED bands (Budget 2023): mid bands cut 8→6 / 13→11 / 21→19; upper collapsed", "LHDN tax-rate page; Finance Act 2023"),
+    reliefs: F_("Self RM9,000; lifestyle RM2,500 + sports RM500; medical cap raised to RM10,000; COVID reliefs GONE", "LHDN reliefs; Budget commentaries", "medium", true),
+    notable: F_("MAJOR: individual rate bands restructured. Medical cap ~RM8,000→RM10,000. COVID reliefs + RM300k renovation expired — must NOT appear from YA2023.", "Finance Act 2023"),
+    traps: ["Do not apply YA2022 rate bands or the expired COVID reliefs to YA2023+."],
+  },
+  2024: {
+    sstRate: F_("SPLIT YEAR: 6% to 29 Feb 2024, then 8% from 1 Mar 2024 (accommodation follows the standard rate; only if SST-registered)", "P.U.(A) 64/2024", "high", false),
+    sstSplit: "2024-03-01",
+    ictAca: { ia: 40, aa: 20, citation: "P.U.(A) 328/2024 (revokes 156/2018)", ...F_("ICT accelerated: IA 40% + AA 20% — citation changes this YA, same rate", "P.U.(A) 328/2024") },
+    einvoice: F_("Exempt (sub-RM1m). Phase 1 (1 Aug 2024) is >RM100m turnover only", "LHDN e-Invoice timeline"),
+    rateBands: F_("Same restructured bands as YA2023", "LHDN tax-rate page"),
+    reliefs: F_("Self RM9,000; lifestyle RM2,500 (sports/gym removed); sports RM500→RM1,000; new dental sub-limit RM1,000", "Budget 2024 commentaries", "medium", true),
+    notable: F_("ICT & software ACA citation changes (327/2024 & 328/2024 replace 274/2019 & 156/2018) — same 40%/20%. SST accommodation rises 6%→8% on 1 Mar 2024.", "P.U.(A) 64/2024; 327/2024; 328/2024"),
+    traps: ["2024 SST is a split year (boundary 1 Mar 2024).", "ICT/software ACA citation changed — same rate, new gazette."],
+  },
+  2025: {
+    sstRate: F_("8% (only if SST-registered). The July 2025 SST expansion did NOT change accommodation", "P.U.(A) 64/2024; 172/2025", "medium", true),
+    ictAca: { ia: 40, aa: 20, citation: "P.U.(A) 328/2024", ...F_("ICT accelerated: IA 40% + AA 20% (open-ended — no gazette sunset)", "P.U.(A) 328/2024") },
+    einvoice: F_("Exempt (sub-RM1m)", "LHDN e-Invoice FAQs"),
+    rateBands: F_("Same restructured bands as YA2023", "LHDN tax-rate page"),
+    reliefs: F_("Education/medical-insurance RM3,000→RM4,000; disabled self/spouse/child raised; NEW first-time homeowner housing-loan interest relief (S&P 2025–2027)", "Budget 2025 commentaries", "medium", true),
+    notable: F_("Education/medical-insurance relief raised; disabled reliefs raised; new first-time-homeowner relief (YA2025+ only). July 2025 SST expansion did not touch accommodation.", "Budget 2025"),
+    traps: ["First-time-homeowner relief does not exist before YA2025.", "Do NOT lower accommodation SST — the 2025 expansion was other service groups."],
+  },
+  2026: {
+    sstRate: F_("8% (only if SST-registered). The 1 Jan 2026 8%→6% reduction is RENTAL/LEASING ONLY — accommodation stays 8%", "P.U.(A) 125/2026", "high", false),
+    ictAca: { ia: 40, aa: 20, citation: "P.U.(A) 328/2024", ...F_("ICT accelerated: IA 40% + AA 20% (open-ended)", "P.U.(A) 328/2024", "medium", true) },
+    einvoice: F_("Exempt — exemption threshold raised RM500k→RM1m (~Dec 2025); the planned up-to-RM1m mandatory phase was cancelled", "LHDN e-Invoice timeline (7 Dec 2025)"),
+    rateBands: F_("No change (Budget 2026 made no individual rate-band change)", "Skrine Budget 2026", "medium", true),
+    reliefs: F_("Mostly carry YA2025 values (not primary-confirmed for YA2026)", "Budget 2025 extensions", "low", true),
+    notable: F_("KEY TRAP: the 8%→6% SST cut is rental/leasing only — accommodation stays 8%. New Budget 2026 RM500k tourism-renovation deduction is MOTAC-operator-gated — a villa STR may not qualify; do NOT auto-apply.", "P.U.(A) 125/2026; Budget 2026"),
+    traps: ["The 2026 SST reduction does NOT apply to your accommodation income.", "RM500k tourism renovation deduction needs MOTAC tourism-operator registration."],
+  },
+  2027: {
+    sstRate: F_("8% assumed (accommodation untouched by the 2026 rental reduction) — confirm no later amendment", "P.U.(A) 64/2024", "medium", true),
+    ictAca: { ia: 40, aa: 20, citation: "P.U.(A) 328/2024", ...F_("ICT accelerated IA 40% + AA 20% — confirm whether any YA2027 sunset applies", "P.U.(A) 328/2024", "low", true) },
+    einvoice: F_("Exempt while <RM1m", "LHDN e-Invoice FAQs"),
+    rateBands: F_("Unconfirmed — Budget 2027 not tabled as of mid-2026", "—", "low", true),
+    reliefs: F_("Unconfirmed — Budget 2027 not tabled. Confirm all figures from YA2027 documents", "—", "low", true),
+    notable: F_("Budget 2027 not yet tabled — NO gazette/Finance Act exists. Treat YA2027 values as PROVISIONAL until the YA2027 documents are loaded.", "—", "low", true),
+    traps: ["YA2027 figures are provisional — upload the YA2027 documents before relying on them."],
+  },
+};
+
+// Per-YA cross-year change notes (what differs from the year before).
+const MY_YEAR_CHANGES = {
+  2023: ["Individual rate bands restructured (mid bands cut).", "COVID extra-lifestyle + domestic-travel reliefs and RM300k renovation deduction expired.", "Medical-expenses cap raised to RM10,000."],
+  2024: ["ICT/software accelerated-allowance gazette citation changed (327/2024 & 328/2024) — same IA 40% / AA 20% rate.", "SST on accommodation rose 6%→8% on 1 Mar 2024 (split year).", "Lifestyle scope changed; sports relief RM500→RM1,000; new dental RM1,000 sub-limit."],
+  2025: ["Education/medical-insurance relief RM3,000→RM4,000; disabled reliefs raised.", "New first-time-homeowner housing-loan interest relief.", "2% individual dividend tax (personal other-income — not the villa business)."],
+  2026: ["SST 8%→6% reduction applies to rental/leasing ONLY — accommodation stays 8%.", "E-invoice exemption raised to RM1m; planned SME mandatory phase cancelled.", "New MOTAC-gated RM500k tourism-renovation deduction."],
+  2027: ["Budget 2027 not tabled — YA2027 values provisional until its documents are loaded."],
+};
+
+// Resolve the profile for a YA: baseline fact base + his confirmed document
+// overrides (taxPlan.yearProfiles[ya].entries). Unknown years are provisional.
+function taxYearProfile(ya) {
+  const base = MY_YEAR_FACTBASE[ya];
+  const overrides = (taxPlan.yearProfiles && taxPlan.yearProfiles[ya] && Array.isArray(taxPlan.yearProfiles[ya].entries))
+    ? taxPlan.yearProfiles[ya].entries : [];
+  if (base) return { ya, known: true, constants: MY_TAX_CONSTANTS, changes: MY_YEAR_CHANGES[ya] || [], ...base, overrides };
+  // Provisional: no stored baseline for this year.
+  return {
+    ya, known: false, constants: MY_TAX_CONSTANTS, changes: [],
+    sstRate: F_("Not stored for this year — upload the YA document", "—", "low", true),
+    ictAca: { ia: 40, aa: 20, citation: "confirm", ...F_("Assumed IA 40% + AA 20% — confirm for this year", "—", "low", true) },
+    einvoice: F_("Confirm from the YA document", "—", "low", true),
+    rateBands: F_("Confirm from the YA document", "—", "low", true),
+    reliefs: F_("Confirm from the YA document", "—", "low", true),
+    notable: F_("No stored rules for this year. Upload the YA's LHDN documents so the engine can apply that year's rules.", "—", "low", true),
+    traps: ["No stored rules for this year — figures are provisional."],
+    overrides,
+  };
+}
+
+const defaultMessageTemplates = {
+  quote:
+    "Hi {guest},\n\nThanks for your interest in Sunrise Villa. Here are the payment details for your stay:\n\nBooking Details:\nCheck-in: {quoteCheckIn}\nCheck-out: {quoteCheckOut}\n\nPayment Breakdown:\nAccommodation Fee: {quoteAccommodationFee}\nCleaning Fee: {quoteCleaningFee}\nDamage Security Deposit: {quoteDamageDeposit} (Refundable)\nSpecial Discount: {quoteDiscount}\nTotal: {quoteActualCharge} + {quoteDamageDeposit}\n\nPayment Terms:\n• A 50% Deposit (Non-Refundable) + Damage Security Deposit (Refundable) are required to secure your booking.\n• Full payment must be made 28 days before arrival.\n\n{bankDetails}\n\nKindly send the transfer receipt via WhatsApp for confirmation. Thanks",
+  checkin:
+    "Hi {guest},\n\nWe are excited to welcome you to Sunrise Villa. Here are the arrival details for a smooth check-in:\n\n#Confirmation Code: {code}\n\n#Address: {address}\n\n#Google Maps Link: {mapsLink}\n\n#Finding Us: We are located right behind McDonald's at Genting Sempah R&R.\n\n#Steps to Access:\n1. Drive up the slope to the guardhouse.\n2. Show your reservation details and Confirmation Code to the guards.\n3. Fill in the required guest information at the guardhouse.\n4. Continue driving until you reach the top T-junction. Look for the coconut tree as your landmark.\n\n#Guest Guide (MUST READ): {guideLink}\n\nPlease read the guest guide before arrival. Thank you, and we look forward to hosting you.",
+  guide:
+    "Hi {guest},\n\nHere is the Sunrise Villa Guest Guide for your stay:\n\n{guideLink}\n\nPlease read it before arrival so your check-in and stay will be smooth. Thank you.",
+  reminder:
+    "Hi {guest},\n\nA friendly reminder that your stay is coming up in about a week. Here are your details again:\n\nCheck-in time: {checkinTime}\nAddress: {address}\nGoogle Maps: {mapsLink}\n\nGuest Guide (please read before arrival): {guideLink}\n\nKindly confirm your expected arrival time and final guest count. We look forward to hosting you!",
+  deposit:
+    "Hi {guest},\n\nTo confirm your booking at Sunrise Villa, kindly proceed with the deposit/payment to secure your dates:\n\n{bankDetails}\n\nKindly send the transfer receipt via WhatsApp once done. Thank you!",
+  midstay:
+    "Hi {guest},\n\nJust checking in — is everything going well with your stay at Sunrise Villa? If you need anything at all, please let us know and we'll be happy to help. Enjoy your time! 🌅",
+  review:
+    "Hi {guest},\n\nThank you so much for staying at Sunrise Villa — it was a pleasure hosting you! If you enjoyed your stay, we'd be really grateful if you could leave us a short review. It genuinely helps us a lot. Hope to welcome you back soon! 🌅",
+  inquiry:
+    "Hi {guest},\n\nThanks for your interest in Sunrise Villa! 🌅 Let me check availability for your dates and I'll get right back to you with the full details. 😊",
+};
+
+let bookings = loadBookings();
+let documents = loadDocuments();
+let profitData = loadProfitData();
+let appSettings = loadAppSettings();
+let selectedMonth = initialMonth();
+let activeView = "today";
+let pendingTaxExpenseAttachment = null;
+let removePendingTaxExpenseAttachment = false;
+
+const els = {
+  monthPicker: document.querySelector("#monthPicker"),
+  monthButtonGrid: document.querySelector("#monthButtonGrid"),
+  monthYearLabel: document.querySelector("#monthYearLabel"),
+  prevMonth: document.querySelector("#prevMonth"),
+  nextMonth: document.querySelector("#nextMonth"),
+  mobilePrevMonth: document.querySelector("#mobilePrevMonth"),
+  mobileNextMonth: document.querySelector("#mobileNextMonth"),
+  mobileMonthLabel: document.querySelector("#mobileMonthLabel"),
+  pageTitle: document.querySelector("#pageTitle"),
+  calendarGrid: document.querySelector("#calendarGrid"),
+  detailMonth: document.querySelector("#detailMonth"),
+  bookingCount: document.querySelector("#bookingCount"),
+  detailsList: document.querySelector("#detailsList"),
+  quickColumnControls: document.querySelector("#quickColumnControls"),
+  downloadQuickView: document.querySelector("#downloadQuickView"),
+  bookingRows: document.querySelector("#bookingRows"),
+  bookingsTable: document.querySelector("#bookingsTable"),
+  bookingTableTitle: document.querySelector("#bookingTableTitle"),
+  bookingColumnControls: document.querySelector("#bookingColumnControls"),
+  bookingMonthFilter: document.querySelector("#bookingMonthFilter"),
+  bookingSearch: document.querySelector("#bookingSearch"),
+  channelFilter: document.querySelector("#channelFilter"),
+  paymentFilter: document.querySelector("#paymentFilter"),
+  depositFilter: document.querySelector("#depositFilter"),
+  contactFilter: document.querySelector("#contactFilter"),
+  summaryRows: document.querySelector("#summaryRows"),
+  upcomingRows: document.querySelector("#upcomingRows"),
+  incomeChart: document.querySelector("#incomeChart"),
+  channelList: document.querySelector("#channelList"),
+  channelMixTitle: document.querySelector("#channelMixTitle"),
+  sideRevenue: document.querySelector("#sideRevenue"),
+  sideTotalToReceive: document.querySelector("#sideTotalToReceive"),
+  sideRefundPending: document.querySelector("#sideRefundPending"),
+  sideBalance: document.querySelector("#sideBalance"),
+  sideUpcomingPayments: document.querySelector("#sideUpcomingPayments"),
+  sideNights: document.querySelector("#sideNights"),
+  backupStatus: document.querySelector("#backupStatus"),
+  backupNow: document.querySelector("#backupNow"),
+  restoreBackup: document.querySelector("#restoreBackup"),
+  syncCloudNow: document.querySelector("#syncCloudNow"),
+  recoverySnapshotSelect: document.querySelector("#recoverySnapshotSelect"),
+  restoreRecoverySnapshot: document.querySelector("#restoreRecoverySnapshot"),
+  downloadRecoverySnapshot: document.querySelector("#downloadRecoverySnapshot"),
+  recoveryStatus: document.querySelector("#recoveryStatus"),
+  dataHealthStatus: document.querySelector("#dataHealthStatus"),
+  dataHealthLastSync: document.querySelector("#dataHealthLastSync"),
+  dataHealthBackup: document.querySelector("#dataHealthBackup"),
+  dataHealthRecords: document.querySelector("#dataHealthRecords"),
+  showDashboardSections: document.querySelector("#showDashboardSections"),
+  overallTitle: document.querySelector("#overallTitle"),
+  overallRevenue: document.querySelector("#overallRevenue"),
+  overallTotalToReceive: document.querySelector("#overallTotalToReceive"),
+  overallPaid: document.querySelector("#overallPaid"),
+  overallBalance: document.querySelector("#overallBalance"),
+  overallUpcomingPayments: document.querySelector("#overallUpcomingPayments"),
+  overallDepositHeld: document.querySelector("#overallDepositHeld"),
+  overallRefundPending: document.querySelector("#overallRefundPending"),
+  monthlyTitle: document.querySelector("#monthlyTitle"),
+  kpiRevenue: document.querySelector("#kpiRevenue"),
+  kpiTotalToReceive: document.querySelector("#kpiTotalToReceive"),
+  kpiPaid: document.querySelector("#kpiPaid"),
+  kpiBalance: document.querySelector("#kpiBalance"),
+  kpiDepositHeld: document.querySelector("#kpiDepositHeld"),
+  kpiRefundPending: document.querySelector("#kpiRefundPending"),
+  kpiNights: document.querySelector("#kpiNights"),
+  kpiBookings: document.querySelector("#kpiBookings"),
+  profitTitle: document.querySelector("#profitTitle"),
+  netProfitOut: document.querySelector("#netProfitOut"),
+  totalExpensesOut: document.querySelector("#totalExpensesOut"),
+  fixedCommitmentsOut: document.querySelector("#fixedCommitmentsOut"),
+  adHocExpensesOut: document.querySelector("#adHocExpensesOut"),
+  commitmentBreakdownSummary: document.querySelector("#commitmentBreakdownSummary"),
+  oneOffTotalOut: document.querySelector("#oneOffTotalOut"),
+  oneOffCostList: document.querySelector("#oneOffCostList"),
+  addOneOffCost: document.querySelector("#addOneOffCost"),
+  pnlCards: document.querySelector("#pnlCards"),
+  pnlRows: document.querySelector("#pnlRows"),
+  expenseCleaning: document.querySelector("#expenseCleaning"),
+  expenseUtilities: document.querySelector("#expenseUtilities"),
+  expenseMaintenance: document.querySelector("#expenseMaintenance"),
+  expenseSupplies: document.querySelector("#expenseSupplies"),
+  expensePlatform: document.querySelector("#expensePlatform"),
+  expenseOther: document.querySelector("#expenseOther"),
+  expenseNotes: document.querySelector("#expenseNotes"),
+  addCommitment: document.querySelector("#addCommitment"),
+  commitmentList: document.querySelector("#commitmentList"),
+  annualCommitmentRows: document.querySelector("#annualCommitmentRows"),
+  occupancyTitle: document.querySelector("#occupancyTitle"),
+  occupancyRate: document.querySelector("#occupancyRate"),
+  bookedNights: document.querySelector("#bookedNights"),
+  availableNights: document.querySelector("#availableNights"),
+  weekdayNights: document.querySelector("#weekdayNights"),
+  weekendNights: document.querySelector("#weekendNights"),
+  avgWeekdayRate: document.querySelector("#avgWeekdayRate"),
+  avgWeekendRate: document.querySelector("#avgWeekendRate"),
+  dialog: document.querySelector("#bookingDialog"),
+  form: document.querySelector("#bookingForm"),
+  dialogTitle: document.querySelector("#dialogTitle"),
+  bookingId: document.querySelector("#bookingId"),
+  channelInput: document.querySelector("#channelInput"),
+  guestTitleInput: document.querySelector("#guestTitleInput"),
+  guestInput: document.querySelector("#guestInput"),
+  contactInput: document.querySelector("#contactInput"),
+  guestEmailInput: document.querySelector("#guestEmailInput"),
+  incidentLogInput: document.querySelector("#incidentLogInput"),
+  villaInput: document.querySelector("#villaInput"),
+  statusInput: document.querySelector("#statusInput"),
+  arrivalInput: document.querySelector("#arrivalInput"),
+  nightsInput: document.querySelector("#nightsInput"),
+  nightsManualInput: document.querySelector("#nightsManualInput"),
+  checkoutEcho: document.querySelector("#checkoutEcho"),
+  revenueInput: document.querySelector("#revenueInput"),
+  paidInput: document.querySelector("#paidInput"),
+  depositAmountInput: document.querySelector("#depositAmountInput"),
+  depositPaidInput: document.querySelector("#depositPaidInput"),
+  depositRefundedInput: document.querySelector("#depositRefundedInput"),
+  airbnbEmailInput: document.querySelector("#airbnbEmailInput"),
+  airbnbAutofillBtn: document.querySelector("#airbnbAutofillBtn"),
+  airbnbAutofillStatus: document.querySelector("#airbnbAutofillStatus"),
+  excludeCalculationsInput: document.querySelector("#excludeCalculationsInput"),
+  addFromBookingsGuide: document.querySelector("#addFromBookingsGuide"),
+  messageBookingSelect: document.querySelector("#messageBookingSelect"),
+  messageGuestTitle: document.querySelector("#messageGuestTitle"),
+  messageGuestName: document.querySelector("#messageGuestName"),
+  messagePhone: document.querySelector("#messagePhone"),
+  messageSecurityCode: document.querySelector("#messageSecurityCode"),
+  messageCheckinTime: document.querySelector("#messageCheckinTime"),
+  messageAddress: document.querySelector("#messageAddress"),
+  messageMapsLink: document.querySelector("#messageMapsLink"),
+  messageGuideLink: document.querySelector("#messageGuideLink"),
+  messageBankDetails: document.querySelector("#messageBankDetails"),
+  icalSunriseUrl: document.querySelector("#icalSunriseUrl"),
+  icalWindmillUrl: document.querySelector("#icalWindmillUrl"),
+  icalSyncBtn: document.querySelector("#icalSyncBtn"),
+  icalSyncStatus: document.querySelector("#icalSyncStatus"),
+  checkinTemplateInput: document.querySelector("#checkinTemplateInput"),
+  guideTemplateInput: document.querySelector("#guideTemplateInput"),
+  quoteTemplateInput: document.querySelector("#quoteTemplateInput"),
+  quoteGuestTitle: document.querySelector("#quoteGuestTitle"),
+  quoteGuestName: document.querySelector("#quoteGuestName"),
+  quotePhone: document.querySelector("#quotePhone"),
+  quoteCheckIn: document.querySelector("#quoteCheckIn"),
+  quoteCheckOut: document.querySelector("#quoteCheckOut"),
+  quoteWeekdayNights: document.querySelector("#quoteWeekdayNights"),
+  quoteWeekendNights: document.querySelector("#quoteWeekendNights"),
+  quoteHolidayNights: document.querySelector("#quoteHolidayNights"),
+  quoteWeekdayRate: document.querySelector("#quoteWeekdayRate"),
+  quoteWeekendRate: document.querySelector("#quoteWeekendRate"),
+  quoteHolidayRate: document.querySelector("#quoteHolidayRate"),
+  quoteCleaningFee: document.querySelector("#quoteCleaningFee"),
+  quoteDamageDeposit: document.querySelector("#quoteDamageDeposit"),
+  quoteActualCharge: document.querySelector("#quoteActualCharge"),
+  quoteDiscount: document.querySelector("#quoteDiscount"),
+  quoteStandardTotal: document.querySelector("#quoteStandardTotal"),
+  quoteGuestTotal: document.querySelector("#quoteGuestTotal"),
+  quoteTotalNights: document.querySelector("#quoteTotalNights"),
+  messageCodeDisplay: document.querySelector("#messageCodeDisplay"),
+  copyCheckinMessage: document.querySelector("#copyCheckinMessage"),
+  copyGuideMessage: document.querySelector("#copyGuideMessage"),
+  copyQuoteMessage: document.querySelector("#copyQuoteMessage"),
+  ackInquiry: document.querySelector("#ackInquiry"),
+  aiQuestion: document.querySelector("#aiQuestion"),
+  aiDraft: document.querySelector("#aiDraft"),
+  aiDraftBtn: document.querySelector("#aiDraftBtn"),
+  aiDraftStatus: document.querySelector("#aiDraftStatus"),
+  aiPhone: document.querySelector("#aiPhone"),
+  aiCopyBtn: document.querySelector("#aiCopyBtn"),
+  aiSendBtn: document.querySelector("#aiSendBtn"),
+  aiVillaName: document.querySelector("#aiVillaName"),
+  openWhatsappMessage: document.querySelector("#openWhatsappMessage"),
+  openGuideMessage: document.querySelector("#openGuideMessage"),
+  openReminderMessage: document.querySelector("#openReminderMessage"),
+  copyReminderMessage: document.querySelector("#copyReminderMessage"),
+  reminderTemplateInput: document.querySelector("#reminderTemplateInput"),
+  openQuoteMessage: document.querySelector("#openQuoteMessage"),
+  messageCopyStatus: document.querySelector("#messageCopyStatus"),
+  manualCopyBox: document.querySelector("#manualCopyBox"),
+  manualCopyText: document.querySelector("#manualCopyText"),
+  documentForm: document.querySelector("#documentForm"),
+  documentId: document.querySelector("#documentId"),
+  documentCodePreview: document.querySelector("#documentCodePreview"),
+  docType: document.querySelector("#docType"),
+  docIssuer: document.querySelector("#docIssuer"),
+  docDate: document.querySelector("#docDate"),
+  docStatus: document.querySelector("#docStatus"),
+  docBookingType: document.querySelector("#docBookingType"),
+  docGuestName: document.querySelector("#docGuestName"),
+  docGuestContact: document.querySelector("#docGuestContact"),
+  docBillTo: document.querySelector("#docBillTo"),
+  docBillAddress: document.querySelector("#docBillAddress"),
+  docProperty: document.querySelector("#docProperty"),
+  docCheckIn: document.querySelector("#docCheckIn"),
+  docCheckOut: document.querySelector("#docCheckOut"),
+  docNights: document.querySelector("#docNights"),
+  docAccommodationFee: document.querySelector("#docAccommodationFee"),
+  docDepositAmount: document.querySelector("#docDepositAmount"),
+  docFromBooking: document.querySelector("#docFromBooking"),
+  docRemarks: document.querySelector("#docRemarks"),
+  invoiceBalanceSection: document.querySelector("#invoiceBalanceSection"),
+  docInvoiceScope: document.querySelector("#docInvoiceScope"),
+  docPreviouslyReceived: document.querySelector("#docPreviouslyReceived"),
+  docLinkedReceiptCode: document.querySelector("#docLinkedReceiptCode"),
+  receiptPaymentSection: document.querySelector("#receiptPaymentSection"),
+  paymentRows: document.querySelector("#paymentRows"),
+  addPaymentRow: document.querySelector("#addPaymentRow"),
+  generateDocument: document.querySelector("#generateDocument"),
+  saveDocument: document.querySelector("#saveDocument"),
+  newDocument: document.querySelector("#newDocument"),
+  duplicateDocument: document.querySelector("#duplicateDocument"),
+  printDocument: document.querySelector("#printDocument"),
+  printOwnerReport: document.querySelector("#printOwnerReport"),
+  ownerReportPrint: document.querySelector("#ownerReportPrint"),
+  documentPreview: document.querySelector("#documentPreview"),
+  documentSearch: document.querySelector("#documentSearch"),
+  documentTypeFilter: document.querySelector("#documentTypeFilter"),
+  documentArchiveRows: document.querySelector("#documentArchiveRows"),
+  taxYearInput: document.querySelector("#taxYearInput"),
+  sdnStartInput: document.querySelector("#sdnStartInput"),
+  enterpriseExpenseInput: document.querySelector("#enterpriseExpenseInput"),
+  sdnExpenseInput: document.querySelector("#sdnExpenseInput"),
+  salaryInput: document.querySelector("#salaryInput"),
+  personalReliefInput: document.querySelector("#personalReliefInput"),
+  enterpriseProfitOut: document.querySelector("#enterpriseProfitOut"),
+  enterpriseRevenueOut: document.querySelector("#enterpriseRevenueOut"),
+  sdnProfitOut: document.querySelector("#sdnProfitOut"),
+  sdnRevenueOut: document.querySelector("#sdnRevenueOut"),
+  salaryOut: document.querySelector("#salaryOut"),
+  salaryMonthsOut: document.querySelector("#salaryMonthsOut"),
+  totalTaxOut: document.querySelector("#totalTaxOut"),
+  sdnGrossOut: document.querySelector("#sdnGrossOut"),
+  sdnExpenseOut: document.querySelector("#sdnExpenseOut"),
+  salaryDeductionOut: document.querySelector("#salaryDeductionOut"),
+  companyTaxOut: document.querySelector("#companyTaxOut"),
+  personalEnterpriseOut: document.querySelector("#personalEnterpriseOut"),
+  personalSalaryOut: document.querySelector("#personalSalaryOut"),
+  reliefOut: document.querySelector("#reliefOut"),
+  personalTaxOut: document.querySelector("#personalTaxOut"),
+  taxNoteBooks: document.querySelector("#taxNoteBooks"),
+  taxNoteSalary: document.querySelector("#taxNoteSalary"),
+  taxNoteCp204: document.querySelector("#taxNoteCp204"),
+  taxNoteDocs: document.querySelector("#taxNoteDocs"),
+  taxExpenseForm: document.querySelector("#taxExpenseForm"),
+  taxExpenseId: document.querySelector("#taxExpenseId"),
+  taxExpenseDate: document.querySelector("#taxExpenseDate"),
+  taxExpenseEntity: document.querySelector("#taxExpenseEntity"),
+  taxExpenseProperty: document.querySelector("#taxExpenseProperty"),
+  taxExpenseCategory: document.querySelector("#taxExpenseCategory"),
+  taxExpenseAmount: document.querySelector("#taxExpenseAmount"),
+  taxExpenseType: document.querySelector("#taxExpenseType"),
+  taxExpenseDeductible: document.querySelector("#taxExpenseDeductible"),
+  taxExpenseVendor: document.querySelector("#taxExpenseVendor"),
+  taxExpensePayment: document.querySelector("#taxExpensePayment"),
+  taxExpenseClaimStatus: document.querySelector("#taxExpenseClaimStatus"),
+  taxExpenseReceipt: document.querySelector("#taxExpenseReceipt"),
+  taxExpenseAttachment: document.querySelector("#taxExpenseAttachment"),
+  taxExpenseAttachmentStatus: document.querySelector("#taxExpenseAttachmentStatus"),
+  removeTaxExpenseAttachment: document.querySelector("#removeTaxExpenseAttachment"),
+  taxExpenseReviewed: document.querySelector("#taxExpenseReviewed"),
+  taxExpenseNotes: document.querySelector("#taxExpenseNotes"),
+  taxExpenseSummary: document.querySelector("#taxExpenseSummary"),
+  taxExpenseRows: document.querySelector("#taxExpenseRows"),
+  taxExpenseTableTitle: document.querySelector("#taxExpenseTableTitle"),
+  taxExpenseYearFilter: document.querySelector("#taxExpenseYearFilter"),
+  taxExpenseMonthFilter: document.querySelector("#taxExpenseMonthFilter"),
+  taxExpenseCategoryFilter: document.querySelector("#taxExpenseCategoryFilter"),
+  taxExpenseReceiptFilter: document.querySelector("#taxExpenseReceiptFilter"),
+  taxExpenseSearch: document.querySelector("#taxExpenseSearch"),
+  clearTaxExpense: document.querySelector("#clearTaxExpense"),
+  exportTaxExpensesExcel: document.querySelector("#exportTaxExpensesExcel"),
+  exportTaxExpensesPdf: document.querySelector("#exportTaxExpensesPdf"),
+  taxExpenseBizPct: document.querySelector("#taxExpenseBizPct"),
+  taxExpenseHint: document.querySelector("#taxExpenseHint"),
+  // AI receipt scanner
+  taxScanInput: document.querySelector("#taxScanInput"),
+  taxScanFileName: document.querySelector("#taxScanFileName"),
+  taxScanBtn: document.querySelector("#taxScanBtn"),
+  taxScanStatus: document.querySelector("#taxScanStatus"),
+  taxScanResult: document.querySelector("#taxScanResult"),
+  // Batch receipt intake
+  taxBatchInput: document.querySelector("#taxBatchInput"),
+  taxBatchFileName: document.querySelector("#taxBatchFileName"),
+  taxBatchScanBtn: document.querySelector("#taxBatchScanBtn"),
+  taxBatchStatus: document.querySelector("#taxBatchStatus"),
+  taxBatchResult: document.querySelector("#taxBatchResult"),
+  // Capital assets
+  taxAssetForm: document.querySelector("#taxAssetForm"),
+  taxAssetId: document.querySelector("#taxAssetId"),
+  taxAssetDesc: document.querySelector("#taxAssetDesc"),
+  taxAssetCost: document.querySelector("#taxAssetCost"),
+  taxAssetClass: document.querySelector("#taxAssetClass"),
+  taxAssetDate: document.querySelector("#taxAssetDate"),
+  taxAssetBizPct: document.querySelector("#taxAssetBizPct"),
+  taxAssetConditionField: document.querySelector("#taxAssetConditionField"),
+  taxAssetCondition: document.querySelector("#taxAssetCondition"),
+  taxAssetVendor: document.querySelector("#taxAssetVendor"),
+  taxAssetEntity: document.querySelector("#taxAssetEntity"),
+  taxAssetProperty: document.querySelector("#taxAssetProperty"),
+  taxAssetNotes: document.querySelector("#taxAssetNotes"),
+  taxAssetHint: document.querySelector("#taxAssetHint"),
+  taxAssetReceipt: document.querySelector("#taxAssetReceipt"),
+  taxAssetAttachment: document.querySelector("#taxAssetAttachment"),
+  taxAssetAttachmentStatus: document.querySelector("#taxAssetAttachmentStatus"),
+  taxAssetDisposalDate: document.querySelector("#taxAssetDisposalDate"),
+  taxAssetDisposalValue: document.querySelector("#taxAssetDisposalValue"),
+  taxAssetReviewed: document.querySelector("#taxAssetReviewed"),
+  clearTaxAsset: document.querySelector("#clearTaxAsset"),
+  removeTaxAssetAttachment: document.querySelector("#removeTaxAssetAttachment"),
+  taxAssetSummary: document.querySelector("#taxAssetSummary"),
+  taxAssetCards: document.querySelector("#taxAssetCards"),
+  // Year-of-assessment summary
+  taxYaInput: document.querySelector("#taxYaInput"),
+  taxYaCards: document.querySelector("#taxYaCards"),
+  taxYaDetail: document.querySelector("#taxYaDetail"),
+  taxYearRules: document.querySelector("#taxYearRules"),
+  taxDocInput: document.querySelector("#taxDocInput"),
+  taxDocFileName: document.querySelector("#taxDocFileName"),
+  taxDocText: document.querySelector("#taxDocText"),
+  taxDocAnalyzeBtn: document.querySelector("#taxDocAnalyzeBtn"),
+  taxDocStatus: document.querySelector("#taxDocStatus"),
+  taxDocResult: document.querySelector("#taxDocResult"),
+  exportTaxYaExcel: document.querySelector("#exportTaxYaExcel"),
+  // Earnings importer
+  taxEarningsInput: document.querySelector("#taxEarningsInput"),
+  taxEarningsFileName: document.querySelector("#taxEarningsFileName"),
+  taxEarningsBtn: document.querySelector("#taxEarningsBtn"),
+  taxEarningsStatus: document.querySelector("#taxEarningsStatus"),
+  taxEarningsResult: document.querySelector("#taxEarningsResult"),
+  taxEarnDocYa: document.querySelector("#taxEarnDocYa"),
+  taxEarnDocInput: document.querySelector("#taxEarnDocInput"),
+  taxEarnDocStatus: document.querySelector("#taxEarnDocStatus"),
+  taxEarnDocLabel: document.querySelector("#taxEarnDocLabel"),
+  taxEarnDocSaveBtn: document.querySelector("#taxEarnDocSaveBtn"),
+  taxEarnDocList: document.querySelector("#taxEarnDocList"),
+  taxEarningsStored: document.querySelector("#taxEarningsStored"),
+  taxExpenseSaveStatus: document.querySelector("#taxExpenseSaveStatus"),
+  taxAssetSaveStatus: document.querySelector("#taxAssetSaveStatus"),
+  // AI tax review
+  runTaxReviewBtn: document.querySelector("#runTaxReviewBtn"),
+  taxClassifyAffirm: document.querySelector("#taxClassifyAffirm"),
+  taxReviewStatus: document.querySelector("#taxReviewStatus"),
+  taxReviewResult: document.querySelector("#taxReviewResult"),
+};
+
+let pendingTaxAssetAttachment = null;
+let removePendingTaxAssetAttachment = false;
+
+let taxPlan = loadTaxPlan();
+
+function loadBookings() {
+  const stored = localStorage.getItem(STORAGE_KEY);
+  if (!stored) return [];
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.map(normalizeBooking) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeBooking(booking) {
+  const channel = booking.channel === "Airbnb" ? "Airbnb" : "Direct";
+  const depositAmount = Number(booking.depositAmount ?? defaultDepositForChannel(channel));
+  return {
+    ...booking,
+    id: safeRecordId(booking.id),
+    channel,
+    guestTitle: booking.guestTitle === "Ms" ? "Ms" : "Mr",
+    guest: String(booking.guest || ""),
+    contact: String(booking.contact || ""),
+    excludeFromCalculations: Boolean(booking.excludeFromCalculations),
+    arrival: String(booking.arrival || ""),
+    nights: Number(booking.nights || 1),
+    revenue: Number(booking.revenue || 0),
+    paid: VillaLedger.received(booking),
+    ...(Array.isArray(booking.paymentLedger) ? { paymentLedger: booking.paymentLedger.map(VillaLedger.normalize) } : {}),
+    guestId: String(booking.guestId || ""),
+    depositAmount: channel === "Airbnb" && !booking.depositPaid && depositAmount === 500 ? 0 : depositAmount,
+    depositPaid: Boolean(booking.depositPaid),
+    depositRefunded: Boolean(booking.depositRefunded),
+    whatsappSent: Boolean(booking.whatsappSent),
+    // --- additive automation/CRM fields (preserved; default-safe for legacy bookings) ---
+    villa: booking.villa === "Windmill" ? "Windmill" : "Sunrise",
+    status: ["inquiry", "quoted", "confirmed", "in-house", "checked-out"].includes(booking.status) ? booking.status : "confirmed",
+    guestEmail: String(booking.guestEmail || ""),
+    checkinSentAt: booking.checkinSentAt || null,
+    reminderSentAt: booking.reminderSentAt || null,
+    incidentLog: String(booking.incidentLog || ""),
+    sentLog: booking.sentLog && typeof booking.sentLog === "object" ? booking.sentLog : {}, // { type: 'YYYY-MM-DD' } — which nudges were sent today
+  };
+}
+
+// Quota-safe localStorage writer. Browsers cap localStorage (~5MB/origin) and
+// throw QuotaExceededError on overflow — without this guard a failed write
+// would silently lose the just-saved data AND abort before scheduleCloudSave.
+// On failure we warn visibly; the cloud save still runs (it reads the
+// in-memory state, so the data reaches the cloud even when local is full).
+let svStorageFullWarned = false;
+function safeSetItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    if (svStorageFullWarned) hideStorageFullBanner();
+    return true;
+  } catch (err) {
+    console.error("localStorage quota exceeded writing", key, err);
+    showStorageFullBanner();
+    return false;
+  }
+}
+
+function showStorageFullBanner() {
+  svStorageFullWarned = true;
+  let banner = document.querySelector("#storageFullBanner");
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.id = "storageFullBanner";
+    banner.className = "storage-full-banner";
+    banner.setAttribute("role", "alert");
+    document.body.appendChild(banner);
+  }
+  banner.innerHTML = `<strong>Browser storage is full.</strong> A local copy could not be saved. Check the cloud save status and download a backup before closing this page.`;
+  banner.hidden = false;
+}
+
+function hideStorageFullBanner() {
+  svStorageFullWarned = false;
+  const banner = document.querySelector("#storageFullBanner");
+  if (banner) banner.hidden = true;
+}
+
+function saveBookings() {
+  safeSetItem(STORAGE_KEY, JSON.stringify(bookings));
+  scheduleCloudSave();
+}
+
+function defaultTaxPlan() {
+  const year = currentYear();
+  return {
+    year,
+    sdnStart: `${year}-06`,
+    enterpriseExpenses: 0,
+    sdnExpenses: 0,
+    monthlySalary: 0,
+    personalReliefs: 9000,
+    expenses: [],
+    assets: [], // capital assets (capital-allowance schedule, multi-year)
+    review: { classificationAffirmed: false, affirmedAt: "" }, // AI tax-review gate state
+    yearProfiles: {}, // per-YA rule overrides extracted from his uploaded LHDN documents
+    lhdnDocs: [], // analyzed LHDN documents (per-year rule sources)
+    earnings: [], // imported past earnings rows (per-year gross income)
+    earningsDocs: [], // supporting documents used for past-year tax calcs (per year)
+    notes: {
+      books: false,
+      salary: false,
+      cp204: false,
+      docs: false,
+    },
+  };
+}
+
+function normalizeTaxExpense(expense = {}) {
+  const attachment =
+    expense.attachment && typeof expense.attachment === "object"
+      ? {
+          name: String(expense.attachment.name || ""),
+          type: String(expense.attachment.type || ""),
+          dataUrl: safeDataUrl(expense.attachment.dataUrl, ["data:image/", "data:application/pdf"]),
+          attachedAt: expense.attachment.attachedAt || new Date().toISOString(),
+        }
+      : null;
+  return {
+    ...expense,
+    id: safeRecordId(expense.id),
+    date: String(expense.date || isoDate(new Date())),
+    entity: ["Enterprise", "Sdn. Bhd.", "Personal / Owner"].includes(expense.entity) ? expense.entity : "Enterprise",
+    property: ["Sunrise Villa", "Windmill Villa", "Shared"].includes(expense.property) ? expense.property : "Sunrise Villa",
+    category: taxExpenseCategories.includes(expense.category) ? expense.category : "Other",
+    type: expense.type === "Recurring" ? "Recurring" : "One-off",
+    deductible: ["Auto (from rule)", "Deductible", "Partially deductible", "Not deductible", "Ask accountant"].includes(expense.deductible) ? expense.deductible : "Auto (from rule)",
+    vendor: String(expense.vendor || ""),
+    payment: String(expense.payment || "Bank Transfer"),
+    claimStatus: ["Paid by business", "Paid personally", "Reimbursed", "Not reimbursed"].includes(expense.claimStatus) ? expense.claimStatus : "Paid by business",
+    receipt: String(expense.receipt || ""),
+    attachment,
+    reviewed: Boolean(expense.reviewed),
+    notes: String(expense.notes || ""),
+    amount: Number(expense.amount || 0),
+    financeMode: ["additional", "commitment", "legacy", "tax-only", "unreviewed"].includes(expense.financeMode) ? expense.financeMode : "unreviewed",
+    commitmentId: String(expense.commitmentId || ""),
+    legacyCost: expense.financeMode === "legacy" && expense.legacyCost ? { monthKey: String(expense.legacyCost.monthKey || ""), costId: String(expense.legacyCost.costId || "") } : null,
+    businessUsePct: clampPct(expense.businessUsePct, 100), // apportionment for mixed-use running costs
+    createdAt: expense.createdAt || new Date().toISOString(),
+    updatedAt: expense.updatedAt || new Date().toISOString(),
+  };
+}
+
+function clampPct(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.min(100, n));
+}
+
+function yearOf(dateStr) {
+  const y = Number(String(dateStr || "").slice(0, 4));
+  return Number.isFinite(y) && y > 1900 ? y : 0;
+}
+
+// ---- Capital assets (multi-year capital-allowance schedule) --------------
+function normalizeTaxAsset(asset = {}) {
+  const attachment =
+    asset.attachment && typeof asset.attachment === "object"
+      ? {
+          name: String(asset.attachment.name || ""),
+          type: String(asset.attachment.type || ""),
+          dataUrl: safeDataUrl(asset.attachment.dataUrl, ["data:image/", "data:application/pdf"]),
+          attachedAt: asset.attachment.attachedAt || new Date().toISOString(),
+        }
+      : null;
+  const cost = Math.max(0, Number(asset.cost || 0));
+  let assetClass = MY_CA_CLASS_KEYS.includes(asset.assetClass) ? asset.assetClass : "plant";
+  // A small-value class only qualifies at ≤ RM2,000; above that it's ordinary plant.
+  if (assetClass === "small-value" && cost > 2000) assetClass = "plant";
+  const disposed =
+    asset.disposed && typeof asset.disposed === "object" && asset.disposed.date
+      ? { date: String(asset.disposed.date), value: Math.max(0, Number(asset.disposed.value || 0)) }
+      : null;
+  return {
+    ...asset,
+    id: safeRecordId(asset.id),
+    description: String(asset.description || ""),
+    vendor: String(asset.vendor || ""),
+    entity: ["Enterprise", "Sdn. Bhd.", "Personal / Owner"].includes(asset.entity) ? asset.entity : "Enterprise",
+    property: ["Sunrise Villa", "Windmill Villa", "Shared"].includes(asset.property) ? asset.property : "Sunrise Villa",
+    cost,
+    acquisitionDate: String(asset.acquisitionDate || isoDate(new Date())),
+    assetClass,
+    condition: asset.condition === "used" ? "used" : "new", // motor QE cap depends on this
+    businessUsePct: clampPct(asset.businessUsePct, 100),
+    disposed,
+    receipt: String(asset.receipt || ""),
+    attachment,
+    reviewed: Boolean(asset.reviewed),
+    notes: String(asset.notes || ""),
+    createdAt: asset.createdAt || new Date().toISOString(),
+    updatedAt: asset.updatedAt || new Date().toISOString(),
+  };
+}
+
+// Qualifying expenditure = cost, except a motor vehicle is statutorily capped.
+function assetQE(asset) {
+  const cost = Math.max(0, Number(asset.cost || 0));
+  const rates = MY_CA_RATES[asset.assetClass] || MY_CA_RATES.plant;
+  if (rates.motorCap) {
+    return asset.condition === "new" && cost <= 150000 ? Math.min(cost, 100000) : Math.min(cost, 50000);
+  }
+  return cost;
+}
+
+// Capital allowance for one asset in one Year of Assessment.
+// Returns { gross, claimed, residual, balancing, sva } where claimed/balancing
+// are already restricted to the business-use % (private portion is forgone).
+function assetCaForYA(asset, ya) {
+  const out = { gross: 0, claimed: 0, residual: 0, balancing: 0, sva: false };
+  const acqYA = yearOf(asset.acquisitionDate);
+  if (!acqYA || ya < acqYA) return out;
+  const qe = assetQE(asset);
+  const bizFrac = clampPct(asset.businessUsePct, 100) / 100;
+  const rates = MY_CA_RATES[asset.assetClass] || MY_CA_RATES.plant;
+  const dispYA = asset.disposed ? yearOf(asset.disposed.date) : 0;
+  if (dispYA && ya > dispYA) return out; // already disposed in an earlier YA
+
+  if (rates.sva) {
+    out.sva = true;
+    if (ya === acqYA) {
+      out.gross = qe;
+      out.claimed = qe * bizFrac;
+    }
+    out.residual = 0;
+    return out;
+  }
+
+  // Cumulative gross allowance written off by the END of YA y (IA once + AA each
+  // year), capped at QE.
+  const cumGross = (y) => {
+    if (y < acqYA) return 0;
+    const aaYears = y - acqYA + 1;
+    return Math.min(qe, (qe * rates.ia) / 100 + ((qe * rates.aa) / 100) * aaYears);
+  };
+
+  if (dispYA && ya === dispYA) {
+    // No annual allowance in the year of disposal; instead a balancing
+    // allowance (sale < residual) or charge (sale > residual). PR 7/2017.
+    const residualBefore = Math.max(0, qe - cumGross(dispYA - 1));
+    const proceeds = Math.max(0, Number(asset.disposed.value || 0));
+    out.balancing = (residualBefore - proceeds) * bizFrac; // + allowance, − charge
+    out.residual = 0;
+    return out;
+  }
+
+  const through = cumGross(ya);
+  const prior = cumGross(ya - 1);
+  out.gross = Math.max(0, through - prior);
+  out.claimed = out.gross * bizFrac;
+  out.residual = Math.max(0, qe - through);
+  return out;
+}
+
+// Deductible amount of a revenue expense for the auto-total. Capital / not-
+// deductible / needs-review items contribute 0 here (handled in their own bucket).
+function expenseDeductibleAmount(expense) {
+  const rule = taxRuleFor(expense.category);
+  const amount = Math.max(0, Number(expense.amount || 0));
+  const bizFrac = clampPct(expense.businessUsePct, 100) / 100;
+  // An explicit user override on the record wins over the rule default.
+  const override = expense.deductible;
+  if (override === "Not deductible") return 0;
+  if (override === "Ask accountant") return 0;
+  if (override === "Deductible") return amount * bizFrac;
+  if (override === "Partially deductible") {
+    const pct = rule.treatment === "partial" && rule.pct ? rule.pct / 100 : 0.5;
+    return amount * bizFrac * pct;
+  }
+  // No override → follow the rule.
+  if (rule.treatment === "deduct") return amount * bizFrac;
+  if (rule.treatment === "partial") return amount * bizFrac * ((rule.pct || 50) / 100);
+  return 0; // capital / no / ask
+}
+
+// Which bucket an expense falls into for the YA summary.
+function expenseBucket(expense) {
+  const override = expense.deductible;
+  if (override === "Not deductible") return "no";
+  if (override === "Ask accountant") return "ask";
+  if (override === "Deductible") return "deduct";
+  if (override === "Partially deductible") return "partial";
+  return taxRuleFor(expense.category).treatment;
+}
+
+// Roll everything up for one Year of Assessment (calendar year). Sole-prop /
+// enterprise source — the Sdn. Bhd. entity is excluded from this Form B view.
+function taxYaSummary(ya, opts = {}) {
+  const property = opts.property || "All";
+  const inScope = (rec) =>
+    rec.entity !== "Sdn. Bhd." && (property === "All" || rec.property === property || rec.property === "Shared");
+
+  const expenses = (taxPlan.expenses || []).filter((e) => inScope(e) && yearOf(e.date) === ya);
+  const sum = { deduct: 0, partial: 0, capitalFlagged: 0, no: 0, ask: 0 };
+  expenses.forEach((e) => {
+    const bucket = expenseBucket(e);
+    const amount = Math.max(0, Number(e.amount || 0));
+    if (bucket === "deduct" || bucket === "partial") sum.deduct += expenseDeductibleAmount(e);
+    else if (bucket === "capital") sum.capitalFlagged += amount;
+    else if (bucket === "no") sum.no += amount;
+    else sum.ask += amount;
+  });
+
+  // Capital allowances from the asset register for this YA.
+  const assets = (taxPlan.assets || []).filter(inScope);
+  let capitalAllowance = 0;
+  let balancing = 0;
+  assets.forEach((a) => {
+    const ca = assetCaForYA(a, ya);
+    capitalAllowance += ca.claimed;
+    balancing += ca.balancing;
+  });
+
+  const revenueDeductible = sum.deduct;
+  const totalRelief = revenueDeductible + capitalAllowance + Math.max(0, balancing);
+  const balancingCharge = balancing < 0 ? -balancing : 0; // adds back to income
+
+  return {
+    ya,
+    expenseCount: expenses.length,
+    assetCount: assets.length,
+    revenueDeductible,
+    capitalAllowance,
+    balancingAllowance: Math.max(0, balancing),
+    balancingCharge,
+    capitalFlagged: sum.capitalFlagged,
+    notDeductible: sum.no,
+    needsReview: sum.ask,
+    totalRelief, // revenue deductions + capital allowances (+ balancing allowance)
+  };
+}
+
+// Residual (tax written-down value) carried into the NEXT YA — the multi-year
+// memory: unabsorbed capital allowances carry forward indefinitely.
+function assetResidualAfter(asset, ya) {
+  const ca = assetCaForYA(asset, ya);
+  if (ca.sva) return ya >= yearOf(asset.acquisitionDate) ? 0 : assetQE(asset);
+  return ca.residual;
+}
+
+// =============================================================================
+// AI TAX-REVIEW AGENT — DETERMINISTIC LAYER. Designed + red-teamed from the
+// verified rules (workflow tax-review-agent-design). The HARD RULE: all
+// arithmetic, thresholds, dates, matching and the VERDICT are computed HERE in
+// code — never by the LLM. The LLM (separate function) only adds semantic
+// judgement over these pre-computed records and can never upgrade the verdict.
+// This is a review aid, NOT a tax sign-off, and no professional checks it.
+// =============================================================================
+
+// Category groups (new + legacy labels) used by the completeness checks.
+const TAX_CAT_GROUPS = {
+  cleaning: ["Housekeeping/Cleaning", "Housekeeping", "Laundry"],
+  utilities: ["Utilities", "Electricity & Water", "Gas"],
+  internet: ["Internet/WiFi"],
+  consumables: ["Consumables/Supplies", "Supplies", "Groceries"],
+};
+
+// Enrich one YA's records with engine-derived fields (so the review — and the
+// LLM — never recompute). Assets exclude the Sdn. Bhd. entity (separate return).
+function taxReviewRecords(ya) {
+  const expenses = (taxPlan.expenses || [])
+    .filter((e) => yearOf(e.date) === ya)
+    .map((e) => ({
+      ...e,
+      pureRule: taxRuleFor(e.category).treatment,
+      ruleTreatment: expenseBucket(e),
+      deductibleAmount: expenseDeductibleAmount(e),
+      hasReceipt: !!(e.receipt || e.attachment?.dataUrl),
+    }));
+  const assets = (taxPlan.assets || [])
+    .filter((a) => a.entity !== "Sdn. Bhd.")
+    .map((a) => {
+      const ca = assetCaForYA(a, ya);
+      return {
+        ...a,
+        qualifyingExpenditure: assetQE(a),
+        thisYaAllowance: ca.claimed,
+        thisYaGross: ca.gross,
+        balancing: ca.balancing,
+        residual: assetResidualAfter(a, ya),
+        hasReceipt: !!(a.receipt || a.attachment?.dataUrl),
+      };
+    });
+  return { expenses, assets };
+}
+
+function refExpense(e) {
+  return `${shortDate(e.date)} · ${e.category} · ${e.vendor || "no vendor"} · ${money(e.amount)}`;
+}
+function refAsset(a) {
+  return `${a.description || "asset"} · ${money(a.cost)} · acquired ${shortDate(a.acquisitionDate)}`;
+}
+
+// The deterministic review. Returns findings (both ledgers), the code-set
+// verdict, and the checks that could not run for missing inputs.
+function buildTaxReview(ya) {
+  const { expenses, assets } = taxReviewRecords(ya);
+  const summary = taxYaSummary(ya);
+  // Gross accommodation turnover for this YA (real figure from bookings — NOT
+  // revenueDeductible). Used only for SST / e-invoice / completeness.
+  let grossTurnover = 0;
+  // Prefer his imported past-earnings figure for the year (authoritative); fall
+  // back to the bookings-derived revenue when no earnings were imported.
+  const imported = importedEarningsFor(ya);
+  if (imported > 0) {
+    grossTurnover = imported;
+  } else {
+    try {
+      grossTurnover = Number(revenueForPeriod(ya, taxPlan.sdnStart || `${ya}-06`, "before")) || 0;
+    } catch {
+      grossTurnover = 0;
+    }
+  }
+  const findings = [];
+  const F = (o) => findings.push({ triggerType: "engine-deterministic", refs: [], rmAtStake: "", ledger: "over_claim_audit_risk", area: "deductibility", ...o });
+
+  // 1. User override more generous than the rule (HIGH).
+  const overGen = expenses.filter(
+    (e) => ["Deductible", "Partially deductible"].includes(e.deductible) && ["no", "capital", "ask"].includes(e.pureRule),
+  );
+  if (overGen.length) {
+    F({ checkId: "override-more-generous-than-rule", severity: "high", area: "deductibility",
+      title: "An override claims more than the rule allows",
+      detail: `${overGen.length} expense(s) are forced to a deductible status the Malaysian rule does not permit for that category — this injects a non-allowable amount into your deductions.`,
+      recommendation: "Open each line and revert Tax Status to 'Auto (from rule)' unless you can document why the rule is wrong. This is the first thing a desk audit catches.",
+      source: "s33 / s39 ITA 1967", refs: overGen.map(refExpense) });
+  }
+  // Inverse: marked not-deductible but rule says deduct (LOW, missed relief).
+  const underClaimed = expenses.filter((e) => e.deductible === "Not deductible" && e.pureRule === "deduct");
+  if (underClaimed.length) {
+    F({ checkId: "missed-deduction-override", severity: "low", ledger: "missed_relief_overpayment",
+      title: "Deductible cost marked 'Not deductible'", area: "deductibility",
+      detail: `${underClaimed.length} item(s) the rule treats as deductible are forced to 'Not deductible' — you may be overpaying.`,
+      recommendation: "Revert to 'Auto (from rule)' unless there is a reason to disclaim the deduction.",
+      source: "s33(1) ITA 1967", refs: underClaimed.map(refExpense) });
+  }
+
+  // 2. Loan principal deducted (HIGH).
+  const loanPrincipal = expenses.filter((e) => e.category === "Loan Principal" && e.deductibleAmount > 0);
+  if (loanPrincipal.length) {
+    F({ checkId: "loan-principal-deducted", severity: "high",
+      title: "Loan principal is being deducted", area: "deductibility",
+      detail: "Only loan INTEREST is deductible; the capital repayment is not.",
+      recommendation: "Claim only interest from your amortisation statement; move principal to 'Not deductible'.",
+      source: "s33(1)(a) / s39 ITA 1967", refs: loanPrincipal.map(refExpense) });
+  }
+
+  // 3. Improvement / renovation given relief (HIGH).
+  const renoRe = /renovat|extension|rebuild|structural|flooring|tiling|repaint|rewire|plaster|build/i;
+  const improvExp = expenses.filter((e) => e.category === "Improvement/Renovation" && (e.deductibleAmount > 0 || e.ruleTreatment === "capital"));
+  const improvAsset = assets.filter((a) => renoRe.test(a.description || "") && a.qualifyingExpenditure > 0);
+  if (improvExp.length || improvAsset.length) {
+    F({ checkId: "improvement-renovation-claimed", severity: "high", area: "capital-allowance",
+      title: "Renovation / improvement claimed (it earns no relief)",
+      detail: "An ordinary accommodation building gets NO capital allowance, and improvements are not deductible.",
+      recommendation: "Remove the deduction/allowance. KEEP the invoice in a separate RPGT base-cost ledger for when you sell — it is not lost, just not an income-tax item now.",
+      source: "Schedule 3 ITA 1967; s33/s39", refs: [...improvExp.map(refExpense), ...improvAsset.map(refAsset)] });
+  }
+
+  // 4. Private / personal-entity leakage into Form B (HIGH).
+  const leak = expenses.filter(
+    (e) => (e.entity === "Personal / Owner" || e.category === "Private/Domestic") && (e.deductibleAmount > 0 || ["deduct", "partial", "capital"].includes(e.ruleTreatment)),
+  );
+  if (leak.length) {
+    F({ checkId: "private-or-wrong-entity-leakage", severity: "high",
+      title: "Private / owner-entity cost is in the business computation", area: "deductibility",
+      detail: "Private or owner-personal records must not reduce Form B business income.",
+      recommendation: "Exclude personal/private records, or re-tag genuinely mixed items with an honest business-use %.",
+      source: "s39(1)(a) ITA 1967", refs: leak.map(refExpense) });
+  }
+
+  // 5. Capital-treated expense not in the asset register (HIGH, missed relief + wrong line).
+  const capFlagged = expenses.filter((e) => e.ruleTreatment === "capital");
+  if (summary.capitalFlagged > 0 && capFlagged.length) {
+    F({ checkId: "capital-flagged-not-in-register", severity: "high", area: "capital-allowance",
+      ledger: "missed_relief_overpayment", rmAtStake: money(summary.capitalFlagged),
+      title: "Capital items sitting in expenses — allowance not claimed",
+      detail: `${capFlagged.length} capital item(s) (${money(summary.capitalFlagged)}) are in the expense list, so they earn neither a deduction nor a capital allowance — you overpay this year and every future year until registered.`,
+      recommendation: "Add each as a Capital Asset (class, cost, date, business-use %) so the engine computes the allowance. Use the '→ Record as a capital asset' link on the expense.",
+      source: "Schedule 3 ITA 1967; PR 5/2014", refs: capFlagged.map(refExpense) });
+  }
+
+  // 6. Smart lock / security forced to revenue (MEDIUM).
+  const secExp = expenses.filter((e) => e.category === "Smart Lock/Security" && e.ruleTreatment === "deduct");
+  if (secExp.length) {
+    F({ checkId: "smartlock-cctv-expensed", severity: "medium", area: "capital-allowance",
+      title: "Security hardware deducted instead of capitalised",
+      detail: "Smart locks / CCTV are capital — claim a capital allowance, not a one-off deduction.",
+      recommendation: "Move to the asset register (plant or ICT).",
+      source: "Schedule 3 ITA 1967", refs: secExp.map(refExpense) });
+  }
+
+  // 7. Motor QE cap independent recompute (MEDIUM) + 8. high business-% (HIGH).
+  assets.filter((a) => a.assetClass === "motor").forEach((a) => {
+    const expectedCap = a.condition === "new" && Number(a.cost) <= 150000 ? 100000 : 50000;
+    if (a.qualifyingExpenditure > expectedCap + 1) {
+      F({ checkId: "motor-qe-cap-recompute", severity: "medium", area: "capital-allowance",
+        title: "Motor qualifying cost exceeds the statutory cap",
+        detail: `Qualifying expenditure ${money(a.qualifyingExpenditure)} is above the ${money(expectedCap)} cap — the allowance is overstated.`,
+        recommendation: "Capital allowance on a car is capped at RM100k (new & ≤RM150k) else RM50k.",
+        source: "Schedule 3 ITA 1967", refs: [refAsset(a)] });
+    }
+  });
+  const motorHigh = assets.filter((a) => a.assetClass === "motor" && a.businessUsePct >= 90);
+  const vehHigh = expenses.filter((e) => e.category === "Vehicle/Transport" && e.businessUsePct >= 90);
+  if (motorHigh.length || vehHigh.length) {
+    F({ checkId: "motor-or-vehicle-high-business-pct", severity: "high", area: "apportionment",
+      title: "Vehicle claimed at ≥90% business use",
+      detail: "For a single villa, a car is rarely almost-entirely business. This is a common audit adjustment.",
+      recommendation: "Set one mileage-log-based business-use % (usually well under 50% for one property) for both the car and its running costs; keep the log 7 years.",
+      source: "Sch 3 Para 73; PR 5/2014; s39", refs: [...motorHigh.map(refAsset), ...vehHigh.map(refExpense)] });
+  }
+
+  // 9. Small-value asset not elected (MEDIUM, missed relief).
+  const sva = assets.filter((a) => Number(a.cost) <= 2000 && a.assetClass !== "small-value" && !a.disposed);
+  if (sva.length) {
+    F({ checkId: "small-value-asset-not-elected", severity: "medium", area: "capital-allowance",
+      ledger: "missed_relief_overpayment",
+      title: "Asset ≤ RM2,000 not written off 100% this year",
+      detail: `${sva.length} asset(s) under RM2,000 are being dribbled over years instead of a full first-year write-off.`,
+      recommendation: "Set their class to 'Small value (≤RM2,000)' to claim 100% now.",
+      source: "PR 3/2021", refs: sva.map(refAsset) });
+  }
+
+  // 9b. Small-value aggregate cap RM20,000/YA for a sole proprietor (HIGH if breached).
+  const svaThisYa = assets.filter((a) => a.assetClass === "small-value" && yearOf(a.acquisitionDate) === ya);
+  const svaTotal = svaThisYa.reduce((s, a) => s + Number(a.cost || 0), 0);
+  if (svaTotal > 20000) {
+    F({ checkId: "small-value-aggregate-cap", severity: "high", area: "capital-allowance",
+      title: "Small-value 100% write-offs exceed the RM20,000/YA cap",
+      detail: `Small-value assets total ${money(svaTotal)} this year. A sole proprietor (non-SMC) is capped at RM20,000 of 100% small-value allowance per YA — the excess must instead be written down at normal capital-allowance rates.`,
+      recommendation: "Reclassify enough assets above RM20,000 to their normal class (plant/furniture/ICT) so only RM20,000 takes the 100% write-off. Confirm with PR 3/2021.",
+      source: "PR 3/2021; ITA 1967 Sch 3 para 19A", refs: svaThisYa.map(refAsset) });
+  }
+
+  // 10. Personal-capable asset at 100% (MEDIUM).
+  const personalRe = /tv|laptop|macbook|phone|tablet|ipad|car|camera/i;
+  const asset100 = assets.filter((a) => a.businessUsePct === 100 && (["motor", "computer-ict"].includes(a.assetClass) || personalRe.test(a.description || "")));
+  if (asset100.length) {
+    F({ checkId: "asset-100pct-on-personal-capable", severity: "medium", area: "apportionment",
+      title: "Personal-capable asset at 100% business use",
+      detail: "A device that can be used privately (laptop, phone, car, TV) at 100% business invites challenge.",
+      recommendation: "Set an honest business-use %. A villa-only device supports 100%; a personal one usually does not.",
+      source: "Sch 3 Para 73; PR 5/2014", refs: asset100.map(refAsset) });
+  }
+
+  // 11. Rule is 'partial' but business-% is 100 (MEDIUM).
+  const partial100 = expenses.filter((e) => e.ruleTreatment === "partial" && e.businessUsePct === 100 && e.category !== "Entertainment");
+  if (partial100.length) {
+    F({ checkId: "partial-treatment-but-100pct", severity: "medium", area: "apportionment",
+      title: "Apportioned category left at 100%",
+      detail: "These categories are meant to be split for business use, but sit at 100%.",
+      recommendation: "Set a genuine business-use % below 100 unless wholly business.",
+      source: "s39; Sch 3 Para 73", refs: partial100.map(refExpense) });
+  }
+
+  // 12. Inherently mixed category at 100% (MEDIUM).
+  const mixedCats = ["Internet/WiFi", "Utilities", "Electricity & Water", "Gas", "Vehicle/Transport"];
+  const mixed100 = expenses.filter((e) => mixedCats.includes(e.category) && e.businessUsePct === 100);
+  if (mixed100.length) {
+    F({ checkId: "mixed-category-100pct-candidates", severity: "medium", area: "apportionment",
+      title: "Utility / internet / vehicle at 100% business",
+      detail: "Confirm each account is dedicated to the villa (own meter / SIM / line). If shared with home, apportion.",
+      recommendation: "Apportion shared supplies to a realistic business % and note the basis.",
+      source: "s39 ITA 1967", refs: mixed100.map(refExpense) });
+  }
+
+  // 13. Undocumented material apportionment (MEDIUM).
+  const undoc = expenses.filter((e) => e.ruleTreatment === "partial" && e.businessUsePct >= 70 && e.deductibleAmount >= 200 && !String(e.notes || "").trim());
+  if (undoc.length) {
+    F({ checkId: "undocumented-material-apportionment", severity: "medium", area: "apportionment",
+      title: "Material partial claim with no basis in notes",
+      detail: "A high business-% on a material amount with empty notes is the weakest point if LHDN asks for the working.",
+      recommendation: "Record how you derived the % in notes (e.g. 'guest nights 320/365').",
+      source: "s33; Sch 3 Para 73", refs: undoc.map(refExpense) });
+  }
+
+  // 14. Entertainment ratio not tiered (MEDIUM).
+  const entOff = expenses.filter((e) => {
+    if (e.category !== "Entertainment" || !(e.amount > 0)) return false;
+    const r = e.deductibleAmount / e.amount;
+    return ![0, 0.5, 1].some((t) => Math.abs(r - t) < 0.01);
+  });
+  if (entOff.length) {
+    F({ checkId: "entertainment-ratio-not-tiered", severity: "medium", area: "deductibility",
+      title: "Entertainment not at 0% / 50% / 100%",
+      detail: "Entertainment is restricted to fixed tiers by recipient.",
+      recommendation: "Existing customer 50% · staff or logo gift 100% · potential customer 0%.",
+      source: "s39(1)(l); PR 4/2015", refs: entOff.map(refExpense) });
+  }
+
+  // 15. Material missing receipt (HIGH) + 16. asset missing receipt (LOW).
+  const noRcpt = expenses.filter((e) => !e.hasReceipt && ["deduct", "partial", "capital"].includes(e.ruleTreatment) && e.deductibleAmount >= 200);
+  const noRcptCap = expenses.filter((e) => !e.hasReceipt && e.ruleTreatment === "capital" && Number(e.amount) >= 200);
+  const noRcptAll = Array.from(new Set([...noRcpt, ...noRcptCap]));
+  if (noRcptAll.length) {
+    F({ checkId: "material-missing-receipt", severity: "high", area: "documentation", ledger: "documentation",
+      title: `${noRcptAll.length} material claim(s) with no receipt reference`,
+      detail: "Records must be kept 7 years (s82A). A reference only means a document exists — it does not prove the amount or that it is genuine.",
+      recommendation: "Attach/reference a receipt for each, largest first. Drop any claim you cannot evidence.",
+      source: "s82A ITA 1967", refs: noRcptAll.map(refExpense) });
+  }
+  const assetNoRcpt = assets.filter((a) => !a.hasReceipt && a.qualifyingExpenditure > 0);
+  if (assetNoRcpt.length) {
+    F({ checkId: "asset-missing-receipt", severity: "low", area: "documentation", ledger: "documentation",
+      title: "Asset with no receipt — allowance unsupported",
+      detail: "Without proof of cost the allowance can be disallowed on audit even when the treatment is right.",
+      recommendation: "Attach each asset's invoice.",
+      source: "s82A ITA 1967", refs: assetNoRcpt.map(refAsset) });
+  }
+
+  // 17. Disposal: balancing + no AA in disposal year (HIGH if a charge).
+  assets.filter((a) => a.disposed).forEach((a) => {
+    const dispYa = yearOf(a.disposed.date);
+    if (dispYa !== ya) return;
+    if (Math.abs(a.thisYaGross) > 1) {
+      F({ checkId: "disposal-balancing-and-no-aa", severity: "high", area: "capital-allowance",
+        title: "Annual allowance claimed in a disposal year",
+        detail: "No annual allowance is due in the year an asset is disposed.",
+        recommendation: "Only a balancing allowance or charge applies in the disposal year.",
+        source: "PR 7/2017", refs: [refAsset(a)] });
+    }
+    if (a.balancing < -1) {
+      F({ checkId: "disposal-balancing-charge", severity: "high", area: "capital-allowance",
+        title: "Balancing charge — taxable income on disposal",
+        detail: `Selling above the residual created a balancing charge of ${money(Math.abs(a.balancing))}, which is added back to income.`,
+        recommendation: "Declare the balancing charge. A sale to a connected party at undervalue needs market-value substitution — confirm with an agent.",
+        source: "PR 7/2017", refs: [refAsset(a)], rmAtStake: money(Math.abs(a.balancing)) });
+    }
+  });
+
+  // 18. YA summary tie-out (HIGH if drift).
+  const reRevenue = expenses.filter((e) => ["deduct", "partial"].includes(e.ruleTreatment)).reduce((s, e) => s + e.deductibleAmount, 0);
+  const reCA = assets.reduce((s, a) => s + a.thisYaAllowance, 0);
+  if (Math.abs(reRevenue - summary.revenueDeductible) > 1 || Math.abs(reCA - summary.capitalAllowance) > 1) {
+    F({ checkId: "ya-summary-tie-out", severity: "high", area: "audit-completeness",
+      title: "Totals do not reconcile to line items",
+      detail: "An independent re-sum of the records does not match the summary — a calculation bug would flow onto Form B.",
+      recommendation: "Do not file until this reconciles. Report it so it can be fixed.",
+      source: "Internal reconciliation", refs: [`revenue ${money(reRevenue)} vs ${money(summary.revenueDeductible)}`, `CA ${money(reCA)} vs ${money(summary.capitalAllowance)}`] });
+  }
+
+  // 19. Duplicate lines (MEDIUM).
+  const dupMap = {};
+  expenses.forEach((e) => {
+    const k = `${(e.vendor || "").toLowerCase()}|${e.date}|${Number(e.amount)}`;
+    (dupMap[k] = dupMap[k] || []).push(e);
+  });
+  const dups = Object.values(dupMap).filter((g) => g.length > 1 && Number(g[0].amount) > 0);
+  if (dups.length) {
+    F({ checkId: "duplicate-line-detection", severity: "medium", area: "audit-completeness",
+      title: "Possible duplicate expense entries",
+      detail: `${dups.length} group(s) share an identical vendor, date and amount — confirm, don't assume.`,
+      recommendation: "Check whether a line was entered twice and delete the duplicate.",
+      source: "s82A ITA 1967", refs: dups.map((g) => `${refExpense(g[0])} ×${g.length}`) });
+  }
+
+  // 20. Needs-review / unresolved (MEDIUM).
+  const needReview = expenses.filter((e) => e.ruleTreatment === "ask" || e.deductible === "Ask accountant" || (!e.reviewed && Number(e.amount) >= 200));
+  if (needReview.length || summary.needsReview > 0) {
+    F({ checkId: "needs-review-unresolved", severity: "medium", area: "audit-completeness",
+      title: "Open grey-area / unreviewed items",
+      detail: `${needReview.length} item(s) still need a decision or review before filing.`,
+      recommendation: "Decide each treatment, note the reasoning, and tick 'reviewed'. Don't file with open 'Ask accountant' items inside the numbers.",
+      source: "s33/s39; s82A", refs: needReview.slice(0, 12).map(refExpense) });
+  }
+
+  // 21. Missing operating categories vs revenue (HIGH).
+  if (grossTurnover > 0 || summary.revenueDeductible > 0) {
+    const present = (group) => expenses.some((e) => TAX_CAT_GROUPS[group].includes(e.category) && e.ruleTreatment !== "no");
+    const absent = ["cleaning", "utilities", "internet"].filter((g) => !present(g));
+    if (absent.length) {
+      F({ checkId: "missing-operating-categories", severity: absent.length >= 3 ? "high" : "medium",
+        area: "audit-completeness", ledger: "missed_relief_overpayment",
+        title: "Revenue earned but expected running costs are missing",
+        detail: `No ${absent.join(", ")} expense recorded all year. Income with no costs reads as incomplete books — and you may be missing deductions.`,
+        recommendation: "Add any unlogged cleaning / utilities / internet costs (with receipts) to cut your tax, or note why a cost was bundled.",
+        source: "s33(1) ITA 1967", refs: absent });
+    }
+  }
+
+  // 22. SST / e-invoice thresholds (MEDIUM) — only if gross turnover known.
+  // Uses THIS year's profile so the right-year rate is cited (6% pre-2024,
+  // split 2024, 8% after — and never the 2026 rental-only reduction).
+  const yProfile = taxYearProfile(ya);
+  if (grossTurnover > 0) {
+    if (grossTurnover >= 500000) {
+      F({ checkId: "sst-threshold", severity: "medium", area: "documentation", ledger: "compliance_separate_regime",
+        title: "Accommodation turnover at/over the RM500k SST line",
+        detail: `Gross accommodation turnover ${money(grossTurnover)} is at/over RM500k. YA${ya} accommodation service-tax rate: ${yProfile.sstRate.value}.`,
+        recommendation: "Register for service tax — a separate regime with its own penalties. Confirm the current threshold with LHDN.",
+        source: `${yProfile.sstRate.source}`, refs: [`turnover ${money(grossTurnover)}`] });
+    } else if (grossTurnover >= 450000) {
+      F({ checkId: "sst-threshold-near", severity: "low", area: "documentation", ledger: "compliance_separate_regime",
+        title: "Turnover within 10% of the RM500k SST line",
+        detail: `Gross turnover ${money(grossTurnover)} is approaching RM500k.`,
+        recommendation: "Watch the SST registration threshold.",
+        source: "SST threshold (confirm current)", refs: [`turnover ${money(grossTurnover)}`] });
+    }
+    if (grossTurnover >= 1000000) {
+      F({ checkId: "einvoice-threshold", severity: "medium", area: "documentation", ledger: "compliance_separate_regime",
+        title: "Turnover at/over RM1m — e-invoice exemption may not apply",
+        detail: `Gross turnover ${money(grossTurnover)} may exceed the e-invoice exemption.`,
+        recommendation: "Confirm the current e-invoice phase threshold with LHDN.",
+        source: "E-invoice phase thresholds (confirm current)", refs: [`turnover ${money(grossTurnover)}`] });
+    }
+  }
+
+  // 23. ICT accelerated expiry (INFO).
+  const ict = assets.filter((a) => a.assetClass === "computer-ict" && (yearOf(a.acquisitionDate) === ya || a.residual > 0));
+  if (ict.length) {
+    F({ checkId: "ict-citation-confirm", severity: "info", area: "capital-allowance", ledger: "missed_relief_overpayment",
+      title: "Confirm the ICT accelerated allowance split + any YA2027 sunset",
+      detail: "ICT/computer uses an accelerated allowance (IA 40% + AA 20% per gazette P.U.(A) 156/2018 → 328/2024 from YA2024). Some secondary sources invert this to 20%/40% — confirm against the gazette. The gazettes are open-ended, so do NOT assume it expires after YA2027 without an amending gazette.",
+      recommendation: "Verify the IA/AA split and any sunset against P.U.(A) 328/2024 (or upload it so the year profile records it).",
+      source: "P.U.(A) 328/2024 / 156/2018", refs: ict.map(refAsset) });
+  }
+
+  // Professional-fee cap (MEDIUM) — deterministic on the obvious categories.
+  const profFee = expenses
+    .filter((e) => ["Professional Fees", "Accounting & Tax"].includes(e.category) && e.deductibleAmount > 0)
+    .reduce((s, e) => s + e.deductibleAmount, 0);
+  if (profFee > 15000) {
+    F({ checkId: "professional-fees-15k-cap", severity: "medium", area: "deductibility",
+      title: "Secretarial + tax fees over the RM15,000/YA cap",
+      detail: `Combined ${money(profFee)} exceeds the RM15,000 cap (recurring legal is separate and uncapped).`,
+      recommendation: `Cap the deduction at RM15,000; add back ${money(profFee - 15000)}.`,
+      source: "P.U.(A) 162/2022", refs: [`combined ${money(profFee)}`] });
+  }
+
+  // Checks that could not run for missing inputs (mandatory, never silently green).
+  const checksNotEvaluated = [
+    { checkId: "business-vs-passive", missingInput: "active-operation evidence (nights let, bookings, listing)", consequence: "Cannot confirm the villa is Form B business income vs passive letting — if wrong, every deduction and allowance is void." },
+    { checkId: "pre-commencement", missingInput: "business commencement date", consequence: "Cannot flag pre-opening costs or initial repairs." },
+    { checkId: "own-use-apportionment", missingInput: "owner/family use nights + blocked-date calendar", consequence: "Cannot carve the private share out of utilities/cleaning." },
+    { checkId: "carry-forward", missingInput: "prior-year unabsorbed CA / losses (with origin YA)", consequence: "Cannot check carry-forward utilisation." },
+  ];
+  if (grossTurnover <= 0) {
+    checksNotEvaluated.push({ checkId: "sst-einvoice-revenue", missingInput: "gross accommodation turnover for this YA", consequence: "SST, e-invoice and revenue-completeness checks could not run." });
+  }
+
+  // ---- DETERMINISTIC VERDICT (code-set; the LLM may never upgrade it) ----
+  const classificationAffirmed = !!taxPlan.review?.classificationAffirmed;
+  const hasHigh = findings.some((f) => f.severity === "high");
+  const hasOpenQuestions = findings.some((f) => ["medium", "low"].includes(f.severity)) || summary.needsReview > 0;
+  let verdict;
+  let verdictReason;
+  if (!classificationAffirmed) {
+    verdict = "not_ready_professional_check_required";
+    verdictReason = "Business-vs-passive classification has not been affirmed — confirm it below.";
+  } else if (hasHigh) {
+    verdict = "not_ready_professional_check_required";
+    verdictReason = `${findings.filter((f) => f.severity === "high").length} high-severity issue(s) are open.`;
+  } else if (hasOpenQuestions) {
+    verdict = "open_questions_block_review";
+    verdictReason = "No high-severity over-claim found, but open questions must be resolved before filing.";
+  } else {
+    verdict = "no_blocking_issues_in_entered_records";
+    verdictReason = "No blocking issues in the records you entered. Not clearance to file.";
+  }
+
+  // Order: high → medium → low → info, then by ledger.
+  const sev = { high: 0, medium: 1, low: 2, info: 3 };
+  findings.sort((a, b) => sev[a.severity] - sev[b.severity]);
+
+  return { ya, grossTurnover, summary, findings, checksNotEvaluated, verdict, verdictReason, classificationAffirmed };
+}
+
+const TAX_VERDICT_LABEL = {
+  not_ready_professional_check_required: "Not ready — issues to resolve",
+  open_questions_block_review: "Open questions to resolve",
+  no_blocking_issues_in_entered_records: "No blocking issues in your records",
+};
+const TAX_VERDICT_TONE = {
+  not_ready_professional_check_required: "bad",
+  open_questions_block_review: "warn",
+  no_blocking_issues_in_entered_records: "ok",
+};
+const TAX_REVIEW_DISCLAIMER =
+  "This is a review aid, not a tax sign-off — and no professional has checked it. It only reviews the records you entered: it can't see income or costs you didn't log, can't tell whether a receipt is genuine, and can't confirm your villa qualifies as business (Form B) income rather than passive rental — which, if wrong, undoes every deduction here. A clean review means “nothing looks wrong in what you typed,” not “your return is correct or ready to file.” Treat flags as questions to resolve before you submit Form B.";
+
+function loadTaxPlan() {
+  const fallback = defaultTaxPlan();
+  const stored = localStorage.getItem(TAX_PLAN_KEY);
+  if (!stored) return fallback;
+  try {
+    const parsed = JSON.parse(stored);
+    return {
+      ...fallback,
+      ...parsed,
+      expenses: Array.isArray(parsed.expenses) ? parsed.expenses.map(normalizeTaxExpense) : fallback.expenses,
+      assets: Array.isArray(parsed.assets) ? parsed.assets.map(normalizeTaxAsset) : fallback.assets,
+      review: { ...fallback.review, ...(parsed.review || {}) },
+      yearProfiles: parsed.yearProfiles && typeof parsed.yearProfiles === "object" ? parsed.yearProfiles : fallback.yearProfiles,
+      lhdnDocs: Array.isArray(parsed.lhdnDocs) ? parsed.lhdnDocs : fallback.lhdnDocs,
+      earnings: Array.isArray(parsed.earnings) ? parsed.earnings : fallback.earnings,
+      earningsDocs: Array.isArray(parsed.earningsDocs) ? parsed.earningsDocs : fallback.earningsDocs,
+      notes: { ...fallback.notes, ...(parsed.notes || {}) },
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveTaxPlan() {
+  safeSetItem(TAX_PLAN_KEY, JSON.stringify(taxPlan));
+  scheduleCloudSave();
+}
+
+function loadDocuments() {
+  const stored = localStorage.getItem(DOCUMENTS_KEY);
+  if (!stored) return [];
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed.map(normalizeDocument) : [];
+  } catch {
+    return [];
+  }
+}
+
+function normalizeDocument(doc) {
+  const now = new Date().toISOString();
+  const type = ["Quotation", "Invoice", "Official Receipt"].includes(doc.type) ? doc.type : "Quotation";
+  const issuer = issuers[doc.issuer] ? doc.issuer : "Sunrise Villa Ventures";
+  const bookingType = doc.bookingType === "Airbnb Booking" ? "Airbnb Booking" : "Direct Booking";
+  const checkIn = String(doc.checkIn || isoDate(new Date()));
+  const nights = Math.max(1, Number(doc.nights || nightsBetween(checkIn, doc.checkOut) || 1));
+  const checkOut = String(doc.checkOut || isoDate(addDays(dateObj(checkIn), nights)));
+  const normalized = {
+    ...doc,
+    id: safeRecordId(doc.id),
+    bookingId: String(doc.bookingId || ""),
+    type,
+    issuer,
+    date: String(doc.date || isoDate(new Date())),
+    status: String(doc.status || "Draft"),
+    bookingType,
+    guestName: String(doc.guestName || ""),
+    guestContact: String(doc.guestContact || doc.contact || ""),
+    billTo: String(doc.billTo || ""),
+    billAddress: String(doc.billAddress || ""),
+    propertyName: String(doc.propertyName || "Sunrise Villa"),
+    checkIn,
+    checkOut,
+    nights,
+    accommodationFee: Number(doc.accommodationFee || 0),
+    securityDeposit: Number(doc.securityDeposit ?? 500),
+    invoiceScope: doc.invoiceScope === "Balance Payment" ? "Balance Payment" : "Full Booking",
+    previouslyReceived: Number(doc.previouslyReceived || 0),
+    linkedReceiptCode: String(doc.linkedReceiptCode || ""),
+    remarks: String(doc.remarks || ""),
+    payments: Array.isArray(doc.payments) ? doc.payments.map(normalizePayment) : [],
+    createdAt: doc.createdAt || now,
+    updatedAt: doc.updatedAt || now,
+  };
+  const totalAmount = documentTotalFor(normalized);
+  const amountDue = documentAmountDueFor({ ...normalized, totalAmount });
+  const codePattern = new RegExp("^" + issuers[issuer].code + "-[0-9]{4}-" + documentTypeCode(type) + "[A-D](08|18)(-[0-9]+)?$");
+  const code = String(doc.code || "").trim() ? String(doc.code) : documentCodeFor(normalized);
+  return { ...normalized, code, totalAmount, amountDue };
+}
+
+function normalizePayment(payment) {
+  return {
+    ...payment,
+    id: String(payment.id || crypto.randomUUID()),
+    mode: String(payment.mode || ""),
+    bank: String(payment.bank || payment.bankDetails || ""),
+    reference: String(payment.reference || ""),
+    date: String(payment.date ?? isoDate(new Date())),
+    amount: Number(payment.amount || 0),
+  };
+}
+
+function saveDocuments() {
+  safeSetItem(DOCUMENTS_KEY, JSON.stringify(documents));
+  scheduleCloudSave();
+}
+
+function defaultProfitMonth() {
+  return {
+    cleaning: 0,
+    utilities: 0,
+    maintenance: 0,
+    supplies: 0,
+    platform: 0,
+    other: 0,
+    oneOffCosts: [],
+    notes: "",
+  };
+}
+
+function normalizeOneOffCost(cost = {}) {
+  return {
+    ...cost,
+    id: safeRecordId(cost.id),
+    category: String(cost.category || "Supplies"),
+    description: String(cost.description || ""),
+    amount: Number(cost.amount || 0),
+    receiptImage: safeDataUrl(cost.receiptImage, ["data:image/"]),
+    receiptName: String(cost.receiptName || ""),
+  };
+}
+
+function loadProfitData() {
+  const stored = localStorage.getItem(PROFIT_KEY);
+  if (!stored) return {};
+  try {
+    const parsed = JSON.parse(stored);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeProfitMonth(monthData = {}) {
+  const fallback = defaultProfitMonth();
+  return {
+    cleaning: Number(monthData.cleaning || 0),
+    utilities: Number(monthData.utilities || 0),
+    maintenance: Number(monthData.maintenance || 0),
+    supplies: Number(monthData.supplies || 0),
+    platform: Number(monthData.platform || 0),
+    other: Number(monthData.other || 0),
+    oneOffCosts: Array.isArray(monthData.oneOffCosts) ? monthData.oneOffCosts.map(normalizeOneOffCost) : [],
+    notes: String(monthData.notes || fallback.notes),
+  };
+}
+
+function profitMonthKey(monthValue, villa = activeVillaKey()) {
+  // Keep the original Sunrise keys so existing backups remain compatible.
+  return villa === "Windmill" ? `Windmill:${monthValue}` : monthValue;
+}
+
+function profitMonth(monthValue, villa = activeVillaKey()) {
+  return normalizeProfitMonth(profitData[profitMonthKey(monthValue, villa)]);
+}
+
+function expenseTotalFor(monthValue) {
+  return expenseBreakdownFor(monthValue).total;
+}
+
+function saveProfitData() {
+  safeSetItem(PROFIT_KEY, JSON.stringify(profitData));
+  scheduleCloudSave();
+}
+
+function defaultAppSettings() {
+  return {
+    lastBackupAt: "",
+    lastCloudSyncAt: "",
+    activeVilla: "Sunrise",
+    guestProfiles: {}, // CRM: keyed by normalized phone/name -> { notes, tags:[], blocklist, consent, displayName }
+    guidebook: {}, // per-villa guest guidebook content -> { Sunrise: {...}, Windmill: {...} }
+    dashboardHidden: {},
+    dashboardMode: "monthly",
+    bookingMonthFilter: "Selected",
+    bookingColumns: {
+      record: false,
+      prefix: false,
+      contact: true,
+      full: true,
+      refund: true,
+    },
+    bookingColumnWidths: {},
+    quickColumns: {
+      deposit: false,
+      total: false,
+      full: false,
+      refund: false,
+    },
+    quickColumnWidths: {},
+    commitments: defaultCommitments,
+    message: {
+      checkinTime: "3:00 PM",
+      address: "No. 59, Jalan Rimba 2, Taman Puncak Rimba, 28750 Bentong, Pahang",
+      mapsLink: "https://g.co/kgs/DYpYPSh",
+      guideLink: GUIDE_LINK,
+      bankDetails: "",
+      templates: defaultMessageTemplates,
+      // Per-villa override block. Blank by default ON PURPOSE so Windmill never inherits
+      // Sunrise's address, directions, bank details or templates. Filled in when on Windmill.
+      windmill: {
+        checkinTime: "3:00 PM",
+        address: "",
+        mapsLink: "",
+        guideLink: "",
+        bankDetails: "",
+        templates: { quote: "", checkin: "", guide: "", reminder: "" },
+      },
+    },
+    ical: { sources: [], imported: [], lastSyncedAt: "", lastStatus: "", lastError: "" },
+  };
+}
+
+function loadAppSettings() {
+  const fallback = defaultAppSettings();
+  const stored = localStorage.getItem(SETTINGS_KEY);
+  if (!stored) return fallback;
+  try {
+    const parsed = JSON.parse(stored);
+    const result = {
+      ...fallback,
+      ...parsed,
+      activeVilla: parsed.activeVilla === "Windmill" ? "Windmill" : "Sunrise",
+      guestProfiles: { ...fallback.guestProfiles, ...(parsed.guestProfiles || {}) },
+      guidebook: { ...fallback.guidebook, ...(parsed.guidebook || {}) },
+      dashboardHidden: { ...fallback.dashboardHidden, ...(parsed.dashboardHidden || {}) },
+      dashboardMode: parsed.dashboardMode === "annual" ? "annual" : "monthly",
+      bookingMonthFilter: parsed.bookingMonthFilter || fallback.bookingMonthFilter,
+      bookingColumns: { ...fallback.bookingColumns, ...(parsed.bookingColumns || {}) },
+      bookingColumnWidths: { ...fallback.bookingColumnWidths, ...(parsed.bookingColumnWidths || {}) },
+      quickColumns: { ...fallback.quickColumns, ...(parsed.quickColumns || {}) },
+      quickColumnWidths: { ...fallback.quickColumnWidths, ...(parsed.quickColumnWidths || {}) },
+      commitments: Array.isArray(parsed.commitments) ? parsed.commitments.map(normalizeCommitment) : fallback.commitments,
+      message: {
+        ...fallback.message,
+        ...(parsed.message || {}),
+        templates: { ...defaultMessageTemplates, ...(parsed.message?.templates || {}) },
+        windmill: {
+          ...fallback.message.windmill,
+          ...(parsed.message?.windmill || {}),
+          templates: { ...fallback.message.windmill.templates, ...(parsed.message?.windmill?.templates || {}) },
+        },
+      },
+      ical: { ...fallback.ical, ...(parsed.ical || {}) },
+    };
+    // One-time migration: lift bank details out of the (now public-sanitized) quote
+    // template into a private field so they live only in your synced data, never in source.
+    if (!result.message.bankDetails) {
+      const savedQuote = result.message.templates?.quote || "";
+      const match = savedQuote.match(/Bank Details:[\s\S]*?Account Number:[^\n]*/i);
+      result.message.bankDetails = match ? match[0] : "";
+    }
+    return result;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveAppSettings() {
+  safeSetItem(SETTINGS_KEY, JSON.stringify(appSettings));
+  scheduleCloudSave();
+}
+
+function normalizeCommitment(commitment = {}) {
+  return {
+    ...commitment,
+    id: safeRecordId(commitment.id),
+    name: String(commitment.name || "New fixed cost"),
+    amount: Number(commitment.amount || 0),
+    category: String(commitment.category || "Other"),
+    villa: commitment.villa === "Windmill" ? "Windmill" : "Sunrise",
+    starts: String(commitment.starts || ""),
+    expires: String(commitment.expires || ""),
+    overrides: commitment.overrides && typeof commitment.overrides === "object" ? commitment.overrides : {},
+  };
+}
+
+function commitmentActiveInMonth(commitment, monthValue) {
+  return (!commitment.starts || monthValue >= commitment.starts) && (!commitment.expires || monthValue <= commitment.expires);
+}
+
+function commitmentAmountFor(commitment, monthValue) {
+  const override = commitment.overrides?.[monthValue];
+  if (override === "" || override === undefined || override === null) return Number(commitment.amount || 0);
+  return Number(override || 0);
+}
+
+function commitmentsForMonth(monthValue) {
+  return (appSettings.commitments || []).map(normalizeCommitment).filter((commitment) => commitment.villa === activeVillaKey() && commitmentActiveInMonth(commitment, monthValue));
+}
+
+function commitmentTotalFor(monthValue) {
+  return commitmentsForMonth(monthValue).reduce((sum, commitment) => sum + commitmentAmountFor(commitment, monthValue), 0);
+}
+
+function adHocExpenseTotalFor(monthValue) {
+  const expenses = profitMonth(monthValue);
+  return expenses.cleaning + expenses.utilities + expenses.maintenance + expenses.supplies + expenses.platform + expenses.other + expenses.oneOffCosts.reduce((sum, cost) => sum + Number(cost.amount || 0), 0);
+}
+
+function oneOffCostBucket(cost) {
+  const text = `${cost.category} ${cost.description}`.toLowerCase();
+  if (text.includes("housekeep") || text.includes("clean") || text.includes("laundry")) return "housekeeping";
+  if (text.includes("repair") || text.includes("maintenance")) return "maintenance";
+  if (text.includes("electric") || text.includes("water") || text.includes("utility")) return "utilities";
+  if (text.includes("grocer") || text.includes("supply") || text.includes("supplies")) return "supplies";
+  return "other";
+}
+
+function commitmentBucket(commitment) {
+  const text = `${commitment.name} ${commitment.category}`.toLowerCase();
+  if (text.includes("housekeeper") || text.includes("housekeeping")) return "housekeeping";
+  if (text.includes("maintenance")) return "maintenance";
+  if (text.includes("electricity") || text.includes("water") || text.includes("utilities")) return "utilities";
+  if (text.includes("property")) return "propertyLoan";
+  if (text.includes("cc") || text.includes("credit") || text.includes("loan")) return "loans";
+  return "other";
+}
+
+function expenseBreakdownFor(monthValue) {
+  const expenses = profitMonth(monthValue);
+  const breakdown = {
+    housekeeping: expenses.cleaning,
+    maintenance: expenses.maintenance,
+    utilities: expenses.utilities,
+    propertyLoan: 0,
+    loans: expenses.platform,
+    supplies: expenses.supplies,
+    other: expenses.other,
+  };
+  expenses.oneOffCosts.forEach((cost) => {
+    breakdown[oneOffCostBucket(cost)] += Number(cost.amount || 0);
+  });
+  commitmentsForMonth(monthValue).forEach((commitment) => {
+    const bucket = commitmentBucket(commitment);
+    breakdown[bucket] += commitmentAmountFor(commitment, monthValue);
+  });
+  breakdown.total = breakdown.housekeeping + breakdown.maintenance + breakdown.utilities + breakdown.propertyLoan + breakdown.loans + breakdown.supplies + breakdown.other;
+  breakdown.adHoc = adHocExpenseTotalFor(monthValue);
+  breakdown.commitments = commitmentTotalFor(monthValue);
+  return typeof unifiedExpenseBreakdown === "function" ? unifiedExpenseBreakdown(monthValue, breakdown) : breakdown;
+}
+
+function initialMonth() {
+  return isoDate(new Date()).slice(0, 7);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function escapeMultiline(value) {
+  return escapeHtml(value).replace(/\r?\n/g, "<br>");
+}
+
+function safeDataUrl(value, allowedPrefixes = []) {
+  const url = String(value || "").trim();
+  const lower = url.toLowerCase();
+  return allowedPrefixes.some((prefix) => lower.startsWith(prefix.toLowerCase())) ? url : "";
+}
+
+function safeRecordId(value) {
+  const id = String(value || "").trim();
+  return /^[a-z0-9_-]{3,120}$/i.test(id) ? id : crypto.randomUUID();
+}
+
+function money(value) {
+  return `RM ${(Number(value) || 0).toLocaleString("en-MY", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function percent(value) {
+  return `${(Number(value) || 0).toLocaleString("en-MY", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  })}%`;
+}
+
+function defaultDepositForChannel(channel) {
+  return channel === "Airbnb" ? 0 : 500;
+}
+
+// A lead that hasn't been confirmed yet (status Inquiry/Quoted). These were a
+// DECOY before — the status was saved but read nowhere, so an inquiry counted
+// as revenue and blocked the calendar exactly like a confirmed stay.
+function isTentativeBooking(booking) {
+  return booking?.status === "inquiry" || booking?.status === "quoted";
+}
+
+function isExcludedBooking(booking) {
+  // Tentative leads never count toward revenue/KPIs/payment maths.
+  return Boolean(booking?.excludeFromCalculations) || isTentativeBooking(booking);
+}
+
+// Villa scope (Sunrise ⇄ Windmill): every display/financial calc flows through this,
+// so a Windmill booking can NEVER count toward Sunrise's revenue and vice versa.
+function scopedBookings() {
+  const villa = appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise";
+  return bookings.filter((booking) => (booking.villa === "Windmill" ? "Windmill" : "Sunrise") === villa);
+}
+
+function calculationBookings(list = scopedBookings()) {
+  return list.filter((booking) => !isExcludedBooking(booking));
+}
+
+// --- Guest CRM (improvement: repeat-guest detection + lightweight profiles) ---
+// Derived stats come straight from bookings; only notes/tags/blocklist/consent are stored
+// (in appSettings.guestProfiles, keyed by normalized phone or name — additive, cloud-synced).
+function guestKeyFor(booking) {
+  if (booking?.guestId) return booking.guestId;
+  const phone = formatPhoneForWhatsapp(booking?.contact);
+  if (phone) return "p:" + phone;
+  const name = String(booking?.guest || "").trim().toLowerCase();
+  return name ? "b:" + booking.id : "";
+}
+function guestProfile(key) {
+  const profiles = appSettings.guestProfiles || {};
+  if (profiles[key]) return profiles[key];
+  const booking = bookings.find(item => guestKeyFor(item) === key);
+  const oldKey = booking ? "n:" + booking.guest.trim().toLowerCase() : "";
+  const matches = oldKey ? bookings.filter(item => "n:" + item.guest.trim().toLowerCase() === oldKey) : [];
+  return matches.length === 1 ? profiles[oldKey] || {} : {};
+}
+function setGuestProfile(key, patch) {
+  if (!key) return;
+  const next = { ...guestProfile(key), ...patch };
+  appSettings = { ...appSettings, guestProfiles: { ...(appSettings.guestProfiles || {}), [key]: next } };
+  saveAppSettings();
+}
+function guestStatsList(list = scopedBookings()) {
+  const map = new Map();
+  [...list].sort((a, b) => a.arrival.localeCompare(b.arrival)).forEach((b) => {
+    const key = guestKeyFor(b);
+    if (!key) return;
+    if (!map.has(key)) map.set(key, { key, name: b.guest, phone: formatPhoneForWhatsapp(b.contact), email: b.guestEmail || "", stays: 0, revenue: 0, nights: 0, firstStay: b.arrival, lastStay: b.arrival, channels: new Set() });
+    const g = map.get(key);
+    if (!isTentativeBooking(b) && departureFor(b) <= isoDate(new Date())) g.stays += 1;
+    g.revenue += isExcludedBooking(b) ? 0 : Number(b.revenue || 0);
+    if (!isTentativeBooking(b)) g.nights += Number(b.nights || 0);
+    if (b.arrival < g.firstStay) g.firstStay = b.arrival;
+    if (b.arrival > g.lastStay) g.lastStay = b.arrival;
+    if (b.guest) g.name = b.guest;
+    if (!g.phone && formatPhoneForWhatsapp(b.contact)) g.phone = formatPhoneForWhatsapp(b.contact);
+    if (!g.email && b.guestEmail) g.email = b.guestEmail;
+    g.channels.add(b.channel);
+  });
+  return [...map.values()].map((g) => ({ ...g, channels: [...g.channels] }));
+}
+function guestStayTotal(booking, list = scopedBookings()) {
+  const key = guestKeyFor(booking);
+  if (!key) return 1;
+  return list.reduce((n, b) => n + (guestKeyFor(b) === key && !isTentativeBooking(b) && departureFor(b) <= isoDate(new Date()) ? 1 : 0), 0);
+}
+function returningBadgeHtml(booking, list = scopedBookings()) {
+  const total = guestStayTotal(booking, list);
+  if (total <= 1) return "";
+  return `<span class="returning-badge" title="Returning guest — ${total} stays on record">★ ${total}× guest</span>`;
+}
+function blocklistBadgeHtml(booking) {
+  return guestProfile(guestKeyFor(booking)).blocklist ? `<span class="blocklist-badge" title="Flagged guest">⚑ flagged</span>` : "";
+}
+
+function renderGuests() {
+  const host = document.querySelector("#guestsList");
+  const summary = document.querySelector("#guestsSummary");
+  if (!host) return;
+  const search = (document.querySelector("#guestSearch")?.value || "").trim().toLowerCase();
+  const returningOnly = !!document.querySelector("#guestReturningOnly")?.checked;
+  let guests = guestStatsList().sort((a, b) => b.stays - a.stays || b.revenue - a.revenue || (a.name || "").localeCompare(b.name || ""));
+  const totalGuests = guests.length;
+  const returningCount = guests.filter((g) => g.stays > 1).length;
+  if (summary) {
+    const repeatRate = totalGuests ? Math.round((returningCount / totalGuests) * 100) : 0;
+    summary.innerHTML = `
+      <div class="guest-stat"><strong>${totalGuests}</strong><span>guests</span></div>
+      <div class="guest-stat"><strong>${returningCount}</strong><span>returning</span></div>
+      <div class="guest-stat"><strong>${repeatRate}%</strong><span>repeat rate</span></div>`;
+  }
+  if (returningOnly) guests = guests.filter((g) => g.stays > 1);
+  if (search) guests = guests.filter((g) => `${g.name} ${g.phone} ${g.email}`.toLowerCase().includes(search));
+  if (!guests.length) {
+    host.innerHTML = `<div class="today-empty">No guests match. Add bookings with a name or phone to build your guest book for ${escapeHtml(activeVillaKey())}.</div>`;
+    return;
+  }
+  host.innerHTML = guests
+    .map((g) => {
+      const p = guestProfile(g.key);
+      const tags = Array.isArray(p.tags) ? p.tags.join(", ") : p.tags || "";
+      return `
+      <article class="guest-card${p.blocklist ? " flagged" : ""}" data-guest-key="${escapeHtml(g.key)}">
+        <div class="guest-card-head">
+          <div class="guest-card-name">
+            <strong>${escapeHtml(g.name || "—")}</strong>
+            ${g.stays > 1 ? `<span class="returning-badge">★ ${g.stays}× guest</span>` : ""}
+            ${p.blocklist ? `<span class="blocklist-badge">⚑ flagged</span>` : ""}
+          </div>
+          ${g.phone ? `<button class="small-action wa-action" type="button" data-guest-wa="${escapeHtml(g.phone)}" data-guest-name="${escapeHtml((g.name || "").split(" ")[0])}" title="Open WhatsApp chat">WhatsApp</button>` : ""}
+        </div>
+        <div class="guest-card-meta">
+          <span>${g.stays} stay${g.stays === 1 ? "" : "s"}</span>
+          <span>${g.nights} nights</span>
+          <span>LTV ${money(g.revenue)}</span>
+          <span>Last ${shortDate(g.lastStay)}</span>
+          <span>${escapeHtml(g.channels.join(" / "))}</span>
+          ${g.phone ? `<span>${escapeHtml(g.phone)}</span>` : `<span class="contact-missing">no phone</span>`}
+          ${g.email ? `<span>${escapeHtml(g.email)}</span>` : ""}
+        </div>
+        <div class="guest-card-edit">
+          <input type="text" data-guest-notes placeholder="Private notes (preferences…)" value="${escapeHtml(p.notes || "")}" aria-label="Notes for ${escapeHtml(g.name || "guest")}" />
+          <input type="text" data-guest-tags placeholder="Tags (family, pet…)" value="${escapeHtml(tags)}" aria-label="Tags" />
+          <label class="guest-toggle" title="Flag this guest as do-not-rebook / problem guest"><input type="checkbox" data-guest-blocklist ${p.blocklist ? "checked" : ""} aria-label="Flag guest as do-not-rebook" /> Flag</label>
+          <label class="guest-toggle" title="Guest agreed to be contacted for future offers (PDPA marketing consent)"><input type="checkbox" data-guest-consent ${p.consent ? "checked" : ""} aria-label="Marketing contact consent (PDPA)" /> Consent</label>
+        </div>
+      </article>`;
+    })
+    .join("");
+}
+
+// --- Digital guidebook (per villa) ---
+function guidebookFor(villa) {
+  return (appSettings.guidebook && appSettings.guidebook[villa]) || {};
+}
+function setGuidebookField(field, value) {
+  const villa = activeVillaKey();
+  appSettings = { ...appSettings, guidebook: { ...(appSettings.guidebook || {}), [villa]: { ...guidebookFor(villa), [field]: value } } };
+  saveAppSettings();
+}
+function renderGuide() {
+  const villa = activeVillaKey();
+  const label = document.querySelector("#guideVillaLabel");
+  if (label) label.textContent = villa;
+  const g = guidebookFor(villa);
+  document.querySelectorAll("#guideView [data-guide]").forEach((el) => {
+    el.value = g[el.dataset.guide] || "";
+  });
+}
+function guidebookHtml(villa) {
+  const g = guidebookFor(villa);
+  const block = messageBlockForVilla(villa) || {};
+  const section = (title, body) => (body && String(body).trim() ? `<section><h2>${escapeHtml(title)}</h2><p>${escapeMultiline(body)}</p></section>` : "");
+  const wifi = g.wifiName || g.wifiPassword
+    ? `<section><h2>WiFi</h2><p><strong>Network:</strong> ${escapeHtml(g.wifiName || "—")}<br><strong>Password:</strong> ${escapeHtml(g.wifiPassword || "—")}</p></section>`
+    : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(villa)} Villa — Guest Guide</title>
+    <style>body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,sans-serif;max-width:680px;margin:0 auto;padding:32px 22px;color:#2a2a2a;line-height:1.55}
+    h1{font-size:26px;margin:0 0 2px}.sub{color:#b07a30;font-weight:600;margin:0 0 22px;letter-spacing:.02em}
+    h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#c08a3e;border-bottom:1px solid #eee;padding-bottom:6px;margin:24px 0 8px}
+    p{margin:0 0 6px;white-space:pre-wrap}@media print{body{padding:0}}</style></head>
+    <body>
+      <h1>${escapeHtml(villa)} Villa</h1>
+      <p class="sub">Guest Guide</p>
+      ${section("Welcome", g.welcome)}
+      ${section("Address", block.address)}
+      ${wifi}
+      ${section("Check-in", g.checkin)}
+      ${section("Check-out", g.checkout)}
+      ${section("House Rules", g.houseRules)}
+      ${section("Appliances & How-tos", g.amenities)}
+      ${section("Local Recommendations", g.localTips)}
+      ${section("Emergency / Host Contact", g.emergency)}
+    </body></html>`;
+}
+function previewGuidebook() {
+  const win = window.open("", "_blank");
+  if (!win) {
+    window.alert("Allow pop-ups to preview the guide.");
+    return;
+  }
+  win.document.write(guidebookHtml(activeVillaKey()));
+  win.document.close();
+}
+
+// Compliance: Registration of Guests Act 1965 — exportable register of all stays.
+function exportGuestRegister() {
+  const rows = [["Guest name", "Phone", "Email", "Check-in", "Check-out", "Nights", "Villa", "Channel", "Confirmation code"]];
+  [...bookings]
+    .sort((a, b) => a.arrival.localeCompare(b.arrival))
+    .forEach((b) => {
+      rows.push([b.guest || "", b.contact || "", b.guestEmail || "", b.arrival || "", departureFor(b), b.nights || "", b.villa === "Windmill" ? "Windmill" : "Sunrise", b.channel || "", bookingConfirmationCode(b)]);
+    });
+  downloadCsv(`guest-register-${isoDate(new Date())}.csv`, rows);
+}
+
+function applyChannelDepositDefault(force = false) {
+  const nextDefault = defaultDepositForChannel(els.channelInput.value);
+  const currentAmount = Number(els.depositAmountInput.value || 0);
+  const currentLooksDefault = currentAmount === 0 || currentAmount === 500;
+  if (force || currentLooksDefault) {
+    els.depositAmountInput.value = nextDefault;
+  }
+  if (nextDefault === 0 && Number(els.depositAmountInput.value || 0) === 0) {
+    els.depositPaidInput.checked = false;
+    els.depositRefundedInput.checked = false;
+  }
+}
+
+function applyExcludedBookingDefaults() {
+  if (!els.excludeCalculationsInput?.checked) return;
+  els.revenueInput.value = 0;
+  els.paidInput.value = 0;
+  els.depositAmountInput.value = 0;
+  els.depositPaidInput.checked = false;
+  els.depositRefundedInput.checked = false;
+}
+
+function depositPortionFor(booking) {
+  if (isExcludedBooking(booking)) return 0;
+  if (!booking.depositPaid) return 0;
+  return Math.min(Number(booking.depositAmount || 0), Number(booking.paid || 0));
+}
+
+function accommodationPaidFor(booking) {
+  return Math.max(0, Number(booking.paid || 0) - depositPortionFor(booking));
+}
+
+function totalToReceiveFor(booking) {
+  if (isExcludedBooking(booking)) return 0;
+  return Number(booking.revenue || 0) + Number(booking.depositAmount || 0);
+}
+
+function balanceFor(booking) {
+  if (isExcludedBooking(booking)) return 0;
+  return Math.max(0, totalToReceiveFor(booking) - Number(booking.paid || 0));
+}
+
+function refundPendingFor(booking) {
+  if (isExcludedBooking(booking)) return 0;
+  return booking.depositRefunded ? 0 : depositPortionFor(booking);
+}
+
+function refundControl(booking) {
+  if (isExcludedBooking(booking)) return "-";
+  if (!booking.depositPaid || Number(booking.depositAmount || 0) <= 0) return "-";
+  return `
+    <label class="refund-toggle">
+      <input type="checkbox" data-refund-toggle="${booking.id}" ${booking.depositRefunded ? "checked" : ""} />
+      <span>${booking.depositRefunded ? "Refunded" : "Pending"}</span>
+    </label>
+  `;
+}
+
+function fullReceivedControl(booking) {
+  if (isExcludedBooking(booking)) return "-";
+  const isFull = balanceFor(booking) <= 0;
+  return `
+    <label class="refund-toggle">
+      <input type="checkbox" data-full-received="${booking.id}" ${isFull ? "checked" : ""} />
+      <span>${isFull ? "Full" : "Mark full"}</span>
+    </label>
+  `;
+}
+
+function whatsappSentControl(booking) {
+  return `
+    <label class="wa-toggle" title="WhatsApp check-in details sent">
+      <input type="checkbox" data-whatsapp-sent="${booking.id}" ${booking.whatsappSent ? "checked" : ""} />
+      <span class="sr-only">WhatsApp sent</span>
+    </label>
+  `;
+}
+
+const quickColumnOptions = [
+  { key: "guest", label: "Guest", locked: true },
+  { key: "type", label: "Type" },
+  { key: "checkin", label: "Check-in", locked: true },
+  { key: "nights", label: "Nights", locked: true },
+  { key: "wa", label: "W/A", locked: true },
+  { key: "revenue", label: "Accommodation" },
+  { key: "deposit", label: "Deposit" },
+  { key: "total", label: "Total" },
+  { key: "received", label: "Received" },
+  { key: "full", label: "Full received" },
+  { key: "balance", label: "Balance", locked: true },
+  { key: "refund", label: "Refund" },
+];
+
+function isQuickColumnVisible(key) {
+  const column = quickColumnOptions.find((item) => item.key === key);
+  if (column?.locked) return true;
+  return appSettings.quickColumns?.[key] !== false;
+}
+
+function quickCell(col, content, extraClass = "") {
+  const hidden = isQuickColumnVisible(col) ? "" : " hidden-col";
+  return `<td data-col="${col}" class="${`${extraClass}${hidden}`.trim()}">${content}</td>`;
+}
+
+function renderQuickColumnControls() {
+  if (!els.quickColumnControls) return;
+  els.quickColumnControls.innerHTML = quickColumnOptions
+    .filter((column) => !column.locked)
+    .map(
+      (column) => `
+        <label class="column-toggle">
+          <input type="checkbox" data-quick-column="${column.key}" ${isQuickColumnVisible(column.key) ? "checked" : ""} />
+          <span>${column.label}</span>
+        </label>
+      `,
+    )
+    .join("");
+  document.querySelectorAll("#quickViewTable [data-col]").forEach((cell) => {
+    cell.classList.toggle("hidden-col", !isQuickColumnVisible(cell.dataset.col));
+  });
+  applyTableColumnWidths("#quickViewTable", appSettings.quickColumnWidths || {});
+  setupTableColumnResizers("#quickViewTable", "quick");
+}
+
+function setDepositRefunded(id, refunded) {
+  bookings = bookings.map((booking) =>
+    booking.id === id
+      ? { ...booking, depositRefunded: Boolean(refunded) && booking.depositPaid }
+      : booking,
+  );
+  saveBookings();
+  renderAll();
+}
+
+function setFullReceived(id, checked) {
+  if (!checked) {
+    renderAll();
+    return;
+  }
+  bookings = bookings.map((booking) =>
+    booking.id === id
+      ? { ...VillaLedger.setTotal(booking, Math.max(Number(booking.paid || 0), totalToReceiveFor(booking)), isoDate(new Date()), "payment"), depositPaid: Number(booking.depositAmount || 0) > 0 }
+      : booking,
+  );
+  saveBookings();
+  renderAll();
+}
+
+function hasCheckinBeenSent(booking) {
+  return Boolean(booking.whatsappSent || booking.checkinSentAt || booking.sentLog?.checkin);
+}
+
+function setWhatsappSent(id, checked) {
+  const stamp = checked ? isoDate(new Date()) : null;
+  bookings = bookings.map(booking => booking.id === id ? {
+    ...booking, whatsappSent: Boolean(checked), checkinSentAt: stamp,
+    sentLog: { ...(booking.sentLog || {}), checkin: stamp },
+  } : booking);
+  saveBookings();
+  renderDetails();
+  renderToday();
+}
+
+// Improvement #2: capture / edit a guest phone inline, no dialog. Saves and re-renders.
+function setBookingContact(id, value) {
+  const next = String(value || "").trim();
+  bookings = bookings.map((booking) => (booking.id === id ? { ...booking, contact: next } : booking));
+  saveBookings();
+  renderAll();
+}
+
+// Improvement #1: stamp a comms timestamp so the "Send today" list self-clears once messaged.
+function markBookingMessaged(id, field) {
+  if (field !== "reminder") { setWhatsappSent(id, true); return; }
+  const key = "reminderSentAt";
+  const stamp = isoDate(new Date());
+  bookings = bookings.map((booking) => (booking.id === id ? { ...booking, [key]: stamp } : booking));
+  saveBookings();
+  renderToday();
+}
+
+// Brief visual "saved" confirmation on a field that persists silently (reuses the calm
+// feedback idiom rather than a toast framework). Gated behind prefers-reduced-motion in CSS.
+function flashSaved(el) {
+  if (!el) return;
+  el.classList.add("just-saved");
+  window.setTimeout(() => el.classList.remove("just-saved"), 1100);
+}
+
+// Record that a Send-today nudge of a given type was sent today, so the list reflects it
+// (check-in/mid-stay/review self-clear; deposit stays until paid but shows "requested").
+function markNudgeSent(id, type) {
+  const stamp = isoDate(new Date());
+  bookings = bookings.map((booking) =>
+    booking.id === id
+      ? { ...booking, sentLog: { ...(booking.sentLog || {}), [type]: stamp }, ...(type === "checkin" ? { checkinSentAt: stamp, whatsappSent: true } : {}) }
+      : booking,
+  );
+  saveBookings();
+  renderToday();
+}
+
+function currentYear() {
+  return new Date().getFullYear();
+}
+
+function bookingsForYear(year) {
+  return calculationBookings().filter((booking) => dateObj(booking.arrival).getFullYear() === year);
+}
+
+function totalsForBookings(list) {
+  return calculationBookings(list).reduce(
+    (acc, booking) => {
+      acc.bookings += 1;
+      acc.revenue += Number(booking.revenue) || 0;
+      acc.totalToReceive += totalToReceiveFor(booking);
+      acc.paid += Number(booking.paid) || 0;
+      acc.balance += balanceFor(booking);
+      acc.depositHeld += refundPendingFor(booking);
+      acc.depositsRefunded += booking.depositRefunded ? depositPortionFor(booking) : 0;
+      acc.refundPending += refundPendingFor(booking);
+      acc.nights += Number(booking.nights) || 0;
+      return acc;
+    },
+    { bookings: 0, revenue: 0, totalToReceive: 0, paid: 0, balance: 0, depositHeld: 0, depositsRefunded: 0, refundPending: 0, nights: 0 },
+  );
+}
+
+function upcomingPaymentsThroughYearEnd(year = currentYear()) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const yearEnd = new Date(year, 11, 31);
+  return calculationBookings()
+    .filter((booking) => {
+      const arrival = dateObj(booking.arrival);
+      return arrival >= today && arrival <= yearEnd;
+    })
+    .reduce((sum, booking) => sum + balanceFor(booking), 0);
+}
+
+function companyTaxEstimate(profit) {
+  const chargeable = Math.max(0, Number(profit) || 0);
+  const firstBand = Math.min(chargeable, 150000) * 0.15;
+  const secondBand = Math.min(Math.max(chargeable - 150000, 0), 450000) * 0.17;
+  const finalBand = Math.max(chargeable - 600000, 0) * 0.24;
+  return firstBand + secondBand + finalBand;
+}
+
+function personalTaxEstimate(chargeableIncome) {
+  const income = Math.max(0, Number(chargeableIncome) || 0);
+  const bands = [
+    { limit: 5000, rate: 0 },
+    { limit: 20000, rate: 0.01 },
+    { limit: 35000, rate: 0.03 },
+    { limit: 50000, rate: 0.06 },
+    { limit: 70000, rate: 0.11 },
+    { limit: 100000, rate: 0.19 },
+    { limit: 400000, rate: 0.25 },
+    { limit: 600000, rate: 0.26 },
+    { limit: 2000000, rate: 0.28 },
+    { limit: Infinity, rate: 0.3 },
+  ];
+  let previous = 0;
+  return bands.reduce((tax, band) => {
+    if (income <= previous) return tax;
+    const taxableAtBand = Math.min(income, band.limit) - previous;
+    previous = band.limit;
+    return tax + taxableAtBand * band.rate;
+  }, 0);
+}
+
+function revenueForPeriod(year, startMonth, mode) {
+  const startDate = dateObj(`${startMonth}-01`);
+  return calculationBookings()
+    .filter((booking) => {
+      const arrival = dateObj(booking.arrival);
+      if (arrival.getFullYear() !== year) return false;
+      return mode === "before" ? arrival < startDate : arrival >= startDate;
+    })
+    .reduce((sum, booking) => sum + Number(booking.revenue || 0), 0);
+}
+
+function salaryMonthsForPlan(year, startMonth) {
+  const [startYear, startMonthNumber] = startMonth.split("-").map(Number);
+  if (startYear !== year) return 0;
+  return Math.max(0, 12 - startMonthNumber + 1);
+}
+
+function dateObj(iso) {
+  const [year, month, day] = iso.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function isoDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function addDays(date, days) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+function nightsBetween(checkIn, checkOut) {
+  if (!checkIn || !checkOut) return 0;
+  const start = dateObj(checkIn);
+  const end = dateObj(checkOut);
+  const diff = Math.round((end - start) / 86400000);
+  return Math.max(0, diff);
+}
+
+function monthLabel(monthValue) {
+  const [year, month] = monthValue.split("-").map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString("en-MY", { month: "long", year: "numeric" });
+}
+
+function shortMonthName(monthIndex) {
+  // en-MY renders September as "Sept" (4 chars); normalise to 3-letter for consistency
+  return new Date(2026, monthIndex, 1).toLocaleDateString("en-MY", { month: "short" }).replace("Sept", "Sep");
+}
+
+function shortDate(iso) {
+  return dateObj(iso).toLocaleDateString("en-MY", { day: "2-digit", month: "short", year: "numeric" }).replace("Sept", "Sep");
+}
+
+function longDate(iso) {
+  return dateObj(iso).toLocaleDateString("en-MY", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+}
+
+function quickDate(iso) {
+  const date = dateObj(iso);
+  const day = date.getDate();
+  const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
+  return `${date.toLocaleDateString("en-MY", { month: "short" }).replace("Sept", "Sep")} ${day}${suffix}`;
+}
+
+function quoteDate(iso) {
+  if (!iso) return "-";
+  const date = dateObj(iso);
+  const day = date.getDate();
+  const suffix = day % 10 === 1 && day !== 11 ? "st" : day % 10 === 2 && day !== 12 ? "nd" : day % 10 === 3 && day !== 13 ? "rd" : "th";
+  return `${date.toLocaleDateString("en-MY", { month: "short" }).replace("Sept", "Sep")} ${day}${suffix}, ${date.getFullYear()}`;
+}
+
+function prefixFor(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const initials =
+    parts.length >= 2
+      ? `${parts[0][0]}${parts[1][0]}`.toUpperCase()
+      : (parts[0] || "").slice(0, 2).toUpperCase();
+  // Initials are rendered via innerHTML in several places (avatars, codes); escape
+  // so a malicious guest name like "<img…" can never inject markup. Defense-in-depth
+  // on top of the CSP, and hardens against null/undefined names.
+  return escapeHtml(initials);
+}
+
+function documentTypeCode(type) {
+  return { Quotation: "Q", Invoice: "I", "Official Receipt": "R" }[type] || "Q";
+}
+
+function documentNightsCode(nights) {
+  const count = Number(nights || 1);
+  if (count === 1) return "A";
+  if (count === 2) return "B";
+  if (count === 3) return "C";
+  return "D";
+}
+
+function bookingConfirmationCode(booking) {
+  if (!booking?.arrival) return "SV-DDMM-A08";
+  const [, month = "01", day = "01"] = booking.arrival.split("-");
+  return `SV-${day}${month}-${documentNightsCode(booking.nights)}${booking.channel === "Airbnb" ? "18" : "08"}`;
+}
+
+function bookingSourceCode(bookingType) {
+  return bookingType === "Airbnb Booking" ? "18" : "08";
+}
+
+function documentCodeFor(doc) {
+  const issuerCode = issuers[doc.issuer]?.code || "SVV";
+  const checkIn = doc.checkIn || isoDate(new Date());
+  const [, month = "01", day = "01"] = checkIn.split("-");
+  return `${issuerCode}-${month}${day}-${documentTypeCode(doc.type)}${documentNightsCode(doc.nights)}${bookingSourceCode(doc.bookingType)}`;
+}
+
+function documentTotalFor(doc) {
+  return Number(doc.accommodationFee || 0) + Number(doc.securityDeposit || 0);
+}
+
+function documentAmountDueFor(doc) {
+  const total = Number(doc.totalAmount ?? documentTotalFor(doc));
+  if (doc.type === "Invoice" && doc.invoiceScope === "Balance Payment") {
+    return Math.max(0, total - Number(doc.previouslyReceived || 0));
+  }
+  return total;
+}
+
+function paymentTotalFor(doc) {
+  return (doc.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+}
+
+function documentStatusClass(status) {
+  return String(status || "Draft").toLowerCase().replaceAll(" ", "-");
+}
+
+function channelBadgeFor(booking) {
+  if (isTentativeBooking(booking)) return `<span class="channel-badge tentative">${booking.status === "quoted" ? "Quoted" : "Inquiry"}</span>`;
+  if (isExcludedBooking(booking)) return `<span class="channel-badge influencer">Influencer</span>`;
+  return `<span class="channel-badge ${booking.channel.toLowerCase()}">${escapeHtml(booking.channel)}</span>`;
+}
+
+function titledGuestName(booking) {
+  const title = booking?.guestTitle === "Ms" ? "Ms" : "Mr";
+  const name = String(booking?.guest || "").trim();
+  return name ? `${title} ${name}` : title;
+}
+
+function syncBookingChannelChoice() {
+  document.querySelectorAll("[data-form-channel]").forEach((button) => {
+    const isActive = button.dataset.formChannel === els.channelInput.value;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function syncGuestTitleChoice() {
+  document.querySelectorAll("[data-title-choice]").forEach((button) => {
+    const isActive = button.dataset.titleChoice === els.guestTitleInput.value;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function setNightsChoice(value) {
+  const numeric = Number(value);
+  if (value === "manual" || numeric > 3) {
+    els.nightsManualInput?.classList.remove("hidden");
+    if (els.nightsManualInput) els.nightsManualInput.value = numeric > 3 ? numeric : els.nightsManualInput.value || 4;
+    els.nightsInput.value = els.nightsManualInput?.value || 4;
+  } else {
+    els.nightsManualInput?.classList.add("hidden");
+    if (els.nightsManualInput) els.nightsManualInput.value = "";
+    els.nightsInput.value = String(numeric || 1);
+  }
+  syncNightsChoice();
+}
+
+function syncNightsChoice() {
+  const value = Number(els.nightsInput.value || 1);
+  document.querySelectorAll("[data-nights-choice]").forEach((button) => {
+    const choice = button.dataset.nightsChoice;
+    const isActive = choice === "manual" ? value > 3 : Number(choice) === value;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+  updateCheckoutEcho();
+}
+
+// Echo the computed check-out date in the booking dialog so off-by-one nights are caught.
+function updateCheckoutEcho() {
+  if (!els.checkoutEcho) return;
+  const arrival = els.arrivalInput?.value;
+  const nights = Number(els.nightsInput?.value || 0);
+  els.checkoutEcho.textContent = arrival && nights ? `Check-out: ${shortDate(isoDate(addDays(dateObj(arrival), nights)))} · ${nights} night${nights === 1 ? "" : "s"}` : "";
+}
+
+function departureFor(booking) {
+  return isoDate(addDays(dateObj(booking.arrival), Number(booking.nights) || 0));
+}
+
+// When Airbnb releases the host payout: about 24h after the guest's check-in.
+// For a 1-night stay that lands on checkout day; for a multi-night stay it's the day
+// after check-in. Both work out to arrival + 1 day.
+function airbnbReleaseDate(booking) {
+  return isoDate(addDays(dateObj(booking.arrival), 1));
+}
+
+function overlapsDate(booking, dayIso) {
+  const day = dateObj(dayIso);
+  const start = dateObj(booking.arrival);
+  const end = dateObj(departureFor(booking));
+  return start <= day && day < end;
+}
+
+function bookingMonthOverlap(booking, monthValue) {
+  const [year, month] = monthValue.split("-").map(Number);
+  const startOfMonth = new Date(year, month - 1, 1);
+  const startOfNextMonth = new Date(year, month, 1);
+  const start = dateObj(booking.arrival);
+  const end = dateObj(departureFor(booking));
+  return start < startOfNextMonth && end > startOfMonth;
+}
+
+function arrivalInMonth(booking, monthValue) {
+  return booking.arrival.slice(0, 7) === monthValue;
+}
+
+function bookingsForMonth(monthValue) {
+  return scopedBookings()
+    .filter((booking) => bookingMonthOverlap(booking, monthValue))
+    .sort((a, b) => a.arrival.localeCompare(b.arrival));
+}
+
+function arrivalsForMonth(monthValue) {
+  return bookings
+    .filter((booking) => arrivalInMonth(booking, monthValue))
+    .sort((a, b) => a.arrival.localeCompare(b.arrival));
+}
+
+function totalsFor(monthValue) {
+  // Charges and receipts belong to the arrival month; occupancy uses stay dates.
+  return totalsForBookings(scopedBookings().filter((booking) => arrivalInMonth(booking, monthValue)));
+}
+
+function daysInMonth(monthValue) {
+  const [year, month] = monthValue.split("-").map(Number);
+  return new Date(year, month, 0).getDate();
+}
+
+function isWeekendNight(iso) {
+  const day = dateObj(iso).getDay();
+  return day === 5 || day === 6 || day === 0;
+}
+
+function stayPerformanceForMonth(monthValue) {
+  const bookedDates = new Set();
+  let weekdayNights = 0;
+  let weekendNights = 0;
+  let weekdayRevenue = 0;
+  let weekendRevenue = 0;
+  const [year, month] = monthValue.split("-").map(Number);
+  const monthStart = new Date(year, month - 1, 1);
+  const monthEnd = new Date(year, month, 1);
+
+  calculationBookings(bookingsForMonth(monthValue)).forEach((booking) => {
+    const nightlyRate = Number(booking.revenue || 0) / Math.max(1, Number(booking.nights || 1));
+    for (let stayDate = dateObj(booking.arrival); stayDate < dateObj(departureFor(booking)); stayDate = addDays(stayDate, 1)) {
+      if (stayDate < monthStart || stayDate >= monthEnd) continue;
+      const stayIso = isoDate(stayDate);
+      bookedDates.add(stayIso);
+      if (isWeekendNight(stayIso)) {
+        weekendNights += 1;
+        weekendRevenue += nightlyRate;
+      } else {
+        weekdayNights += 1;
+        weekdayRevenue += nightlyRate;
+      }
+    }
+  });
+
+  const availableNights = daysInMonth(monthValue);
+  const bookedNights = bookedDates.size;
+  return {
+    availableNights,
+    bookedNights,
+    occupancyRate: availableNights ? (bookedNights / availableNights) * 100 : 0,
+    weekdayNights,
+    weekendNights,
+    avgWeekdayRate: weekdayNights ? weekdayRevenue / weekdayNights : 0,
+    avgWeekendRate: weekendNights ? weekendRevenue / weekendNights : 0,
+  };
+}
+
+function setView(view) {
+  activeView = view;
+  document.querySelectorAll(".view").forEach((node) => node.classList.toggle("active", node.id === `${view}View`));
+  document.querySelectorAll(".nav-button").forEach((node) => {
+    const isActive = node.dataset.view === view;
+    node.classList.toggle("active", isActive);
+    node.setAttribute("aria-current", isActive ? "page" : "false");
+  });
+  els.pageTitle.textContent = {
+    today: "Today",
+    calendar: "Monthly Calendar",
+    dashboard: "Income Dashboard",
+    bookings: "Bookings",
+    guests: "Guest Book",
+    guide: "Digital Guidebook",
+    messages: "Guest Messages",
+    documents: "Villa Documents",
+    tax: "Tax Plan",
+  }[view];
+  if (typeof renderWorkflowShell === "function") renderWorkflowShell();
+}
+
+function setMessageFlow(flow) {
+  const mode = flow === "checkin" ? "checkin" : "quote";
+  const messagesView = document.querySelector("#messagesView");
+  messagesView?.classList.toggle("message-mode-quote", mode === "quote");
+  messagesView?.classList.toggle("message-mode-checkin", mode === "checkin");
+  messagesView?.querySelectorAll(".message-details-card, .checkin-flow-card, .ai-draft-card").forEach(node => { node.hidden = mode !== "checkin"; });
+  messagesView?.querySelectorAll(".quote-card").forEach(node => { node.hidden = mode !== "quote"; });
+  document.querySelectorAll("[data-message-flow]").forEach((button) => {
+    const active = button.dataset.messageFlow === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  if (els.messageCopyStatus) {
+    els.messageCopyStatus.textContent = "WhatsApp opens with your message ready. Review it, then press Send in WhatsApp.";
+  }
+  els.manualCopyBox?.classList.add("hidden");
+}
+
+function setTaxInnerTab(mode) {
+  if (mode === "expenses" && typeof showFinanceSection === "function") { showFinanceSection("expenses"); return; }
+  if (["assets", "claim", "plan"].includes(mode) && typeof showFinanceSection === "function") setView("tax");
+  const valid = ["plan", "expenses", "assets", "claim"];
+  const nextMode = valid.includes(mode) ? mode : "plan";
+  document.querySelectorAll("[data-tax-inner-tab]").forEach((button) => {
+    const active = button.dataset.taxInnerTab === nextMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll("[data-tax-inner-panel]").forEach((panel) => {
+    panel.classList.toggle("active", panel.dataset.taxInnerPanel === nextMode);
+  });
+  if (nextMode === "expenses") renderTaxExpenses();
+  if (nextMode === "assets") renderTaxAssets();
+  if (nextMode === "claim") renderTaxYa();
+}
+
+function staySegmentClass(booking, dayIso) {
+  const start = booking.arrival;
+  const end = isoDate(addDays(dateObj(departureFor(booking)), -1));
+  const day = dateObj(dayIso);
+  const isMonday = day.getDay() === 1;
+  const isSunday = day.getDay() === 0;
+  const starts = dayIso === start || isMonday;
+  const ends = dayIso === end || isSunday;
+  if (starts && ends) return "single";
+  if (starts) return "start";
+  if (ends) return "end";
+  return "middle";
+}
+
+function shouldShowStayLabel(booking, dayIso) {
+  const day = dateObj(dayIso);
+  return dayIso === booking.arrival || day.getDay() === 1 || day.getDate() === 1;
+}
+
+function renderCalendar() {
+  const bookings = scopedBookings();
+  const activeVilla = appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise";
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const first = new Date(year, month - 1, 1);
+  const mondayOffset = (first.getDay() + 6) % 7;
+  const gridStart = addDays(first, -mondayOffset);
+  const todayIso = isoDate(new Date());
+  els.calendarGrid.innerHTML = "";
+
+  // De-duplicate the iCal layer: an Airbnb reservation that's already recorded as a
+  // real booking would otherwise show twice (the named pill AND a generic "Airbnb · …"
+  // pill from the calendar feed). Keep only imported blocks for THIS villa that no real
+  // booking overlaps — so each reservation appears once, and the feed now flags only
+  // Airbnb stays you haven't entered yet. Render-only; nothing stored is changed.
+  const importedBlocks = (appSettings.ical?.imported || []).filter((b) => {
+    const villa = b.villa === "Windmill" ? "Windmill" : "Sunrise";
+    if (villa !== activeVilla) return false;
+    const alreadyRecorded = bookings.some((bk) => b.start < departureFor(bk) && bk.arrival < b.end);
+    return !alreadyRecorded;
+  });
+
+  for (let i = 0; i < 42; i += 1) {
+    const day = addDays(gridStart, i);
+    const dayIso = isoDate(day);
+    const cell = document.createElement("article");
+    cell.className = "day-cell";
+    if (day.getMonth() !== month - 1) cell.classList.add("outside");
+    if (dayIso === todayIso) cell.classList.add("today");
+
+    const booked = bookings.filter((booking) => overlapsDate(booking, dayIso));
+    cell.innerHTML = `
+      <div class="date-number">
+        <span>${day.getDate()}</span>
+        ${booked.length ? `<span class="status-pill">${booked.length}</span>` : ""}
+      </div>
+    `;
+
+    booked.slice(0, 3).forEach((booking) => {
+      const chip = document.createElement("div");
+      const label = shouldShowStayLabel(booking, dayIso);
+      // Tentative leads (inquiry/quoted) draw DASHED so a lead is visible on the
+      // calendar without reading as a confirmed, date-blocking stay.
+      const tentative = isTentativeBooking(booking);
+      const kindClass = tentative ? "tentative" : isExcludedBooking(booking) ? "influencer" : booking.channel.toLowerCase();
+      const kindLabel = tentative ? (booking.status === "quoted" ? "Quoted (not confirmed)" : "Inquiry (not confirmed)") : isExcludedBooking(booking) ? "Influencer" : booking.channel;
+      chip.className = `booking-chip stay-segment clickable ${kindClass} ${staySegmentClass(booking, dayIso)} ${label ? "" : "label-hidden"}`;
+      chip.dataset.bookingId = booking.id;
+      chip.tabIndex = 0; // keyboard-reachable (Enter/Space handled on the grid)
+      chip.setAttribute("role", "button");
+      chip.setAttribute("aria-label", `${booking.guest}, ${kindLabel}, ${booking.nights} night${booking.nights === 1 ? "" : "s"} — edit booking`);
+      // Channel is already carried by the chip's color + dot, so the in-cell text shows only
+      // the guest name (full width = readable). Channel/nights move to the hover title.
+      chip.title = `${booking.guest} · ${kindLabel} · ${booking.nights} night${booking.nights === 1 ? "" : "s"} — click to edit`;
+      chip.innerHTML = label
+        ? `<strong>${escapeHtml(booking.guest)}</strong>`
+        : `<span aria-label="${escapeHtml(booking.guest)} ${escapeHtml(booking.channel)} booking">&nbsp;</span>`;
+      cell.appendChild(chip);
+    });
+
+    if (booked.length > 3) {
+      const more = document.createElement("div");
+      more.className = "booking-chip";
+      more.textContent = `+${booked.length - 3} more`;
+      cell.appendChild(more);
+    }
+
+    // Imported Airbnb blocks (improvement #5): availability only, not financial bookings.
+    // A block covers [start, end) — end is the checkout/exclusive date.
+    const importedToday = importedBlocks.filter((b) => b.start <= dayIso && dayIso < b.end);
+    importedToday.slice(0, 2).forEach((b) => {
+      const chip = document.createElement(b.reservationUrl ? "a" : "div");
+      chip.className = "booking-chip airbnb-import";
+      if (b.reservationUrl) {
+        chip.href = b.reservationUrl;
+        chip.target = "_blank";
+        chip.rel = "noopener noreferrer";
+        chip.title = "Open this reservation in Airbnb";
+      }
+      chip.innerHTML = `<span>Airbnb · ${escapeHtml(b.villa)}${b.reservationUrl ? " ↗" : ""}</span>`;
+      cell.appendChild(chip);
+    });
+
+    els.calendarGrid.appendChild(cell);
+  }
+}
+
+// --- Airbnb calendar sync (improvement #5): pulls blocked dates in via the ical-import Edge Function ---
+function icalSourcesFromInputs() {
+  const sources = [];
+  const s = els.icalSunriseUrl?.value?.trim();
+  const w = els.icalWindmillUrl?.value?.trim();
+  if (s) sources.push({ villa: "Sunrise", url: s });
+  if (w) sources.push({ villa: "Windmill", url: w });
+  return sources;
+}
+
+function persistIcalSources() {
+  appSettings = { ...appSettings, ical: { ...(appSettings.ical || {}), sources: icalSourcesFromInputs() } };
+  saveAppSettings();
+}
+
+function renderIcalSettings() {
+  if (!els.icalSyncStatus) return;
+  const ical = appSettings.ical || {};
+  const bySrc = {};
+  (ical.sources || []).forEach((src) => {
+    if (src && src.villa) bySrc[src.villa] = src.url || "";
+  });
+  if (els.icalSunriseUrl && !els.icalSunriseUrl.value && bySrc.Sunrise) els.icalSunriseUrl.value = bySrc.Sunrise;
+  if (els.icalWindmillUrl && !els.icalWindmillUrl.value && bySrc.Windmill) els.icalWindmillUrl.value = bySrc.Windmill;
+  const count = (ical.imported || []).length;
+  if (ical.lastStatus === "error") {
+    els.icalSyncStatus.className = "ical-sync-status err";
+    els.icalSyncStatus.textContent = `Sync failed — ${ical.lastError || "try again"}`;
+  } else if (ical.lastSyncedAt) {
+    const when = new Date(ical.lastSyncedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+    els.icalSyncStatus.className = "ical-sync-status ok";
+    els.icalSyncStatus.textContent = `✓ Synced ${when} · ${count} dates`;
+  } else {
+    els.icalSyncStatus.className = "ical-sync-status";
+    els.icalSyncStatus.textContent = "Not synced yet";
+  }
+}
+
+async function syncIcalNow() {
+  if (!els.icalSyncStatus) return;
+  const sources = icalSourcesFromInputs();
+  if (!sources.length) {
+    els.icalSyncStatus.className = "ical-sync-status err";
+    els.icalSyncStatus.textContent = "Paste your Airbnb .ics link first";
+    return;
+  }
+  if (!supabaseClient) initSupabaseClient();
+  if (!supabaseClient) {
+    els.icalSyncStatus.className = "ical-sync-status err";
+    els.icalSyncStatus.textContent = "Cloud not connected — log in first";
+    return;
+  }
+  persistIcalSources();
+  if (els.icalSyncBtn) els.icalSyncBtn.disabled = true;
+  els.icalSyncStatus.className = "ical-sync-status";
+  els.icalSyncStatus.textContent = "Syncing…";
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("property-ical-import", { body: { sources } });
+    if (error) throw error;
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const imported = [];
+    const seen = new Set();
+    let failed = "";
+    for (const r of results) {
+      if (!r.ok) {
+        failed = r.error || "fetch failed";
+        continue;
+      }
+      for (const ev of r.events || []) {
+        const key = `${r.villa}|${ev.uid}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        imported.push({ villa: r.villa, uid: ev.uid, start: ev.start, end: ev.end, reservationUrl: ev.reservationUrl || "" });
+      }
+    }
+    appSettings = {
+      ...appSettings,
+      ical: {
+        ...(appSettings.ical || {}),
+        sources,
+        imported,
+        lastSyncedAt: data?.syncedAt || new Date().toISOString(),
+        lastStatus: failed ? "error" : "ok",
+        lastError: failed,
+      },
+    };
+    saveAppSettings();
+    renderAll();
+  } catch (e) {
+    appSettings = { ...appSettings, ical: { ...(appSettings.ical || {}), lastStatus: "error", lastError: e?.message || "sync failed" } };
+    saveAppSettings();
+    renderIcalSettings();
+  } finally {
+    if (els.icalSyncBtn) els.icalSyncBtn.disabled = false;
+  }
+}
+
+// Auto-sync (improvement #5b): when the dashboard opens and a feed is configured,
+// refresh automatically if the last sync is older than ~2 hours — so no manual clicking.
+function maybeAutoSyncIcal() {
+  const ical = appSettings.ical || {};
+  if (!(ical.sources || []).length) return;
+  const last = ical.lastSyncedAt ? new Date(ical.lastSyncedAt).getTime() : 0;
+  const ageHours = (Date.now() - last) / 3600000;
+  if (ageHours >= 2) syncIcalNow();
+}
+
+// Villa switch (Sunrise ⇄ Windmill): reflect the active villa on the toggle + body.
+function renderVillaSwitch() {
+  const active = appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise";
+  document.querySelectorAll(".villa-tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.villa === active);
+  });
+  document.body.dataset.villa = active;
+}
+
+// --- Booking candidates queue (improvement #6): auto-parsed Airbnb bookings awaiting review ---
+let bookingCandidates = [];
+
+// RUNG 4: merge the SERVER-refreshed iCal blocks (hourly pg_cron keeps
+// public.ical_blocks fresh even while the app is closed). Read-own via RLS;
+// newest server snapshot replaces the locally-imported set.
+async function mergeServerIcalBlocks() {
+  if (!supabaseClient || !cloudUser) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from("property_ical_blocks")
+      .select("villa, uid, start_date, end_date, reservation_url, synced_at")
+      .order("synced_at", { ascending: false })
+      .limit(600);
+    if (error || !Array.isArray(data) || !data.length) return;
+    const imported = data.map((r) => ({ villa: r.villa === "Windmill" ? "Windmill" : "Sunrise", uid: r.uid, start: r.start_date, end: r.end_date, reservationUrl: r.reservation_url || "" }));
+    appSettings = {
+      ...appSettings,
+      ical: { ...(appSettings.ical || {}), imported, lastSyncedAt: data[0].synced_at, lastStatus: `✓ Synced ${imported.length} dates (server, hourly)`, lastError: "" },
+    };
+    saveAppSettings();
+    renderCalendar();
+  } catch (e) {
+    console.warn("ical_blocks merge skipped", e);
+  }
+}
+
+async function loadBookingCandidates() {
+  if (!supabaseClient || !cloudUser) return;
+  try {
+    const { data, error } = await supabaseClient
+      .from("property_booking_candidates")
+      .select("*")
+      .eq("status", "new")
+      .order("created_at", { ascending: false });
+    if (error) return; // table may not exist yet — fail quietly
+    bookingCandidates = Array.isArray(data) ? data : [];
+    renderBookingCandidates();
+  } catch (e) {}
+}
+
+function renderBookingCandidates() {
+  const host = document.querySelector("#bookingCandidatesQueue");
+  if (!host) return;
+  if (!bookingCandidates.length) {
+    host.innerHTML = "";
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML = `
+    <div class="candidates-head">${bookingCandidates.length} new Airbnb booking${bookingCandidates.length === 1 ? "" : "s"} to review</div>
+    ${bookingCandidates
+      .map(
+        (c) => `
+      <div class="candidate-row">
+        <div class="candidate-info">
+          <strong>${escapeHtml(c.guest || "Guest")}</strong>
+          <span>${escapeHtml(c.villa || "")} · ${shortDate(c.arrival)} · ${c.nights || "?"} night${Number(c.nights) === 1 ? "" : "s"} · ${c.revenue != null ? money(c.revenue) : "—"}</span>
+        </div>
+        <div class="candidate-actions">
+          <button class="ghost-button compact" data-dismiss-candidate="${escapeHtml(c.id)}" type="button">Dismiss</button>
+          <button class="primary-button compact" data-add-candidate="${escapeHtml(c.id)}" type="button">Add booking</button>
+        </div>
+      </div>`,
+      )
+      .join("")}
+  `;
+}
+
+async function importBookingCandidate(id) {
+  const c = bookingCandidates.find((x) => x.id === id);
+  if (!c) return;
+  const booking = normalizeBooking({
+    channel: "Airbnb",
+    guest: c.guest || "Guest",
+    villa: c.villa === "Windmill" ? "Windmill" : "Sunrise",
+    arrival: c.arrival || `${selectedMonth}-01`,
+    nights: Number(c.nights) || 1,
+    revenue: Number(c.revenue) || 0,
+    paid: Number(c.revenue) || 0,
+    status: "confirmed",
+  });
+  bookings = [...bookings, booking];
+  saveBookings();
+  if (supabaseClient) {
+    try {
+      await supabaseClient.from("property_booking_candidates").update({ status: "imported" }).eq("id", id);
+    } catch (e) {}
+  }
+  bookingCandidates = bookingCandidates.filter((x) => x.id !== id);
+  renderAll();
+}
+
+async function dismissBookingCandidate(id) {
+  if (supabaseClient) {
+    try {
+      await supabaseClient.from("property_booking_candidates").update({ status: "dismissed" }).eq("id", id);
+    } catch (e) {}
+  }
+  bookingCandidates = bookingCandidates.filter((x) => x.id !== id);
+  renderBookingCandidates();
+}
+
+function renderDetails() {
+  const monthBookings = bookingsForMonth(selectedMonth);
+  els.detailMonth.textContent = monthLabel(selectedMonth);
+  els.bookingCount.textContent = `${monthBookings.length} booking${monthBookings.length === 1 ? "" : "s"}`;
+  els.detailsList.innerHTML = "";
+
+  if (!monthBookings.length) {
+    els.detailsList.innerHTML = `<div class="empty-state">No bookings for this month.</div>`;
+    renderQuickColumnControls();
+    return;
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentBookings = monthBookings.filter((booking) => dateObj(booking.arrival) <= today && dateObj(departureFor(booking)) > today);
+  const upcomingBookings = monthBookings.filter((booking) => dateObj(booking.arrival) > today);
+  const pastBookings = monthBookings.filter((booking) => dateObj(departureFor(booking)) <= today);
+  const bookingRows = (items) =>
+    items
+      .map((booking) => {
+        const balance = balanceFor(booking);
+        return `
+          <tr>
+            ${quickCell("guest", `
+              <div class="guest-cell">
+                <span class="guest-code">${prefixFor(booking.guest)}</span>
+                <span class="guest-meta">
+                  <button type="button" class="workspace-link" data-workspace-booking="${booking.id}">${escapeHtml(booking.guest)}</button>
+                  <span>${shortDate(departureFor(booking))} out</span>
+                </span>
+              </div>
+            `)}
+            ${quickCell("type", channelBadgeFor(booking))}
+            ${quickCell("checkin", `<strong>${quickDate(booking.arrival)}</strong>`)}
+            ${quickCell("nights", `<strong>${booking.nights}</strong>`)}
+            ${quickCell("wa", whatsappSentControl(booking))}
+            ${quickCell("revenue", money(booking.revenue), "amount-cell")}
+            ${quickCell("deposit", money(booking.depositAmount), "amount-cell")}
+            ${quickCell("total", money(totalToReceiveFor(booking)), "amount-cell")}
+            ${quickCell("received", money(booking.paid), "amount-cell")}
+            ${quickCell("full", fullReceivedControl(booking))}
+            ${quickCell("balance", money(balance), `amount-cell ${balance > 0 ? "balance-due" : ""}`)}
+            ${quickCell("refund", refundControl(booking))}
+          </tr>
+        `;
+      })
+      .join("");
+
+  els.detailsList.innerHTML = `
+    <div class="quick-view-card">
+      <table class="quick-view-table" id="quickViewTable" aria-label="Quick booking list">
+        <thead>
+          <tr>
+            <th data-col="guest">Guest</th>
+            <th data-col="type">Type</th>
+            <th data-col="checkin">Check-in</th>
+            <th data-col="nights">Nights</th>
+            <th data-col="wa">W/A</th>
+            <th data-col="revenue">Accommodation Fees</th>
+            <th data-col="deposit">Damage Deposit</th>
+            <th data-col="total">Total to Receive</th>
+            <th data-col="received">Received</th>
+            <th data-col="full">Full Received</th>
+            <th data-col="balance">Balance</th>
+            <th data-col="refund">Refund</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="quick-section-row current"><td colspan="12">Current Guests</td></tr>
+          ${currentBookings.length ? bookingRows(currentBookings) : `<tr><td colspan="12" class="empty-row">No current guests for this selected month.</td></tr>`}
+          <tr class="quick-section-row"><td colspan="12">Upcoming Guests</td></tr>
+          ${upcomingBookings.length ? bookingRows(upcomingBookings) : `<tr><td colspan="12" class="empty-row">No upcoming guests for this selected month.</td></tr>`}
+          <tr class="quick-section-row past"><td colspan="12">Past Guests</td></tr>
+          ${pastBookings.length ? bookingRows(pastBookings) : `<tr><td colspan="12" class="empty-row">No past guests for this selected month.</td></tr>`}
+        </tbody>
+      </table>
+      <div class="quick-summary">
+        <div><span>Accommodation Fees</span><strong>${money(monthBookings.reduce((sum, booking) => sum + Number(booking.revenue || 0), 0))}</strong></div>
+        <div><span>Total to Receive</span><strong>${money(monthBookings.reduce((sum, booking) => sum + totalToReceiveFor(booking), 0))}</strong></div>
+        <div><span>Balance</span><strong>${money(monthBookings.reduce((sum, booking) => sum + balanceFor(booking), 0))}</strong></div>
+      </div>
+    </div>
+  `;
+  renderQuickColumnControls();
+}
+
+function drawQuickViewImage() {
+  const monthBookings = bookingsForMonth(selectedMonth);
+  const rowHeight = 78;
+  const headerHeight = 168;
+  const footerHeight = 42;
+  const width = 1580;
+  const height = Math.max(420, headerHeight + rowHeight * Math.max(monthBookings.length, 1) + footerHeight);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = "#f4f7f9";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#17324d";
+  ctx.fillRect(0, 0, width, 118);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "800 42px system-ui";
+  ctx.fillText("Sunrise Villa", 48, 58);
+  ctx.font = "700 28px system-ui";
+  ctx.fillText(`${monthLabel(selectedMonth)} Booking Quick View`, 48, 98);
+
+  const cols = [48, 330, 460, 610, 720, 875, 1035, 1190, 1320];
+  const headers = ["Guest", "Type", "Check-in", "Nights", "Fees", "Deposit", "Total", "Received", "Balance"];
+  ctx.fillStyle = "#e8f1f7";
+  ctx.fillRect(32, 136, width - 64, 44);
+  ctx.fillStyle = "#17324d";
+  ctx.font = "800 19px system-ui";
+  headers.forEach((header, index) => ctx.fillText(header, cols[index], 165));
+
+  if (!monthBookings.length) {
+    ctx.fillStyle = "#657386";
+    ctx.font = "700 28px system-ui";
+    ctx.fillText("No bookings for this month.", 48, 250);
+    return canvas;
+  }
+
+  monthBookings.forEach((booking, index) => {
+    const y = 180 + index * rowHeight;
+    const balance = balanceFor(booking);
+    ctx.fillStyle = index % 2 === 0 ? "#ffffff" : "#f9fbfc";
+    ctx.fillRect(32, y, width - 64, rowHeight);
+    ctx.strokeStyle = "#d9e0e8";
+    ctx.beginPath();
+    ctx.moveTo(32, y + rowHeight);
+    ctx.lineTo(width - 32, y + rowHeight);
+    ctx.stroke();
+
+    ctx.fillStyle = "#17324d";
+    ctx.fillRect(cols[0], y + 18, 46, 42);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 18px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(prefixFor(booking.guest), cols[0] + 23, y + 46);
+    ctx.textAlign = "left";
+
+    ctx.fillStyle = "#17212f";
+    ctx.font = "800 24px system-ui";
+    ctx.fillText(booking.guest, cols[0] + 62, y + 36);
+    ctx.fillStyle = "#657386";
+    ctx.font = "600 17px system-ui";
+    ctx.fillText(`${shortDate(departureFor(booking))} out`, cols[0] + 62, y + 60);
+
+    ctx.fillStyle = booking.channel === "Direct" ? "#2e7d54" : "#c97920";
+    ctx.font = "800 21px system-ui";
+    ctx.fillText(booking.channel, cols[1], y + 45);
+    ctx.fillStyle = "#17212f";
+    ctx.fillText(quickDate(booking.arrival), cols[2], y + 45);
+    ctx.fillText(String(booking.nights), cols[3], y + 45);
+    ctx.textAlign = "right";
+    ctx.fillText(money(booking.revenue), cols[4] + 120, y + 45);
+    ctx.fillText(money(booking.depositAmount), cols[5] + 120, y + 45);
+    ctx.fillText(money(totalToReceiveFor(booking)), cols[6] + 120, y + 45);
+    ctx.fillText(money(booking.paid), cols[7] + 120, y + 45);
+    ctx.fillStyle = balance > 0 ? "#b42318" : "#17212f";
+    ctx.fillText(money(balance), cols[8] + 120, y + 45);
+    ctx.textAlign = "left";
+  });
+
+  return canvas;
+}
+
+function allAppData() {
+  return {
+    ...propertyOriginalFields,
+    version: 3,
+    appVersion: APP_VERSION,
+    ownerId: cloudUser?.id || readSyncState().userId || "",
+    exportedAt: new Date().toISOString(),
+    bookings,
+    documents,
+    taxPlan,
+    profitData,
+    appSettings,
+  };
+}
+
+function recoveryCounts(data = allAppData()) {
+  return {
+    bookings: Array.isArray(data.bookings) ? data.bookings.length : 0,
+    documents: Array.isArray(data.documents) ? data.documents.length : 0,
+    expenses: Array.isArray(data.taxPlan?.expenses) ? data.taxPlan.expenses.length : 0,
+    assets: Array.isArray(data.taxPlan?.assets) ? data.taxPlan.assets.length : 0,
+    earnings: Array.isArray(data.taxPlan?.earnings) ? data.taxPlan.earnings.length : 0,
+    earningsDocs: Array.isArray(data.taxPlan?.earningsDocs) ? data.taxPlan.earningsDocs.length : 0,
+    lhdnDocs: Array.isArray(data.taxPlan?.lhdnDocs) ? data.taxPlan.lhdnDocs.length : 0,
+    commitments: Array.isArray(data.appSettings?.commitments) ? data.appSettings.commitments.length : 0,
+    guestProfiles: Object.keys(data.appSettings?.guestProfiles || {}).length,
+    calendarSources: Array.isArray(data.appSettings?.ical?.sources) ? data.appSettings.ical.sources.length : 0,
+  };
+}
+
+// Recovery snapshots keep RECORDS, not pictures: up to 8 full copies compete
+// for the same ~5MB quota, so attachment images are stripped from snapshot
+// copies (name/date kept — a restore keeps every record minus its photo).
+function stripAttachmentImages(data) {
+  const stripAtt = (att) => (att && typeof att === "object" ? { ...att, dataUrl: "" } : att);
+  const tp = data.taxPlan || {};
+  return {
+    ...data,
+    taxPlan: {
+      ...tp,
+      expenses: Array.isArray(tp.expenses) ? tp.expenses.map((e) => (e.attachment ? { ...e, attachment: stripAtt(e.attachment) } : e)) : tp.expenses,
+      assets: Array.isArray(tp.assets) ? tp.assets.map((a) => (a.attachment ? { ...a, attachment: stripAtt(a.attachment) } : a)) : tp.assets,
+      earningsDocs: Array.isArray(tp.earningsDocs) ? tp.earningsDocs.map((d) => ({ ...d, dataUrl: "" })) : tp.earningsDocs,
+      lhdnDocs: Array.isArray(tp.lhdnDocs) ? tp.lhdnDocs.map((d) => ({ ...d, dataUrl: "" })) : tp.lhdnDocs,
+    },
+    profitData: Object.fromEntries(Object.entries(data.profitData || {}).map(([key, month]) => [key, { ...month,
+      oneOffCosts: (month.oneOffCosts || []).map(cost => ({ ...cost, receiptImage: "" })),
+    }])),
+  };
+}
+
+function hasMeaningfulAppData(data = allAppData()) {
+  const counts = recoveryCounts(data);
+  return Object.values(counts).some(count => count > 0) || Object.keys(data.profitData || {}).length > 0;
+}
+
+function incomingDataLooksSmaller(incomingData, currentData = allAppData()) {
+  const incoming = recoveryCounts(incomingData);
+  const current = recoveryCounts(currentData);
+  // Any collection shrinking (incl. the tax module's) pauses the cloud load.
+  return ["bookings", "documents", "expenses", "assets", "earnings", "earningsDocs", "lhdnDocs"].some(
+    (key) => current[key] > 0 && incoming[key] < current[key],
+  );
+}
+
+function loadRecoverySnapshots() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(RECOVERY_KEY) || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeRecoverySnapshots(snapshots) {
+  let next = snapshots.slice(0, MAX_RECOVERY_SNAPSHOTS);
+  while (next.length) {
+    try {
+      localStorage.setItem(RECOVERY_KEY, JSON.stringify(next));
+      return true;
+    } catch {
+      next = next.slice(0, -1);
+    }
+  }
+  return false;
+}
+
+let recoverySnapshotFailed = false;
+function createRecoverySnapshot(reason, data = allAppData()) {
+  if (!hasMeaningfulAppData(data)) return false;
+  const snapshot = {
+    id: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    reason,
+    appVersion: APP_VERSION,
+    ownerId: data.ownerId || cloudUser?.id || readSyncState().userId || "",
+    counts: recoveryCounts(data),
+    data: stripAttachmentImages(data),
+  };
+  const snapshots = [snapshot, ...loadRecoverySnapshots().filter((item) => item?.id !== snapshot.id)];
+  const saved = writeRecoverySnapshots(snapshots);
+  recoverySnapshotFailed = !saved; // surfaced in the Recovery panel — never silent
+  renderRecoverySnapshots();
+  return saved;
+}
+
+function recoverySnapshotLabel(snapshot) {
+  const date = new Date(snapshot.createdAt);
+  const dateLabel = Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  const counts = snapshot.counts || recoveryCounts(snapshot.data || {});
+  return `${dateLabel} · ${snapshot.reason || "Safety copy"} · ${counts.bookings || 0} bookings · ${counts.documents || 0} docs`;
+}
+
+function visibleRecoverySnapshots() {
+  return loadRecoverySnapshots().filter(snapshot => !snapshot.ownerId || snapshot.ownerId === cloudUser?.id);
+}
+
+function renderRecoverySnapshots() {
+  if (!els.recoverySnapshotSelect) return;
+  const snapshots = visibleRecoverySnapshots();
+  els.recoverySnapshotSelect.innerHTML = snapshots.length
+    ? snapshots.map((snapshot) => `<option value="${snapshot.id}">${escapeHtml(recoverySnapshotLabel(snapshot))}</option>`).join("")
+    : `<option value="">No recovery point saved</option>`;
+  if (els.recoveryStatus) {
+    els.recoveryStatus.textContent = recoverySnapshotFailed
+      ? "⚠ Storage full — the latest recovery point could NOT be saved. Free space (delete old receipt attachments) to restore this safety net."
+      : snapshots.length
+        ? `${snapshots.length} recovery point${snapshots.length === 1 ? "" : "s"} saved in this browser.`
+        : "No recovery point yet.";
+  }
+}
+
+function selectedRecoverySnapshot() {
+  const id = els.recoverySnapshotSelect?.value;
+  return visibleRecoverySnapshots().find((snapshot) => snapshot.id === id);
+}
+
+function downloadJsonFile(filename, data) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.download = filename;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function createStartupRecoverySnapshot() {
+  if (sessionStorage.getItem(RECOVERY_SESSION_KEY)) {
+    renderRecoverySnapshots();
+    return;
+  }
+  sessionStorage.setItem(RECOVERY_SESSION_KEY, "1");
+  createRecoverySnapshot("Before this session loaded");
+}
+
+function cloudEls() {
+  return {
+    panel: document.querySelector("#cloudAuthPanel"),
+    appShell: document.querySelector("#appShell"),
+    form: document.querySelector("#cloudLoginForm"),
+    email: document.querySelector("#cloudEmail"),
+    password: document.querySelector("#cloudPassword"),
+    logout: document.querySelector("#cloudLogout"),
+    title: document.querySelector("#cloudStatusTitle"),
+    text: document.querySelector("#cloudStatusText"),
+    dot: document.querySelector("#cloudStatusDot"),
+    remember: document.querySelector("#cloudRemember"),
+    passwordToggle: document.querySelector("#cloudPasswordToggle"),
+    greeting: document.querySelector("#cloudGreeting"),
+    dateLine: document.querySelector("#cloudDateLine"),
+  };
+}
+
+function setCloudStatus(mode, title, text) {
+  cloudStatusMode = mode;
+  cloudStatusMessage = text || title;
+  const ui = cloudEls();
+  ui.panel?.dataset && (ui.panel.dataset.status = mode);
+  if (ui.title) ui.title.textContent = title;
+  if (ui.text) ui.text.textContent = text;
+  renderDataHealth(mode);
+}
+
+function syncCloudAuthUi() {
+  const ui = cloudEls();
+  if (!ui.form || !ui.logout) return;
+  const isLoggedIn = Boolean(cloudUser);
+  const canOpen = isLoggedIn && cloudReady;
+  ui.appShell?.classList.toggle("private-locked", !canOpen);
+  if (ui.appShell) ui.appShell.hidden = !canOpen;
+  if (!canOpen) {
+    document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
+    const workspace = document.querySelector("#bookingWorkspace");
+    if (workspace) workspace.replaceChildren();
+    if (typeof closeRestorePreview === "function") closeRestorePreview();
+    if (typeof closeBackupDialog === "function") closeBackupDialog();
+  }
+  const retry = document.querySelector("#retryCloudLoad");
+  if (retry) retry.hidden = !isLoggedIn || canOpen;
+  ui.form.classList.toggle("hidden", isLoggedIn);
+  ui.logout.classList.toggle("hidden", !isLoggedIn);
+  if (isLoggedIn) {
+    if (!cloudReady) setCloudStatus("syncing", "Loading your workspace", "Your saved data will appear once the cloud has been checked.");
+  } else {
+    setCloudStatus("offline", "Cloud storage not connected", "Log in to save bookings, documents, expenses, and settings to Supabase.");
+  }
+}
+
+function initSupabaseClient() {
+  if (!window.supabase?.createClient) {
+    setCloudStatus("error", "Supabase library not loaded", "Check your internet connection, then refresh this page.");
+    return null;
+  }
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+    accessToken: async () => (await window.PropertyHost.session()).access_token,
+  });
+  const propertyClient=supabaseClient,functions=propertyClient.functions;
+  const invoke=functions.invoke.bind(functions);
+  const propertyFunctions={invoke:(name,options)=>name==='property-ical-import'?invoke(name,options):Promise.resolve({data:null,error:new Error('AI tools are disabled. No records were uploaded.')})};
+  supabaseClient=new Proxy(propertyClient,{get(target,key){if(key==='functions')return propertyFunctions;const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;}});
+  return supabaseClient;
+}
+
+function readSyncState() {
+  try {
+    const state = JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || "{}");
+    if (!state || typeof state !== "object" || Array.isArray(state)) return {};
+    return { userId: typeof state.userId === "string" ? state.userId : "",
+      updatedAt: typeof state.updatedAt === "string" ? state.updatedAt : "", dirty: state.dirty === true };
+  } catch { return {}; }
+}
+
+function writeSyncState() {
+  safeSetItem(SYNC_STATE_KEY, JSON.stringify({
+    userId: cloudUser?.id || "", updatedAt: cloudKnownUpdatedAt, dirty: cloudDirty,
+  }));
+}
+
+function scheduleCloudSave() {
+  if (isRestoringCloudData || !supabaseClient || !cloudUser || !cloudReady) return;
+  cloudRevision += 1;
+  cloudDirty = true;
+  writeSyncState();
+  window.clearTimeout(cloudSaveTimer);
+  if (cloudConflict || cloudLoadPromise) return;
+  setCloudStatus("syncing", "Changes waiting to save", "Your changes are waiting to be saved to Supabase.");
+  cloudSaveTimer = window.setTimeout(() => saveCloudSnapshot(), 700);
+}
+
+async function saveCloudSnapshot() {
+  if (!supabaseClient || !cloudUser || !cloudReady || cloudConflict || cloudLoadPromise) return false;
+  if (cloudSavePromise) return cloudSavePromise;
+  if (cloudRecordId && !cloudKnownUpdatedAt) {
+    cloudConflict = true;
+    setCloudStatus("error", "Save paused", "The loaded cloud copy has no save version. Download a backup and reload before saving.");
+    return false;
+  }
+  window.clearTimeout(cloudSaveTimer);
+  const user = cloudUser;
+  const generation = authGeneration;
+  cloudSavePromise = (async () => {
+    do {
+      const revision = cloudRevision;
+      const stamp = new Date().toISOString();
+      const payload = {
+        user_id: user.id, data_type: CLOUD_DATA_TYPE, record_key: CLOUD_RECORD_KEY,
+        data: allAppData(), updated_at: stamp,
+      };
+      setCloudStatus("syncing", "Saving changes", "Saving your latest changes to Supabase.");
+      let request;
+      if (cloudRecordId) {
+        // Compare and write in ONE request so another device cannot win between a read and write.
+        request = supabaseClient.from("property_workspaces").update(payload).eq("id", cloudRecordId).eq("user_id", user.id);
+        if (cloudKnownUpdatedAt) request = request.eq("updated_at", cloudKnownUpdatedAt);
+        request = request.select("id, updated_at").maybeSingle();
+      } else {
+        request = supabaseClient.from("property_workspaces").insert(payload).select("id, updated_at").single();
+      }
+      const { data, error } = await request;
+      if (generation !== authGeneration || cloudUser?.id !== user.id) return false;
+      if (error) throw error;
+      if (!data) {
+        cloudConflict = true;
+        createRecoverySnapshot("Save paused: another device changed the cloud copy");
+        setCloudStatus("error", "Save paused", "Another device has newer data. Download your local backup, then load the cloud copy before continuing.");
+        return false;
+      }
+      cloudRecordId = data.id;
+      cloudKnownUpdatedAt = data.updated_at || stamp;
+      cloudDirty = revision !== cloudRevision;
+      writeSyncState();
+      appSettings = { ...appSettings, lastCloudSyncAt: stamp };
+      safeSetItem(SETTINGS_KEY, JSON.stringify(appSettings));
+    } while (cloudDirty && generation === authGeneration);
+    setCloudStatus("connected", "All changes saved", "Your latest changes are saved to Supabase.");
+    return true;
+  })().catch(error => {
+    if (generation === authGeneration) {
+      cloudDirty = true;
+      writeSyncState();
+      setCloudStatus("error", "Cloud save failed", error.message || "Reconnect and retry. Keep this page open or download a backup.");
+    }
+    return false;
+  }).finally(() => {
+    cloudSavePromise = null;
+    if (!cloudDirty) window.clearTimeout(cloudSaveTimer);
+  });
+  return cloudSavePromise;
+}
+
+async function loadCloudSnapshot({ replaceLocal = false } = {}) {
+  if (!supabaseClient || !cloudUser) return false;
+  if (cloudLoadPromise) return cloudLoadPromise;
+  const user = cloudUser;
+  const generation = authGeneration;
+  cloudLoadPromise = (async () => {
+    if (cloudSavePromise) await cloudSavePromise;
+    if (generation !== authGeneration || cloudUser?.id !== user.id) return false;
+    window.clearTimeout(cloudSaveTimer);
+    const revision = cloudRevision;
+    const fingerprint = replaceLocal ? JSON.stringify([bookings, documents, taxPlan, profitData, appSettings]) : "";
+    setCloudStatus("syncing", "Loading your workspace", "Checking Supabase for your latest saved data.");
+    const { data: rows, error } = await supabaseClient.from("property_workspaces")
+      .select("id, data, updated_at").eq("data_type", CLOUD_DATA_TYPE)
+      .eq("record_key", CLOUD_RECORD_KEY).eq("user_id", user.id)
+      .order("updated_at", { ascending: false }).order("id", { ascending: false }).limit(2);
+    if (generation !== authGeneration || cloudUser?.id !== user.id) return false;
+    if (error) throw error;
+    if (replaceLocal && (revision !== cloudRevision || fingerprint !== JSON.stringify([bookings, documents, taxPlan, profitData, appSettings]))) {
+      throw new Error("Your records changed while the cloud copy was loading. Nothing was replaced. Download a backup and load the cloud copy again when you have finished editing.");
+    }
+    const data = inspectCloudCopies(rows);
+    // An open tab's pending state is authoritative; another tab may have changed the shared cache.
+    const local = cloudReady
+      ? { userId: user.id, updatedAt: cloudKnownUpdatedAt, dirty: cloudDirty }
+      : readSyncState();
+    const ownsLocal = local.userId === user.id;
+    if (!data && ownsLocal && (local.dirty || local.updatedAt)) {
+      cloudDirty = Boolean(local.dirty);
+      cloudKnownUpdatedAt = local.updatedAt || "";
+      cloudConflict = true;
+      cloudReady = true;
+      writeSyncState();
+      syncCloudAuthUi();
+      setCloudStatus("error", "Cloud record not found", "Your previous cloud workspace is missing. Local records were kept and automatic saving is paused. Download a full backup before investigating; no empty workspace was uploaded.");
+      return false;
+    }
+    if (data) {
+      if (!data.id || typeof data.updated_at !== "string" || !data.updated_at) {
+        throw Object.assign(new Error("The cloud record has no valid save version. Nothing was replaced. The database needs review before this copy can be used."), { pauseSaving: true });
+      }
+      if (!data.data) throw Object.assign(new Error("The cloud record has no workspace data. Nothing was replaced."), { pauseSaving: true });
+      if (data.data.ownerId && data.data.ownerId !== user.id) throw Object.assign(new Error("The cloud workspace owner does not match this account. Nothing was replaced."), { pauseSaving: true });
+      prepareRestoreData(data.data);
+      if (ownsLocal && local.dirty && !replaceLocal) {
+        cloudRecordId = data.id;
+        cloudKnownUpdatedAt = local.updatedAt || "";
+        cloudDirty = true;
+        cloudConflict = local.updatedAt !== data.updated_at;
+        if (cloudConflict) createRecoverySnapshot("Local edits preserved: cloud also changed");
+      } else {
+        if (hasMeaningfulAppData() && !createRecoverySnapshot("Before loading cloud data")) {
+          throw new Error("Cloud reload stopped: the browser could not save a recovery point. Your records and pending edits were kept. Download a full backup, free browser storage, then retry.");
+        }
+        isRestoringCloudData = true;
+        try { restoreAppData(data.data); } finally { isRestoringCloudData = false; }
+        cloudRecordId = data.id;
+        cloudKnownUpdatedAt = data.updated_at;
+        cloudDirty = false;
+        cloudConflict = false;
+      }
+    } else {
+      // Only a genuinely new account may initialize an empty workspace.
+      if (hasMeaningfulAppData() && !createRecoverySnapshot("Local data preserved before opening an empty cloud account")) {
+        throw new Error("The browser could not preserve its previous records. Nothing was replaced. Free browser storage before opening this empty account.");
+      }
+      isRestoringCloudData = true;
+      try {
+        restoreAppData({ bookings: [], documents: [], taxPlan: defaultTaxPlan(), profitData: {}, appSettings: defaultAppSettings() });
+      } finally { isRestoringCloudData = false; }
+      cloudRecordId = "";
+      cloudKnownUpdatedAt = "";
+      cloudConflict = false;
+      cloudDirty = true;
+    }
+    cloudReady = true;
+    writeSyncState();
+    syncCloudAuthUi();
+    if (cloudCopyReview?.needsReview) {
+      cloudConflict = true;
+      setCloudStatus("error", "Review your saved copies", "More than one saved workspace was found. The latest valid cloud copy is available; pending local edits were kept. Review saved copies to confirm which workspace to keep using. Cloud saving is paused; nothing was deleted.");
+      return false;
+    }
+    if (cloudConflict) {
+      setCloudStatus("error", "Save paused", "This device has unsaved edits and the cloud also changed. Download a backup, then load the cloud copy.");
+      return false;
+    }
+    if (!cloudDirty) {
+      // Reading a cloud copy must not rewrite saved user settings.
+      safeSetItem(SETTINGS_KEY, JSON.stringify(appSettings));
+      setCloudStatus("connected", "All changes saved", "Loaded your latest saved workspace.");
+    }
+    return true;
+  })().catch(error => {
+    if (generation === authGeneration) {
+      if (error.pauseSaving) cloudConflict = true;
+      setCloudStatus("error", "Could not load your workspace", error.message || "Check your connection, then retry.");
+    }
+    return false;
+  }).finally(() => { cloudLoadPromise = null; });
+  const loaded = await cloudLoadPromise;
+  if (!loaded || generation !== authGeneration || cloudUser?.id !== user.id) return false;
+  // Saving starts only after the read has settled, never during a replacement.
+  return cloudDirty ? saveCloudSnapshot() : true;
+}
+
+async function applyCloudSession(session) {
+  const nextUser = session?.user || null;
+  if (nextUser?.id === cloudUser?.id) return;
+  authGeneration += 1;
+  clearCloudCopyReview();
+  cloudReady = false;
+  cloudConflict = false;
+  cloudRecordId = "";
+  cloudKnownUpdatedAt = "";
+  window.clearTimeout(cloudSaveTimer);
+  cloudUser = nextUser;
+  syncCloudAuthUi();
+  if (!nextUser) return;
+  // Let outstanding requests finish; generation checks prevent stale responses being applied.
+  if (cloudLoadPromise) await cloudLoadPromise;
+  if (cloudSavePromise) await cloudSavePromise;
+  if (cloudUser?.id !== nextUser.id) return;
+  const localOwner = readSyncState().userId;
+  if (localOwner && localOwner !== nextUser.id) {
+    createRecoverySnapshot("Before switching accounts", { ...allAppData(), ownerId: localOwner });
+    writeRecoverySnapshots(loadRecoverySnapshots().map(snapshot => ({ ...snapshot, ownerId: snapshot.ownerId || localOwner })));
+    bookings = [];
+    documents = [];
+    taxPlan = defaultTaxPlan();
+    profitData = {};
+    appSettings = defaultAppSettings();
+    cloudDirty = false;
+  }
+  const loaded = await loadCloudSnapshot();
+  if (loaded) {
+    // Scheduled import remains opt-in until migration acceptance.
+    loadBookingCandidates();
+    mergeServerIcalBlocks();
+  }
+}
+
+async function initCloudStorage() {
+  const client=initSupabaseClient();syncCloudAuthUi();if(!client)return;
+  try { await applyCloudSession(await window.PropertyHost.session()); }
+  catch { setCloudStatus('error','Life OS sign-in required','Open your Life OS account settings to reconnect. Existing records have not been cleared.'); }
+}
+cloudEls().form?.addEventListener('submit',event=>{event.preventDefault();window.PropertyHost.account();});
+
+function purgeLocalSensitiveData() {
+  clearCloudCopyReview();
+  // Called on sign-out AFTER the cloud is confirmed to hold the latest data.
+  // Clears every local copy so a shared/stolen device can't read the P&C data after
+  // logout. Everything is restored from Supabase on the next login. In-memory is left
+  // EMPTY (not via the loaders, which would seed demo data) so the cloud copy always
+  // wins the "is the incoming data smaller?" guard on the next load.
+  authGeneration += 1;
+  cloudReady = false;
+  cloudDirty = false;
+  cloudConflict = false;
+  cloudUser = null;
+  cloudRecordId = "";
+  cloudKnownUpdatedAt = "";
+  window.clearTimeout(cloudSaveTimer);
+  try {
+    [STORAGE_KEY, TAX_PLAN_KEY, DOCUMENTS_KEY, PROFIT_KEY, SETTINGS_KEY, RECOVERY_KEY, RECOVERY_SESSION_KEY, SYNC_STATE_KEY].forEach((key) =>
+      localStorage.removeItem(key),
+    );
+  } catch (error) {}
+  bookings = [];
+  documents = [];
+  profitData = {};
+  taxPlan = defaultTaxPlan();
+  appSettings = defaultAppSettings();
+  try {
+    renderAll();
+  } catch (error) {}
+}
+
+cloudEls().logout?.addEventListener('click',()=>window.PropertyHost.account());
+
+function downloadBackup() {
+  appSettings = { ...appSettings, lastBackupAt: new Date().toISOString() };
+  saveAppSettings();
+  downloadJsonFile(`sunrise-villa-backup-${isoDate(new Date())}.json`, allAppData());
+  renderBackupStatus();
+}
+
+function renderBackupStatus() {
+  if (typeof renderBackupSafety === "function") renderBackupSafety();
+  if (!els.backupStatus) return;
+  if (!appSettings.lastBackupAt) {
+    els.backupStatus.textContent = "Not yet";
+    if (els.dataHealthBackup) els.dataHealthBackup.textContent = "Export requested: not yet";
+    return;
+  }
+  const last = new Date(appSettings.lastBackupAt);
+  const days = Math.floor((Date.now() - last.getTime()) / 86400000);
+  const label = days <= 0 ? "Today" : `${days} day${days === 1 ? "" : "s"} ago`;
+  els.backupStatus.textContent = label;
+  if (els.dataHealthBackup) els.dataHealthBackup.textContent = `Export requested: ${label}`;
+}
+
+function shortDateTimeLabel(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString([], {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function renderDataHealth(statusMode = cloudStatusMode) {
+  renderCloudCopyAction();
+  const notice = document.querySelector("#syncNotice");
+  if (notice) {
+    notice.hidden = statusMode !== "error";
+    const message = notice.querySelector("[data-sync-message]");
+    if (message) message.textContent = cloudStatusMessage;
+  }
+  if (els.dataHealthStatus) {
+    els.dataHealthStatus.title = cloudStatusMessage;
+    const cloudLabel = cloudUser
+      ? statusMode === "syncing"
+        ? "Saving changes..."
+        : statusMode === "error"
+          ? "Cloud: needs attention"
+          : statusMode === "connected" && cloudReady && !cloudDirty
+            ? "All changes saved"
+            : "Cloud: check connection"
+      : "Cloud: login required";
+    els.dataHealthStatus.textContent = cloudLabel;
+    els.dataHealthStatus.dataset.status = statusMode || (cloudUser ? "connected" : "offline");
+  }
+  if (els.dataHealthLastSync) {
+    els.dataHealthLastSync.textContent = `Last synced: ${shortDateTimeLabel(cloudKnownUpdatedAt || appSettings.lastCloudSyncAt)}`;
+  }
+  if (els.dataHealthRecords) {
+    els.dataHealthRecords.textContent = `${bookings.length} booking${bookings.length === 1 ? "" : "s"}`;
+  }
+  renderBackupStatus();
+}
+
+async function syncCloudNow() {
+  if (!supabaseClient) initSupabaseClient();
+  if (!supabaseClient || !cloudUser) {
+    setCloudStatus("error", "Cloud login needed", "Log in first, then use Sync cloud now.");
+    return;
+  }
+  setCloudStatus("syncing", "Saving cloud backup", "Sending your latest website data to Supabase.");
+  if (!cloudReady) { await loadCloudSnapshot(); return; }
+  if (cloudConflict) {
+    setCloudStatus("error", "Save paused", "Your local copy was kept. Download a backup, then load the cloud copy to resolve the conflict.");
+    return;
+  }
+  await saveCloudSnapshot();
+}
+
+async function restoreJsonFromInput(event, label = "backup file") {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const ownerId = cloudUser?.id;
+  try {
+    if (!cloudReady || !ownerId) throw new Error("Log in before restoring a backup.");
+    if (file.size > VillaBackup.MAX_FILE_BYTES) throw new Error("This file exceeds the 90 MB import limit.");
+    const text = await file.text();
+    if (!cloudReady || cloudUser?.id !== ownerId) return;
+    const parsed = JSON.parse(text);
+    if (VillaBackup.isEncrypted(parsed)) openEncryptedImport(parsed, { label: file.name });
+    else {
+      validateBackupData(parsed);
+      openRestorePreview(parsed, { label: file.name });
+    }
+  } catch (error) {
+    if (cloudReady && cloudUser?.id === ownerId) {
+      const message = error instanceof SyntaxError ? "The file is not valid JSON." : error.message;
+      window.alert(`Could not restore this ${label}. ${message || "Please choose a valid Sunrise Villa JSON backup file."}`);
+    }
+  } finally {
+    event.target.value = "";
+  }
+}
+
+function saveSelectedProfitMonth(nextMonthData, monthValue = selectedMonth, villa = activeVillaKey()) {
+  profitData = {
+    ...profitData,
+    [profitMonthKey(monthValue, villa)]: normalizeProfitMonth(nextMonthData),
+  };
+  saveProfitData();
+}
+
+function receiptImageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read receipt image."));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("Could not load receipt image."));
+      image.onload = () => {
+        const maxSide = 1200;
+        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.72));
+      };
+      image.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderOneOffCosts() {
+  if (!els.oneOffCostList) return;
+  const expenses = profitMonth(selectedMonth);
+  const oneOffTotal = expenses.oneOffCosts.reduce((sum, cost) => sum + Number(cost.amount || 0), 0);
+  if (els.oneOffTotalOut) els.oneOffTotalOut.textContent = money(oneOffTotal);
+  els.oneOffCostList.innerHTML = expenses.oneOffCosts.length
+    ? expenses.oneOffCosts
+        .map(
+          (cost) => `
+            <div class="one-off-row">
+              <label>Type
+                <select data-one-off-field="category" data-one-off-id="${cost.id}">
+                  ${["Groceries", "Gas", "Supplies", "Repair", "Laundry", "Utilities", "Other"]
+                    .map((category) => `<option ${cost.category === category ? "selected" : ""}>${category}</option>`)
+                    .join("")}
+                </select>
+              </label>
+              <label>Description
+                <input data-one-off-field="description" data-one-off-id="${cost.id}" value="${escapeHtml(cost.description)}" placeholder="Example: BBQ charcoal, towels, petrol" />
+              </label>
+              <label>Amount
+                <input data-one-off-field="amount" data-one-off-id="${cost.id}" type="number" min="0" step="0.01" value="${Number(cost.amount || 0)}" ${typeof linkedLegacyExpense === "function" && linkedLegacyExpense(profitMonthKey(selectedMonth), cost.id) ? 'readonly title="Edit the linked amount in Finance > Expenses"' : ""} />
+              </label>
+              <div class="receipt-field">
+                <span>Receipt Image</span>
+                ${
+                  cost.receiptImage
+                    ? `<div class="receipt-preview">
+                        <img src="${escapeHtml(safeDataUrl(cost.receiptImage, ["data:image/"]))}" alt="Receipt for ${escapeHtml(cost.description || cost.category)}" />
+                        <div>
+                          <strong>${escapeHtml(cost.receiptName || "Receipt attached")}</strong>
+                          <button class="small-action danger" type="button" data-remove-receipt="${cost.id}">Remove receipt</button>
+                        </div>
+                      </div>`
+                    : `<label class="receipt-upload">
+                        Attach receipt
+                        <input data-receipt-upload="${cost.id}" type="file" accept="image/*" />
+                      </label>`
+                }
+              </div>
+              ${typeof linkedLegacyExpense === "function" && linkedLegacyExpense(profitMonthKey(selectedMonth), cost.id)
+                ? `<button class="small-action" type="button" data-open-linked-cost="${cost.id}">Edit linked record</button>`
+                : `<button class="small-action danger" type="button" data-delete-one-off="${cost.id}">Delete</button>`}
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="empty-one-off">No one-off costs recorded for ${monthLabel(selectedMonth)}.</div>`;
+}
+
+function renderCommitments() {
+  const breakdown = expenseBreakdownFor(selectedMonth);
+  const [selectedYear] = selectedMonth.split("-").map(Number);
+  if (els.commitmentBreakdownSummary) {
+    const rows = [
+      ["Housekeeping", breakdown.housekeeping],
+      ["Maintenance", breakdown.maintenance],
+      ["Electricity & Water", breakdown.utilities],
+      ["Property Loan", breakdown.propertyLoan],
+      ["Credit Card / Loans", breakdown.loans],
+      ["Other Costs", breakdown.supplies + breakdown.other],
+    ];
+    els.commitmentBreakdownSummary.innerHTML = rows
+      .map(
+        ([label, value]) => `
+          <div>
+            <span>${label}</span>
+            <strong>${money(value)}</strong>
+          </div>
+        `,
+      )
+      .join("");
+  }
+  if (!els.commitmentList) return;
+  const commitments = (appSettings.commitments || []).map(normalizeCommitment).filter((item) => item.villa === activeVillaKey());
+  const activeTotal = commitmentTotalFor(selectedMonth);
+  els.commitmentList.innerHTML = `
+    <div class="commitment-summary">
+      <span>Active this month</span>
+      <strong>${money(activeTotal)}</strong>
+      <small>Loans automatically stop after their expiry month.</small>
+    </div>
+    ${commitments
+      .map(
+        (commitment) => `
+          <div class="commitment-row ${commitmentActiveInMonth(commitment, selectedMonth) ? "" : "inactive"}">
+            <label>Name
+              <input data-commitment-field="name" data-commitment-id="${commitment.id}" value="${escapeHtml(commitment.name)}" />
+            </label>
+            <label>Monthly Amount
+              <input data-commitment-field="amount" data-commitment-id="${commitment.id}" type="number" min="0" step="0.01" value="${Number(commitment.amount || 0)}" />
+            </label>
+            <label>Category
+              <input data-commitment-field="category" data-commitment-id="${commitment.id}" value="${escapeHtml(commitment.category)}" />
+            </label>
+            <label>Starts
+              <input data-commitment-field="starts" data-commitment-id="${commitment.id}" type="month" value="${escapeHtml(commitment.starts)}" />
+            </label>
+            <label>Last payment month
+              <input data-commitment-field="expires" data-commitment-id="${commitment.id}" type="month" value="${escapeHtml(commitment.expires)}" />
+            </label>
+            <button class="small-action danger" type="button" data-delete-commitment="${commitment.id}">Delete</button>
+          </div>
+        `,
+      )
+      .join("")}
+  `;
+  if (els.annualCommitmentRows) {
+    const months = Array.from({ length: 12 }, (_, index) => `${selectedYear}-${String(index + 1).padStart(2, "0")}`);
+    els.annualCommitmentRows.innerHTML = commitments
+      .map(
+        (commitment) => `
+          <tr>
+            <td><strong>${escapeHtml(commitment.name)}</strong><br><span class="table-muted">${escapeHtml(commitment.category)}</span></td>
+            ${months
+              .map(
+                (monthValue) => `
+                  <td>
+                    <input class="annual-amount-input" data-annual-commitment-id="${commitment.id}" data-annual-month="${monthValue}" type="number" min="0" step="0.01" value="${commitmentAmountFor(commitment, monthValue)}" />
+                  </td>
+                `,
+              )
+              .join("")}
+          </tr>
+        `,
+      )
+      .join("");
+  }
+}
+
+function validateBackupData(data) {
+  const payload = Array.isArray(data) ? { bookings: data } : data;
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.bookings)) {
+    throw new Error("This file is not a Sunrise Villa backup. No records were changed.");
+  }
+  if (Number(payload.version || 1) > 3) throw new Error("This backup uses a newer format. Update the application before importing it.");
+  for (const key of ["documents"]) {
+    if (payload[key] !== undefined && !Array.isArray(payload[key])) throw new Error("Invalid " + key + " collection.");
+  }
+  const record = value => value && typeof value === "object" && !Array.isArray(value);
+  const collection = (value, label) => {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.some(item => !record(item))) throw new Error("Invalid " + label + " records.");
+    const ids = value.map(item => item.id).filter(Boolean);
+    if (new Set(ids).size !== ids.length) throw new Error("Duplicate IDs in " + label + ".");
+    return value;
+  };
+  const amounts = (item, keys) => {
+    for (const key of keys) {
+      if (item[key] !== undefined && !Number.isFinite(Number(item[key]))) throw new Error("Invalid amount: " + key + ".");
+    }
+  };
+  for (const key of ["taxPlan", "profitData", "appSettings"]) {
+    if (payload[key] !== undefined && !record(payload[key])) throw new Error("Invalid " + key + ".");
+  }
+  collection(payload.bookings, "bookings");
+  collection(payload.documents, "documents");
+  for (const key of ["expenses", "assets", "earnings", "earningsDocs", "lhdnDocs"]) {
+    collection(payload.taxPlan?.[key], key).forEach(item => amounts(item, ["amount", "cost"]));
+  }
+  collection(payload.appSettings?.commitments, "commitments").forEach(item => amounts(item, ["amount"]));
+  for (const key of ["sources", "imported"]) collection(payload.appSettings?.ical?.[key], "calendar " + key);
+  for (const item of Object.values(payload.profitData || {})) {
+    if (!record(item)) throw new Error("Invalid monthly cost records.");
+    amounts(item, ["cleaning", "utilities", "maintenance", "supplies", "platform", "other"]);
+    collection(item.oneOffCosts, "one-off costs").forEach(cost => amounts(cost, ["amount"]));
+  }
+  const validDate = value => /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(value || "")) && isoDate(dateObj(value)) === value;
+  for (const booking of payload.bookings) {
+    amounts(booking, ["revenue", "paid", "depositAmount"]);
+    if (booking.paymentLedger !== undefined) {
+      const ledger = collection(booking.paymentLedger, "booking payments");
+      if (ledger.some(entry => !Number.isSafeInteger(entry.amountSen) || !["payment", "opening", "adjustment"].includes(entry.kind) || (entry.date && !validDate(entry.date)) || (entry.kind !== "adjustment" && entry.amountSen < 0))) throw new Error("Invalid booking payment history.");
+      if (VillaLedger.total(ledger) < 0 || VillaLedger.cents(VillaLedger.total(ledger)) !== VillaLedger.cents(booking.paid)) throw new Error("Booking payments do not match the recorded received total.");
+    }
+    if (!booking || !validDate(booking.arrival) || !Number.isInteger(Number(booking.nights)) || Number(booking.nights) < 1 || Number(booking.nights) > 3660) {
+      throw new Error("A booking has an invalid date or stay length. No records were changed.");
+    }
+  }
+  for (const doc of payload.documents || []) {
+    amounts(doc, ["accommodationFee", "securityDeposit", "previouslyReceived"]);
+    collection(doc.payments, "payment transactions").forEach(payment => amounts(payment, ["amount"]));
+    if (!doc || (doc.checkIn && !validDate(doc.checkIn)) || (doc.checkOut && !validDate(doc.checkOut))) throw new Error("A saved document contains an invalid stay date.");
+  }
+  return payload;
+}
+
+function prepareRestoreData(data) {
+  validateBackupData(data);
+  const staged = { bookings, documents, taxPlan, profitData, appSettings };
+  if (Array.isArray(data)) {
+    staged.bookings = data.map(normalizeBooking);
+  } else {
+    staged.bookings = Array.isArray(data.bookings) ? data.bookings.map(normalizeBooking) : bookings;
+    staged.documents = Array.isArray(data.documents) ? data.documents.map(normalizeDocument) : documents;
+    staged.taxPlan = data.taxPlan
+      ? {
+          ...defaultTaxPlan(),
+          ...data.taxPlan,
+          expenses: Array.isArray(data.taxPlan.expenses) ? data.taxPlan.expenses.map(normalizeTaxExpense) : taxPlan.expenses || [],
+          // Fall back to the CURRENT in-memory collections (not empty arrays) so a
+          // stale/older cloud copy can never wipe the tax module's data.
+          assets: Array.isArray(data.taxPlan.assets) ? data.taxPlan.assets.map(normalizeTaxAsset) : taxPlan.assets || [],
+          review: { ...defaultTaxPlan().review, ...(taxPlan.review || {}), ...(data.taxPlan.review || {}) },
+          yearProfiles: data.taxPlan.yearProfiles && typeof data.taxPlan.yearProfiles === "object" ? data.taxPlan.yearProfiles : taxPlan.yearProfiles || {},
+          lhdnDocs: Array.isArray(data.taxPlan.lhdnDocs) ? data.taxPlan.lhdnDocs : taxPlan.lhdnDocs || [],
+          earnings: Array.isArray(data.taxPlan.earnings) ? data.taxPlan.earnings : taxPlan.earnings || [],
+          earningsDocs: Array.isArray(data.taxPlan.earningsDocs) ? data.taxPlan.earningsDocs : taxPlan.earningsDocs || [],
+          notes: { ...defaultTaxPlan().notes, ...(data.taxPlan.notes || {}) },
+        }
+      : taxPlan;
+    staged.profitData = data.profitData && typeof data.profitData === "object" ? data.profitData : profitData;
+    staged.appSettings = data.appSettings
+      ? {
+          ...defaultAppSettings(),
+          ...data.appSettings,
+          activeVilla: data.appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise",
+          commitments: Array.isArray(data.appSettings.commitments) ? data.appSettings.commitments.map(normalizeCommitment) : appSettings.commitments || [],
+          guestProfiles: { ...defaultAppSettings().guestProfiles, ...(data.appSettings.guestProfiles || {}) },
+          guidebook: { ...defaultAppSettings().guidebook, ...(data.appSettings.guidebook || {}) },
+          dashboardMode: data.appSettings.dashboardMode === "annual" ? "annual" : "monthly",
+          bookingMonthFilter: data.appSettings.bookingMonthFilter || defaultAppSettings().bookingMonthFilter,
+          bookingColumns: { ...defaultAppSettings().bookingColumns, ...(data.appSettings.bookingColumns || {}) },
+          bookingColumnWidths: { ...defaultAppSettings().bookingColumnWidths, ...(data.appSettings.bookingColumnWidths || {}) },
+          quickColumns: { ...defaultAppSettings().quickColumns, ...(data.appSettings.quickColumns || {}) },
+          quickColumnWidths: { ...defaultAppSettings().quickColumnWidths, ...(data.appSettings.quickColumnWidths || {}) },
+          message: {
+            ...defaultAppSettings().message,
+            ...(data.appSettings.message || {}),
+            templates: { ...defaultMessageTemplates, ...(data.appSettings.message?.templates || {}) },
+            windmill: {
+              ...defaultAppSettings().message.windmill,
+              ...(data.appSettings.message?.windmill || {}),
+              templates: { ...defaultAppSettings().message.windmill.templates, ...(data.appSettings.message?.windmill?.templates || {}) },
+            },
+          },
+          ical: { ...defaultAppSettings().ical, ...(data.appSettings.ical || {}) },
+        }
+      : appSettings;
+  }
+  if (typeof validateLegacyExpenseLinks === "function") validateLegacyExpenseLinks(staged);
+  return staged;
+}
+
+function restoreAppData(data) {
+  const staged = prepareRestoreData(data);
+  propertyOriginalFields = structuredClone(data);
+  if (!isRestoringCloudData && hasMeaningfulAppData() && !createRecoverySnapshot("Before data restore/import")) {
+    throw new Error("Restore stopped: the browser could not save a recovery point. Your records have not been replaced. Free browser storage and try again.");
+  }
+  ({ bookings, documents, taxPlan, profitData, appSettings } = staged);
+  loadVillaMessageIntoForm();
+  saveBookings();
+  saveDocuments();
+  saveTaxPlan();
+  saveProfitData();
+  saveAppSettings();
+  renderAll();
+}
+
+function formatPhoneForWhatsapp(value) {
+  let phone = String(value || "").replace(/[^\d]/g, "");
+  if (phone.startsWith("00")) phone = phone.slice(2);
+  if (/^0[1-9][0-9]{7,9}$/.test(phone)) phone = "60" + phone.slice(1);
+  return phone;
+}
+
+// --- Per-villa message resolution (improvement #7) -------------------------------
+// Sunrise uses the top-level message block (unchanged). Windmill uses its own block
+// so Sunrise's address, directions, bank details and templates can never leak across.
+function messageBlockForVilla(villa) {
+  return villa === "Windmill" ? (appSettings.message.windmill || {}) : appSettings.message;
+}
+function activeMessageBlock() {
+  return messageBlockForVilla(appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise");
+}
+function templateForVilla(villa, key) {
+  const t = messageBlockForVilla(villa)?.templates?.[key];
+  if (typeof t === "string") return t;
+  // Sunrise falls back to the built-in defaults; Windmill stays blank (never Sunrise text).
+  return villa === "Windmill" ? "" : defaultMessageTemplates[key];
+}
+
+function templateValuesForBooking(booking = selectedMessageBooking()) {
+  const title = booking?.guestTitle === "Ms" ? "Ms" : "Mr";
+  const guestName = String(booking?.guest || els.messageGuestName?.value || "Guest").trim();
+  const guest = guestName === "Guest" ? guestName : `${title} ${guestName}`;
+  return templateValues({ guest, booking });
+}
+
+function templateValuesForQuote() {
+  const title = els.quoteGuestTitle?.value === "Ms" ? "Ms" : "Mr";
+  const name = String(els.quoteGuestName?.value || "Guest").trim();
+  const guest = name === "Guest" ? name : `${title} ${name}`;
+  return templateValues({ guest, booking: null });
+}
+
+function templateValues({ guest, booking }) {
+  const quote = quoteCalculation();
+  const villa = booking
+    ? (booking.villa === "Windmill" ? "Windmill" : "Sunrise")
+    : (appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise");
+  const block = messageBlockForVilla(villa);
+  const isW = villa === "Windmill";
+  return {
+    guest,
+    code: booking ? bookingConfirmationCode(booking) : "SV-DDMM-A08",
+    address: els.messageAddress?.value?.trim() || block.address || "",
+    mapsLink: els.messageMapsLink?.value?.trim() || block.mapsLink || (isW ? "" : "https://g.co/kgs/DYpYPSh"),
+    checkinTime: els.messageCheckinTime?.value || block.checkinTime || "3:00 PM",
+    guideLink: els.messageGuideLink?.value?.trim() || block.guideLink || (isW ? "" : GUIDE_LINK),
+    bankDetails: (els.messageBankDetails && els.messageBankDetails.value.trim()) || block.bankDetails || "",
+    quoteCheckIn: quoteDate(quote.checkIn),
+    quoteCheckOut: quoteDate(quote.checkOut),
+    quoteAccommodationFee: money(quote.accommodationFee),
+    quoteCleaningFee: money(quote.cleaningFee),
+    quoteDamageDeposit: money(quote.damageDeposit),
+    quoteDiscount: money(quote.discount),
+    quoteActualCharge: money(quote.actualCharge),
+    quoteStandardTotal: money(quote.standardTotal),
+    quoteTotalNights: quote.totalNights,
+  };
+}
+
+function applyTemplate(template, values) {
+  return String(template || "")
+    .replaceAll("{guest}", values.guest)
+    .replaceAll("{code}", values.code)
+    .replaceAll("{address}", values.address)
+    .replaceAll("{mapsLink}", values.mapsLink)
+    .replaceAll("{checkinTime}", values.checkinTime)
+    .replaceAll("{guideLink}", values.guideLink)
+    .replaceAll("{bankDetails}", values.bankDetails || "")
+    .replaceAll("{quoteCheckIn}", values.quoteCheckIn)
+    .replaceAll("{quoteCheckOut}", values.quoteCheckOut)
+    .replaceAll("{quoteAccommodationFee}", values.quoteAccommodationFee)
+    .replaceAll("{quoteCleaningFee}", values.quoteCleaningFee)
+    .replaceAll("{quoteDamageDeposit}", values.quoteDamageDeposit)
+    .replaceAll("{quoteDiscount}", values.quoteDiscount)
+    .replaceAll("{quoteActualCharge}", values.quoteActualCharge)
+    .replaceAll("{quoteStandardTotal}", values.quoteStandardTotal)
+    .replaceAll("{quoteTotalNights}", values.quoteTotalNights);
+}
+
+function messageBookingOptions() {
+  const bookings = scopedBookings();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const upcoming = [...bookings]
+    .filter((booking) => !isTentativeBooking(booking) && dateObj(departureFor(booking)) > today)
+    .sort((a, b) => a.arrival.localeCompare(b.arrival));
+  const groups = upcoming.reduce((acc, booking) => {
+    const monthValue = booking.arrival.slice(0, 7);
+    if (!acc.has(monthValue)) acc.set(monthValue, []);
+    acc.get(monthValue).push(booking);
+    return acc;
+  }, new Map());
+  return [...groups]
+    .map(
+      ([monthValue, items]) => `
+        <optgroup label="${escapeHtml(monthLabel(monthValue))}">
+          ${items.map((booking) => `<option value="${booking.id}">${escapeHtml(quickDate(booking.arrival))} · ${escapeHtml(booking.guest)}</option>`).join("")}
+        </optgroup>
+      `,
+    )
+    .join("");
+}
+
+function selectedMessageBooking() {
+  const bookings = scopedBookings().filter((booking) => !isTentativeBooking(booking) && departureFor(booking) > isoDate(new Date()));
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return (
+    bookings.find((booking) => booking.id === els.messageBookingSelect?.value) ||
+    [...bookings]
+      .filter((booking) => dateObj(departureFor(booking)) > today)
+      .sort((a, b) => a.arrival.localeCompare(b.arrival))[0]
+  );
+}
+
+function quoteNightBreakdown(checkIn, checkOut) {
+  let weekday = 0;
+  let weekend = 0;
+  if (!checkIn || !checkOut) return { weekday, weekend };
+  for (let stayDate = dateObj(checkIn); stayDate < dateObj(checkOut); stayDate = addDays(stayDate, 1)) {
+    if (isWeekendNight(isoDate(stayDate))) weekend += 1;
+    else weekday += 1;
+  }
+  return { weekday, weekend };
+}
+
+function quoteCalculation() {
+  const checkIn = els.quoteCheckIn?.value || "";
+  const checkOut = els.quoteCheckOut?.value || "";
+  const weekdayNights = Math.max(0, Number(els.quoteWeekdayNights?.value || 0));
+  const weekendNights = Math.max(0, Number(els.quoteWeekendNights?.value || 0));
+  const holidayNights = Math.max(0, Number(els.quoteHolidayNights?.value || 0));
+  const weekdayRate = Math.max(0, Number(els.quoteWeekdayRate?.value || 2488));
+  const weekendRate = Math.max(0, Number(els.quoteWeekendRate?.value || 2888));
+  const holidayRate = Math.max(0, Number(els.quoteHolidayRate?.value || 3688));
+  const cleaningFee = Math.max(0, Number(els.quoteCleaningFee?.value || 200));
+  const damageDeposit = Math.max(0, Number(els.quoteDamageDeposit?.value || 500));
+  const chargeableHolidayNights = Math.min(holidayNights, weekdayNights + weekendNights);
+  const weekdayHolidayNights = Math.min(chargeableHolidayNights, weekdayNights);
+  const weekendHolidayNights = Math.max(0, chargeableHolidayNights - weekdayHolidayNights);
+  const chargeableWeekdayNights = Math.max(0, weekdayNights - weekdayHolidayNights);
+  const chargeableWeekendNights = Math.max(0, weekendNights - weekendHolidayNights);
+  const accommodationFee = chargeableWeekdayNights * weekdayRate + chargeableWeekendNights * weekendRate + chargeableHolidayNights * holidayRate;
+  const standardTotal = accommodationFee + cleaningFee;
+  const actualCharge = Math.max(0, Number(els.quoteActualCharge?.value || standardTotal));
+  const discount = Math.max(0, standardTotal - actualCharge);
+  return {
+    checkIn,
+    checkOut,
+    weekdayNights,
+    weekendNights,
+    holidayNights,
+    weekdayRate,
+    weekendRate,
+    holidayRate,
+    cleaningFee,
+    damageDeposit,
+    accommodationFee,
+    standardTotal,
+    actualCharge,
+    discount,
+    totalNights: weekdayNights + weekendNights,
+  };
+}
+
+function syncQuoteNightsFromDates(forceActualCharge = false) {
+  if (!els.quoteCheckIn || !els.quoteCheckOut) return;
+  const breakdown = quoteNightBreakdown(els.quoteCheckIn.value, els.quoteCheckOut.value);
+  if (els.quoteWeekdayNights) els.quoteWeekdayNights.value = breakdown.weekday;
+  if (els.quoteWeekendNights) els.quoteWeekendNights.value = breakdown.weekend;
+  if (els.quoteHolidayNights && !els.quoteHolidayNights.value) els.quoteHolidayNights.value = 0;
+  renderQuickQuote(forceActualCharge);
+}
+
+function renderQuickQuote(forceActualCharge = false) {
+  const initial = quoteCalculation();
+  if (forceActualCharge && els.quoteActualCharge) els.quoteActualCharge.value = initial.standardTotal;
+  const quote = quoteCalculation();
+  if (els.quoteDiscount) els.quoteDiscount.value = quote.discount.toFixed(0);
+  if (els.quoteStandardTotal) els.quoteStandardTotal.textContent = money(quote.standardTotal);
+  if (els.quoteGuestTotal) els.quoteGuestTotal.textContent = `${money(quote.actualCharge)} + ${money(quote.damageDeposit)}`;
+  if (els.quoteTotalNights) els.quoteTotalNights.textContent = quote.totalNights;
+}
+
+function fillMessageFromBooking(force = false) {
+  const booking = selectedMessageBooking();
+  if (!booking || !els.messageGuestName) return;
+  if (els.messageGuestTitle) els.messageGuestTitle.value = booking.guestTitle === "Ms" ? "Ms" : "Mr";
+  if (force || !els.messageGuestName.value) els.messageGuestName.value = booking.guest;
+  if (force || !els.messagePhone.value) els.messagePhone.value = booking.contact || "";
+  const block = activeMessageBlock();
+  const isW = activeVillaKey() === "Windmill";
+  if (force || !els.messageCheckinTime.value) els.messageCheckinTime.value = block.checkinTime || "3:00 PM";
+  els.messageSecurityCode.value = bookingConfirmationCode(booking);
+  if (els.messageCodeDisplay) els.messageCodeDisplay.textContent = bookingConfirmationCode(booking);
+  if (force || !els.messageAddress.value) els.messageAddress.value = block.address || "";
+  if (els.messageMapsLink && (force || !els.messageMapsLink.value)) els.messageMapsLink.value = block.mapsLink || (isW ? "" : "https://g.co/kgs/DYpYPSh");
+  if (els.messageGuideLink && (force || !els.messageGuideLink.value)) els.messageGuideLink.value = block.guideLink || (isW ? "" : GUIDE_LINK);
+  if (els.messageBankDetails && (force || !els.messageBankDetails.value)) els.messageBankDetails.value = block.bankDetails || "";
+  renderQuickQuote(false);
+  renderCheckinMessage();
+}
+
+function activeVillaKey() {
+  return appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise";
+}
+function villaOf(booking) {
+  return booking ? (booking.villa === "Windmill" ? "Windmill" : "Sunrise") : activeVillaKey();
+}
+
+function checkinMessageText() {
+  return applyTemplate(templateForVilla(villaOf(selectedMessageBooking()), "checkin"), templateValuesForBooking());
+}
+
+function checkinMessageTextForBooking(booking) {
+  return applyTemplate(templateForVilla(villaOf(booking), "checkin"), templateValuesForBooking(booking));
+}
+
+function guestGuideMessageTextForBooking(booking) {
+  return applyTemplate(templateForVilla(villaOf(booking), "guide"), templateValuesForBooking(booking));
+}
+
+function reminderMessageTextForBooking(booking) {
+  return applyTemplate(templateForVilla(villaOf(booking), "reminder"), templateValuesForBooking(booking));
+}
+
+function depositMessageTextForBooking(booking) {
+  return applyTemplate(templateForVilla(villaOf(booking), "deposit"), templateValuesForBooking(booking));
+}
+
+function midstayMessageTextForBooking(booking) {
+  return applyTemplate(templateForVilla(villaOf(booking), "midstay"), templateValuesForBooking(booking));
+}
+
+function reviewMessageTextForBooking(booking) {
+  return applyTemplate(templateForVilla(villaOf(booking), "review"), templateValuesForBooking(booking));
+}
+
+function quoteMessageText() {
+  return applyTemplate(templateForVilla(activeVillaKey(), "quote"), templateValuesForQuote());
+}
+
+function openWhatsappMessage(phoneValue, text) {
+  const phone = formatPhoneForWhatsapp(phoneValue || "");
+  if (!/^[0-9]{8,15}$/.test(phone)) {
+    window.alert("Enter the guest WhatsApp number including the country code, for example +60 12-345 6789.");
+    return;
+  }
+  const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+  // noopener deliberately returns null in some browsers; null is not proof of a blocked popup.
+  const link = document.createElement("a");
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function openWhatsappForBooking(booking, template) {
+  const text =
+    template === "guide" ? guestGuideMessageTextForBooking(booking)
+    : template === "reminder" ? reminderMessageTextForBooking(booking)
+    : template === "deposit" ? depositMessageTextForBooking(booking)
+    : template === "midstay" ? midstayMessageTextForBooking(booking)
+    : template === "review" ? reviewMessageTextForBooking(booking)
+    : checkinMessageTextForBooking(booking);
+  openWhatsappMessage(booking?.contact || "", text);
+}
+
+function inquiryAckText() {
+  return applyTemplate(templateForVilla(activeVillaKey(), "inquiry"), templateValuesForQuote());
+}
+function openInquiryAck() {
+  openWhatsappMessage(els.quotePhone?.value || "", inquiryAckText());
+}
+
+// --- AI guest Q&A drafter (grounded in the per-villa Guidebook; draft-only) ---
+// Compiles the active villa's Guidebook + address into a plain-text facts block.
+function gatherVillaFacts(villa) {
+  const g = guidebookFor(villa);
+  const block = messageBlockForVilla(villa) || {};
+  const parts = [];
+  if (block.address) parts.push(`Address: ${block.address}`);
+  if (block.checkinTime) parts.push(`Standard check-in time: ${block.checkinTime}`);
+  if (g.wifiName || g.wifiPassword) parts.push(`WiFi — network: ${g.wifiName || "(not set)"}, password: ${g.wifiPassword || "(not set)"}`);
+  if (g.checkin) parts.push(`Check-in steps: ${g.checkin}`);
+  if (g.checkout) parts.push(`Check-out instructions: ${g.checkout}`);
+  if (g.houseRules) parts.push(`House rules: ${g.houseRules}`);
+  if (g.amenities) parts.push(`Appliances & how-tos: ${g.amenities}`);
+  if (g.localTips) parts.push(`Local recommendations: ${g.localTips}`);
+  if (g.emergency) parts.push(`Emergency / host contact: ${g.emergency}`);
+  return parts.join("\n");
+}
+
+function setAiStatus(text, kind) {
+  if (!els.aiDraftStatus) return;
+  els.aiDraftStatus.textContent = text || "";
+  els.aiDraftStatus.className = `ai-draft-status${kind ? " " + kind : ""}`;
+}
+
+async function draftGuestReply() {
+  const question = els.aiQuestion?.value?.trim();
+  if (!question) {
+    setAiStatus("Type the guest's question first.", "err");
+    els.aiQuestion?.focus();
+    return;
+  }
+  if (!supabaseClient || !cloudUser) {
+    setAiStatus("Log in first — the drafter runs through your secure cloud function.", "err");
+    return;
+  }
+  const villa = activeVillaKey();
+  const facts = gatherVillaFacts(villa);
+  if (!facts) {
+    setAiStatus(`No ${villa} Guidebook facts yet — fill the Guidebook tab so the draft has something to ground on.`, "err");
+    return;
+  }
+  if (els.aiDraftBtn) els.aiDraftBtn.disabled = true;
+  setAiStatus("Drafting…");
+  try {
+    const { data, error } = await supabaseClient.functions.invoke("property-guest-reply-draft", { body: { question, villa, facts } });
+    if (error) throw new Error(error.message || "request failed");
+    if (data?.error) {
+      const lowBalance = /credit|balance|billing|quota/i.test(data.detail || "");
+      throw new Error(lowBalance ? "Anthropic balance is empty — add funds in the Console, then try again." : data.detail || data.error);
+    }
+    if (els.aiDraft) els.aiDraft.value = data.draft || "";
+    if (els.aiPhone && !els.aiPhone.value && selectedMessageBooking()?.contact) els.aiPhone.value = selectedMessageBooking().contact;
+    setAiStatus("Draft ready — review and edit before sending.", "ok");
+    syncAiActionButtons();
+  } catch (e) {
+    setAiStatus(e?.message || "Could not draft a reply.", "err");
+  } finally {
+    if (els.aiDraftBtn) els.aiDraftBtn.disabled = false;
+  }
+}
+
+// Copy/Send only make sense once there's a draft — keep them disabled until then.
+function syncAiActionButtons() {
+  const has = !!els.aiDraft?.value?.trim();
+  if (els.aiCopyBtn) els.aiCopyBtn.disabled = !has;
+  if (els.aiSendBtn) els.aiSendBtn.disabled = !has;
+}
+
+function openWhatsappForQuote() {
+  openWhatsappMessage(els.quotePhone?.value || "", quoteMessageText());
+}
+
+function fallbackCopyText(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  return copied;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  return false;
+}
+
+function showManualCopy(text) {
+  if (!els.manualCopyBox || !els.manualCopyText) return;
+  els.manualCopyBox.classList.remove("hidden");
+  els.manualCopyText.value = text;
+  els.manualCopyText.textContent = text;
+  els.manualCopyText.focus();
+  els.manualCopyText.select();
+  els.manualCopyText.setSelectionRange(0, els.manualCopyText.value.length);
+}
+
+async function copyMessageWithFeedback(text, button, defaultLabel) {
+  renderCheckinMessage();
+  els.manualCopyBox?.classList.add("hidden");
+  try {
+    const copied = await copyTextToClipboard(text);
+    if (!copied) throw new Error("Copy blocked");
+    button.textContent = "Copied";
+    if (els.messageCopyStatus) els.messageCopyStatus.textContent = "Message copied. You can paste it into WhatsApp now.";
+  } catch {
+    showManualCopy(text);
+    button.textContent = "Select to Copy";
+    if (els.messageCopyStatus) els.messageCopyStatus.textContent = "Copy was blocked by the browser, so I selected the message for manual copy.";
+  }
+  window.setTimeout(() => {
+    button.textContent = defaultLabel;
+  }, 1600);
+}
+
+function renderCheckinMessage(event) {
+  if(!event || !['input','change'].includes(event.type) || isRestoringCloudData)return;
+  if (els.messageCodeDisplay) els.messageCodeDisplay.textContent = selectedMessageBooking() ? bookingConfirmationCode(selectedMessageBooking()) : "SV-DDMM-A08";
+  const isW = activeVillaKey() === "Windmill";
+  const base = activeMessageBlock();
+  const dflt = (key) => (isW ? "" : defaultMessageTemplates[key]);
+  const block = {
+    checkinTime: els.messageCheckinTime?.value || "3:00 PM",
+    address: els.messageAddress?.value || "",
+    mapsLink: els.messageMapsLink?.value || base.mapsLink || (isW ? "" : "https://g.co/kgs/DYpYPSh"),
+    guideLink: els.messageGuideLink?.value || base.guideLink || (isW ? "" : GUIDE_LINK),
+    bankDetails: els.messageBankDetails ? els.messageBankDetails.value : (base.bankDetails || ""),
+    templates: {
+      ...(base.templates || {}),
+      quote: els.quoteTemplateInput?.value ?? dflt("quote"),
+      checkin: els.checkinTemplateInput?.value ?? dflt("checkin"),
+      guide: els.guideTemplateInput?.value ?? dflt("guide"),
+      reminder: els.reminderTemplateInput?.value ?? dflt("reminder"),
+    },
+  };
+  // Write only the ACTIVE villa's block; the other villa's settings are preserved untouched.
+  appSettings = isW
+    ? { ...appSettings, message: { ...appSettings.message, windmill: { ...(appSettings.message.windmill || {}), ...block } } }
+    : { ...appSettings, message: { ...appSettings.message, ...block } };
+  saveAppSettings();
+}
+
+function renderMessageGenerator() {
+  if (!els.messageBookingSelect) return;
+  const current = els.messageBookingSelect.value;
+  els.messageBookingSelect.innerHTML = messageBookingOptions() || `<option value="">No bookings yet</option>`;
+  if (current && [...els.messageBookingSelect.options].some((option) => option.value === current)) els.messageBookingSelect.value = current;
+  if (els.quoteTemplateInput && !els.quoteTemplateInput.value) els.quoteTemplateInput.value = templateForVilla(activeVillaKey(), "quote");
+  if (els.checkinTemplateInput && !els.checkinTemplateInput.value) els.checkinTemplateInput.value = templateForVilla(activeVillaKey(), "checkin");
+  if (els.guideTemplateInput && !els.guideTemplateInput.value) els.guideTemplateInput.value = templateForVilla(activeVillaKey(), "guide");
+  if (els.reminderTemplateInput && !els.reminderTemplateInput.value) els.reminderTemplateInput.value = templateForVilla(activeVillaKey(), "reminder");
+  if (els.aiVillaName) els.aiVillaName.textContent = activeVillaKey();
+  // AI drafter: if this villa has no Guidebook facts yet, say so up front + block drafting.
+  const aiFacts = gatherVillaFacts(activeVillaKey());
+  if (els.aiDraftBtn) els.aiDraftBtn.disabled = true;
+  if (!aiFacts && els.aiDraftStatus && !els.aiDraftStatus.textContent) setAiStatus(`Fill the ${activeVillaKey()} Guidebook first so drafts ground on real facts.`, "");
+  syncAiActionButtons();
+  fillMessageFromBooking(false);
+}
+
+// Force the message form + template editors to show the ACTIVE villa's saved block.
+// Called when the villa switch flips so Sunrise text is never left sitting in Windmill's editor.
+function loadVillaMessageIntoForm() {
+  const villa = activeVillaKey();
+  const block = messageBlockForVilla(villa);
+  const isW = villa === "Windmill";
+  if (els.messageCheckinTime) els.messageCheckinTime.value = block.checkinTime || "3:00 PM";
+  if (els.messageAddress) els.messageAddress.value = block.address || "";
+  if (els.messageMapsLink) els.messageMapsLink.value = block.mapsLink || (isW ? "" : "https://g.co/kgs/DYpYPSh");
+  if (els.messageGuideLink) els.messageGuideLink.value = block.guideLink || (isW ? "" : GUIDE_LINK);
+  if (els.messageBankDetails) els.messageBankDetails.value = block.bankDetails || "";
+  if (els.quoteTemplateInput) els.quoteTemplateInput.value = templateForVilla(villa, "quote");
+  if (els.checkinTemplateInput) els.checkinTemplateInput.value = templateForVilla(villa, "checkin");
+  if (els.guideTemplateInput) els.guideTemplateInput.value = templateForVilla(villa, "guide");
+  if (els.reminderTemplateInput) els.reminderTemplateInput.value = templateForVilla(villa, "reminder");
+  // The AI draft is grounded in the PREVIOUS villa's facts — a switch invalidates it.
+  // Clear it so a Sunrise-grounded answer (and phone) can't be sent under the Windmill label.
+  if (els.aiDraft) {
+    const had = els.aiDraft.value || els.aiQuestion?.value;
+    if (els.aiQuestion) els.aiQuestion.value = "";
+    els.aiDraft.value = "";
+    if (els.aiPhone) els.aiPhone.value = "";
+    if (typeof setAiStatus === "function") setAiStatus(had ? "Villa changed — draft cleared." : "", "");
+  }
+}
+
+const bookingColumnOptions = [
+  { key: "channel", label: "Channel", locked: true },
+  { key: "record", label: "Record type" },
+  { key: "guest", label: "Guest", locked: true },
+  { key: "contact", label: "Contact" },
+  { key: "prefix", label: "Prefix" },
+  { key: "arrival", label: "Arrival", locked: true },
+  { key: "nights", label: "Nights", locked: true },
+  { key: "revenue", label: "Accommodation" },
+  { key: "deposit", label: "Deposit" },
+  { key: "total", label: "Total" },
+  { key: "received", label: "Received" },
+  { key: "full", label: "Full received" },
+  { key: "balance", label: "Balance", locked: true },
+  { key: "refund", label: "Refund" },
+  { key: "actions", label: "Actions", locked: true },
+];
+
+function isBookingColumnVisible(key) {
+  const column = bookingColumnOptions.find((item) => item.key === key);
+  if (column?.locked) return true;
+  return appSettings.bookingColumns?.[key] !== false;
+}
+
+function bookingCell(col, content, extraClass = "") {
+  const hidden = isBookingColumnVisible(col) ? "" : " hidden-col";
+  return `<td data-col="${col}" class="${`${extraClass}${hidden}`.trim()}">${content}</td>`;
+}
+
+function renderBookingColumnControls() {
+  if (!els.bookingColumnControls) return;
+  els.bookingColumnControls.innerHTML = bookingColumnOptions
+    .filter((column) => !column.locked)
+    .map(
+      (column) => `
+        <label class="column-toggle">
+          <input type="checkbox" data-booking-column="${column.key}" ${isBookingColumnVisible(column.key) ? "checked" : ""} />
+          <span>${column.label}</span>
+        </label>
+      `,
+    )
+    .join("");
+  document.querySelectorAll("#bookingsTable [data-col]").forEach((cell) => {
+    cell.classList.toggle("hidden-col", !isBookingColumnVisible(cell.dataset.col));
+  });
+  applyTableColumnWidths("#bookingsTable", appSettings.bookingColumnWidths || {});
+  setupTableColumnResizers("#bookingsTable", "booking");
+}
+
+const quickColumnWidthLimits = {
+  guest: 180,
+  type: 78,
+  checkin: 82,
+  nights: 52,
+  wa: 36,
+  revenue: 102,
+  deposit: 102,
+  total: 102,
+  received: 102,
+  full: 96,
+  balance: 102,
+  refund: 86,
+};
+
+function applyTableColumnWidths(tableSelector, widths) {
+  document.querySelectorAll(`${tableSelector} [data-col]`).forEach((cell) => {
+    const storedWidth = Number(widths[cell.dataset.col] || 0);
+    const width = tableSelector === "#quickViewTable" && quickColumnWidthLimits[cell.dataset.col]
+      ? Math.min(storedWidth, quickColumnWidthLimits[cell.dataset.col])
+      : storedWidth;
+    if (width > 0) {
+      cell.style.width = `${width}px`;
+      cell.style.minWidth = `${width}px`;
+    } else {
+      cell.style.width = "";
+      cell.style.minWidth = "";
+    }
+  });
+}
+
+let activeColumnResize = null;
+
+function setupTableColumnResizers(tableSelector, tableType) {
+  document.querySelectorAll(`${tableSelector} thead th[data-col]`).forEach((th) => {
+    if (th.dataset.resizeReady) return;
+    th.dataset.resizeReady = "true";
+    const handle = document.createElement("span");
+    handle.className = "column-resize-handle";
+    handle.setAttribute("aria-hidden", "true");
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      activeColumnResize = {
+        tableType,
+        tableSelector,
+        key: th.dataset.col,
+        startX: event.clientX,
+        startWidth: th.getBoundingClientRect().width,
+      };
+      document.body.classList.add("resizing-column");
+    });
+    th.appendChild(handle);
+  });
+}
+
+document.addEventListener("mousemove", (event) => {
+  if (!activeColumnResize) return;
+  const maxWidth = activeColumnResize.tableType === "quick" ? (quickColumnWidthLimits[activeColumnResize.key] || 160) : 260;
+  const minWidth = activeColumnResize.tableType === "quick" ? 34 : 64;
+  const nextWidth = Math.max(minWidth, Math.min(maxWidth, Math.round(activeColumnResize.startWidth + event.clientX - activeColumnResize.startX)));
+  const key = activeColumnResize.tableType === "quick" ? "quickColumnWidths" : "bookingColumnWidths";
+  appSettings = {
+    ...appSettings,
+    [key]: {
+      ...(appSettings[key] || {}),
+      [activeColumnResize.key]: nextWidth,
+    },
+  };
+  applyTableColumnWidths(activeColumnResize.tableSelector, appSettings[key] || {});
+});
+
+document.addEventListener("mouseup", () => {
+  if (!activeColumnResize) return;
+  activeColumnResize = null;
+  document.body.classList.remove("resizing-column");
+  saveAppSettings();
+});
+
+function setupDashboardToggles() {
+  document.querySelectorAll("#dashboardView .dashboard-section").forEach((section, index) => {
+    const heading = section.querySelector(".section-heading");
+    if (!heading || heading.querySelector("[data-dashboard-toggle]")) return;
+    const key = section.querySelector("h3")?.id || `section-${index}`;
+    section.dataset.dashboardKey = key;
+    const button = document.createElement("button");
+    button.className = "ghost-button compact dashboard-toggle";
+    button.type = "button";
+    button.dataset.dashboardToggle = key;
+    heading.appendChild(button);
+  });
+  applyDashboardToggles();
+}
+
+function applyDashboardToggles() {
+  document.querySelectorAll("#dashboardView .dashboard-section").forEach((section) => {
+    const key = section.dataset.dashboardKey;
+    const isHidden = Boolean(appSettings.dashboardHidden?.[key]);
+    section.classList.toggle("collapsed", isHidden);
+    const button = section.querySelector("[data-dashboard-toggle]");
+    if (button) button.textContent = isHidden ? "Show" : "Hide";
+  });
+}
+
+function applyDashboardMode() {
+  const mode = appSettings.dashboardMode === "annual" ? "annual" : "monthly";
+  const dashboard = document.querySelector("#dashboardView");
+  if (dashboard) {
+    dashboard.classList.toggle("mode-annual", mode === "annual");
+    dashboard.classList.toggle("mode-monthly", mode === "monthly");
+  }
+  document.querySelectorAll("[data-dashboard-mode]").forEach((button) => {
+    const isActive = button.dataset.dashboardMode === mode;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function renderDashboard() {
+  const totals = totalsFor(selectedMonth);
+  const selectedPerformance = stayPerformanceForMonth(selectedMonth);
+  const selectedExpenses = profitMonth(selectedMonth);
+  const selectedExpenseTotal = expenseTotalFor(selectedMonth);
+  const selectedBreakdown = expenseBreakdownFor(selectedMonth);
+  const selectedNetProfit = Number(totals.revenue || 0) - selectedExpenseTotal;
+  const year = Number(selectedMonth.slice(0, 4));
+  const overall = totalsForBookings(bookingsForYear(year));
+  const upcomingPayments = upcomingPaymentsThroughYearEnd(year);
+  const dashboardGuideTitle = document.querySelector("#dashboardGuideTitle");
+  if (dashboardGuideTitle) dashboardGuideTitle.textContent = appSettings.dashboardMode === "annual" ? String(year) : monthLabel(selectedMonth);
+  els.sideRevenue.textContent = money(totals.revenue);
+  if (els.sideTotalToReceive) els.sideTotalToReceive.textContent = money(totals.totalToReceive);
+  if (els.sideRefundPending) els.sideRefundPending.textContent = money(totals.refundPending);
+  els.sideBalance.textContent = money(totals.balance);
+  els.sideUpcomingPayments.textContent = money(upcomingPayments);
+  els.sideNights.textContent = `${selectedPerformance.bookedNights}/${selectedPerformance.availableNights} (${percent(selectedPerformance.occupancyRate)})`;
+  els.overallTitle.textContent = `${year} Overall Summary`;
+  els.overallRevenue.textContent = money(overall.revenue);
+  els.overallTotalToReceive.textContent = money(overall.totalToReceive);
+  els.overallPaid.textContent = money(overall.paid);
+  els.overallBalance.textContent = money(overall.balance);
+  els.overallUpcomingPayments.textContent = money(upcomingPayments);
+  els.overallDepositHeld.textContent = money(overall.depositsRefunded);
+  els.overallRefundPending.textContent = money(overall.refundPending);
+  els.monthlyTitle.textContent = `${monthLabel(selectedMonth)} Monthly Summary`;
+  els.kpiRevenue.textContent = money(totals.revenue);
+  els.kpiTotalToReceive.textContent = money(totals.totalToReceive);
+  els.kpiPaid.textContent = money(totals.paid);
+  els.kpiBalance.textContent = money(totals.balance);
+  els.kpiDepositHeld.textContent = money(totals.depositsRefunded);
+  els.kpiRefundPending.textContent = money(totals.refundPending);
+  if (els.kpiBookings) els.kpiBookings.textContent = totals.bookings;
+  els.profitTitle.textContent = `${monthLabel(selectedMonth)} Cash Plan`;
+  if (els.expenseCleaning) els.expenseCleaning.value = selectedExpenses.cleaning;
+  if (els.expenseUtilities) els.expenseUtilities.value = selectedExpenses.utilities;
+  if (els.expenseMaintenance) els.expenseMaintenance.value = selectedExpenses.maintenance;
+  if (els.expenseSupplies) els.expenseSupplies.value = selectedExpenses.supplies;
+  if (els.expensePlatform) els.expensePlatform.value = selectedExpenses.platform;
+  if (els.expenseOther) els.expenseOther.value = selectedExpenses.other;
+  if (els.expenseNotes) els.expenseNotes.value = selectedExpenses.notes;
+  els.netProfitOut.textContent = money(selectedNetProfit);
+  els.totalExpensesOut.textContent = money(selectedExpenseTotal);
+  els.fixedCommitmentsOut.textContent = money(selectedBreakdown.commitments);
+  if (els.adHocExpensesOut) els.adHocExpensesOut.textContent = money(selectedBreakdown.adHoc);
+  renderOneOffCosts();
+  renderCommitments();
+  els.occupancyTitle.textContent = `${monthLabel(selectedMonth)} Occupancy & Nightly Rates`;
+  els.occupancyRate.textContent = percent(selectedPerformance.occupancyRate);
+  const occHero = els.occupancyRate?.closest(".performance-hero");
+  if (occHero) occHero.style.setProperty("--occ", Math.max(0, Math.min(100, Number(selectedPerformance.occupancyRate) || 0)));
+  els.bookedNights.textContent = selectedPerformance.bookedNights;
+  els.availableNights.textContent = selectedPerformance.availableNights;
+  els.weekdayNights.textContent = selectedPerformance.weekdayNights;
+  els.weekendNights.textContent = selectedPerformance.weekendNights;
+  els.avgWeekdayRate.textContent = money(selectedPerformance.avgWeekdayRate);
+  els.avgWeekendRate.textContent = money(selectedPerformance.avgWeekendRate);
+  els.channelMixTitle.textContent = `${monthLabel(selectedMonth)} Direct vs Airbnb`;
+
+  const [selectedYear] = selectedMonth.split("-").map(Number);
+  const monthSummaries = Array.from({ length: 12 }, (_, index) => {
+    const monthValue = `${selectedYear}-${String(index + 1).padStart(2, "0")}`;
+    return { monthValue, label: monthLabel(monthValue).replace(` ${selectedYear}`, ""), ...totalsFor(monthValue), performance: stayPerformanceForMonth(monthValue) };
+  });
+  const maxRevenue = Math.max(...monthSummaries.map((item) => item.revenue), 1);
+
+  els.incomeChart.innerHTML = monthSummaries
+    .map(
+      (item) => `
+        <div class="bar-row">
+          <strong>${item.label}</strong>
+          <div class="bar-track"><div class="bar-fill" style="width:${(item.revenue / maxRevenue) * 100}%"></div></div>
+          <span>${money(item.revenue)}</span>
+        </div>
+      `,
+    )
+    .join("");
+
+  els.summaryRows.innerHTML = monthSummaries
+    .map(
+      (item) => `
+        <tr>
+          <td>${item.label} ${selectedYear}</td>
+          <td>${item.bookings}</td>
+          <td>${money(item.revenue)}</td>
+          <td>${money(expenseTotalFor(item.monthValue))}</td>
+          <td>${money(item.revenue - expenseTotalFor(item.monthValue))}</td>
+          <td>${money(item.totalToReceive)}</td>
+          <td>${money(item.paid)}</td>
+          <td>${money(item.balance)}</td>
+          <td>${percent(item.performance.occupancyRate)}</td>
+          <td>${money(item.depositsRefunded)}</td>
+          <td>${money(item.refundPending)}</td>
+          <td>${item.performance.bookedNights}</td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  const pnlSummaries = monthSummaries.map((item) => {
+    const breakdown = expenseBreakdownFor(item.monthValue);
+    const netProfit = item.revenue - breakdown.total;
+    return { ...item, breakdown, netProfit, margin: item.revenue ? (netProfit / item.revenue) * 100 : 0 };
+  });
+  const bestMonth = pnlSummaries.reduce((best, item) => (item.netProfit > best.netProfit ? item : best), pnlSummaries[0]);
+  const totalYearProfit = pnlSummaries.reduce((sum, item) => sum + item.netProfit, 0);
+  const totalYearExpenses = pnlSummaries.reduce((sum, item) => sum + item.breakdown.total, 0);
+  els.pnlCards.innerHTML = `
+    <article class="mini-kpi"><span>Year net after costs & loans</span><strong>${money(totalYearProfit)}</strong><small>${selectedYear}</small></article>
+    <article class="mini-kpi"><span>Year Expenses</span><strong>${money(totalYearExpenses)}</strong><small>Recurring commitments included</small></article>
+    <article class="mini-kpi"><span>Best Month</span><strong>${bestMonth?.label || "-"}</strong><small>${money(bestMonth?.netProfit || 0)} after costs & loans</small></article>
+  `;
+  els.pnlRows.innerHTML = pnlSummaries
+    .map(
+      (item) => `
+        <tr>
+          <td>${item.label} ${selectedYear}</td>
+          <td>${money(item.revenue)}</td>
+          <td>${money(item.breakdown.commitments)}</td>
+          <td>${money(item.breakdown.total)}</td>
+          <td class="${item.netProfit < 0 ? "balance-due" : ""}">${money(item.netProfit)}</td>
+        </tr>
+      `,
+    )
+    .join("");
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const upcoming = calculationBookings()
+    .filter((booking) => dateObj(booking.arrival) >= today)
+    .sort((a, b) => a.arrival.localeCompare(b.arrival))
+    .slice(0, 6);
+
+  if (els.upcomingRows) {
+    els.upcomingRows.innerHTML = upcoming.length
+      ? upcoming
+          .map((booking) => {
+            const balance = balanceFor(booking);
+            return `
+            <tr>
+              <td><strong>${escapeHtml(booking.guest)}</strong><br><span class="table-muted">${prefixFor(booking.guest)}</span></td>
+              <td><span class="channel-badge ${booking.channel.toLowerCase()}">${escapeHtml(booking.channel)}</span></td>
+              <td>${shortDate(booking.arrival)}</td>
+              <td>${booking.nights}</td>
+              <td class="${balance > 0 ? "balance-due" : ""}">${money(balance)}</td>
+              <td>${fullReceivedControl(booking)}</td>
+              <td>${money(booking.depositAmount)}</td>
+              <td>${refundControl(booking)}</td>
+            </tr>
+          `;
+          })
+          .join("")
+      : `<tr><td colspan="8" class="empty-row">No upcoming arrivals.</td></tr>`;
+  }
+
+  const direct = calculationBookings(scopedBookings().filter(b => arrivalInMonth(b, selectedMonth))).filter((booking) => booking.channel === "Direct");
+  const airbnb = calculationBookings(scopedBookings().filter(b => arrivalInMonth(b, selectedMonth))).filter((booking) => booking.channel === "Airbnb");
+  const channelTotals = [
+    { label: "Direct", value: direct.reduce((sum, item) => sum + Number(item.revenue || 0), 0) },
+    { label: "Airbnb", value: airbnb.reduce((sum, item) => sum + Number(item.revenue || 0), 0) },
+  ];
+  const maxChannel = Math.max(...channelTotals.map((item) => item.value), 1);
+  els.channelList.innerHTML = channelTotals
+    .map(
+      (item) => `
+      <div class="channel-item">
+        <strong><span>${item.label}</span><span>${money(item.value)}</span></strong>
+        <div class="channel-meter"><span style="width:${(item.value / maxChannel) * 100}%"></span></div>
+      </div>
+    `,
+    )
+    .join("");
+}
+
+function renderBookingsTable() {
+  const bookings = scopedBookings();
+  renderBookingMonthFilter();
+  const search = els.bookingSearch?.value.trim().toLowerCase() || "";
+  const monthFilter = els.bookingMonthFilter?.value || appSettings.bookingMonthFilter || "Selected";
+  const effectiveMonth = monthFilter === "Selected" ? selectedMonth : monthFilter;
+  if (els.bookingTableTitle) {
+    els.bookingTableTitle.textContent = effectiveMonth === "All" ? "All Bookings" : `${monthLabel(effectiveMonth)} Bookings`;
+  }
+  const channel = els.channelFilter?.value || "All";
+  const payment = els.paymentFilter?.value || "All";
+  const deposit = els.depositFilter?.value || "All";
+  const contactState = els.contactFilter?.value || "All";
+  const sorted = [...bookings]
+    .filter((booking) => {
+      const balance = balanceFor(booking);
+      const hasPhone = !!formatPhoneForWhatsapp(booking.contact);
+      const haystack = `${booking.guest} ${booking.contact} ${prefixFor(booking.guest)} ${booking.channel} ${isExcludedBooking(booking) ? "influencer complimentary free record only" : "financial"}`.toLowerCase();
+      if (effectiveMonth !== "All" && !bookingMonthOverlap(booking, effectiveMonth)) return false;
+      if (search && !haystack.includes(search)) return false;
+      if (channel !== "All" && booking.channel !== channel) return false;
+      if (payment === "Due" && balance <= 0) return false;
+      if (payment === "Paid" && balance > 0) return false;
+      if (deposit === "Unpaid" && booking.depositPaid) return false;
+      if (deposit === "Held" && (!booking.depositPaid || booking.depositRefunded)) return false;
+      if (deposit === "RefundDue" && refundPendingFor(booking) <= 0) return false;
+      if (deposit === "Refunded" && !booking.depositRefunded) return false;
+      if (contactState === "Missing" && hasPhone) return false;
+      if (contactState === "Has" && !hasPhone) return false;
+      return true;
+    })
+    .sort((a, b) => a.arrival.localeCompare(b.arrival));
+  let currentMonthHeader = "";
+  const bookingRowHtml = sorted
+    .map((booking) => {
+      const balance = balanceFor(booking);
+      const monthValue = booking.arrival.slice(0, 7);
+      const monthHeader =
+        effectiveMonth === "All" && monthValue !== currentMonthHeader
+          ? ((currentMonthHeader = monthValue), `<tr class="booking-month-row"><td colspan="15">${escapeHtml(monthLabel(monthValue))}</td></tr>`)
+          : "";
+      return `
+        ${monthHeader}
+        <tr>
+          ${bookingCell("channel", channelBadgeFor(booking))}
+          ${bookingCell("record", isExcludedBooking(booking) ? `<span class="channel-badge influencer">Record only</span>` : `<span class="channel-badge direct">Financial</span>`)}
+          ${bookingCell("guest", `<button type="button" class="workspace-link" data-workspace-booking="${booking.id}">${escapeHtml(booking.guest)}</button> ${isTentativeBooking(booking) ? `<span class="tentative-badge" title="Not confirmed — excluded from revenue and payment reminders">${booking.status === "quoted" ? "QUOTED" : "INQUIRY"}</span> ` : ""}${returningBadgeHtml(booking, bookings)}${blocklistBadgeHtml(booking)}`, "booking-guest-cell")}
+          ${bookingCell("contact", formatPhoneForWhatsapp(booking.contact) ? escapeHtml(booking.contact) : `<span class="contact-missing" title="No WhatsApp number saved">⚠ no phone</span>`, "contact-cell")}
+          ${bookingCell("prefix", `<strong>${prefixFor(booking.guest)}</strong>`)}
+          ${bookingCell("arrival", shortDate(booking.arrival), "date-cell")}
+          ${bookingCell("nights", booking.nights)}
+          ${bookingCell("revenue", money(booking.revenue), "money-cell")}
+          ${bookingCell("deposit", money(booking.depositAmount), "money-cell")}
+          ${bookingCell("total", money(totalToReceiveFor(booking)), "money-cell")}
+          ${bookingCell("received", money(booking.paid), "money-cell")}
+          ${bookingCell("full", fullReceivedControl(booking))}
+          ${bookingCell("balance", money(balance), balance > 0 ? "money-cell balance-due" : "money-cell")}
+          ${bookingCell("refund", refundControl(booking))}
+          ${bookingCell("actions", `
+            <button class="small-action wa-action" type="button" data-wa="${booking.id}" title="Open WhatsApp with the check-in message">WhatsApp</button>
+            <button class="small-action" type="button" data-edit="${booking.id}">Edit</button>
+            <button class="small-action danger" type="button" data-delete="${booking.id}">Delete</button>
+          `, "actions")}
+        </tr>
+      `;
+    })
+    .join("");
+  els.bookingRows.innerHTML = bookingRowHtml || `<tr><td colspan="15" class="empty-row">No bookings match these filters.</td></tr>`;
+  renderBookingColumnControls();
+}
+
+function renderBookingMonthFilter() {
+  const bookings = scopedBookings();
+  if (!els.bookingMonthFilter) return;
+  const current = appSettings.bookingMonthFilter || "Selected";
+  const months = Array.from(new Set([selectedMonth, ...bookings.map((booking) => booking.arrival?.slice(0, 7)).filter(Boolean)])).sort();
+  els.bookingMonthFilter.innerHTML = [
+    `<option value="Selected">Selected month (${monthLabel(selectedMonth)})</option>`,
+    `<option value="All">All months</option>`,
+    ...months.map((monthValue) => `<option value="${monthValue}">${monthLabel(monthValue)}</option>`),
+  ].join("");
+  els.bookingMonthFilter.value = [...months, "All", "Selected"].includes(current) ? current : "Selected";
+}
+
+function renderOwnerReport() {
+  if (!els.ownerReportPrint) return;
+  const villa = activeVillaKey();
+  const isWindmill = villa === "Windmill";
+  const totals = totalsFor(selectedMonth);
+  const performance = stayPerformanceForMonth(selectedMonth);
+  const breakdown = expenseBreakdownFor(selectedMonth);
+  const netProfit = totals.revenue - breakdown.total;
+  const paidBookings = calculationBookings(arrivalsForMonth(selectedMonth));
+  const influencerBookings = arrivalsForMonth(selectedMonth).filter(isExcludedBooking);
+  // Windmill is managed for its owner (Austin earns nothing from it) and the expense data
+  // tracked here is Sunrise's, so a Windmill statement reports revenue/occupancy/bookings
+  // only — never Sunrise's P&L. Sunrise keeps the full owner report.
+  const summaryGrid = isWindmill
+    ? `
+    <section class="owner-report-grid">
+      <article><span>Accommodation Fees</span><strong>${money(totals.revenue)}</strong></article>
+      <article><span>Occupancy</span><strong>${percent(performance.occupancyRate)}</strong></article>
+      <article><span>Nights Booked</span><strong>${performance.bookedNights}</strong></article>
+      <article><span>Bookings</span><strong>${paidBookings.length}</strong></article>
+    </section>`
+    : `
+    <section class="owner-report-grid">
+      <article><span>Accommodation Fees</span><strong>${money(totals.revenue)}</strong></article>
+      <article><span>Total Expenses</span><strong>${money(breakdown.total)}</strong></article>
+      <article><span>Net after costs &amp; loans</span><strong>${money(netProfit)}</strong></article>
+      <article><span>Occupancy</span><strong>${percent(performance.occupancyRate)}</strong></article>
+    </section>`;
+  const pnlSection = isWindmill
+    ? ""
+    : `
+    <section class="owner-report-section">
+      <h2>P&L Breakdown</h2>
+      <table>
+        <tbody>
+          <tr><td>Housekeeping</td><td>${money(breakdown.housekeeping)}</td></tr>
+          <tr><td>Maintenance</td><td>${money(breakdown.maintenance)}</td></tr>
+          <tr><td>Electricity & Water</td><td>${money(breakdown.utilities)}</td></tr>
+          <tr><td>Property Loan</td><td>${money(breakdown.propertyLoan)}</td></tr>
+          <tr><td>Credit Card / Loans</td><td>${money(breakdown.loans)}</td></tr>
+          <tr><td>Other Costs</td><td>${money(breakdown.supplies + breakdown.other)}</td></tr>
+          <tr class="report-total"><td>Total Expenses</td><td>${money(breakdown.total)}</td></tr>
+          <tr class="report-total"><td>Net after costs &amp; loans</td><td>${money(netProfit)}</td></tr>
+        </tbody>
+      </table>
+    </section>`;
+  els.ownerReportPrint.innerHTML = `
+    <div class="owner-report-head">
+      <div>
+        <p>${escapeHtml(villa)} Villa</p>
+        <h1>Monthly Owner Report</h1>
+        <span>${monthLabel(selectedMonth)}</span>
+      </div>
+      <strong>${isoDate(new Date())}</strong>
+    </div>
+    ${summaryGrid}
+    ${pnlSection}
+    <section class="owner-report-section">
+      <h2>Paid Booking Summary</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Guest</th>
+            <th>Channel</th>
+            <th>Check-in</th>
+            <th>Nights</th>
+            <th>Accommodation Fees</th>
+            <th>Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            paidBookings.length
+              ? paidBookings
+                  .map(
+                    (booking) => `
+                      <tr>
+                        <td>${escapeHtml(booking.guest)}</td>
+                        <td>${escapeHtml(booking.channel)}</td>
+                        <td>${shortDate(booking.arrival)}</td>
+                        <td>${booking.nights}</td>
+                        <td>${money(booking.revenue)}</td>
+                        <td>${money(balanceFor(booking))}</td>
+                      </tr>
+                    `,
+                  )
+                  .join("")
+              : `<tr><td colspan="6">No paid bookings this month.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </section>
+
+    <section class="owner-report-section">
+      <h2>Complimentary / Influencer Stays</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Guest</th>
+            <th>Check-in</th>
+            <th>Nights</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            influencerBookings.length
+              ? influencerBookings
+                  .map(
+                    (booking) => `
+                      <tr>
+                        <td>${escapeHtml(booking.guest)}</td>
+                        <td>${shortDate(booking.arrival)}</td>
+                        <td>${booking.nights}</td>
+                        <td>Recorded only. Excluded from P&L, occupancy, and revenue calculations.</td>
+                      </tr>
+                    `,
+                  )
+                  .join("")
+              : `<tr><td colspan="4">No complimentary influencer stays recorded this month.</td></tr>`
+          }
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+function printOwnerReport() {
+  renderOwnerReport();
+  document.body.classList.add("printing-owner-report");
+  window.print();
+}
+
+function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = text.split(" ");
+  let line = "";
+  let row = 0;
+  words.forEach((word) => {
+    const testLine = line ? `${line} ${word}` : word;
+    if (ctx.measureText(testLine).width > maxWidth && line) {
+      ctx.fillText(line, x, y + row * lineHeight);
+      line = word;
+      row += 1;
+    } else {
+      line = testLine;
+    }
+  });
+  ctx.fillText(line, x, y + row * lineHeight);
+}
+
+// --- Paste-to-import: auto-fill a booking from a real Airbnb confirmation email ---
+const AIRBNB_MONTHS = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
+function airbnbInferDate(mon, day) {
+  const m = AIRBNB_MONTHS[mon];
+  if (!m) return "";
+  const mk = (y) => `${y}-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const now = new Date();
+  let y = now.getFullYear();
+  // Airbnb omits the year; if that date already rolled well past, it's next year.
+  if (new Date(`${mk(y)}T00:00:00`) < new Date(now.getTime() - 60 * 86400000)) y += 1;
+  return mk(y);
+}
+function parseAirbnbBookingEmail(text) {
+  const t = String(text || "").replace(/\r/g, "");
+  const grab = (re) => (t.match(re) || [])[1] || "";
+  const name = grab(/New booking confirmed!\s+(.+?)\s+arrives/i) || grab(/Get ready for\s+(.+?)[’']s arrival/i);
+  const listing = grab(/([^\n]*(?:Sunrise|Windmill)[^\n]*)/i);
+  const villa = /windmill/i.test(listing) ? "Windmill" : "Sunrise";
+  const ci = t.match(/Check-?in\s+[A-Za-z]{3},\s*([A-Za-z]{3})\s+(\d{1,2})/i);
+  const co = t.match(/Check-?out\s+[A-Za-z]{3},\s*([A-Za-z]{3})\s+(\d{1,2})/i);
+  let arrival = ci ? airbnbInferDate(ci[1], Number(ci[2])) : "";
+  if (!arrival) {
+    // Fallback: the headline "…arrives Jul 3" is in every booking email (plain-text safe).
+    const am = t.match(/arrives\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})/i);
+    if (am) arrival = airbnbInferDate(am[1], Number(am[2]));
+  }
+  const checkout = co ? airbnbInferDate(co[1], Number(co[2])) : "";
+  let nights = Number(grab(/x\s*(\d+)\s*night/i)) || 0;
+  if (!nights && arrival && checkout) nights = Math.round((new Date(checkout) - new Date(arrival)) / 86400000);
+  return {
+    name: name.trim(),
+    villa,
+    arrival,
+    nights,
+    guests: grab(/Guests\s+(\d+\s*adults?[^\n]*)/i),
+    code: grab(/Confirmation code\s+([A-Z0-9]{6,})/i),
+    totalPaid: grab(/Total \(MYR\)\s+RM\s*([\d,]+\.\d{2})/i).replace(/,/g, ""),
+    hostPayout: grab(/You earn\s+RM\s*([\d,]+\.\d{2})/i).replace(/,/g, ""),
+  };
+}
+function autofillBookingFromAirbnbEmail() {
+  const parsed = parseAirbnbBookingEmail(els.airbnbEmailInput?.value || "");
+  const status = els.airbnbAutofillStatus;
+  if (!parsed.name && !parsed.arrival) {
+    if (status) {
+      status.textContent = "Couldn't read that — paste the full Airbnb booking email.";
+      status.className = "airbnb-import-status err";
+    }
+    return;
+  }
+  document.querySelector('[data-form-channel="Airbnb"]')?.click(); // channel = Airbnb (+ its deposit default)
+  if (els.villaInput && parsed.villa) els.villaInput.value = parsed.villa; // villa auto-detected from listing
+  if (els.guestInput && parsed.name) els.guestInput.value = parsed.name;
+  if (els.arrivalInput && parsed.arrival) els.arrivalInput.value = parsed.arrival;
+  if (parsed.nights) setNightsChoice(parsed.nights);
+  if (els.revenueInput && parsed.hostPayout) els.revenueInput.value = parsed.hostPayout; // YOUR payout, not guest total
+  if (els.paidInput && parsed.hostPayout) els.paidInput.value = parsed.hostPayout; // Airbnb collects in full -> no balance to chase
+  if (status) {
+    const bits = [parsed.name, parsed.villa, parsed.arrival, parsed.nights ? `${parsed.nights}n` : "", parsed.hostPayout ? `RM ${parsed.hostPayout}` : ""].filter(Boolean).join(" · ");
+    status.textContent = `Filled: ${bits}${parsed.code ? ` · ${parsed.code}` : ""}. Add the guest's phone if you'll WhatsApp them, then Save.`;
+    status.className = "airbnb-import-status ok";
+  }
+}
+
+function conflictingBookings(candidate) {
+  if (isTentativeBooking(candidate)) return [];
+  const end = departureFor(candidate);
+  return bookings.filter(booking => booking.id !== candidate.id && !isTentativeBooking(booking)
+    && villaOf(booking) === villaOf(candidate) && booking.arrival < end && departureFor(booking) > candidate.arrival);
+}
+
+function openBookingDialog(booking = null, edit = false) {
+  if (booking && !edit && typeof openBookingWorkspace === "function") { openBookingWorkspace(booking.id); return; }
+  els.dialogTitle.textContent = booking ? "Edit Booking" : "Add Booking";
+  els.bookingId.value = booking?.id || "";
+  els.channelInput.value = booking?.channel || "Direct";
+  syncBookingChannelChoice();
+  if (els.guestTitleInput) els.guestTitleInput.value = booking?.guestTitle === "Ms" ? "Ms" : "Mr";
+  syncGuestTitleChoice();
+  els.guestInput.value = booking?.guest || "";
+  els.contactInput.value = booking?.contact || "";
+  if (els.guestEmailInput) els.guestEmailInput.value = booking?.guestEmail || "";
+  if (els.incidentLogInput) els.incidentLogInput.value = booking?.incidentLog || "";
+  if (els.villaInput) els.villaInput.value = booking ? (booking.villa === "Windmill" ? "Windmill" : "Sunrise") : (appSettings.activeVilla === "Windmill" ? "Windmill" : "Sunrise");
+  if (els.statusInput) els.statusInput.value = booking?.status || (booking ? "confirmed" : "confirmed");
+  els.excludeCalculationsInput.checked = Boolean(booking?.excludeFromCalculations);
+  els.arrivalInput.value = booking?.arrival || `${selectedMonth}-01`;
+  setNightsChoice(booking?.nights || 1);
+  els.revenueInput.value = booking?.revenue || 0;
+  els.paidInput.value = booking?.paid || 0;
+  els.depositAmountInput.value = booking?.depositAmount ?? defaultDepositForChannel(els.channelInput.value);
+  els.depositPaidInput.checked = Boolean(booking?.depositPaid);
+  els.depositRefundedInput.checked = Boolean(booking?.depositRefunded);
+  if (!booking) applyChannelDepositDefault(true);
+  els.dialog.showModal();
+}
+
+function defaultDocumentDraft() {
+  const today = isoDate(new Date());
+  return normalizeDocument({
+    type: "Quotation",
+    issuer: activeVillaKey() === "Windmill" ? "Windmill Villa Ventures" : "Sunrise Villa Ventures",
+    date: today,
+    status: "Draft",
+    bookingType: "Direct Booking",
+    guestName: "",
+    guestContact: "",
+    billTo: "",
+    billAddress: "",
+    propertyName: activeVillaKey() === "Windmill" ? "Windmill Villa" : "Sunrise Villa",
+    checkIn: today,
+    checkOut: isoDate(addDays(new Date(), 1)),
+    nights: 1,
+    accommodationFee: 0,
+    securityDeposit: 500,
+    invoiceScope: "Full Booking",
+    previouslyReceived: 0,
+    linkedReceiptCode: "",
+    remarks: "",
+    payments: [],
+  });
+}
+
+// "Prefill from booking" — stop re-typing guest/dates/fee/deposit that already live on a booking.
+function renderDocBookingPicker(selectedId = null) {
+  if (!els.docFromBooking) return;
+  const current = selectedId ?? (els.docFromBooking.value || els.docFromBooking.dataset.currentId || "");
+  const opts = [...bookings]
+    .sort((a, b) => b.arrival.localeCompare(a.arrival))
+    .map((b) => `<option value="${b.id}">${escapeHtml(villaOf(b))} · ${escapeHtml(shortDate(b.arrival))} · ${escapeHtml(b.guest)}</option>`)
+    .join("");
+  els.docFromBooking.innerHTML = `<option value="">— Start blank —</option>${opts}${current && !bookings.some(booking => booking.id === current) ? `<option value="${escapeHtml(current)}">Archived booking link</option>` : ""}`;
+  if (current && [...els.docFromBooking.options].some((o) => o.value === current)) els.docFromBooking.value = current;
+}
+function prefillDocFromBooking(id) {
+  const b = bookings.find((x) => x.id === id);
+  if (!b) return;
+  const type = els.docType.value;
+  fillDocumentForm({ ...defaultDocumentDraft(), type });
+  els.docFromBooking.value = b.id;
+  els.docFromBooking.dataset.currentId = b.id;
+  els.docBookingType.value = b.channel === "Airbnb" ? "Airbnb Booking" : "Direct Booking";
+  els.docIssuer.value = b.villa === "Windmill" ? "Windmill Villa Ventures" : "Sunrise Villa Ventures";
+  if (els.docGuestName) els.docGuestName.value = b.guest || "";
+  if (els.docGuestContact) els.docGuestContact.value = b.contact || "";
+  if (els.docProperty) els.docProperty.value = b.villa === "Windmill" ? "Windmill Villa" : "Sunrise Villa";
+  if (els.docCheckIn) els.docCheckIn.value = b.arrival || "";
+  if (els.docCheckOut) els.docCheckOut.value = departureFor(b);
+  if (els.docNights) els.docNights.value = b.nights || 1;
+  if (els.docAccommodationFee) els.docAccommodationFee.value = b.revenue || 0;
+  if (els.docDepositAmount) els.docDepositAmount.value = b.depositAmount || 0;
+
+  els.docBillTo.value = "";
+  els.docBillAddress.value = "";
+  els.docRemarks.value = "";
+  els.docPreviouslyReceived.value = 0;
+  els.docLinkedReceiptCode.value = "";
+  const fullTotal = Number(b.revenue || 0) + Number(b.depositAmount || 0);
+  const received = Number(b.paid || 0);
+  const recordedPayments = typeof bookingReceiptPayments === "function" ? bookingReceiptPayments(b) : [];
+  renderPaymentRows(recordedPayments.length ? recordedPayments : [{ ...normalizePayment({ amount: received }), date: "" }]);
+  if (els.docType?.value === "Invoice" && els.docInvoiceScope) {
+    const isPartial = received > 0 && fullTotal > 0 && received < fullTotal;
+    els.docInvoiceScope.value = isPartial ? "Balance Payment" : "Full Booking";
+    if (els.docPreviouslyReceived) els.docPreviouslyReceived.value = isPartial ? received : 0;
+    if (els.docLinkedReceiptCode && !isPartial) els.docLinkedReceiptCode.value = "";
+  }
+  updateReceiptVisibility();
+  renderDocumentPreview();
+}
+
+function formDocument() {
+  const raw = {
+    id: safeRecordId(els.documentId.value),
+    bookingId: els.docFromBooking?.value || "",
+    type: els.docType.value,
+    issuer: els.docIssuer.value,
+    date: els.docDate.value || isoDate(new Date()),
+    status: els.docStatus.value,
+    bookingType: els.docBookingType.value,
+    guestName: els.docGuestName.value.trim(),
+    guestContact: els.docGuestContact?.value.trim() || "",
+    billTo: els.docBillTo.value.trim(),
+    billAddress: els.docBillAddress.value.trim(),
+    propertyName: els.docProperty.value.trim(),
+    checkIn: els.docCheckIn.value || isoDate(new Date()),
+    checkOut: els.docCheckOut.value || isoDate(addDays(new Date(), 1)),
+    nights: Number(els.docNights.value || 1),
+    accommodationFee: Number(els.docAccommodationFee.value || 0),
+    securityDeposit: Number(els.docDepositAmount.value || 0),
+    invoiceScope: els.docInvoiceScope?.value || "Full Booking",
+    previouslyReceived: Number(els.docPreviouslyReceived?.value || 0),
+    linkedReceiptCode: els.docLinkedReceiptCode?.value.trim() || "",
+    remarks: els.docRemarks.value.trim(),
+    payments: els.docType.value === "Official Receipt" ? paymentRowsFromForm() : [],
+  };
+  const existing = documents.find((doc) => doc.id === raw.id);
+  if (raw.type === "Official Receipt" && typeof receiptPreviouslyReceived === "function") raw.previouslyReceived = receiptPreviouslyReceived(raw);
+  return normalizeDocument({
+    ...existing,
+    ...raw,
+    code: existing?.code,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function fillDocumentForm(doc) {
+  const normalized = normalizeDocument(doc);
+  els.documentId.value = normalized.id;
+  renderDocBookingPicker(normalized.bookingId);
+  if (els.docFromBooking) {
+    els.docFromBooking.value = normalized.bookingId;
+    els.docFromBooking.dataset.currentId = normalized.bookingId;
+  }
+  els.docType.value = normalized.type;
+  els.docIssuer.value = normalized.issuer;
+  els.docDate.value = normalized.date;
+  els.docStatus.value = normalized.status;
+  els.docBookingType.value = normalized.bookingType;
+  els.docGuestName.value = normalized.guestName;
+  if (els.docGuestContact) els.docGuestContact.value = normalized.guestContact;
+  els.docBillTo.value = normalized.billTo;
+  els.docBillAddress.value = normalized.billAddress;
+  els.docProperty.value = normalized.propertyName;
+  els.docCheckIn.value = normalized.checkIn;
+  els.docCheckOut.value = normalized.checkOut;
+  els.docNights.value = normalized.nights;
+  els.docAccommodationFee.value = normalized.accommodationFee;
+  els.docDepositAmount.value = normalized.securityDeposit;
+  if (els.docInvoiceScope) els.docInvoiceScope.value = normalized.invoiceScope;
+  if (els.docPreviouslyReceived) els.docPreviouslyReceived.value = normalized.previouslyReceived;
+  if (els.docLinkedReceiptCode) els.docLinkedReceiptCode.value = normalized.linkedReceiptCode;
+  els.docRemarks.value = normalized.remarks;
+  renderPaymentRows(normalized.payments.length ? normalized.payments : [normalizePayment({})]);
+  updateReceiptVisibility();
+  renderDocumentPreview(normalized);
+  setDocumentWorkspace("editor");
+  const saved = documents.some(item => item.id === normalized.id);
+  setDocumentFeedback(saved ? "Saved document opened" : normalized.guestName ? "Unsaved document" : "New document", !saved && Boolean(normalized.guestName));
+}
+
+function paymentRowsFromForm(includeEmpty = false) {
+  return [...els.paymentRows.querySelectorAll(".payment-row")]
+    .map((row) =>
+      normalizePayment({
+        id: row.dataset.paymentId,
+        mode: row.querySelector("[data-payment-mode]")?.value,
+        bank: row.querySelector("[data-payment-bank]")?.value,
+        reference: row.querySelector("[data-payment-reference]")?.value,
+        date: row.querySelector("[data-payment-date]")?.value,
+        amount: row.querySelector("[data-payment-amount]")?.value,
+      }),
+    )
+    .filter((payment) => includeEmpty || payment.mode || payment.bank || payment.reference || payment.amount);
+}
+
+function renderPaymentRows(payments = [normalizePayment({})]) {
+  els.paymentRows.innerHTML = payments
+    .map(
+      (payment, index) => `
+        <div class="payment-row" data-payment-id="${escapeHtml(payment.id || crypto.randomUUID())}">
+          <div class="payment-row-heading">Transaction ${index + 1}</div>
+          <label>Payment Mode
+            <input data-payment-mode value="${escapeHtml(payment.mode)}" placeholder="Bank transfer, cash, card" />
+          </label>
+          <label>Bank / Payment Details
+            <input data-payment-bank value="${escapeHtml(payment.bank)}" placeholder="RHB, Maybank, cash" />
+          </label>
+          <label>Reference No.
+            <input data-payment-reference value="${escapeHtml(payment.reference)}" placeholder="Transaction ID" />
+          </label>
+          <label>Transaction Date
+            <input data-payment-date type="date" value="${escapeHtml(payment.date)}" required />
+          </label>
+          <label>Amount Received
+            <input data-payment-amount type="number" min="0.01" step="0.01" required inputmode="decimal" value="${Number(payment.amount || 0)}" />
+          </label>
+          <div class="payment-row-actions">
+            <button class="small-action" type="button" data-fill-payment="${index}">Fill remaining balance</button>
+            <button class="small-action danger" type="button" data-remove-payment="${index}">Remove</button>
+          </div>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+// Payments are entered explicitly; the booking total is never assumed received.
+function receiptTotalFromForm() {
+  return Number(els.docAccommodationFee.value || 0) + Number(els.docDepositAmount.value || 0);
+}
+function updateReceiptVisibility() {
+  const isReceipt = els.docType.value === "Official Receipt";
+  const isInvoice = els.docType.value === "Invoice";
+  const isBalanceInvoice = isInvoice && els.docInvoiceScope?.value === "Balance Payment";
+  if (els.receiptPaymentSection) els.receiptPaymentSection.hidden = !isReceipt;
+  if (els.invoiceBalanceSection) els.invoiceBalanceSection.hidden = !isInvoice;
+  if (els.docPreviouslyReceived) els.docPreviouslyReceived.disabled = !isBalanceInvoice;
+  if (els.docLinkedReceiptCode) els.docLinkedReceiptCode.disabled = !isBalanceInvoice;
+  if (isReceipt && !els.paymentRows.children.length) renderPaymentRows([normalizePayment({})]);
+  els.paymentRows.querySelectorAll("input").forEach(input => { input.disabled = !isReceipt; });
+  document.querySelectorAll("[data-document-type]").forEach(button => {
+    const active = button.dataset.documentType === els.docType.value;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const jump = document.querySelector("#jumpToPayments");
+  if (jump) jump.hidden = !isReceipt;
+}
+
+function syncDocumentDates() {
+  const checkIn = els.docCheckIn.value;
+  const checkOut = els.docCheckOut.value;
+  if (!checkIn || !checkOut) return;
+  const nights = nightsBetween(checkIn, checkOut);
+  if (nights > 0) els.docNights.value = nights;
+}
+
+function syncDocumentCheckout() {
+  const checkIn = els.docCheckIn.value;
+  const nights = Number(els.docNights.value || 0);
+  if (!checkIn || nights < 1) return;
+  els.docCheckOut.value = isoDate(addDays(dateObj(checkIn), nights));
+}
+
+// Renders the on-screen preview as the ACTUAL printable document inside an
+// iframe, so the preview is pixel-identical to the saved/printed PDF (one
+// source of truth — no separate preview stylesheet to drift out of sync).
+let _docPreviewTimer = null;
+function renderDocumentPreview(doc = formDocument()) {
+  const normalized = normalizeDocument(doc);
+  renderDocumentPaymentSummary(normalized);
+  if (els.documentCodePreview) els.documentCodePreview.textContent = normalized.code;
+  const host = els.documentPreview;
+  if (!host) return;
+  let frame = host.querySelector("iframe.doc-preview-frame");
+  if (!frame) {
+    host.textContent = "";
+    frame = document.createElement("iframe");
+    frame.className = "doc-preview-frame";
+    frame.setAttribute("title", "Document preview");
+    frame.setAttribute("scrolling", "no");
+    host.appendChild(frame);
+    frame.addEventListener("load", () => fitDocPreviewFrame(frame));
+    if (!host._docFrameObserved && typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(() => {
+        if(host._propertyFitQueued)return;
+        host._propertyFitQueued=true;
+        requestAnimationFrame(()=>{host._propertyFitQueued=false;fitDocPreviewFrame(frame);});
+      }).observe(host);
+      host._docFrameObserved = true;
+    }
+  }
+  const html = standaloneDocumentHtml(normalized);
+  // Debounce the write so live typing in the builder stays smooth.
+  clearTimeout(_docPreviewTimer);
+  _docPreviewTimer = setTimeout(() => { frame.srcdoc = html; }, 60);
+}
+
+// Scales the A4 document iframe down to fit the preview column width (CSS zoom
+// keeps the surrounding layout height correct automatically).
+function fitDocPreviewFrame(frame) {
+  const host=frame.parentElement;
+  if(!host || host.clientWidth<20 || !host.isConnected)return;
+  const css=getComputedStyle(host),left=parseFloat(css.paddingLeft)||0,right=parseFloat(css.paddingRight)||0,top=parseFloat(css.paddingTop)||0,bottom=parseFloat(css.paddingBottom)||0;
+  const width=Math.max(1,host.clientWidth-left-right),scale=Math.min(1,width/780);
+  if(frame.style.width!=='780px')frame.style.width='780px';
+  const sheet=frame.contentDocument?.querySelector('.doc-sheet');
+  // Measure document content, never its viewport: viewport-derived heights can
+  // grow themselves on every ResizeObserver notification in Safari.
+  const height=Math.ceil(Math.max(1040,(sheet?.getBoundingClientRect().height || 0)+48));
+  const key=width+':'+height+':'+top+':'+bottom;
+  if(frame._propertyFit===key)return;
+  frame._propertyFit=key;
+  host.style.position='relative';host.style.overflow='hidden';host.style.height=Math.ceil(height*scale+top+bottom)+'px';
+  frame.style.position='absolute';frame.style.left=left+'px';frame.style.top=top+'px';frame.style.height=height+'px';frame.style.zoom='1';frame.style.transformOrigin='top left';frame.style.transform='scale('+scale+')';
+}
+
+// Builds the inner HTML for ONE document. Used by both the on-screen preview
+// and the standalone print window, so the printed PDF is exactly this single
+// document — never the surrounding app, the builder form, or any other guest's
+// records that live in the archive.
+function buildDocumentMarkup(normalized) {
+  const issuer = issuers[normalized.issuer] || issuers["Sunrise Villa Ventures"];
+  const isReceipt = normalized.type === "Official Receipt";
+  const isBalanceInvoice = normalized.type === "Invoice" && normalized.invoiceScope === "Balance Payment";
+  const previouslyReceived = isBalanceInvoice ? Math.min(Number(normalized.previouslyReceived || 0), normalized.totalAmount) : 0;
+  const amountDue = Math.max(0, normalized.totalAmount - previouslyReceived);
+  const totalPayments = paymentTotalFor(normalized);
+  const receiptBalance = Math.max(0, normalized.totalAmount - totalPayments - Number(normalized.previouslyReceived || 0));
+  const totalLabel = isBalanceInvoice ? "Balance Amount Due" : "Total Amount";
+  const monogram = escapeHtml(
+    ((normalized.issuer || "Sunrise Villa").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("") || "SV").toUpperCase(),
+  );
+  const contactLine = [issuer.contact, issuer.email].filter(Boolean).map(escapeHtml).join(" · ");
+  return `
+    <header class="doc-paper-head">
+      <div class="doc-brand">
+        <div class="doc-monogram">${monogram}</div>
+        <div class="doc-issuer">
+          <h2>${escapeHtml(normalized.issuer)}</h2>
+          ${issuer.registration ? `<p>Business Registration No.: ${escapeHtml(issuer.registration)}</p>` : ""}
+          ${issuer.address ? `<p>${escapeHtml(issuer.address)}</p>` : ""}
+          ${contactLine ? `<p>${contactLine}</p>` : ""}
+        </div>
+      </div>
+      <div class="doc-title-box">
+        <span>${escapeHtml(normalized.type)}</span>
+        <strong>${escapeHtml(normalized.code)}</strong>
+        <small>${shortDate(normalized.date)}</small>
+      </div>
+    </header>
+
+    <div class="doc-info-grid">
+      <section>
+        <h4>Bill To</h4>
+        <p><strong>${escapeHtml(normalized.guestName || "Guest Name")}</strong></p>
+        ${normalized.guestContact ? `<p>Contact: ${escapeHtml(normalized.guestContact)}</p>` : ""}
+        ${normalized.billTo ? `<p>${escapeHtml(normalized.billTo)}</p>` : ""}
+        ${normalized.billAddress ? `<p class="doc-address">${escapeMultiline(normalized.billAddress)}</p>` : ""}
+      </section>
+      <section>
+        <h4>Stay</h4>
+        <p><strong>${escapeHtml(normalized.propertyName || "-")}</strong></p>
+        <p>${shortDate(normalized.checkIn)} &rarr; ${shortDate(normalized.checkOut)}</p>
+        <p>${normalized.nights} night${normalized.nights === 1 ? "" : "s"}</p>
+      </section>
+    </div>
+
+    <table class="doc-item-table">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Accommodation Fee</td>
+          <td>${money(normalized.accommodationFee)}</td>
+        </tr>
+        <tr>
+          <td>Refundable Damage Security Deposit</td>
+          <td>${money(normalized.securityDeposit)}</td>
+        </tr>
+        ${
+          isBalanceInvoice && previouslyReceived > 0
+            ? `<tr class="doc-less-row"><td>Less: Amount Previously Received${normalized.linkedReceiptCode ? ` (${escapeHtml(normalized.linkedReceiptCode)})` : ""}</td><td>- ${money(previouslyReceived)}</td></tr>`
+            : ""
+        }
+      </tbody>
+      <tfoot>
+        <tr>
+          <th>${escapeHtml(totalLabel)}</th>
+          <th><span class="doc-total-mark">${money(amountDue)}</span></th>
+        </tr>
+      </tfoot>
+    </table>
+
+    ${
+      isReceipt
+        ? `
+          <section class="doc-payment-section">
+            <h4>Payment Received</h4>
+            <table class="doc-item-table compact-doc-table">
+              <thead>
+                <tr>
+                  <th>Mode</th>
+                  <th>Bank / Details</th>
+                  <th>Reference No.</th>
+                  <th>Date</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${
+                  normalized.payments.length
+                    ? normalized.payments
+                        .map(
+                          (payment) => `
+                            <tr>
+                              <td>${escapeHtml(payment.mode || "-")}</td>
+                              <td>${escapeHtml(payment.bank || "-")}</td>
+                              <td>${escapeHtml(payment.reference || "-")}</td>
+                              <td>${payment.date ? shortDate(payment.date) : "-"}</td>
+                              <td>${money(payment.amount)}</td>
+                            </tr>
+                          `,
+                        )
+                        .join("")
+                    : `<tr><td colspan="5">No payment transaction entered.</td></tr>`
+                }
+              </tbody>
+              <tfoot>
+                <tr>
+                  <th colspan="4">Total Received</th>
+                  <th>${money(totalPayments)}</th>
+                </tr>
+                <tr class="doc-balance-row">
+                  <th colspan="4">Balance Remaining</th>
+                  <th><span class="doc-total-mark">${money(receiptBalance)}</span></th>
+                </tr>
+              </tfoot>
+            </table>
+            ${normalized.previouslyReceived > 0 ? `<p class="doc-balance-note">Other payments already recorded: ${money(normalized.previouslyReceived)}.</p>` : ""}
+            <p class="doc-balance-note">This receipt confirms only the payment received above. Any balance remaining is payable before check-in unless otherwise agreed.</p>
+          </section>
+        `
+        : ""
+    }
+
+    <section class="doc-remarks">
+      <h4>Remarks</h4>
+      <p>${escapeHtml(normalized.remarks || "-")}</p>
+    </section>
+
+    <div class="doc-signatures">
+      <div>
+        <span></span>
+        <strong>Prepared by</strong>
+      </div>
+      <div>
+        <span></span>
+        <strong>${isReceipt ? "Received by" : "Accepted by"}</strong>
+      </div>
+    </div>
+
+    <footer class="doc-foot">
+      <span class="doc-foot-thanks">Thank you for choosing ${escapeHtml(normalized.issuer)}.</span>
+      <span class="doc-foot-meta">${escapeHtml(normalized.type)} · ${escapeHtml(normalized.code)}${contactLine ? " · " + contactLine : ""}</span>
+    </footer>
+  `;
+}
+
+function renderDocuments() {
+  if (!els.documentForm) return;
+  updateReceiptVisibility();
+  renderDocBookingPicker();
+  const current = formDocument();
+  if (els.documentCodePreview) els.documentCodePreview.textContent = current.code;
+  renderDocumentArchive();
+}
+
+let documentHasUnsavedChanges = false;
+
+function setDocumentFeedback(message, dirty = documentHasUnsavedChanges) {
+  const node = document.querySelector("#documentFeedback");
+  if (node) node.textContent = message;
+  documentHasUnsavedChanges = dirty;
+}
+
+function setDocumentWorkspace(mode) {
+  const archive = mode === "archive";
+  const view = document.querySelector("#documentsView");
+  view.querySelector(".documents-layout").hidden = archive;
+  view.querySelector(".document-editor-tools").hidden = archive;
+  view.querySelector(".document-archive").hidden = !archive;
+  const mobileSwitch = view.querySelector(".document-mobile-switch");
+  if (mobileSwitch) mobileSwitch.hidden = archive;
+  view.querySelectorAll("[data-document-workspace]").forEach(button => {
+    const selected = button.dataset.documentWorkspace === (archive ? "archive" : "editor");
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-selected", String(selected));
+  });
+}
+
+function renderDocumentPaymentSummary(doc) {
+  const summary = document.querySelector("#documentPaymentSummary");
+  if (!summary) return;
+  const received = doc.type === "Official Receipt" ? paymentTotalFor(doc) : doc.invoiceScope === "Balance Payment" && doc.type === "Invoice" ? doc.previouslyReceived : 0;
+  const total = documentTotalFor(doc);
+  const balance = Math.max(0, total - received - (doc.type === "Official Receipt" ? Number(doc.previouslyReceived || 0) : 0));
+  summary.innerHTML = `<span>Booking total<strong>${money(total)}</strong></span>
+    <span>${doc.type === "Official Receipt" ? "Received on this receipt" : "Previously received"}<strong>${money(received)}</strong></span>
+    <span>${received > total ? "Overpayment" : "Balance due"}<strong>${money(received > total ? received - total : balance)}</strong></span>`;
+}
+
+function validateDocumentForm() {
+  els.docCheckOut.setCustomValidity(els.docCheckOut.value <= els.docCheckIn.value ? "Check-out must be after check-in." : "");
+  els.docPreviouslyReceived?.setCustomValidity(Number(els.docPreviouslyReceived.value) > receiptTotalFromForm() ? "Previously received cannot exceed this booking total." : "");
+  if (!els.documentForm.reportValidity()) return false;
+  if (els.docType.value === "Official Receipt" && paymentTotalFor(formDocument()) <= 0) {
+    setDocumentFeedback("Enter at least one payment amount and transaction date.");
+    els.receiptPaymentSection.scrollIntoView({ block: "center", behavior: "smooth" });
+    return false;
+  }
+  return true;
+}
+
+function confirmDocumentReplacement() {
+  return !documentHasUnsavedChanges || window.confirm("Discard the unsaved document changes?");
+}
+
+function saveCurrentDocument() {
+  if (!validateDocumentForm()) return;
+  let doc = formDocument();
+  if (!documents.some(item => item.id === doc.id)) {
+    const base = documentCodeFor(doc);
+    let code = base;
+    let suffix = 2;
+    while (documents.some(item => item.code === code)) code = base + "-" + String(suffix++).padStart(2, "0");
+    doc = { ...doc, code };
+  } else {
+    createRecoverySnapshot("Before saved document amended");
+  }
+  documents = documents.some((item) => item.id === doc.id) ? documents.map((item) => (item.id === doc.id ? doc : item)) : [doc, ...documents];
+  saveDocuments();
+  fillDocumentForm(doc);
+  renderDocumentArchive();
+  setDocumentFeedback("Saved on this device. Cloud status is shown above.", false);
+}
+
+function duplicateCurrentDocument() {
+  const source = formDocument();
+  const copy = normalizeDocument({
+    ...source,
+    code: "",
+    id: crypto.randomUUID(),
+    status: "Draft",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  fillDocumentForm(copy);
+}
+
+function openSavedDocument(id) {
+  if (!confirmDocumentReplacement()) return;
+  const doc = documents.find((item) => item.id === id);
+  if (doc) fillDocumentForm(doc);
+}
+
+function duplicateSavedDocument(id) {
+  if (!confirmDocumentReplacement()) return;
+  const doc = documents.find((item) => item.id === id);
+  if (!doc) return;
+  fillDocumentForm(
+    normalizeDocument({
+      ...doc,
+      code: "",
+      id: crypto.randomUUID(),
+      status: "Draft",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+function createBalanceInvoiceFromReceipt(id) {
+  if (!confirmDocumentReplacement()) return;
+  const receipt = documents.find((item) => item.id === id);
+  if (!receipt) return;
+  const linkedBooking = bookings.find(booking => booking.id === receipt.bookingId);
+  const received = linkedBooking ? Number(linkedBooking.paid || 0) : paymentTotalFor(receipt) + Number(receipt.previouslyReceived || 0);
+  if (linkedBooking && received < paymentTotalFor(receipt)) { setDocumentFeedback("Reconcile this receipt with the booking payment history before creating a balance invoice."); return; }
+  const total = documentTotalFor(receipt);
+  fillDocumentForm(
+    normalizeDocument({
+      ...receipt,
+      code: "",
+      id: crypto.randomUUID(),
+      type: "Invoice",
+      date: isoDate(new Date()),
+      status: "Draft",
+      invoiceScope: "Balance Payment",
+      previouslyReceived: Math.min(received, total),
+      linkedReceiptCode: receipt.code,
+      payments: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+function deleteSavedDocument(id) {
+  const doc = documents.find((item) => item.id === id);
+  if (!window.confirm(`Delete ${doc?.code || "this document"}?`)) return;
+  createRecoverySnapshot("Before document deleted");
+  documents = documents.filter((item) => item.id !== id);
+  saveDocuments();
+  renderDocumentArchive();
+}
+
+// Self-contained stylesheet for the printable document window. It is embedded
+// in the new window (which contains ONLY the one document), so it never depends
+// on the app's stylesheet and can't be polluted by app chrome.
+const DOC_PRINT_CSS = `
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #3f3b33; background: #edece7;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  /* A4 sheet: clean WHITE paper, a single hair-thin golden rule at the very top
+     as the only always-on colour, footer pinned to the bottom so it always
+     reads as one finished page. Yellow appears again only as a highlighter
+     swipe behind the amount that matters. */
+  .doc-sheet {
+    position: relative; width: 100%; max-width: 190mm; min-height: 272mm;
+    margin: 0 auto; padding: 19mm 17mm 14mm; font-size: 12px; line-height: 1.55;
+    background: #ffffff; border-top: 3px solid #f2c94c;
+    display: flex; flex-direction: column;
+  }
+  @media screen { body { padding: 24px 14px; } .doc-sheet { box-shadow: 0 14px 46px rgba(28,24,14,.15); } }
+  @page { size: A4; margin: 0; }
+  @media print {
+    body { background: #fff; }
+    .doc-sheet { max-width: none; min-height: 100vh; margin: 0; padding: 17mm 15mm 13mm; box-shadow: none; }
+  }
+
+  /* Header: monogram + serif wordmark on the left, document meta on the right */
+  .doc-paper-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding-bottom: 20px; margin-bottom: 22px; border-bottom: 1px solid #ece8e0; }
+  .doc-brand { display: flex; gap: 14px; align-items: flex-start; max-width: 64%; }
+  .doc-monogram {
+    flex: none; width: 46px; height: 46px; border-radius: 11px;
+    background: #23201a; color: #fff; display: flex; align-items: center; justify-content: center;
+    font-family: Georgia, "Times New Roman", serif; font-size: 18px; font-weight: 600; letter-spacing: .5px;
+  }
+  .doc-issuer h2 { margin: 0 0 5px; font-family: Georgia, "Times New Roman", serif; font-size: 20px; font-weight: 600; letter-spacing: .2px; line-height: 1.15; color: #23201a; }
+  .doc-issuer p { margin: 2px 0; font-size: 10.5px; color: #8b8578; line-height: 1.5; }
+  .doc-title-box { text-align: right; flex: none; }
+  .doc-title-box span { display: block; text-transform: uppercase; letter-spacing: 2.4px; font-size: 11px; font-weight: 700; color: #b0891c; }
+  .doc-title-box strong { display: block; font-size: 17px; margin: 6px 0 3px; letter-spacing: .3px; color: #23201a; }
+  .doc-title-box small { display: block; font-size: 11px; color: #8b8578; }
+
+  /* Bill To / Stay */
+  .doc-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 4px 0 24px; }
+  .doc-info-grid h4 { margin: 0 0 7px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.4px; color: #aaa393; font-weight: 700; }
+  .doc-info-grid p { margin: 3px 0; font-size: 12px; color: #4a463d; }
+  .doc-info-grid strong { font-size: 13.5px; color: #23201a; font-weight: 600; }
+  .doc-address { white-space: pre-wrap; color: #8b8578; }
+
+  /* Line items — borderless, airy, numbers right-aligned and tabular */
+  .doc-item-table { width: 100%; border-collapse: collapse; margin: 0; }
+  .doc-item-table thead th { padding: 0 2px 9px; text-align: left; font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.4px; color: #aaa393; font-weight: 700; border-bottom: 1.5px solid #23201a; }
+  .doc-item-table thead th:last-child { text-align: right; }
+  .doc-item-table tbody td { padding: 12px 2px; font-size: 12.5px; color: #4a463d; border-bottom: 1px solid #efece5; }
+  .doc-item-table tbody td:last-child { text-align: right; color: #23201a; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .doc-less-row td { color: #8b8578; }
+  .doc-less-row td:last-child { color: #a1495e; }
+  .doc-item-table tfoot th { padding: 15px 2px 0; text-align: left; font-size: 14px; font-weight: 700; color: #23201a; }
+  .doc-item-table tfoot th:last-child { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* THE hint of yellow: a highlighter swipe behind the hero amount */
+  .doc-total-mark {
+    background-image: linear-gradient(120deg, #ffe9a8 0%, #ffdd76 100%);
+    background-repeat: no-repeat; background-size: 100% 48%; background-position: 0 62%;
+    padding: 0 7px; margin-right: -1px; border-radius: 1px;
+  }
+
+  /* Payment received (receipts) */
+  .doc-payment-section { margin: 26px 0 0; page-break-inside: avoid; }
+  .doc-payment-section h4 { margin: 0 0 10px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.4px; color: #aaa393; font-weight: 700; }
+  .compact-doc-table thead th { padding: 0 2px 7px; font-size: 9px; letter-spacing: 1.1px; border-bottom: 1px solid #e4dfd4; }
+  .compact-doc-table thead th:last-child { text-align: right; }
+  .compact-doc-table tbody td { padding: 9px 2px; font-size: 11px; }
+  .compact-doc-table tbody td:last-child { text-align: right; }
+  .compact-doc-table tfoot th { padding: 11px 2px 0; font-size: 12px; font-weight: 700; border-top: 1px solid #efece5; }
+  .compact-doc-table tfoot th:last-child { text-align: right; }
+  .doc-balance-row th { font-size: 14px; }
+  .doc-balance-note { margin: 10px 0 0; font-size: 10.5px; line-height: 1.45; color: #8b8578; }
+
+  /* Remarks + signatures */
+  .doc-remarks { margin: 26px 0 0; page-break-inside: avoid; }
+  .doc-remarks h4 { margin: 0 0 5px; font-size: 9.5px; text-transform: uppercase; letter-spacing: 1.4px; color: #aaa393; font-weight: 700; }
+  .doc-remarks p { margin: 0; font-size: 12px; color: #4a463d; white-space: pre-wrap; }
+  .doc-signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 46px; page-break-inside: avoid; }
+  .doc-signatures > div { text-align: center; }
+  .doc-signatures span { display: block; height: 40px; border-bottom: 1px solid #cfc9bc; margin-bottom: 8px; }
+  .doc-signatures strong { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: #8b8578; font-weight: 700; }
+
+  /* Footer pinned to the bottom of the page */
+  .doc-foot { margin-top: auto; padding-top: 16px; border-top: 1px solid #ece8e0; display: flex; justify-content: space-between; align-items: baseline; gap: 16px; font-size: 9.5px; color: #aaa393; }
+  .doc-foot-thanks { color: #6f6a5e; font-style: italic; }
+  .doc-foot-meta { text-align: right; letter-spacing: .2px; }
+`;
+
+// Wraps ONE document in a complete standalone HTML page for printing / Save-as-PDF.
+function standaloneDocumentHtml(normalized) {
+  const title = `${normalized.type} ${normalized.code} — ${normalized.guestName || "Guest"}`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>${DOC_PRINT_CSS}</style>
+</head>
+<body>
+<div class="doc-sheet">${buildDocumentMarkup(normalized)}</div>
+</body>
+</html>`;
+}
+
+// Print / Save-as-PDF for a SINGLE document. Opens a fresh window containing
+// only that one document (same proven pattern as exportTaxExpensesPdf), so the
+// PDF is one clean page and can never leak the builder form or other guests'
+// records. Falls back to the in-page print path only if pop-ups are blocked.
+function printDocumentPreview() {
+  if (!validateDocumentForm()) return;
+  if (!els.documentForm.reportValidity()) return;
+  const normalized = normalizeDocument(formDocument());
+  const html = standaloneDocumentHtml(normalized);
+  const printWindow = window.open("", "_blank");
+  if (printWindow) {
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    return;
+  }
+  // Pop-up blocked → print via a hidden iframe. Still ONLY this one document,
+  // never the app or other guests' records.
+  const frame = document.createElement("iframe");
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;";
+  frame.setAttribute("aria-hidden", "true");
+  frame.addEventListener("load", () => {
+    try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch (e) { /* ignore */ }
+    setTimeout(() => frame.remove(), 2000);
+  });
+  document.body.appendChild(frame);
+  frame.srcdoc = html;
+}
+
+function renderDocumentArchive() {
+  if (!els.documentArchiveRows) return;
+  const count = document.querySelector("#documentArchiveCount");
+  if (count) count.textContent = documents.length;
+  const search = els.documentSearch?.value.trim().toLowerCase() || "";
+  const type = els.documentTypeFilter?.value || "All";
+  const filtered = documents
+    .filter((doc) => {
+      const haystack = `${doc.code} ${doc.type} ${doc.issuer} ${doc.guestName} ${doc.guestContact} ${doc.billTo} ${doc.billAddress} ${doc.propertyName} ${doc.linkedReceiptCode} ${doc.checkIn} ${doc.checkOut}`.toLowerCase();
+      if (type !== "All" && doc.type !== type) return false;
+      return !search || haystack.includes(search);
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  els.documentArchiveRows.innerHTML = filtered.length
+    ? filtered
+        .map(
+          (doc) => {
+            const amountDue = doc.type === "Official Receipt" ? paymentTotalFor(doc) : documentAmountDueFor(doc);
+            const receiptBalance = doc.type === "Official Receipt" ? Math.max(0, documentTotalFor(doc) - paymentTotalFor(doc) - Number(doc.previouslyReceived || 0)) : 0;
+            const canCreateBalanceInvoice = doc.type === "Official Receipt" && receiptBalance > 0;
+            return `
+            <tr>
+              <td><strong>${escapeHtml(doc.code)}</strong><br><span class="table-muted">${shortDate(doc.date)}</span></td>
+              <td>${escapeHtml(doc.type)}</td>
+              <td>${escapeHtml(issuers[doc.issuer]?.code || doc.issuer)}</td>
+              <td>${escapeHtml(doc.guestName || "-")}</td>
+              <td>${escapeHtml(doc.billTo || "-")}</td>
+              <td>${shortDate(doc.checkIn)}<br><span class="table-muted">${doc.nights} night${doc.nights === 1 ? "" : "s"}</span></td>
+              <td class="money-cell"><strong>${money(amountDue)}</strong><br><span class="table-muted">${doc.type === "Official Receipt" ? "Received" : "Amount due"}</span>${doc.type === "Official Receipt" ? `<br><span class="${receiptBalance > 0 ? "balance-due" : "table-muted"}">Balance ${money(receiptBalance)}</span>` : ""}</td>
+              <td><span class="doc-status ${documentStatusClass(doc.status)}">${escapeHtml(doc.status)}</span></td>
+              <td class="actions">
+                <button class="small-action" type="button" data-open-document="${doc.id}">Open</button>
+                <button class="small-action" type="button" data-duplicate-document="${doc.id}">Duplicate</button>
+                ${canCreateBalanceInvoice ? `<button class="small-action" type="button" data-balance-invoice-document="${doc.id}">Balance Invoice</button>` : ""}
+                <button class="small-action" type="button" data-print-document="${doc.id}">Print</button>
+                <button class="small-action danger" type="button" data-delete-document="${doc.id}">Delete</button>
+              </td>
+            </tr>
+          `;
+          },
+        )
+        .join("")
+    : `<tr><td colspan="9" class="empty-row">No saved documents yet.</td></tr>`;
+}
+
+function renderTaxPlan() {
+  if (!els.taxYearInput) return;
+  const year = Number(taxPlan.year || currentYear());
+  const sdnStart = taxPlan.sdnStart || `${year}-06`;
+  const enterpriseRevenue = revenueForPeriod(year, sdnStart, "before");
+  const sdnRevenue = revenueForPeriod(year, sdnStart, "after");
+  const enterpriseExpenses = Number(taxPlan.enterpriseExpenses || 0);
+  const sdnExpenses = Number(taxPlan.sdnExpenses || 0);
+  const monthlySalary = Number(taxPlan.monthlySalary || 0);
+  const personalReliefs = Number(taxPlan.personalReliefs || 0);
+  const salaryMonths = salaryMonthsForPlan(year, sdnStart);
+  const annualSalary = monthlySalary * salaryMonths;
+  const enterpriseProfit = Math.max(0, enterpriseRevenue - enterpriseExpenses);
+  const sdnProfit = Math.max(0, sdnRevenue - sdnExpenses - annualSalary);
+  const companyTax = companyTaxEstimate(sdnProfit);
+  const personalTaxable = Math.max(0, enterpriseProfit + annualSalary - personalReliefs);
+  const personalTax = personalTaxEstimate(personalTaxable);
+
+  els.taxYearInput.value = year;
+  els.sdnStartInput.value = sdnStart;
+  els.enterpriseExpenseInput.value = enterpriseExpenses;
+  els.sdnExpenseInput.value = sdnExpenses;
+  els.salaryInput.value = monthlySalary;
+  els.personalReliefInput.value = personalReliefs;
+  els.taxNoteBooks.checked = Boolean(taxPlan.notes?.books);
+  els.taxNoteSalary.checked = Boolean(taxPlan.notes?.salary);
+  els.taxNoteCp204.checked = Boolean(taxPlan.notes?.cp204);
+  els.taxNoteDocs.checked = Boolean(taxPlan.notes?.docs);
+
+  els.enterpriseProfitOut.textContent = money(enterpriseProfit);
+  els.enterpriseRevenueOut.textContent = `Accommodation fees: ${money(enterpriseRevenue)}`;
+  els.sdnProfitOut.textContent = money(sdnProfit);
+  els.sdnRevenueOut.textContent = `Accommodation fees: ${money(sdnRevenue)}`;
+  els.salaryOut.textContent = money(annualSalary);
+  els.salaryMonthsOut.textContent = `${salaryMonths} month${salaryMonths === 1 ? "" : "s"} planned`;
+  els.totalTaxOut.textContent = money(companyTax + personalTax);
+  els.sdnGrossOut.textContent = money(sdnRevenue);
+  els.sdnExpenseOut.textContent = money(sdnExpenses);
+  els.salaryDeductionOut.textContent = money(annualSalary);
+  els.companyTaxOut.textContent = money(companyTax);
+  els.personalEnterpriseOut.textContent = money(enterpriseProfit);
+  els.personalSalaryOut.textContent = money(annualSalary);
+  els.reliefOut.textContent = money(personalReliefs);
+  els.personalTaxOut.textContent = money(personalTax);
+  renderTaxExpenses();
+  renderTaxAssets();
+  if (els.taxYaInput && !els.taxYaInput.value) els.taxYaInput.value = year;
+  renderTaxYa();
+}
+
+function taxExpenseFilters() {
+  return {
+    year: Number(els.taxExpenseYearFilter?.value || taxPlan.year || currentYear()),
+    month: els.taxExpenseMonthFilter?.value || "All",
+    category: els.taxExpenseCategoryFilter?.value || "All",
+    receipt: els.taxExpenseReceiptFilter?.value || "All",
+    search: els.taxExpenseSearch?.value.trim().toLowerCase() || "",
+    property: document.querySelector("#expensePropertyFilter")?.value || "All",
+  };
+}
+
+function filteredTaxExpenses() {
+  const filters = taxExpenseFilters();
+  return (taxPlan.expenses || [])
+    .filter((expense) => {
+      const date = new Date(`${expense.date}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return false;
+      if (date.getFullYear() !== filters.year) return false;
+      const property = filters.property === "Selected" ? activeVillaKey() + " Villa" : filters.property;
+      if (property !== "All" && expense.property !== property) return false;
+      if (filters.month !== "All" && expense.date.slice(5, 7) !== filters.month) return false;
+      if (filters.category !== "All" && expense.category !== filters.category) return false;
+      if (filters.receipt === "Missing" && (expense.receipt || expense.attachment?.dataUrl)) return false;
+      if (filters.receipt === "Attached" && !expense.attachment?.dataUrl) return false;
+      if (filters.receipt === "Review" && expense.reviewed) return false;
+      const haystack = `${expense.entity} ${expense.property} ${expense.category} ${expense.type} ${expense.deductible} ${expense.vendor} ${expense.payment} ${expense.claimStatus} ${expense.receipt} ${expense.notes}`.toLowerCase();
+      return !filters.search || haystack.includes(filters.search);
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function renderTaxExpenseSelects() {
+  if (els.taxExpenseCategory && !els.taxExpenseCategory.options.length) {
+    els.taxExpenseCategory.innerHTML = taxExpenseCategories.map((category) => `<option>${escapeHtml(category)}</option>`).join("");
+  }
+  if (els.taxExpenseCategoryFilter && els.taxExpenseCategoryFilter.options.length <= 1) {
+    els.taxExpenseCategoryFilter.innerHTML = `<option value="All">All categories</option>${taxExpenseCategories.map((category) => `<option>${escapeHtml(category)}</option>`).join("")}`;
+  }
+}
+
+function clearTaxExpenseForm() {
+  if (!els.taxExpenseForm) return;
+  els.taxExpenseForm.reset();
+  els.taxExpenseId.value = "";
+  els.taxExpenseDate.value = isoDate(new Date());
+  els.taxExpenseEntity.value = "Enterprise";
+  els.taxExpenseProperty.value = activeVillaKey() + " Villa";
+  if (typeof renderExpenseFinanceOptions === "function") renderExpenseFinanceOptions();
+  els.taxExpenseCategory.value = "Housekeeping/Cleaning";
+  els.taxExpenseType.value = "One-off";
+  els.taxExpenseDeductible.value = "Auto (from rule)";
+  els.taxExpensePayment.value = "Bank Transfer";
+  els.taxExpenseClaimStatus.value = "Paid by business";
+  els.taxExpenseReviewed.checked = false;
+  if (els.taxExpenseBizPct) els.taxExpenseBizPct.value = 100;
+  pendingTaxExpenseAttachment = null;
+  removePendingTaxExpenseAttachment = false;
+  if (els.taxExpenseAttachment) els.taxExpenseAttachment.value = "";
+  if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "No file attached";
+  renderTaxExpenseHint();
+}
+
+function formTaxExpense() {
+  const now = new Date().toISOString();
+  const existing = (taxPlan.expenses || []).find((expense) => expense.id === els.taxExpenseId.value);
+  return normalizeTaxExpense({
+    id: safeRecordId(els.taxExpenseId.value),
+    date: els.taxExpenseDate.value || isoDate(new Date()),
+    entity: els.taxExpenseEntity.value,
+    property: els.taxExpenseProperty.value,
+    category: els.taxExpenseCategory.value,
+    type: els.taxExpenseType.value,
+    deductible: els.taxExpenseDeductible.value,
+    vendor: els.taxExpenseVendor.value.trim(),
+    payment: els.taxExpensePayment.value,
+    claimStatus: els.taxExpenseClaimStatus.value,
+    receipt: els.taxExpenseReceipt.value.trim(),
+    attachment: pendingTaxExpenseAttachment || (removePendingTaxExpenseAttachment ? null : existing?.attachment || null),
+    reviewed: els.taxExpenseReviewed.checked,
+    notes: els.taxExpenseNotes.value.trim(),
+    amount: Number(els.taxExpenseAmount.value || 0),
+    financeMode: document.querySelector("#expenseFinanceMode")?.value || existing?.financeMode || "unreviewed",
+    commitmentId: document.querySelector("#expenseCommitment")?.value || "",
+    legacyCost: typeof selectedLegacyExpenseSource === "function" ? selectedLegacyExpenseSource() : existing?.legacyCost,
+    businessUsePct: els.taxExpenseBizPct ? clampPct(els.taxExpenseBizPct.value, 100) : 100,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  });
+}
+
+// Live, sourced treatment hint shown under the expense category. Reads the
+// deterministic TAX_RULES table — never the AI — so what the host sees is what
+// the engine will tabulate.
+function renderTaxExpenseHint() {
+  if (!els.taxExpenseHint) return;
+  const category = els.taxExpenseCategory?.value || "Other";
+  const rule = taxRuleFor(category);
+  const bizPct = els.taxExpenseBizPct ? clampPct(els.taxExpenseBizPct.value, 100) : 100;
+  const amount = Number(els.taxExpenseAmount?.value || 0);
+  const preview = normalizeTaxExpense({
+    category,
+    amount,
+    businessUsePct: bizPct,
+    deductible: els.taxExpenseDeductible?.value,
+  });
+  const claimable = expenseDeductibleAmount(preview);
+  const tone = { deduct: "ok", partial: "warn", capital: "info", no: "bad", ask: "warn" }[rule.treatment] || "info";
+  const bits = [];
+  bits.push(`<span class="tax-hint-badge tone-${tone}">${escapeHtml(TREATMENT_LABEL[rule.treatment] || "Review")}</span>`);
+  bits.push(`<span class="tax-hint-rule">${escapeHtml(rule.rule)}</span>`);
+  if (rule.source && rule.source !== "—") bits.push(`<span class="tax-hint-src">${escapeHtml(rule.source)}</span>`);
+  if (rule.treatment === "capital") {
+    bits.push(`<button type="button" class="tax-hint-link" id="taxHintToAsset">→ Record as a capital asset instead</button>`);
+  }
+  if (amount > 0 && (rule.treatment === "deduct" || rule.treatment === "partial")) {
+    bits.push(`<span class="tax-hint-amt">Deductible: <strong>${money(claimable)}</strong>${bizPct < 100 ? ` (at ${bizPct}% business use)` : ""}</span>`);
+  }
+  let html = `<div class="tax-hint-row">${bits.join("")}</div>`;
+  if (rule.flag) html += `<p class="tax-hint-flag">⚠ ${escapeHtml(rule.flag)}</p>`;
+  els.taxExpenseHint.innerHTML = html;
+  const toAsset = document.querySelector("#taxHintToAsset");
+  if (toAsset) toAsset.addEventListener("click", () => sendExpenseToAsset());
+}
+
+// Move the half-typed expense into the capital-asset form (when the rule says
+// it's capital, not a deduction).
+function sendExpenseToAsset() {
+  const desc = [els.taxExpenseVendor?.value, els.taxExpenseNotes?.value].filter(Boolean).join(" — ");
+  clearTaxAssetForm();
+  setTaxInnerTab("assets");
+  if (els.taxAssetDesc) els.taxAssetDesc.value = desc || els.taxExpenseCategory?.value || "";
+  if (els.taxAssetCost) els.taxAssetCost.value = els.taxExpenseAmount?.value || "";
+  if (els.taxAssetVendor) els.taxAssetVendor.value = els.taxExpenseVendor?.value || "";
+  if (els.taxAssetDate) els.taxAssetDate.value = els.taxExpenseDate?.value || isoDate(new Date());
+  if (els.taxAssetBizPct) els.taxAssetBizPct.value = els.taxExpenseBizPct?.value || 100;
+  if (els.taxAssetClass) els.taxAssetClass.value = suggestAssetClass(els.taxExpenseCategory?.value, Number(els.taxExpenseAmount?.value || 0));
+  // carry a pending attachment across if one was staged
+  if (pendingTaxExpenseAttachment) {
+    pendingTaxAssetAttachment = pendingTaxExpenseAttachment;
+    if (els.taxAssetAttachmentStatus) els.taxAssetAttachmentStatus.textContent = `Attached: ${pendingTaxAssetAttachment.name}`;
+  }
+  updateAssetConditionVisibility();
+  renderTaxAssetHint();
+  if (els.taxAssetDesc) els.taxAssetDesc.focus();
+}
+
+// Map an expense category / cost to the most likely capital-allowance class.
+function suggestAssetClass(category, cost) {
+  if (cost > 0 && cost <= 2000) return "small-value";
+  const map = {
+    "Computer/ICT": "computer-ict",
+    "Furniture & Fittings": "furniture-office",
+    "Appliances/Electronics": "plant",
+    "Smart Lock/Security": "plant",
+    "Vehicle/Transport": "motor",
+  };
+  return map[category] || "plant";
+}
+
+function fileToTaxAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      resolve({
+        name: file.name,
+        type: file.type || "application/octet-stream",
+        dataUrl: String(reader.result || ""),
+        attachedAt: new Date().toISOString(),
+      });
+    });
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
+}
+
+function receiptLabel(expense) {
+  if (expense.attachment?.dataUrl) return "Attached";
+  if (expense.receipt) return "Ref only";
+  return "Missing";
+}
+
+function attachmentLink(expense) {
+  const href = safeDataUrl(expense.attachment?.dataUrl, ["data:image/", "data:application/pdf"]);
+  if (!href) return "";
+  return `<a class="small-action" href="${escapeHtml(href)}" download="${escapeHtml(expense.attachment.name || "receipt")}" title="${escapeHtml(expense.attachment.name || "Receipt")}">View</a>`;
+}
+
+function fillTaxExpenseForm(id) {
+  const expense = (taxPlan.expenses || []).find((item) => item.id === id);
+  if (!expense) return;
+  renderTaxExpenseSelects();
+  els.taxExpenseId.value = expense.id;
+  els.taxExpenseDate.value = expense.date;
+  els.taxExpenseEntity.value = expense.entity;
+  els.taxExpenseProperty.value = expense.property;
+  els.taxExpenseCategory.value = expense.category;
+  els.taxExpenseType.value = expense.type;
+  els.taxExpenseDeductible.value = expense.deductible;
+  els.taxExpenseAmount.value = expense.amount;
+  els.taxExpenseVendor.value = expense.vendor;
+  els.taxExpensePayment.value = expense.payment;
+  if (typeof renderExpenseFinanceOptions === "function") renderExpenseFinanceOptions(expense);
+  document.querySelector("#expenseEntryDisclosure")?.setAttribute("open", "");
+  els.taxExpenseClaimStatus.value = expense.claimStatus;
+  els.taxExpenseReceipt.value = expense.receipt;
+  els.taxExpenseReviewed.checked = Boolean(expense.reviewed);
+  els.taxExpenseNotes.value = expense.notes;
+  if (els.taxExpenseBizPct) els.taxExpenseBizPct.value = clampPct(expense.businessUsePct, 100);
+  pendingTaxExpenseAttachment = null;
+  removePendingTaxExpenseAttachment = false;
+  if (els.taxExpenseAttachment) els.taxExpenseAttachment.value = "";
+  if (els.taxExpenseAttachmentStatus) {
+    els.taxExpenseAttachmentStatus.textContent = expense.attachment?.name ? `Attached: ${expense.attachment.name}` : "No file attached";
+  }
+  renderTaxExpenseHint();
+}
+
+let taxSaveStatusTimer = null;
+function showSaveStatus(el, message) {
+  if (!el) return;
+  el.textContent = message;
+  el.className = "tax-scan-status ok";
+  clearTimeout(taxSaveStatusTimer);
+  taxSaveStatusTimer = setTimeout(() => { el.textContent = ""; }, 8000);
+}
+
+function saveTaxExpense(event) {
+  event.preventDefault();
+  if (!els.taxExpenseForm.reportValidity()) return;
+  const expense = formTaxExpense();
+  if (["additional", "commitment"].includes(expense.financeMode) && expense.property === "Shared") {
+    window.alert("Choose Sunrise or Windmill for finance reporting. Split shared costs into one record per property.");
+    return;
+  }
+  if (expense.financeMode === "commitment" && !(appSettings.commitments || []).some(item => item.id === expense.commitmentId && (item.villa || "Sunrise") + " Villa" === expense.property)) {
+    window.alert("Select a recurring commitment for this property.");
+    return;
+  }
+  try {
+    if (typeof validateExpenseFinanceChange === "function" && !validateExpenseFinanceChange(expense)) return;
+  } catch (error) { window.alert(error.message); return; }
+  const revisedProfitData = typeof prepareExpenseFinanceChange === "function" ? prepareExpenseFinanceChange(expense) : profitData;
+  createRecoverySnapshot("Before expense saved");
+  profitData = revisedProfitData;
+  saveProfitData();
+  taxPlan = {
+    ...taxPlan,
+    expenses: (taxPlan.expenses || []).some((item) => item.id === expense.id)
+      ? taxPlan.expenses.map((item) => (item.id === expense.id ? expense : item))
+      : [expense, ...(taxPlan.expenses || [])],
+  };
+  saveTaxPlan();
+  clearTaxExpenseForm();
+  // Make the just-saved record VISIBLE: if it belongs to a different year than
+  // the filter shows, jump the filter — otherwise it silently "disappears" and
+  // the natural (wrong) reaction is to enter it again.
+  const savedYear = yearOf(expense.date);
+  const propertyFilter = document.querySelector("#expensePropertyFilter");
+  if (propertyFilter && propertyFilter.value !== "All") propertyFilter.value = expense.property;
+  if (els.taxExpenseYearFilter && savedYear && Number(els.taxExpenseYearFilter.value) !== savedYear) {
+    els.taxExpenseYearFilter.value = savedYear;
+  }
+  renderTaxExpenses();
+  renderDashboard();
+  showSaveStatus(els.taxExpenseSaveStatus, `✓ Saved: ${expense.vendor || expense.category} ${money(expense.amount)} — ${shortDate(expense.date)} (YA ${savedYear})`);
+}
+
+function deleteTaxExpense(id) {
+  const existing = (taxPlan.expenses || []).find(expense => expense.id === id);
+  if (!window.confirm(existing?.financeMode === "legacy" ? "Delete this receipt record? The original monthly cost will stay in Finance." : "Delete this expense record?")) return;
+  createRecoverySnapshot("Before tax expense deleted");
+  taxPlan = { ...taxPlan, expenses: (taxPlan.expenses || []).filter((expense) => expense.id !== id) };
+  saveTaxPlan();
+  if (els.taxExpenseId.value === id) clearTaxExpenseForm();
+  renderTaxExpenses();
+  renderDashboard();
+}
+
+function taxExpenseExportRows(rows = filteredTaxExpenses()) {
+  return rows.map((expense) => [
+    expense.date,
+    expense.entity,
+    expense.property,
+    expense.category,
+    expense.type,
+    expense.deductible,
+    expense.vendor || "-",
+    expense.notes || "-",
+    expense.payment || "-",
+    expense.claimStatus,
+    expense.receipt || "-",
+    expense.attachment?.name || "-",
+    expense.reviewed ? "Reviewed" : "Pending",
+    `${clampPct(expense.businessUsePct, 100)}%`,
+    Number(expense.amount || 0),
+  ]);
+}
+
+function renderTaxExpenses() {
+  if (!els.taxExpenseRows) return;
+  renderTaxExpenseSelects();
+  if (els.taxExpenseYearFilter && !els.taxExpenseYearFilter.value) els.taxExpenseYearFilter.value = taxPlan.year || currentYear();
+  if (els.taxExpenseDate && !els.taxExpenseDate.value) clearTaxExpenseForm();
+  const rows = filteredTaxExpenses();
+  const filters = taxExpenseFilters();
+  const total = rows.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const missingReceiptCount = rows.filter((expense) => !expense.receipt && !expense.attachment?.dataUrl).length;
+  const reviewPendingCount = rows.filter((expense) => !expense.reviewed).length;
+  const byCategory = rows.reduce((acc, expense) => {
+    acc[expense.category] = (acc[expense.category] || 0) + Number(expense.amount || 0);
+    return acc;
+  }, {});
+  const topCategories = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  if (els.taxExpenseTableTitle) els.taxExpenseTableTitle.textContent = `${filters.year} Expense List`;
+  if (els.taxExpenseSummary) {
+    els.taxExpenseSummary.innerHTML = `
+      <article class="tax-expense-card"><span>Total expenses</span><strong>${money(total)}</strong></article>
+      <article class="tax-expense-card"><span>Missing receipts</span><strong>${missingReceiptCount}</strong></article>
+      <article class="tax-expense-card"><span>Review pending</span><strong>${reviewPendingCount}</strong></article>
+      <article class="tax-expense-card"><span>Top category</span><strong>${escapeHtml(topCategories[0]?.[0] || "-")}</strong></article>
+    `;
+  }
+  els.taxExpenseRows.innerHTML = rows.length
+    ? rows
+        .map(
+          (expense) => `
+            <tr>
+              <td>${shortDate(expense.date)}</td>
+              <td>${escapeHtml(expense.entity)}</td>
+              <td>${escapeHtml(expense.property)}</td>
+              <td><span class="doc-status">${escapeHtml(expense.category)}</span></td>
+              <td>${escapeHtml(expense.vendor || "-")}</td>
+              <td>${escapeHtml(receiptLabel(expense))}<br><span class="table-muted">${escapeHtml(expense.receipt || expense.attachment?.name || "-")}</span>${attachmentLink(expense)}</td>
+              <td>${expense.reviewed ? "Reviewed" : "Pending"}<small class="expense-finance-status">${expense.financeMode === "additional" ? "Finance: included" : expense.financeMode === "commitment" ? "Finance: replaces budget" : expense.financeMode === "legacy" ? "Finance: linked monthly cost" : expense.financeMode === "tax-only" ? "Tax only" : "Finance: not reconciled"}</small></td>
+              <td><strong>${money(expense.amount)}</strong></td>
+              <td class="actions">
+                <button class="small-action" type="button" data-edit-tax-expense="${expense.id}">Edit</button>
+                <button class="small-action danger" type="button" data-delete-tax-expense="${expense.id}">Delete</button>
+              </td>
+            </tr>
+          `,
+        )
+        .join("")
+    : `<tr><td colspan="9" class="empty-state">No expense records for this filter.</td></tr>`;
+  if (typeof renderExpenseReview === "function") renderExpenseReview();
+}
+
+function exportTaxExpensesExcel() {
+  const headers = ["Date", "Business", "Property", "Category", "Type", "Tax Status", "Supplier", "Description", "Payment", "Claim Status", "Receipt", "Attachment", "Review", "Business %", "Amount"];
+  const rows = taxExpenseExportRows();
+  const tableHtml = `
+    <table>
+      <tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>
+      ${rows.map((row) => `<tr>${row.map((value) => `<td>${escapeHtml(value)}</td>`).join("")}</tr>`).join("")}
+    </table>
+  `;
+  const blob = new Blob([tableHtml], { type: "application/vnd.ms-excel" });
+  const link = document.createElement("a");
+  link.download = `sunrise-villa-tax-expenses-${taxExpenseFilters().year}.xls`;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function exportTaxExpensesPdf() {
+  const filters = taxExpenseFilters();
+  const rows = filteredTaxExpenses();
+  const total = rows.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const printWindow = window.open("", "_blank");
+  if (!printWindow) return;
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Sunrise Villa Tax Expenses</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 28px; color: #2f1e28; }
+          h1 { margin: 0 0 6px; }
+          p { margin: 0 0 18px; color: #6f5b64; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th, td { border: 1px solid #e8cfc8; padding: 8px; text-align: left; }
+          th { background: #fff1f6; }
+          .total { margin: 18px 0; font-weight: 800; }
+        </style>
+      </head>
+      <body>
+        <h1>Sunrise Villa Tax Expense Report</h1>
+        <p>${filters.year} ${filters.month === "All" ? "All months" : monthLabel(`${filters.year}-${filters.month}`)} · ${filters.category === "All" ? "All categories" : escapeHtml(filters.category)}</p>
+        <div class="total">Total Expenses: ${money(total)}</div>
+        <table>
+          <thead><tr><th>Date</th><th>Business</th><th>Property</th><th>Category</th><th>Tax</th><th>Claim</th><th>Receipt</th><th>Review</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${rows
+              .map(
+                (expense) => `
+                  <tr>
+                    <td>${shortDate(expense.date)}</td>
+                    <td>${escapeHtml(expense.entity)}</td>
+                    <td>${escapeHtml(expense.property)}</td>
+                    <td>${escapeHtml(expense.category)}</td>
+                    <td>${escapeHtml(expense.deductible)}</td>
+                    <td>${escapeHtml(expense.claimStatus)}</td>
+                    <td>${escapeHtml(expense.receipt || expense.attachment?.name || receiptLabel(expense))}</td>
+                    <td>${expense.reviewed ? "Reviewed" : "Pending"}</td>
+                    <td>${money(expense.amount)}</td>
+                  </tr>
+                `,
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
+// =============================================================================
+// CAPITAL ASSETS — form, register, and the multi-year capital-allowance schedule
+// =============================================================================
+function updateAssetConditionVisibility() {
+  if (!els.taxAssetConditionField) return;
+  els.taxAssetConditionField.style.display = els.taxAssetClass?.value === "motor" ? "" : "none";
+}
+
+function clearTaxAssetForm() {
+  if (!els.taxAssetForm) return;
+  els.taxAssetForm.reset();
+  els.taxAssetId.value = "";
+  els.taxAssetDate.value = isoDate(new Date());
+  els.taxAssetClass.value = "furniture-office";
+  els.taxAssetEntity.value = "Enterprise";
+  els.taxAssetProperty.value = "Sunrise Villa";
+  els.taxAssetCondition.value = "new";
+  if (els.taxAssetBizPct) els.taxAssetBizPct.value = 100;
+  pendingTaxAssetAttachment = null;
+  removePendingTaxAssetAttachment = false;
+  if (els.taxAssetAttachment) els.taxAssetAttachment.value = "";
+  if (els.taxAssetAttachmentStatus) els.taxAssetAttachmentStatus.textContent = "No file attached";
+  updateAssetConditionVisibility();
+  renderTaxAssetHint();
+}
+
+function formTaxAsset() {
+  const now = new Date().toISOString();
+  const existing = (taxPlan.assets || []).find((a) => a.id === els.taxAssetId.value);
+  const disposalDate = els.taxAssetDisposalDate?.value || "";
+  return normalizeTaxAsset({
+    id: safeRecordId(els.taxAssetId.value),
+    description: els.taxAssetDesc.value.trim(),
+    vendor: els.taxAssetVendor.value.trim(),
+    entity: els.taxAssetEntity.value,
+    property: els.taxAssetProperty.value,
+    cost: Number(els.taxAssetCost.value || 0),
+    acquisitionDate: els.taxAssetDate.value || isoDate(new Date()),
+    assetClass: els.taxAssetClass.value,
+    condition: els.taxAssetCondition.value,
+    businessUsePct: clampPct(els.taxAssetBizPct?.value, 100),
+    disposed: disposalDate ? { date: disposalDate, value: Number(els.taxAssetDisposalValue?.value || 0) } : null,
+    receipt: els.taxAssetReceipt.value.trim(),
+    attachment: pendingTaxAssetAttachment || (removePendingTaxAssetAttachment ? null : existing?.attachment || null),
+    reviewed: els.taxAssetReviewed.checked,
+    notes: els.taxAssetNotes.value.trim(),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  });
+}
+
+function fillTaxAssetForm(id) {
+  const asset = (taxPlan.assets || []).find((a) => a.id === id);
+  if (!asset) return;
+  els.taxAssetId.value = asset.id;
+  els.taxAssetDesc.value = asset.description;
+  els.taxAssetVendor.value = asset.vendor;
+  els.taxAssetEntity.value = asset.entity;
+  els.taxAssetProperty.value = asset.property;
+  els.taxAssetCost.value = asset.cost;
+  els.taxAssetDate.value = asset.acquisitionDate;
+  els.taxAssetClass.value = asset.assetClass;
+  els.taxAssetCondition.value = asset.condition;
+  if (els.taxAssetBizPct) els.taxAssetBizPct.value = clampPct(asset.businessUsePct, 100);
+  els.taxAssetDisposalDate.value = asset.disposed?.date || "";
+  els.taxAssetDisposalValue.value = asset.disposed?.value || "";
+  els.taxAssetReceipt.value = asset.receipt;
+  els.taxAssetReviewed.checked = Boolean(asset.reviewed);
+  els.taxAssetNotes.value = asset.notes;
+  pendingTaxAssetAttachment = null;
+  removePendingTaxAssetAttachment = false;
+  if (els.taxAssetAttachment) els.taxAssetAttachment.value = "";
+  if (els.taxAssetAttachmentStatus) {
+    els.taxAssetAttachmentStatus.textContent = asset.attachment?.name ? `Attached: ${asset.attachment.name}` : "No file attached";
+  }
+  updateAssetConditionVisibility();
+  renderTaxAssetHint();
+  setTaxInnerTab("assets");
+  els.taxAssetDesc.focus();
+}
+
+function saveTaxAsset(event) {
+  event.preventDefault();
+  if (!els.taxAssetForm.reportValidity()) return;
+  const asset = formTaxAsset();
+  taxPlan = {
+    ...taxPlan,
+    assets: (taxPlan.assets || []).some((a) => a.id === asset.id)
+      ? taxPlan.assets.map((a) => (a.id === asset.id ? asset : a))
+      : [asset, ...(taxPlan.assets || [])],
+  };
+  saveTaxPlan();
+  clearTaxAssetForm();
+  renderTaxAssets();
+  showSaveStatus(els.taxAssetSaveStatus, `✓ Saved: ${asset.description || "asset"} ${money(asset.cost)} — acquired ${shortDate(asset.acquisitionDate)}`);
+}
+
+function deleteTaxAsset(id) {
+  if (!window.confirm("Delete this capital asset and its allowance schedule?")) return;
+  createRecoverySnapshot("Before capital asset deleted");
+  taxPlan = { ...taxPlan, assets: (taxPlan.assets || []).filter((a) => a.id !== id) };
+  saveTaxPlan();
+  renderTaxAssets();
+}
+
+// Live hint on the asset form — shows the class rates and what this YA's
+// allowance and carry-forward will be.
+function renderTaxAssetHint() {
+  if (!els.taxAssetHint) return;
+  const cls = els.taxAssetClass?.value || "plant";
+  const rates = MY_CA_RATES[cls] || MY_CA_RATES.plant;
+  const preview = normalizeTaxAsset({
+    cost: Number(els.taxAssetCost?.value || 0),
+    assetClass: cls,
+    acquisitionDate: els.taxAssetDate?.value || isoDate(new Date()),
+    condition: els.taxAssetCondition?.value || "new",
+    businessUsePct: clampPct(els.taxAssetBizPct?.value, 100),
+  });
+  const acqYA = yearOf(preview.acquisitionDate);
+  const first = assetCaForYA(preview, acqYA);
+  const bits = [];
+  bits.push(`<span class="tax-hint-badge tone-info">${escapeHtml(rates.label)}</span>`);
+  if (rates.sva) bits.push(`<span class="tax-hint-rule">100% written off in ${acqYA}.</span>`);
+  else bits.push(`<span class="tax-hint-rule">Initial ${rates.ia}% + ${rates.aa}%/yr on qualifying cost.</span>`);
+  if (preview.cost > 0) {
+    const qe = assetQE(preview);
+    if (qe < preview.cost) bits.push(`<span class="tax-hint-amt">Qualifying cost capped at <strong>${money(qe)}</strong></span>`);
+    bits.push(`<span class="tax-hint-amt">${acqYA} allowance: <strong>${money(first.claimed)}</strong>${preview.businessUsePct < 100 ? ` (at ${preview.businessUsePct}% business use)` : ""}</span>`);
+    if (!rates.sva) bits.push(`<span class="tax-hint-src">Carries forward to ${acqYA + 1} +</span>`);
+  }
+  let html = `<div class="tax-hint-row">${bits.join("")}</div>`;
+  if (rates.note) html += `<p class="tax-hint-flag">ℹ ${escapeHtml(rates.note)}</p>`;
+  if (preview.businessUsePct < 100) html += `<p class="tax-hint-flag">⚠ The private ${100 - preview.businessUsePct}% is permanently forgone (Sch 3 Para 73) — the asset still writes down on its full cost.</p>`;
+  els.taxAssetHint.innerHTML = html;
+}
+
+// Build the year-by-year allowance schedule for one asset, from acquisition
+// until the residual is written off (cap 12 rows for display).
+function assetScheduleRows(asset) {
+  const acqYA = yearOf(asset.acquisitionDate);
+  if (!acqYA) return [];
+  const rows = [];
+  let ya = acqYA;
+  for (let i = 0; i < 12; i += 1) {
+    const ca = assetCaForYA(asset, ya);
+    const residual = assetResidualAfter(asset, ya);
+    rows.push({ ya, ...ca, residual });
+    const dispYA = asset.disposed ? yearOf(asset.disposed.date) : 0;
+    if (dispYA && ya >= dispYA) break;
+    if (residual <= 0 && ca.gross <= 0 && ya > acqYA) break;
+    if (residual <= 0 && (ca.sva || ca.gross > 0) && i >= 0) {
+      // SVA or fully written off in this year — stop after showing this row.
+      if (residual <= 0) break;
+    }
+    ya += 1;
+  }
+  return rows;
+}
+
+function renderTaxAssets() {
+  if (!els.taxAssetCards) return;
+  const assets = (taxPlan.assets || []).slice().sort((a, b) => String(b.acquisitionDate).localeCompare(String(a.acquisitionDate)));
+  const thisYa = currentYear();
+  if (els.taxAssetSummary) {
+    const totalCost = assets.reduce((s, a) => s + Number(a.cost || 0), 0);
+    const caThisYear = assets.reduce((s, a) => s + assetCaForYA(a, thisYa).claimed, 0);
+    const residual = assets.reduce((s, a) => s + assetResidualAfter(a, thisYa), 0);
+    els.taxAssetSummary.innerHTML = `
+      <article class="tax-expense-card"><span>Assets recorded</span><strong>${assets.length}</strong></article>
+      <article class="tax-expense-card"><span>Total cost</span><strong>${money(totalCost)}</strong></article>
+      <article class="tax-expense-card"><span>${thisYa} allowance</span><strong>${money(caThisYear)}</strong></article>
+      <article class="tax-expense-card"><span>Carries to ${thisYa + 1}</span><strong>${money(residual)}</strong></article>
+    `;
+  }
+  if (!assets.length) {
+    els.taxAssetCards.innerHTML = `<p class="empty-state">No capital assets yet. Add furniture, appliances, a computer or a vehicle above — or scan a receipt in the Expense tab and send it here.</p>`;
+    return;
+  }
+  els.taxAssetCards.innerHTML = assets
+    .map((asset) => {
+      const rates = MY_CA_RATES[asset.assetClass] || MY_CA_RATES.plant;
+      const rows = assetScheduleRows(asset);
+      const qe = assetQE(asset);
+      const capNote = qe < Number(asset.cost || 0) ? ` · qualifying cost ${money(qe)}` : "";
+      const disposed = asset.disposed?.date
+        ? `<span class="tax-asset-flag">Disposed ${shortDate(asset.disposed.date)} · proceeds ${money(asset.disposed.value || 0)}</span>`
+        : "";
+      const bizNote = asset.businessUsePct < 100 ? ` · ${asset.businessUsePct}% business` : "";
+      const scheduleRows = rows
+        .map(
+          (r) => `
+            <tr${r.ya === currentYear() ? ' class="tax-row-now"' : ""}>
+              <td>${r.ya}</td>
+              <td>${r.balancing ? `<em>${r.balancing >= 0 ? "Balancing allowance" : "Balancing charge"}</em>` : (r.sva ? "100% (small value)" : (r.ya === yearOf(asset.acquisitionDate) ? `IA+AA` : "AA"))}</td>
+              <td>${money(r.balancing ? Math.abs(r.balancing) : r.claimed)}</td>
+              <td>${money(r.residual)}</td>
+            </tr>`,
+        )
+        .join("");
+      return `
+        <article class="tax-asset-card">
+          <div class="tax-asset-head">
+            <div>
+              <strong>${escapeHtml(asset.description || "Untitled asset")}</strong>
+              <span class="tax-asset-meta">${escapeHtml(rates.label)} · ${money(asset.cost || 0)}${capNote}${bizNote} · acquired ${shortDate(asset.acquisitionDate)}</span>
+              ${disposed}
+            </div>
+            <div class="actions">
+              <button class="small-action" type="button" data-edit-tax-asset="${asset.id}">Edit</button>
+              <button class="small-action danger" type="button" data-delete-tax-asset="${asset.id}">Delete</button>
+            </div>
+          </div>
+          <table class="tax-asset-schedule">
+            <thead><tr><th>YA</th><th>Allowance type</th><th>Claim</th><th title="Cost still left to claim in future years">Residual c/f</th></tr></thead>
+            <tbody>${scheduleRows}</tbody>
+          </table>
+          <p class="tax-schedule-legend">IA = initial allowance (first year only) · AA = annual allowance (claimed each year) · Residual c/f = cost still to claim in future years — this carries forward automatically.</p>
+        </article>`;
+    })
+    .join("");
+}
+
+// =============================================================================
+// AI RECEIPT SCANNER — calls the receipt-scan Edge Function, then the host
+// confirms before anything saves. The model only extracts + suggests; the
+// deterministic rules above decide the treatment.
+// =============================================================================
+let pendingScanData = null;
+
+// Full-size receipt viewer: click any thumbnail to verify a row against the
+// actual receipt without leaving the page.
+function openReceiptLightbox(srcUrl, caption = "") {
+  const safe = safeDataUrl(srcUrl, ["data:image/"]);
+  if (!safe) return;
+  let box = document.querySelector("#receiptLightbox");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "receiptLightbox";
+    box.className = "receipt-lightbox";
+    box.addEventListener("click", () => { box.hidden = true; });
+    // Close on Escape (the flow promised "click to enlarge" but trapped keyboard users).
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !box.hidden) box.hidden = true; });
+    document.body.appendChild(box);
+  }
+  box.innerHTML = `<img alt="Receipt full size" /><span class="lightbox-caption"></span>`;
+  box.querySelector("img").src = safe;
+  box.querySelector(".lightbox-caption").textContent = caption ? `${caption} — tap anywhere or press Esc to close` : "Tap anywhere or press Esc to close";
+  box.hidden = false;
+}
+
+// Re-rendering a review table used to snap focus + scroll back to the start on
+// EVERY edit — exactly the friction that makes bulk verification stop happening.
+// Capture the focused control + scroll offsets before a rebuild, restore after.
+function captureTableUiState(container) {
+  const state = { scrolls: [], focusAttr: null, focusKey: null };
+  if (!container) return state;
+  container.querySelectorAll(".table-scroll").forEach((el, i) => state.scrolls.push([i, el.scrollLeft, el.scrollTop]));
+  const active = document.activeElement;
+  if (active && container.contains(active)) {
+    const attrs = ["data-batch-sel", "data-batch-date", "data-batch-amt", "data-batch-cat", "data-earn-sel", "data-earn-gross", "data-earn-ya"];
+    state.focusAttr = attrs.find((a) => active.hasAttribute(a)) || null;
+    state.focusKey = state.focusAttr ? active.getAttribute(state.focusAttr) : null;
+  }
+  return state;
+}
+function restoreTableUiState(container, state) {
+  if (!container || !state) return;
+  const scrollEls = container.querySelectorAll(".table-scroll");
+  state.scrolls.forEach(([i, left, top]) => { if (scrollEls[i]) { scrollEls[i].scrollLeft = left; scrollEls[i].scrollTop = top; } });
+  if (state.focusAttr && state.focusKey) {
+    const el = container.querySelector(`[${state.focusAttr}="${CSS.escape(state.focusKey)}"]`);
+    if (el) el.focus({ preventScroll: true });
+  }
+}
+
+// Translate an Edge Function failure into a plain instruction. supabase-js
+// throws FunctionsHttpError with `context` = the Response, whose JSON body our
+// functions fill with {error, detail, status} — read it instead of showing
+// "Edge Function returned a non-2xx status code".
+async function edgeErrorMessage(error, data) {
+  let body = data && !data.ok ? data : null;
+  try {
+    if (!body && error?.context && typeof error.context.json === "function") body = await error.context.json();
+  } catch { /* body unavailable — fall through to generic mapping */ }
+  const code = String(body?.error || "");
+  const detail = String(body?.detail || "");
+  const status = Number(body?.status || error?.context?.status || 0);
+  if (code === "anthropic_error" && (/credit|billing|balance/i.test(detail) || status === 400)) {
+    return "AI credit exhausted — top up at console.anthropic.com, then retry.";
+  }
+  if (code === "anthropic_error" && status === 429) return "AI rate limit hit — wait a minute and retry.";
+  if (code === "anthropic_error") return `AI service error${detail ? `: ${detail}` : ""} — retry in a moment.`;
+  if (code === "not_configured") return "The AI key is not set up on the server — tell Claude to redeploy the function secret.";
+  if (code === "parse_failed") return "The AI reply couldn't be read — try again (or a clearer photo).";
+  if (code === "network") return "The server couldn't reach the AI service — check again in a minute.";
+  if (status === 401 || /jwt|unauthorized/i.test(String(error?.message || ""))) return "Session expired — sign in again, then retry.";
+  if (detail) return detail;
+  return String(error?.message || error || "request failed");
+}
+function splitDataUrl(dataUrl) {
+  const comma = String(dataUrl || "").indexOf(",");
+  const header = comma >= 0 ? dataUrl.slice(0, comma) : "";
+  const m = header.match(/^data:([^;]+)/);
+  return { mediaType: (m && m[1]) || "image/jpeg", base64: comma >= 0 ? dataUrl.slice(comma + 1) : String(dataUrl || "") };
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const result = String(reader.result || "");
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    });
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
+}
+
+function setScanStatus(message, tone = "") {
+  if (!els.taxScanStatus) return;
+  els.taxScanStatus.textContent = message;
+  els.taxScanStatus.className = `tax-scan-status${tone ? ` ${tone}` : ""}`;
+}
+
+async function scanReceipt() {
+  const file = els.taxScanInput?.files?.[0];
+  if (!file) {
+    setScanStatus("Choose a receipt image or PDF first.", "warn");
+    return;
+  }
+  if (!supabaseClient) {
+    setScanStatus("Sign in with cloud sync to use the AI scanner.", "warn");
+    return;
+  }
+  if (file.type === "application/pdf") {
+    setScanStatus("PDFs can't be read directly — please upload a photo/screenshot of the receipt.", "warn");
+    return;
+  }
+  const mediaType = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type) ? file.type : "image/jpeg";
+  setScanStatus("Reading the receipt…", "loading");
+  if (els.taxScanBtn) els.taxScanBtn.disabled = true;
+  try {
+    const rawDataUrl = `data:${mediaType};base64,${await fileToBase64(file)}`;
+    // 1568px is the vision model's native cap — sending more is wasted bytes.
+    const api = splitDataUrl(await downscaleImage(rawDataUrl, 1568, 0.8));
+    // Store the attachment DOWNSCALED (a full-res photo inside the single JSON
+    // blob is the #1 storage-quota risk — same treatment as the batch path).
+    pendingScanData = { attachment: { name: file.name, type: "image/jpeg", dataUrl: await downscaleImage(rawDataUrl), attachedAt: new Date().toISOString() } };
+    const { data, error } = await supabaseClient.functions.invoke("property-receipt-scan", {
+      body: { imageBase64: api.base64, mediaType: api.mediaType },
+    });
+    if (error) throw new Error(await edgeErrorMessage(error, data));
+    if (!data?.ok || !data.data) throw new Error(data?.detail || data?.error || "Could not read the receipt.");
+    pendingScanData.fields = data.data;
+    renderScanResult(data.data);
+    setScanStatus("Done — review and confirm below.", "ok");
+  } catch (err) {
+    console.error("property-receipt-scan", err);
+    setScanStatus(`Scan failed: ${err.message || err}. You can still enter it manually below.`, "bad");
+  } finally {
+    if (els.taxScanBtn) els.taxScanBtn.disabled = false;
+  }
+}
+
+function renderScanResult(fields) {
+  if (!els.taxScanResult) return;
+  const category = TAX_RULES[fields.suggestedCategory] ? fields.suggestedCategory : "Other";
+  const rule = taxRuleFor(category);
+  const isCapital = rule.treatment === "capital" || fields.isLikelyCapitalAsset;
+  const conf = String(fields.confidence || "").toLowerCase();
+  const confTone = conf === "high" ? "ok" : conf === "low" ? "bad" : "warn";
+  els.taxScanResult.hidden = false;
+  const scanThumb = safeDataUrl(pendingScanData?.attachment?.dataUrl, ["data:image/"]);
+  els.taxScanResult.innerHTML = `
+    ${scanThumb ? `<div class="scan-thumb-wrap"><img class="receipt-thumb" tabindex="0" role="button" src="${escapeHtml(scanThumb)}" alt="Scanned receipt — click to enlarge" title="${escapeHtml(pendingScanData?.attachment?.name || "receipt")}" /><span class="table-muted">Click to check the extracted figures against the receipt.</span></div>` : ""}
+    <div class="scan-result-grid">
+      <div><span>Supplier</span><strong>${escapeHtml(fields.vendor || "—")}</strong></div>
+      <div><span>Date</span><strong>${escapeHtml(fields.date || "—")}</strong></div>
+      <div><span>Amount</span><strong>${escapeHtml(fields.currency || "RM")} ${escapeHtml(String(fields.amount ?? 0))}</strong></div>
+      <div><span>What</span><strong>${escapeHtml(fields.description || "—")}</strong></div>
+      <div><span>Suggested category</span><strong>${escapeHtml(category)}</strong></div>
+      <div><span>Confidence</span><strong class="scan-conf tone-${confTone}">${escapeHtml(fields.confidence || "—")}</strong></div>
+    </div>
+    <div class="scan-treatment">
+      <span class="tax-hint-badge tone-${{ deduct: "ok", partial: "warn", capital: "info", no: "bad", ask: "warn" }[rule.treatment] || "info"}">${escapeHtml(TREATMENT_LABEL[rule.treatment])}</span>
+      <span class="tax-hint-rule">${escapeHtml(rule.rule)}</span>
+      ${rule.source && rule.source !== "—" ? `<span class="tax-hint-src">${escapeHtml(rule.source)}</span>` : ""}
+    </div>
+    ${rule.flag ? `<p class="tax-hint-flag">⚠ ${escapeHtml(rule.flag)}</p>` : ""}
+    ${isCapital ? `<p class="tax-hint-flag">ℹ This looks like a durable asset — record it as a Capital Asset so the allowance spreads over years.</p>` : ""}
+    <div class="scan-actions">
+      ${isCapital
+        ? `<button type="button" class="primary-button" id="scanToAsset">Use as capital asset</button><button type="button" class="ghost-button" id="scanToExpense">Use as expense instead</button>`
+        : `<button type="button" class="primary-button" id="scanToExpense">Use for expense</button><button type="button" class="ghost-button" id="scanToAsset">Use as capital asset instead</button>`}
+      <button type="button" class="ghost-button" id="scanDismiss">Dismiss</button>
+    </div>
+    <p class="scan-disclaimer">Always check the figures against the receipt before saving. This is a record-keeping aid, not tax advice — run the AI review (Year Summary tab) before you file.</p>
+  `;
+  document.querySelector("#scanToExpense")?.addEventListener("click", () => applyScanToExpense());
+  document.querySelector("#scanToAsset")?.addEventListener("click", () => applyScanToAsset());
+  document.querySelector("#scanDismiss")?.addEventListener("click", () => {
+    els.taxScanResult.hidden = true;
+    pendingScanData = null;
+  });
+}
+
+function applyScanToExpense() {
+  if (!pendingScanData?.fields) return;
+  const f = pendingScanData.fields;
+  const category = TAX_RULES[f.suggestedCategory] ? f.suggestedCategory : "Other";
+  clearTaxExpenseForm();
+  setTaxInnerTab("expenses");
+  renderTaxExpenseSelects();
+  if (els.taxExpenseDate && f.date) els.taxExpenseDate.value = f.date;
+  if (els.taxExpenseCategory) els.taxExpenseCategory.value = category;
+  if (els.taxExpenseAmount && f.amount) els.taxExpenseAmount.value = f.amount;
+  if (els.taxExpenseVendor) els.taxExpenseVendor.value = f.vendor || "";
+  if (els.taxExpenseNotes) els.taxExpenseNotes.value = f.description || "";
+  // attach the scanned image to the record
+  if (pendingScanData.attachment) {
+    pendingTaxExpenseAttachment = pendingScanData.attachment;
+    if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = `Attached: ${pendingScanData.attachment.name}`;
+  }
+  renderTaxExpenseHint();
+  if (els.taxScanResult) els.taxScanResult.hidden = true;
+  els.taxExpenseAmount?.focus();
+  els.taxExpenseAmount?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function applyScanToAsset() {
+  if (!pendingScanData?.fields) return;
+  const f = pendingScanData.fields;
+  clearTaxAssetForm();
+  setTaxInnerTab("assets");
+  if (els.taxAssetDesc) els.taxAssetDesc.value = f.description || f.vendor || "";
+  if (els.taxAssetVendor) els.taxAssetVendor.value = f.vendor || "";
+  if (els.taxAssetCost && f.amount) els.taxAssetCost.value = f.amount;
+  if (els.taxAssetDate && f.date) els.taxAssetDate.value = f.date;
+  if (els.taxAssetClass) els.taxAssetClass.value = suggestAssetClass(f.suggestedCategory, Number(f.amount || 0));
+  if (pendingScanData.attachment) {
+    pendingTaxAssetAttachment = pendingScanData.attachment;
+    if (els.taxAssetAttachmentStatus) els.taxAssetAttachmentStatus.textContent = `Attached: ${pendingScanData.attachment.name}`;
+  }
+  updateAssetConditionVisibility();
+  renderTaxAssetHint();
+  if (els.taxScanResult) els.taxScanResult.hidden = true;
+  els.taxAssetCost?.focus();
+  els.taxAssetCost?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// =============================================================================
+// BATCH RECEIPT INTAKE — scan many receipts, match each to its tax YEAR, classify
+// against that year's rules, FLAG DUPLICATES (within the batch and vs existing
+// records), organise into annual tabs, then import what he confirms.
+// =============================================================================
+let batchItems = [];
+let batchActiveYa = null;
+
+function setBatchStatus(message, tone = "") {
+  const cls = `tax-scan-status${tone ? ` ${tone}` : ""}`;
+  if (els.taxBatchStatus) {
+    els.taxBatchStatus.textContent = message || "";
+    els.taxBatchStatus.className = cls;
+  }
+  // Mirror near the action buttons at the bottom of the table — the top status
+  // is off-screen on a phone when he taps Import.
+  const near = document.querySelector("#batchActionMsg");
+  if (near) { near.textContent = message || ""; near.className = cls; }
+}
+
+// Downscale a captured image so storing many receipts doesn't bloat the cloud blob.
+function downscaleImage(dataUrl, maxDim = 1280, quality = 0.7) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      } catch {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+// Duplicate key — same vendor + date + amount (rounded).
+function dupKey(vendor, date, amount) {
+  return `${String(vendor || "").toLowerCase().trim()}|${String(date || "")}|${Math.round(Number(amount || 0) * 100)}`;
+}
+function existingRecordKeys() {
+  const keys = new Map();
+  (taxPlan.expenses || []).forEach((e) => keys.set(dupKey(e.vendor, e.date, e.amount), `${e.category} ${money(e.amount)}`));
+  (taxPlan.assets || []).forEach((a) => keys.set(dupKey(a.vendor, a.acquisitionDate, a.cost), `${a.description} ${money(a.cost)}`));
+  return keys;
+}
+
+function classifyBatchItem(item) {
+  const category = TAX_RULES[item.fields.suggestedCategory] ? item.fields.suggestedCategory : "Other";
+  const rule = taxRuleFor(category);
+  const isCapital = rule.treatment === "capital" || item.fields.isLikelyCapitalAsset;
+  item.category = category;
+  item.isCapital = isCapital;
+  item.treatment = isCapital ? "capital" : rule.treatment;
+  item.ya = yearOf(item.fields.date) || "Unknown";
+}
+
+function dedupBatch() {
+  const existing = existingRecordKeys();
+  const seen = new Map();
+  batchItems.forEach((item) => {
+    if (item.error) return;
+    const k = dupKey(item.fields.vendor, item.fields.date, item.fields.amount);
+    item.dup = { inBatch: false, existing: existing.has(k), of: "" };
+    if (seen.has(k)) {
+      item.dup.inBatch = true;
+      item.dup.of = seen.get(k);
+    } else {
+      seen.set(k, `${item.fields.vendor || "?"} ${money(item.fields.amount)}`);
+    }
+    // Default: don't auto-select a duplicate.
+    item.selected = !item.dup.inBatch && !item.dup.existing;
+  });
+}
+
+async function scanBatch() {
+  const files = Array.from(els.taxBatchInput?.files || []);
+  if (!files.length) { setBatchStatus("Choose receipt images first.", "warn"); return; }
+  if (!supabaseClient) { setBatchStatus("Sign in with cloud sync to use the scanner.", "warn"); return; }
+  const images = files.filter((f) => f.type !== "application/pdf");
+  const skipped = files.length - images.length;
+  if (!images.length) { setBatchStatus("Those are PDFs — upload photos/screenshots instead.", "warn"); return; }
+  if (images.length > 40) { setBatchStatus(`Too many at once (${images.length}). Please do up to 40 per batch.`, "warn"); return; }
+
+  if (els.taxBatchScanBtn) els.taxBatchScanBtn.disabled = true;
+  batchCancelRequested = false;
+  showBatchCancel(true);
+  batchItems = [];
+  // Picker DEFAULT follows the villa toggle, but the choice itself is always
+  // visible + explicit at import time.
+  batchProperty = appSettings?.activeVilla === "Windmill" ? "Windmill Villa" : "Sunrise Villa";
+  let consecutiveFailures = 0;
+  let aborted = "";
+  for (let i = 0; i < images.length; i += 1) {
+    if (batchCancelRequested) { aborted = `Cancelled — ${images.length - i} file(s) not scanned.`; break; }
+    const file = images[i];
+    setBatchStatus(`Scanning ${i + 1} of ${images.length}…`, "loading");
+    const mediaType = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type) ? file.type : "image/jpeg";
+    const item = { id: safeRecordId(""), fileName: file.name, mediaType, fields: {}, error: "", selected: false };
+    try {
+      const rawDataUrl = `data:${mediaType};base64,${await fileToBase64(file)}`;
+      // Downscale to the vision model's 1568px cap before sending — faster,
+      // cheaper, and item.dataUrl stays small for review + eventual storage.
+      item.dataUrl = await downscaleImage(rawDataUrl, 1568, 0.8);
+      const api = splitDataUrl(item.dataUrl);
+      const { data, error } = await supabaseClient.functions.invoke("property-receipt-scan", { body: { imageBase64: api.base64, mediaType: api.mediaType } });
+      if (error) throw new Error(await edgeErrorMessage(error, data));
+      if (!data?.ok || !data.data) throw new Error(data?.detail || data?.error || "unreadable");
+      item.fields = data.data;
+      classifyBatchItem(item);
+      consecutiveFailures = 0;
+    } catch (err) {
+      item.error = String(err.message || err);
+      consecutiveFailures += 1;
+      // Don't keep burning paid calls into a dead key/session/credit.
+      if (consecutiveFailures >= 3) {
+        batchItems.push(item);
+        aborted = `Stopped after 3 failures in a row — ${item.error} ${images.length - i - 1} file(s) not scanned.`;
+        break;
+      }
+    }
+    batchItems.push(item);
+  }
+  showBatchCancel(false);
+  dedupBatch();
+  const years = [...new Set(batchItems.filter((b) => !b.error).map((b) => b.ya))];
+  batchActiveYa = years.sort((a, b) => String(b).localeCompare(String(a)))[0] || null;
+  const ok = batchItems.filter((b) => !b.error).length;
+  const dups = batchItems.filter((b) => b.dup && (b.dup.inBatch || b.dup.existing)).length;
+  const summary = `Scanned ${ok}/${images.length}${skipped ? ` (${skipped} PDF skipped)` : ""}${dups ? ` · ${dups} duplicate(s) flagged` : ""}.`;
+  setBatchStatus(aborted ? `${aborted} ${summary}` : `${summary} Review and import below.`, aborted ? "bad" : dups ? "warn" : "ok");
+  if (els.taxBatchScanBtn) els.taxBatchScanBtn.disabled = false;
+  renderBatch();
+}
+
+let batchCancelRequested = false;
+function showBatchCancel(visible) {
+  let btn = document.querySelector("#taxBatchCancelBtn");
+  if (!btn && visible) {
+    btn = document.createElement("button");
+    btn.id = "taxBatchCancelBtn";
+    btn.type = "button";
+    btn.className = "ghost-button";
+    btn.textContent = "Cancel scanning";
+    btn.addEventListener("click", () => { batchCancelRequested = true; btn.disabled = true; btn.textContent = "Cancelling…"; });
+    els.taxBatchScanBtn?.after(btn);
+  }
+  if (btn) {
+    btn.hidden = !visible;
+    if (visible) { btn.disabled = false; btn.textContent = "Cancel scanning"; }
+  }
+}
+
+function batchYears() {
+  const ys = [...new Set(batchItems.filter((b) => !b.error).map((b) => b.ya))];
+  return ys.sort((a, b) => (a === "Unknown" ? 1 : b === "Unknown" ? -1 : String(b).localeCompare(String(a))));
+}
+
+function renderBatch() {
+  if (!els.taxBatchResult) return;
+  const ok = batchItems.filter((b) => !b.error);
+  const errors = batchItems.filter((b) => b.error);
+  if (!ok.length && !errors.length) { els.taxBatchResult.hidden = true; return; }
+  els.taxBatchResult.hidden = false;
+  const years = batchYears();
+  if (!years.includes(batchActiveYa)) batchActiveYa = years[0] || null;
+  const treatLabel = { capital: "Capital asset", deduct: "Claimable", partial: "Claimable (restricted)", no: "Not claimable", ask: "Needs review" };
+  const treatTone = { capital: "info", deduct: "ok", partial: "warn", no: "bad", ask: "warn" };
+
+  const uiState = captureTableUiState(els.taxBatchResult);
+  const tabs = years.map((y) => {
+    const n = ok.filter((b) => b.ya === y).length;
+    const sel = ok.filter((b) => b.ya === y && b.selected).length;
+    return `<button type="button" role="tab" aria-selected="${y === batchActiveYa}" class="batch-tab ${y === batchActiveYa ? "active" : ""}" data-batch-ya="${escapeHtml(String(y))}">YA ${escapeHtml(String(y))} <span>${sel}/${n}</span></button>`;
+  }).join("");
+
+  const rows = ok.filter((b) => b.ya === batchActiveYa).map((b) => {
+    const dupBadge = b.dup?.existing ? `<span class="batch-dup tone-bad">Duplicate of existing</span>`
+      : b.dup?.inBatch ? `<span class="batch-dup tone-warn">Duplicate in batch</span>` : "";
+    const conf = String(b.fields.confidence || "").toLowerCase();
+    const confTone = conf === "high" ? "ok" : conf === "low" ? "bad" : "warn";
+    const catOpts = taxExpenseCategories.map((c) => `<option ${c === b.category ? "selected" : ""}>${escapeHtml(c)}</option>`).join("");
+    const thumb = safeDataUrl(b.dataUrl, ["data:image/"]);
+    return `
+      <tr class="${b.selected ? "" : "batch-row-off"}">
+        <td><input type="checkbox" data-batch-sel="${b.id}" ${b.selected ? "checked" : ""} /></td>
+        <td>${thumb ? `<img class="receipt-thumb" tabindex="0" role="button" src="${escapeHtml(thumb)}" alt="Receipt ${escapeHtml(b.fileName)} — click to enlarge" title="${escapeHtml(b.fileName)}" />` : "—"}</td>
+        <td><input type="date" class="batch-date" data-batch-date="${b.id}" value="${escapeHtml(b.fields.date || "")}" /></td>
+        <td>${escapeHtml(b.fields.vendor || "—")}<br><span class="table-muted">${escapeHtml((b.fields.description || "").slice(0, 40))}</span></td>
+        <td><input type="number" step="0.01" class="batch-amt" data-batch-amt="${b.id}" value="${Number(b.fields.amount || 0)}" /></td>
+        <td><select class="batch-cat" data-batch-cat="${b.id}">${catOpts}</select></td>
+        <td><span class="batch-treat tone-${treatTone[b.treatment] || "info"}">${treatLabel[b.treatment] || "—"}</span><br><span class="scan-conf tone-${confTone}">${escapeHtml(b.fields.confidence || "")}</span></td>
+        <td>${dupBadge}</td>
+      </tr>`;
+  }).join("");
+
+  const selCount = ok.filter((b) => b.selected).length;
+  els.taxBatchResult.innerHTML = `
+    <div class="batch-tabs" role="tablist" aria-label="Receipt years">${tabs}</div>
+    <div class="table-scroll">
+      <table class="compact-table batch-table">
+        <thead><tr><th>Add</th><th>Receipt</th><th>Date</th><th>Supplier</th><th>Amount</th><th>Category</th><th>Treatment</th><th>Duplicate</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="8" class="empty-state">Nothing for this year.</td></tr>`}</tbody>
+      </table>
+    </div>
+    ${errors.length ? `<p class="tax-ai-note bad">${errors.length} file(s) couldn't be read and were skipped${errors[0]?.error ? ` (e.g. ${escapeHtml(errors[0].error)})` : ""}.</p>` : ""}
+    <div class="scan-actions">
+      <label class="ya-picker batch-property-pick">Import these receipts to
+        <select id="batchPropertySelect">
+          ${["Sunrise Villa", "Windmill Villa", "Shared"].map((p) => `<option ${p === batchProperty ? "selected" : ""}>${p}</option>`).join("")}
+        </select>
+      </label>
+      <button type="button" class="primary-button" id="batchImportBtn">Import ${selCount} selected</button>
+      <button type="button" class="ghost-button" id="batchSelectAll">Select all (non-duplicate)</button>
+      <button type="button" class="ghost-button" id="batchClear">Clear</button>
+      <span class="tax-scan-status" id="batchActionMsg" role="status" aria-live="polite"></span>
+    </div>
+    <p class="scan-disclaimer">Each row is matched to its year by date and classified against that year's rules. Capital items import to the asset register; the rest to expenses. Duplicates are unticked by default. Always check amounts and dates before importing — then run the AI review.</p>
+  `;
+  // wire row controls
+  els.taxBatchResult.querySelectorAll("[data-batch-ya]").forEach((b) => b.addEventListener("click", () => { batchActiveYa = b.dataset.batchYa === "Unknown" ? "Unknown" : Number(b.dataset.batchYa); renderBatch(); }));
+  els.taxBatchResult.querySelectorAll("[data-batch-sel]").forEach((c) => c.addEventListener("change", () => { const it = batchItems.find((x) => x.id === c.dataset.batchSel); if (it) { it.selected = c.checked; renderBatch(); } }));
+  els.taxBatchResult.querySelectorAll("[data-batch-cat]").forEach((s) => s.addEventListener("change", () => { const it = batchItems.find((x) => x.id === s.dataset.batchCat); if (it) { it.fields.suggestedCategory = s.value; classifyBatchItem(it); renderBatch(); } }));
+  els.taxBatchResult.querySelectorAll("[data-batch-date]").forEach((d) => d.addEventListener("change", () => { const it = batchItems.find((x) => x.id === d.dataset.batchDate); if (it) { it.fields.date = d.value; it.ya = yearOf(d.value) || "Unknown"; dedupBatch(); renderBatch(); } }));
+  els.taxBatchResult.querySelectorAll("[data-batch-amt]").forEach((a) => a.addEventListener("change", () => { const it = batchItems.find((x) => x.id === a.dataset.batchAmt); if (it) { it.fields.amount = Number(a.value || 0); dedupBatch(); renderBatch(); } }));
+  document.querySelector("#batchPropertySelect")?.addEventListener("change", (e) => { batchProperty = e.target.value; });
+  document.querySelector("#batchImportBtn")?.addEventListener("click", importBatch);
+  document.querySelector("#batchSelectAll")?.addEventListener("click", () => { batchItems.forEach((b) => { if (!b.error && !(b.dup?.inBatch || b.dup?.existing)) b.selected = true; }); renderBatch(); });
+  document.querySelector("#batchClear")?.addEventListener("click", () => { batchItems = []; batchActiveYa = null; els.taxBatchResult.hidden = true; if (els.taxBatchInput) els.taxBatchInput.value = ""; if (els.taxBatchFileName) els.taxBatchFileName.textContent = "No files chosen"; if (els.taxBatchScanBtn) els.taxBatchScanBtn.disabled = true; setBatchStatus(""); });
+  // The freshly-built near-button status starts empty — carry over the current
+  // message (e.g. the "Imported N…" set just before this re-render).
+  const near = document.querySelector("#batchActionMsg");
+  if (near && els.taxBatchStatus) { near.textContent = els.taxBatchStatus.textContent; near.className = els.taxBatchStatus.className; }
+  restoreTableUiState(els.taxBatchResult, uiState);
+}
+
+// The villa the batch imports into — set by the VISIBLE picker, never silently
+// inherited from the global villa toggle (Windmill cross-contamination guard).
+// Default follows the toggle only as the picker's starting value.
+let batchProperty = "Sunrise Villa";
+let batchImportRunning = false;
+
+async function importBatch() {
+  if (batchImportRunning) return; // double-tap guard
+  const chosen = batchItems.filter((b) => !b.error && b.selected);
+  if (!chosen.length) { setBatchStatus("Nothing selected to import.", "warn"); return; }
+  const invalid = chosen.filter((b) => !yearOf(b.fields.date) || !(Number(b.fields.amount) > 0));
+  if (invalid.length) { setBatchStatus(`${invalid.length} selected item(s) need a valid date and amount first.`, "warn"); return; }
+  const property = document.querySelector("#batchPropertySelect")?.value || batchProperty;
+  batchImportRunning = true;
+  const importBtn = document.querySelector("#batchImportBtn");
+  if (importBtn) { importBtn.disabled = true; importBtn.textContent = "Importing…"; }
+  try {
+    createRecoverySnapshot("Before batch receipt import");
+    let addedExp = 0;
+    let addedAsset = 0;
+    for (const b of chosen) {
+      const small = await downscaleImage(b.dataUrl);
+      const attachment = { name: b.fileName, type: "image/jpeg", dataUrl: small, attachedAt: new Date().toISOString() };
+      if (b.isCapital) {
+        const asset = normalizeTaxAsset({
+          description: b.fields.description || b.fields.vendor || b.category,
+          vendor: b.fields.vendor || "", cost: Number(b.fields.amount || 0),
+          acquisitionDate: b.fields.date, assetClass: suggestAssetClass(b.category, Number(b.fields.amount || 0)),
+          attachment, receipt: "Batch scan", property,
+        });
+        taxPlan = { ...taxPlan, assets: [asset, ...(taxPlan.assets || [])] };
+        addedAsset += 1;
+      } else {
+        const expense = normalizeTaxExpense({
+          date: b.fields.date, category: b.category, amount: Number(b.fields.amount || 0),
+          vendor: b.fields.vendor || "", notes: b.fields.description || "", attachment, receipt: "Batch scan",
+          property,
+        });
+        taxPlan = { ...taxPlan, expenses: [expense, ...(taxPlan.expenses || [])] };
+        addedExp += 1;
+      }
+    }
+    saveTaxPlan();
+    // drop imported items from the batch
+    batchItems = batchItems.filter((b) => !chosen.includes(b));
+    // Jump the expense-list year filter to the imported records' year so they're
+    // visible when he checks (same trap saveTaxExpense already guards).
+    const importedYear = yearOf(chosen[0]?.fields?.date);
+    if (els.taxExpenseYearFilter && importedYear) els.taxExpenseYearFilter.value = importedYear;
+    setBatchStatus(`Imported ${addedExp} expense(s) and ${addedAsset} asset(s) to ${property}. Run the AI review when ready.`, "ok");
+    renderBatch();
+    renderTaxExpenses();
+    renderTaxAssets();
+  } catch (err) {
+    console.error("importBatch", err);
+    setBatchStatus(`Import failed: ${err.message || err}. Nothing was lost — try again.`, "bad");
+  } finally {
+    batchImportRunning = false;
+    const importBtn = document.querySelector("#batchImportBtn");
+    if (importBtn) { importBtn.disabled = false; importBtn.textContent = "Import selected"; }
+  }
+}
+
+// =============================================================================
+// PAST EARNINGS IMPORT — read a CSV of past earnings, normalize via AI, tabulate
+// per year, confirm, store. Feeds each year's gross turnover for the tax review.
+// =============================================================================
+let earningsStaging = [];
+let earningsActiveYa = null;
+
+function setEarningsStatus(message, tone = "") {
+  if (!els.taxEarningsStatus) return;
+  els.taxEarningsStatus.textContent = message || "";
+  els.taxEarningsStatus.className = `tax-scan-status${tone ? ` ${tone}` : ""}`;
+}
+
+// Sum of imported earnings for a YA (his authoritative past figure).
+function importedEarningsFor(ya) {
+  return (taxPlan.earnings || []).filter((e) => Number(e.ya) === Number(ya)).reduce((s, e) => s + Number(e.gross || 0), 0);
+}
+
+function readFileText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsText(file);
+  });
+}
+
+async function importEarningsCsv() {
+  const file = els.taxEarningsInput?.files?.[0];
+  if (!file) { setEarningsStatus("Choose a CSV file first.", "warn"); return; }
+  if (!supabaseClient) { setEarningsStatus("Sign in with cloud sync to read the CSV.", "warn"); return; }
+  setEarningsStatus("Reading your earnings…", "loading");
+  if (els.taxEarningsBtn) els.taxEarningsBtn.disabled = true;
+  try {
+    const csvText = await readFileText(file);
+    if (!csvText.trim()) throw new Error("the file is empty");
+    const { data, error } = await supabaseClient.functions.invoke("property-earnings-import", { body: { csvText } });
+    if (error) throw new Error(await edgeErrorMessage(error, data));
+    if (!data?.ok || !data.data) throw new Error(data?.detail || data?.error || "Could not read the CSV.");
+    const rows = Array.isArray(data.data.rows) ? data.data.rows : [];
+    earningsStaging = rows.map((r) => ({
+      id: safeRecordId(""), ya: Number(r.ya) || "Unknown", period: String(r.period || ""),
+      gross: Number(r.gross || 0), channel: String(r.channel || ""), note: String(r.note || ""),
+      confidence: String(r.confidence || ""), fileName: file.name, selected: Number(r.gross || 0) > 0,
+    }));
+    earningsActiveYa = earningsStagingYears()[0] || null;
+    renderEarnings(data.data.note || "");
+    const yrs = earningsStagingYears().length;
+    setEarningsStatus(`Read ${rows.length} row(s) across ${yrs} year(s). Review and import below.`, "ok");
+  } catch (err) {
+    console.error("property-earnings-import", err);
+    setEarningsStatus(`Couldn't read it: ${err.message || err}.`, "bad");
+  } finally {
+    if (els.taxEarningsBtn) els.taxEarningsBtn.disabled = false;
+  }
+}
+
+function earningsStagingYears() {
+  const ys = [...new Set(earningsStaging.map((r) => r.ya))];
+  return ys.sort((a, b) => (a === "Unknown" ? 1 : b === "Unknown" ? -1 : Number(b) - Number(a)));
+}
+
+function renderEarnings(note = "") {
+  if (!els.taxEarningsResult) return;
+  if (!earningsStaging.length) { els.taxEarningsResult.hidden = true; return; }
+  els.taxEarningsResult.hidden = false;
+  const uiState = captureTableUiState(els.taxEarningsResult);
+  const years = earningsStagingYears();
+  if (!years.includes(earningsActiveYa)) earningsActiveYa = years[0] || null;
+  const tabs = years.map((y) => {
+    const rowsY = earningsStaging.filter((r) => r.ya === y);
+    const total = rowsY.filter((r) => r.selected).reduce((s, r) => s + Number(r.gross || 0), 0);
+    return `<button type="button" role="tab" aria-selected="${y === earningsActiveYa}" class="batch-tab ${y === earningsActiveYa ? "active" : ""}" data-earn-ya="${escapeHtml(String(y))}">YA ${escapeHtml(String(y))} <span>${money(total)}</span></button>`;
+  }).join("");
+  const rows = earningsStaging.filter((r) => r.ya === earningsActiveYa).map((r) => {
+    const conf = String(r.confidence || "").toLowerCase();
+    const confTone = conf === "high" ? "ok" : conf === "low" ? "bad" : "warn";
+    const yaCell = r.ya === "Unknown"
+      ? `<input type="number" class="batch-amt" min="2018" max="2035" step="1" placeholder="Year?" data-earn-setya="${r.id}" title="This row has no year — set its Year of Assessment or it will be skipped" />`
+      : escapeHtml(String(r.ya));
+    return `
+      <tr class="${r.selected ? "" : "batch-row-off"}">
+        <td><input type="checkbox" data-earn-sel="${r.id}" ${r.selected ? "checked" : ""} /></td>
+        <td>${yaCell}</td>
+        <td>${escapeHtml(r.period || "—")}</td>
+        <td><input type="number" step="0.01" class="batch-amt" data-earn-gross="${r.id}" value="${Number(r.gross || 0)}" /></td>
+        <td>${escapeHtml(r.channel || "—")}</td>
+        <td>${escapeHtml((r.note || "").slice(0, 50))}${r.confidence ? `<br><span class="scan-conf tone-${confTone}">${escapeHtml(r.confidence)}</span>` : ""}</td>
+      </tr>`;
+  }).join("");
+  const importable = earningsStaging.filter((r) => r.selected && Number(r.gross) > 0 && r.ya !== "Unknown");
+  const selTotal = importable.reduce((s, r) => s + Number(r.gross || 0), 0);
+  const unknownSelected = earningsStaging.filter((r) => r.selected && r.ya === "Unknown").length;
+  const existing = importedEarningsFor(earningsActiveYa);
+  els.taxEarningsResult.innerHTML = `
+    ${note ? `<p class="tax-ai-note">${escapeHtml(note)}</p>` : ""}
+    <div class="batch-tabs" role="tablist" aria-label="Earnings years">${tabs}</div>
+    ${existing > 0 ? `<p class="tyr-note">You already have ${money(existing)} of imported earnings stored for YA ${earningsActiveYa} — importing again adds to it (clear old ones first if re-importing).</p>` : ""}
+    <div class="table-scroll">
+      <table class="compact-table batch-table">
+        <thead><tr><th>Add</th><th>YA</th><th>Period</th><th>Gross (RM)</th><th>Channel</th><th>Note · confidence</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="6" class="empty-state">Nothing for this year.</td></tr>`}</tbody>
+      </table>
+    </div>
+    ${unknownSelected ? `<p class="tax-hint-flag">⚠ ${unknownSelected} selected row(s) have no year — set one in the YA column or they'll be skipped.</p>` : ""}
+    <div class="scan-actions">
+      <button type="button" class="primary-button" id="earnImportBtn">Import ${money(selTotal)} (${importable.length} rows)</button>
+      <button type="button" class="ghost-button" id="earnClear">Clear</button>
+    </div>
+    <p class="scan-disclaimer">Each row is matched to its tax year by date. Imported gross income feeds that year's summary and the SST / e-invoice threshold checks. Check the amounts against your records before importing.</p>
+  `;
+  els.taxEarningsResult.querySelectorAll("[data-earn-ya]").forEach((b) => b.addEventListener("click", () => { earningsActiveYa = b.dataset.earnYa === "Unknown" ? "Unknown" : Number(b.dataset.earnYa); renderEarnings(note); }));
+  els.taxEarningsResult.querySelectorAll("[data-earn-sel]").forEach((c) => c.addEventListener("change", () => { const it = earningsStaging.find((x) => x.id === c.dataset.earnSel); if (it) { it.selected = c.checked; renderEarnings(note); } }));
+  els.taxEarningsResult.querySelectorAll("[data-earn-gross]").forEach((a) => a.addEventListener("change", () => { const it = earningsStaging.find((x) => x.id === a.dataset.earnGross); if (it) { it.gross = Number(a.value || 0); renderEarnings(note); } }));
+  els.taxEarningsResult.querySelectorAll("[data-earn-setya]").forEach((y) => y.addEventListener("change", () => {
+    const it = earningsStaging.find((x) => x.id === y.dataset.earnSetya);
+    if (!it) return;
+    const val = Number(y.value || 0);
+    it.ya = val >= 2018 && val <= 2035 ? val : "Unknown";
+    if (it.ya !== "Unknown") earningsActiveYa = it.ya;
+    renderEarnings(note);
+  }));
+  document.querySelector("#earnImportBtn")?.addEventListener("click", importEarnings);
+  document.querySelector("#earnClear")?.addEventListener("click", () => { earningsStaging = []; earningsActiveYa = null; els.taxEarningsResult.hidden = true; if (els.taxEarningsInput) els.taxEarningsInput.value = ""; if (els.taxEarningsFileName) els.taxEarningsFileName.textContent = "No file chosen"; if (els.taxEarningsBtn) els.taxEarningsBtn.disabled = true; setEarningsStatus(""); });
+  restoreTableUiState(els.taxEarningsResult, uiState);
+}
+
+function importEarnings() {
+  const chosen = earningsStaging.filter((r) => r.selected && Number(r.gross) > 0 && r.ya !== "Unknown");
+  if (!chosen.length) { setEarningsStatus("Select rows with a valid year and amount to import.", "warn"); return; }
+  // Re-import guard: warn when a chosen row matches an ALREADY-stored one
+  // (same year + period + amount, or the same source file for that year) —
+  // a double-import silently doubles the year's gross turnover.
+  const existing = taxPlan.earnings || [];
+  const dupRows = chosen.filter((r) =>
+    existing.some((e) => Number(e.ya) === Number(r.ya) && (String(e.period) === String(r.period) && Number(e.gross) === Number(r.gross) || (e.source && e.source === r.fileName))),
+  );
+  if (dupRows.length) {
+    const proceed = window.confirm(
+      `${dupRows.length} of the selected rows look ALREADY IMPORTED (same year/period/amount or same file). Importing again ADDS to the stored totals and inflates that year's gross income.\n\nImport anyway?`,
+    );
+    if (!proceed) { setEarningsStatus("Import cancelled — delete the old rows below first if you're re-importing.", "warn"); return; }
+  }
+  createRecoverySnapshot("Before earnings import");
+  const records = chosen.map((r) => ({
+    id: safeRecordId(""), ya: Number(r.ya), period: r.period, gross: Number(r.gross || 0),
+    channel: r.channel, note: r.note, source: r.fileName, createdAt: new Date().toISOString(),
+  }));
+  taxPlan = { ...taxPlan, earnings: [...records, ...(taxPlan.earnings || [])] };
+  saveTaxPlan();
+  earningsStaging = earningsStaging.filter((r) => !chosen.includes(r));
+  const byYa = {};
+  records.forEach((r) => { byYa[r.ya] = (byYa[r.ya] || 0) + r.gross; });
+  setEarningsStatus(`Imported ${records.length} row(s): ${Object.entries(byYa).map(([y, v]) => `YA ${y} ${money(v)}`).join(", ")}.`, "ok");
+  renderEarnings();
+  renderTaxYa();
+  renderStoredEarnings();
+}
+
+// Stored (already-imported) earnings — visible + deletable per row, because
+// these figures ARE the year's gross turnover: an invisible double-import
+// would silently inflate income. The UI used to say "clear old ones first"
+// with no way to do it; this is that way.
+function renderStoredEarnings() {
+  if (!els.taxEarningsStored) return;
+  const rows = (taxPlan.earnings || []).slice().sort((a, b) => Number(b.ya) - Number(a.ya) || String(b.period).localeCompare(String(a.period)));
+  if (!rows.length) { els.taxEarningsStored.innerHTML = ""; return; }
+  const byYa = {};
+  rows.forEach((r) => { byYa[r.ya] = (byYa[r.ya] || 0) + Number(r.gross || 0); });
+  els.taxEarningsStored.innerHTML = `
+    <details class="tax-accounting-drawer">
+      <summary>Imported earnings on record (${rows.length} rows · ${Object.entries(byYa).sort((a, b) => Number(b[0]) - Number(a[0])).map(([y, v]) => `YA ${y} ${money(v)}`).join(" · ")})</summary>
+      <div class="table-scroll">
+        <table class="compact-table batch-table">
+          <thead><tr><th>YA</th><th>Period</th><th>Gross</th><th>Channel</th><th>Source file</th><th></th></tr></thead>
+          <tbody>
+            ${rows.map((r) => `
+              <tr>
+                <td>${escapeHtml(String(r.ya))}</td>
+                <td>${escapeHtml(r.period || "—")}</td>
+                <td><strong>${money(r.gross)}</strong></td>
+                <td>${escapeHtml(r.channel || "—")}</td>
+                <td class="table-muted">${escapeHtml(r.source || "—")}</td>
+                <td><button class="small-action danger" type="button" data-del-earning="${escapeHtml(r.id)}">Delete</button></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </details>`;
+  els.taxEarningsStored.querySelectorAll("[data-del-earning]").forEach((b) => b.addEventListener("click", () => {
+    const row = (taxPlan.earnings || []).find((x) => x.id === b.dataset.delEarning);
+    if (!row) return;
+    if (!window.confirm(`Delete imported earning ${row.period} ${money(row.gross)} (YA ${row.ya})?`)) return;
+    createRecoverySnapshot("Before imported earning deleted");
+    taxPlan = { ...taxPlan, earnings: (taxPlan.earnings || []).filter((x) => x.id !== b.dataset.delEarning) };
+    saveTaxPlan();
+    renderStoredEarnings();
+    renderTaxYa();
+  }));
+}
+
+// Save a supporting document (past tax-calc file) against a year.
+async function saveEarningsDoc() {
+  const ya = Number(els.taxEarnDocYa?.value || 0);
+  const file = els.taxEarnDocInput?.files?.[0];
+  if (!ya) { if (els.taxEarnDocStatus) els.taxEarnDocStatus.textContent = "Enter the year first."; return; }
+  if (!file) { if (els.taxEarnDocStatus) els.taxEarnDocStatus.textContent = "Choose a file first."; return; }
+  if (file.size > 3_000_000) { if (els.taxEarnDocStatus) els.taxEarnDocStatus.textContent = "File too large (max 3 MB)."; return; }
+  let dataUrl = "";
+  try {
+    const isImage = file.type.startsWith("image/");
+    const raw = await fileToTaxAttachment(file);
+    dataUrl = isImage ? await downscaleImage(raw.dataUrl) : raw.dataUrl;
+  } catch { /* keep reference even if read fails */ }
+  const doc = {
+    id: safeRecordId(""), ya, label: els.taxEarnDocLabel?.value?.trim() || file.name,
+    name: file.name, type: file.type, dataUrl, addedAt: new Date().toISOString(),
+  };
+  taxPlan = { ...taxPlan, earningsDocs: [doc, ...(taxPlan.earningsDocs || [])] };
+  saveTaxPlan();
+  if (els.taxEarnDocInput) els.taxEarnDocInput.value = "";
+  if (els.taxEarnDocLabel) els.taxEarnDocLabel.value = "";
+  if (els.taxEarnDocStatus) els.taxEarnDocStatus.textContent = `Saved to YA ${ya}.`;
+  renderEarningsDocs();
+}
+
+function renderEarningsDocs() {
+  if (!els.taxEarnDocList) return;
+  const docs = taxPlan.earningsDocs || [];
+  if (!docs.length) { els.taxEarnDocList.innerHTML = "No supporting documents stored yet."; return; }
+  els.taxEarnDocList.innerHTML = docs
+    .slice()
+    .sort((a, b) => Number(b.ya) - Number(a.ya))
+    .map((d) => {
+      const href = safeDataUrl(d.dataUrl, ["data:image/", "data:application/pdf"]);
+      const link = href ? `<a class="small-action" href="${escapeHtml(href)}" download="${escapeHtml(d.name || "doc")}">View</a>` : "";
+      return `<div class="earn-doc-row"><strong>YA ${escapeHtml(String(d.ya))}</strong> · ${escapeHtml(d.label || d.name)} ${link} <button class="small-action danger" type="button" data-del-earndoc="${d.id}">Delete</button></div>`;
+    })
+    .join("");
+  els.taxEarnDocList.querySelectorAll("[data-del-earndoc]").forEach((b) => b.addEventListener("click", () => {
+    const doc = (taxPlan.earningsDocs || []).find((x) => x.id === b.dataset.delEarndoc);
+    if (!doc) return;
+    if (!window.confirm(`Delete supporting document "${doc.label || doc.name}" (YA ${doc.ya})?`)) return;
+    createRecoverySnapshot("Before supporting document deleted");
+    taxPlan = { ...taxPlan, earningsDocs: (taxPlan.earningsDocs || []).filter((x) => x.id !== b.dataset.delEarndoc) };
+    saveTaxPlan();
+    renderEarningsDocs();
+  }));
+}
+
+// =============================================================================
+// YEAR-OF-ASSESSMENT SUMMARY — Form B tabulation for the Enterprise source.
+// =============================================================================
+// Confidence badge for a sourced fact-base value.
+function confBadge(v) {
+  if (!v) return "";
+  const tone = { high: "ok", medium: "warn", low: "bad" }[v.confidence] || "info";
+  const label = v.mustConfirm ? `${v.confidence} · confirm` : v.confidence;
+  return `<span class="tax-conf tone-${tone}" title="${escapeHtml(v.source || "")}">${escapeHtml(label)}</span>`;
+}
+
+// Render the LHDN rules that apply to ONE Year of Assessment (his "annual tabs").
+function renderTaxYearRules(ya) {
+  if (!els.taxYearRules) return;
+  const p = taxYearProfile(ya);
+  const c = p.constants;
+  const row = (label, v, extra = "") => `
+    <tr>
+      <td class="tyr-label">${escapeHtml(label)}</td>
+      <td class="tyr-val">${escapeHtml(typeof v === "string" ? v : v.value)}${extra}</td>
+      <td class="tyr-meta">${typeof v === "string" ? "" : `${confBadge(v)}${v.source && v.source !== "—" ? `<span class="tyr-src">${escapeHtml(v.source)}</span>` : ""}`}</td>
+    </tr>`;
+  const ict = p.ictAca;
+  const overrides = (p.overrides || []).filter(Boolean);
+  els.taxYearRules.innerHTML = `
+    ${!p.known ? `<p class="tax-hint-flag">⚠ No stored rules for YA ${ya} — values are provisional. Upload this year's LHDN documents (Public Ruling / Budget / SST notice) so the engine applies that year's rules.</p>` : ""}
+    ${p.changes && p.changes.length ? `<div class="tyr-changes"><strong>What changed in YA ${ya}:</strong><ul>${p.changes.map((x) => `<li>${escapeHtml(x)}</li>`).join("")}</ul></div>` : ""}
+    ${(p.traps || []).length ? `<div class="tyr-traps">${p.traps.map((t) => `<p class="tax-hint-flag">⚠ ${escapeHtml(t)}</p>`).join("")}</div>` : ""}
+    <table class="tyr-table">
+      <thead><tr><th>Rule (YA ${ya})</th><th>Value</th><th>Confidence · source</th></tr></thead>
+      <tbody>
+        ${row("Service tax on accommodation", p.sstRate)}
+        ${row("SST registration threshold", c.sstThreshold)}
+        ${row("ICT / computer / software allowance", ict, ` <span class="tyr-cite">(${escapeHtml(ict.citation)})</span>`)}
+        ${row("Normal capital allowances", c.normalCa)}
+        ${row("Small-value assets", c.smallValue)}
+        ${row("Secretarial + tax-filing fee cap", c.secretarialCap)}
+        ${row("Individual relief (self)", c.selfRelief)}
+        ${row("Other reliefs (this YA)", p.reliefs)}
+        ${row("Individual rate bands", p.rateBands)}
+        ${row("E-invoice status", p.einvoice)}
+        ${row("Filing & basis period", c.basis)}
+        ${row("Carry-forward", c.carryForward)}
+        ${row("Scope guard", c.scopeGuard)}
+      </tbody>
+    </table>
+    ${overrides.length ? `<div class="tyr-overrides"><strong>From your uploaded documents (override the baseline for YA ${ya}):</strong><ul>${overrides.map((o) => `<li>${escapeHtml(o.ruleType || "rule")}: ${escapeHtml(o.extractedValue || o.value || "")} <span class="tyr-src">${escapeHtml(o.docIdentifier || o.source || "")}</span></li>`).join("")}</ul></div>` : `<p class="tyr-note">No documents uploaded for YA ${ya} yet — these are the researched baseline values. Upload your YA documents to confirm/override them.</p>`}
+    <p class="scan-disclaimer">${escapeHtml(p.notable.value)} · Confidence and sources shown per row. Confirm anything marked “confirm” against that year's LHDN document before filing.</p>
+  `;
+}
+
+// ---- LHDN document analyzer: extract a year's rules from his document ----
+let pendingDocData = null;
+
+function setDocStatus(message, tone = "") {
+  if (!els.taxDocStatus) return;
+  els.taxDocStatus.textContent = message || "";
+  els.taxDocStatus.className = `tax-scan-status${tone ? ` ${tone}` : ""}`;
+}
+
+function soleProThis(taxpayerType) {
+  const t = String(taxpayerType || "").toLowerCase();
+  return t.includes("individual") || t.includes("sole") || t.includes("all") || t === "";
+}
+
+async function analyzeTaxDoc() {
+  if (!supabaseClient) { setDocStatus("Sign in with cloud sync to analyze documents.", "warn"); return; }
+  const file = els.taxDocInput?.files?.[0];
+  const text = els.taxDocText?.value?.trim() || "";
+  if (!file && !text) { setDocStatus("Upload a document image or paste its text first.", "warn"); return; }
+  if (file && file.type === "application/pdf") { setDocStatus("PDFs can't be read directly — paste the text or upload a screenshot.", "warn"); return; }
+  setDocStatus("Reading the document…", "loading");
+  if (els.taxDocAnalyzeBtn) els.taxDocAnalyzeBtn.disabled = true;
+  try {
+    const body = {};
+    if (file) {
+      const mediaType = ["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type) ? file.type : "image/jpeg";
+      body.imageBase64 = await fileToBase64(file);
+      body.mediaType = mediaType;
+    }
+    if (text) body.text = text;
+    const { data, error } = await supabaseClient.functions.invoke("property-tax-doc-analyze", { body });
+    if (error) throw new Error(await edgeErrorMessage(error, data));
+    if (!data?.ok || !data.data) throw new Error(data?.detail || data?.error || "Could not read the document.");
+    pendingDocData = data.data;
+    renderDocResult(data.data);
+    setDocStatus("Done — review and save to the year(s) below.", "ok");
+  } catch (err) {
+    console.error("property-tax-doc-analyze", err);
+    setDocStatus(`Analysis failed: ${err.message || err}.`, "bad");
+  } finally {
+    if (els.taxDocAnalyzeBtn) els.taxDocAnalyzeBtn.disabled = false;
+  }
+}
+
+function renderDocResult(d) {
+  if (!els.taxDocResult) return;
+  const rules = Array.isArray(d.rules) ? d.rules : [];
+  const yas = Array.isArray(d.appliesToYAs) && d.appliesToYAs.length ? d.appliesToYAs : [];
+  els.taxDocResult.hidden = false;
+  if (!rules.length) {
+    els.taxDocResult.innerHTML = `<p class="tax-ai-note">No extractable year-specific rule found in this document (${escapeHtml(d.docType || "unknown")}). Try a clearer page or paste the relevant text.</p>`;
+    return;
+  }
+  const rows = rules.map((r) => {
+    const ruleYas = (Array.isArray(r.appliesToYAs) && r.appliesToYAs.length ? r.appliesToYAs : yas).join(", ") || "—";
+    const conf = String(r.confidence || "").toLowerCase();
+    const confTone = conf === "high" ? "ok" : conf === "low" ? "bad" : "warn";
+    const gate = soleProThis(r.appliesToTaxpayerType) ? "" : `<span class="batch-dup tone-warn">may not apply to sole-prop: ${escapeHtml(r.appliesToTaxpayerType || "")}</span>`;
+    return `
+      <tr>
+        <td>${escapeHtml(r.ruleType || "rule")}${r.assetClassOrCategory ? `<br><span class="table-muted">${escapeHtml(r.assetClassOrCategory)}</span>` : ""}</td>
+        <td><strong>${escapeHtml(r.extractedValue || "—")}</strong>${r.expiryOrSunset && r.expiryOrSunset !== "none stated" ? `<br><span class="table-muted">ends: ${escapeHtml(r.expiryOrSunset)}</span>` : ""}</td>
+        <td>${escapeHtml(ruleYas)}</td>
+        <td><span class="scan-conf tone-${confTone}">${escapeHtml(r.confidence || "")}</span>${r.mustConfirm ? " · confirm" : ""}<br><span class="table-muted">${escapeHtml(r.sourceRefInDoc || "")}</span>${gate}</td>
+      </tr>`;
+  }).join("");
+  const defaultYa = Number(els.taxYaInput?.value || taxPlan.year || currentYear());
+  const yaOptions = yas.length ? yas : [defaultYa];
+  els.taxDocResult.innerHTML = `
+    <div class="tax-doc-head"><strong>${escapeHtml(d.docIdentifier || d.docType || "Document")}</strong>${yas.length ? `<span class="tyr-src">applies to YA ${escapeHtml(yas.join(", "))}</span>` : ""}</div>
+    <div class="table-scroll"><table class="compact-table"><thead><tr><th>Rule</th><th>Value (as written)</th><th>YA(s)</th><th>Confidence · source</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="scan-actions">
+      <label class="ya-picker">Save to YA
+        <select id="taxDocTargetYa">${yaOptions.map((y) => `<option value="${y}">${y}</option>`).join("")}</select>
+      </label>
+      <button type="button" class="primary-button" id="taxDocSaveBtn">Save ${rules.length} rule(s) to this year</button>
+      <button type="button" class="ghost-button" id="taxDocDismiss">Dismiss</button>
+    </div>
+    <p class="scan-disclaimer">Stored as YOUR document override for the chosen year only — it will show under that year's rules. Rules tagged “may not apply to sole-prop” are for other taxpayer types; don't save those unless they truly apply to you.</p>
+  `;
+  document.querySelector("#taxDocSaveBtn")?.addEventListener("click", () => {
+    const ya = Number(document.querySelector("#taxDocTargetYa")?.value || defaultYa);
+    saveDocToProfile(d, ya);
+  });
+  document.querySelector("#taxDocDismiss")?.addEventListener("click", () => { els.taxDocResult.hidden = true; pendingDocData = null; });
+}
+
+function saveDocToProfile(d, ya) {
+  const rules = Array.isArray(d.rules) ? d.rules : [];
+  const entries = rules.map((r) => ({
+    ruleType: r.ruleType, assetClassOrCategory: r.assetClassOrCategory || null,
+    extractedValue: r.extractedValue || "", appliesToTaxpayerType: r.appliesToTaxpayerType || "",
+    expiryOrSunset: r.expiryOrSunset || "", sourceRefInDoc: r.sourceRefInDoc || "",
+    docIdentifier: d.docIdentifier || d.docType || "document", confidence: r.confidence || "low",
+    addedAt: new Date().toISOString(),
+  }));
+  const yp = { ...(taxPlan.yearProfiles || {}) };
+  const existing = yp[ya] && Array.isArray(yp[ya].entries) ? yp[ya].entries : [];
+  yp[ya] = { entries: [...entries, ...existing] };
+  const docRecord = {
+    id: safeRecordId(""), docIdentifier: d.docIdentifier || d.docType || "document",
+    docType: d.docType || "other", appliesToYAs: d.appliesToYAs || [ya], ruleCount: rules.length,
+    addedAt: new Date().toISOString(),
+  };
+  taxPlan = { ...taxPlan, yearProfiles: yp, lhdnDocs: [docRecord, ...(taxPlan.lhdnDocs || [])] };
+  saveTaxPlan();
+  setDocStatus(`Saved ${rules.length} rule(s) to YA ${ya}.`, "ok");
+  if (els.taxDocResult) els.taxDocResult.hidden = true;
+  if (els.taxDocInput) els.taxDocInput.value = "";
+  if (els.taxDocText) els.taxDocText.value = "";
+  if (els.taxDocFileName) els.taxDocFileName.textContent = "No file chosen";
+  pendingDocData = null;
+  if (els.taxYaInput) els.taxYaInput.value = ya;
+  renderTaxYearRules(ya);
+  if (els.taxYearRulesBox && "open" in els.taxYearRulesBox) els.taxYearRulesBox.open = true;
+}
+
+function renderTaxYa() {
+  if (!els.taxYaCards) return;
+  if (els.taxClassifyAffirm) els.taxClassifyAffirm.checked = !!taxPlan.review?.classificationAffirmed;
+  if (els.taxYaInput && !els.taxYaInput.value) els.taxYaInput.value = taxPlan.year || currentYear();
+  const ya = Number(els.taxYaInput?.value || taxPlan.year || currentYear());
+  const s = taxYaSummary(ya);
+  const gross = importedEarningsFor(ya);
+  els.taxYaCards.innerHTML = `
+    ${gross > 0 ? `<article class="tax-card"><span>Gross earnings (imported)</span><strong>${money(gross)}</strong><small>From your earnings CSV</small></article>` : ""}
+    <article class="tax-card"><span>Revenue deductions</span><strong>${money(s.revenueDeductible)}</strong><small>${s.expenseCount} expense record${s.expenseCount === 1 ? "" : "s"}</small></article>
+    <article class="tax-card"><span>Capital allowances</span><strong>${money(s.capitalAllowance)}</strong><small>${s.assetCount} asset${s.assetCount === 1 ? "" : "s"} in register</small></article>
+    <article class="tax-card"><span>Total relief (YA ${ya})</span><strong>${money(s.totalRelief)}</strong><small>Deductions + allowances</small></article>
+    <article class="tax-card ${s.needsReview > 0 ? "warning" : ""}"><span>Needs your decision</span><strong>${money(s.needsReview)}</strong><small>Items to confirm with agent</small></article>
+  `;
+  if (!els.taxYaDetail) return;
+  const lines = [
+    ["Revenue deductions (s33)", s.revenueDeductible, "Deductible operating costs, restricted to business-use %."],
+    ["Capital allowances (Sch 3)", s.capitalAllowance, "From the asset register — initial + annual allowances for this year."],
+    s.balancingAllowance > 0 ? ["Balancing allowance", s.balancingAllowance, "Extra relief from assets sold below their residual value."] : null,
+    s.balancingCharge > 0 ? ["Balancing charge (adds back)", -s.balancingCharge, "Clawed-back allowance on assets sold above residual value."] : null,
+    s.capitalFlagged > 0 ? ["Tagged capital — not yet in register", s.capitalFlagged, "Expenses marked capital. Add them under Capital Assets so they get an allowance."] : null,
+    s.notDeductible > 0 ? ["Not deductible", s.notDeductible, "Private, capital repayment, renovations, pre-commencement, etc."] : null,
+    s.needsReview > 0 ? ["Needs review", s.needsReview, "Judgement calls (vehicle, legal, groceries…) — the AI review below flags these."] : null,
+  ].filter(Boolean);
+  els.taxYaDetail.innerHTML = `
+    <div class="table-scroll">
+      <table class="compact-table">
+        <thead><tr><th>Line</th><th>Amount</th><th>What it means</th></tr></thead>
+        <tbody>
+          ${lines
+            .map(
+              ([label, amt, note]) => `
+            <tr>
+              <td><strong>${escapeHtml(label)}</strong></td>
+              <td>${amt < 0 ? `(${money(Math.abs(amt))})` : money(amt)}</td>
+              <td class="table-muted">${escapeHtml(note)}</td>
+            </tr>`,
+            )
+            .join("")}
+          <tr class="tax-row-now">
+            <td><strong>Total relief against income</strong></td>
+            <td><strong>${money(s.totalRelief)}</strong></td>
+            <td class="table-muted">Subtract from adjusted income; unabsorbed capital allowances carry forward indefinitely.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="scan-disclaimer">YA ${ya} · Enterprise / sole-proprietor source (Form B). Suggested figures — run the AI review before filing. Capital allowances and losses not used this year carry forward automatically in the asset schedules above.</p>
+  `;
+  renderTaxYearRules(ya);
+  renderEarningsDocs();
+  renderStoredEarnings();
+}
+
+function exportTaxYaExcel() {
+  const ya = Number(els.taxYaInput?.value || currentYear());
+  const s = taxYaSummary(ya);
+  const rows = [
+    ["Year of Assessment", ya],
+    ["Revenue deductions (s33)", s.revenueDeductible],
+    ["Capital allowances (Sch 3)", s.capitalAllowance],
+    ["Balancing allowance", s.balancingAllowance],
+    ["Balancing charge (add back)", s.balancingCharge],
+    ["Capital tagged, not in register", s.capitalFlagged],
+    ["Not deductible", s.notDeductible],
+    ["Needs review", s.needsReview],
+    ["TOTAL RELIEF", s.totalRelief],
+  ];
+  const assetRows = (taxPlan.assets || [])
+    .filter((a) => a.entity !== "Sdn. Bhd.")
+    .map((a) => {
+      const ca = assetCaForYA(a, ya);
+      return [a.description, (MY_CA_RATES[a.assetClass] || {}).label || a.assetClass, a.cost, a.businessUsePct + "%", money(ca.claimed), money(assetResidualAfter(a, ya))];
+    });
+  const tableHtml = `
+    <table>
+      <tr><th colspan="2">Sunrise Villa — YA ${ya} tax summary (Enterprise)</th></tr>
+      ${rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${typeof v === "number" ? v : escapeHtml(String(v))}</td></tr>`).join("")}
+      <tr><th colspan="6">Capital asset schedule (YA ${ya})</th></tr>
+      <tr><th>Asset</th><th>Class</th><th>Cost</th><th>Business %</th><th>Allowance</th><th>Residual c/f</th></tr>
+      ${assetRows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(String(c))}</td>`).join("")}</tr>`).join("")}
+    </table>`;
+  const blob = new Blob([tableHtml], { type: "application/vnd.ms-excel" });
+  const link = document.createElement("a");
+  link.download = `sunrise-villa-tax-YA${ya}.xls`;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+// =============================================================================
+// TAX REVIEW — controller: run the deterministic engine instantly, then enrich
+// with the AI judgement layer when signed in. The deterministic verdict + the
+// deterministic findings always render; the AI only ADDS findings/questions.
+// =============================================================================
+let lastTaxReview = null;
+let lastTaxReviewAi = null; // cached AI payload so re-renders (e.g. ticking the classification box) keep the findings
+
+function setTaxReviewStatus(message, tone = "") {
+  if (!els.taxReviewStatus) return;
+  els.taxReviewStatus.textContent = message || "";
+  els.taxReviewStatus.className = `tax-review-status${tone ? ` ${tone}` : ""}`;
+}
+
+function reviewYa() {
+  return Number(els.taxYaInput?.value || taxPlan.year || currentYear());
+}
+
+async function runTaxReview() {
+  const ya = reviewYa();
+  // Persist the classification affirmation (his own factual confirmation).
+  if (els.taxClassifyAffirm) {
+    const affirmed = els.taxClassifyAffirm.checked;
+    const prev = taxPlan.review || {};
+    taxPlan = { ...taxPlan, review: { classificationAffirmed: affirmed, affirmedAt: affirmed ? prev.affirmedAt || new Date().toISOString() : "" } };
+    saveTaxPlan();
+  }
+  const review = buildTaxReview(ya); // deterministic — instant, offline
+  lastTaxReview = review;
+  lastTaxReviewAi = null; // fresh run — drop any cached AI findings
+  renderTaxReview(review, { aiState: "pending" });
+
+  // AI judgement layer (optional — needs sign-in + funded API).
+  if (!supabaseClient) {
+    renderTaxReview(review, { aiState: "offline" });
+    return;
+  }
+  setTaxReviewStatus("Running the AI judgement pass…", "loading");
+  if (els.runTaxReviewBtn) els.runTaxReviewBtn.disabled = true;
+  try {
+    const payload = {
+      ya,
+      grossTurnover: review.grossTurnover,
+      summary: review.summary,
+      expenses: taxReviewRecords(ya).expenses.map((e) => ({
+        date: e.date, category: e.category, amount: e.amount, businessUsePct: e.businessUsePct,
+        deductible: e.deductible, vendor: e.vendor, notes: e.notes, entity: e.entity,
+        hasReceipt: e.hasReceipt, ruleTreatment: e.ruleTreatment, deductibleAmount: e.deductibleAmount,
+      })),
+      assets: taxReviewRecords(ya).assets.map((a) => ({
+        description: a.description, vendor: a.vendor, cost: a.cost, assetClass: a.assetClass,
+        businessUsePct: a.businessUsePct, condition: a.condition, acquisitionDate: a.acquisitionDate,
+        disposed: a.disposed, hasReceipt: a.hasReceipt, qualifyingExpenditure: a.qualifyingExpenditure,
+        thisYaAllowance: a.thisYaAllowance, residual: a.residual,
+      })),
+      deterministicFindings: review.findings.map((f) => ({ checkId: f.checkId, severity: f.severity, title: f.title, refs: f.refs })),
+      checksNotEvaluated: review.checksNotEvaluated,
+    };
+    const { data, error } = await supabaseClient.functions.invoke("property-tax-review", { body: payload });
+    if (error) throw new Error(await edgeErrorMessage(error, data));
+    if (!data?.ok || !data.data) throw new Error(data?.detail || data?.error || "Could not complete the AI review.");
+    lastTaxReviewAi = data.data;
+    renderTaxReview(review, { aiState: "done", ai: data.data });
+    setTaxReviewStatus("AI review complete.", "ok");
+  } catch (err) {
+    console.error("property-tax-review", err);
+    renderTaxReview(review, { aiState: "error", aiError: String(err.message || err) });
+    setTaxReviewStatus(`AI pass failed: ${err.message || err}. The built-in checks above still apply.`, "bad");
+  } finally {
+    if (els.runTaxReviewBtn) els.runTaxReviewBtn.disabled = false;
+  }
+}
+
+function findingCard(f, source) {
+  const tone = { high: "bad", medium: "warn", low: "info", info: "info" }[f.severity] || "info";
+  const ledgerLabel = {
+    over_claim_audit_risk: "Over-claim / audit risk",
+    missed_relief_overpayment: "Missed relief — you may overpay",
+    compliance_separate_regime: "Separate compliance regime",
+    documentation: "Documentation",
+  }[f.ledger] || "";
+  const refs = (f.refs && f.refs.length)
+    ? `<ul class="tax-finding-refs">${f.refs.slice(0, 12).map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>`
+    : (f.recordRef ? `<ul class="tax-finding-refs"><li>${escapeHtml(f.recordRef)}</li></ul>` : "");
+  const rm = f.rmAtStake ? `<span class="tax-finding-rm">${escapeHtml(String(f.rmAtStake))}</span>` : "";
+  const fact = f.factNeededToDecide ? `<p class="tax-finding-fact"><strong>To decide:</strong> ${escapeHtml(f.factNeededToDecide)}</p>` : "";
+  const q = f.isQuestion ? `<span class="tax-finding-q">Question</span>` : "";
+  return `
+    <article class="tax-finding tone-${tone}">
+      <div class="tax-finding-head">
+        <span class="tax-finding-sev tone-${tone}">${escapeHtml((f.severity || "").toUpperCase())}</span>
+        <strong>${escapeHtml(f.title || f.finding || "Finding")}</strong>
+        ${q}${rm}
+        <span class="tax-finding-tag">${escapeHtml(source)}${ledgerLabel ? ` · ${escapeHtml(ledgerLabel)}` : ""}</span>
+      </div>
+      ${f.detail || f.finding ? `<p class="tax-finding-detail">${escapeHtml(f.detail || f.finding)}</p>` : ""}
+      ${fact}
+      ${f.recommendation ? `<p class="tax-finding-rec">→ ${escapeHtml(f.recommendation)}</p>` : ""}
+      ${refs}
+      ${f.source ? `<span class="tax-finding-src">${escapeHtml(f.source)}</span>` : ""}
+    </article>`;
+}
+
+function renderTaxReview(review, opts = {}) {
+  if (!els.taxReviewResult) return;
+  els.taxReviewResult.hidden = false;
+  const { verdict, verdictReason, findings, checksNotEvaluated, summary, ya } = review;
+  const tone = TAX_VERDICT_TONE[verdict];
+  const aiFindings = opts.ai?.findings || [];
+  const detFindings = findings; // info-level planning items render inline with the rest
+  const overClaim = [...detFindings, ...aiFindings].filter((f) => f.ledger !== "missed_relief_overpayment");
+  const missed = [...detFindings, ...aiFindings].filter((f) => f.ledger === "missed_relief_overpayment");
+  const highCount = [...detFindings, ...aiFindings].filter((f) => f.severity === "high").length;
+
+  let aiBlock = "";
+  if (opts.aiState === "pending") aiBlock = `<p class="tax-ai-note loading">Running the AI judgement pass…</p>`;
+  else if (opts.aiState === "offline") aiBlock = `<p class="tax-ai-note">Sign in with cloud sync to add the AI judgement pass (repair-vs-renovation, entertainment, vehicle use, OTA withholding). The built-in checks below already ran.</p>`;
+  else if (opts.aiState === "error") aiBlock = `<p class="tax-ai-note bad">AI pass unavailable (${escapeHtml(opts.aiError || "")}). The built-in checks below still apply.</p>`;
+
+  const gate = opts.ai?.businessClassificationGate;
+  const prompts = opts.ai?.completenessPrompts || [];
+  const standing = opts.ai?.standingProfessionalChecks || [];
+
+  els.taxReviewResult.innerHTML = `
+    <div class="tax-verdict tone-${tone}">
+      <div class="tax-verdict-head">
+        <span class="tax-verdict-badge tone-${tone}">${escapeHtml(TAX_VERDICT_LABEL[verdict])}</span>
+        <span class="tax-verdict-ya">YA ${ya}</span>
+      </div>
+      <p class="tax-verdict-reason">${escapeHtml(verdictReason)}</p>
+      <p class="tax-verdict-counts">${highCount} high-severity · ${overClaim.length + missed.length} finding(s) total · relief ${money(summary.totalRelief)}</p>
+    </div>
+    ${aiBlock}
+    ${gate ? `<div class="tax-gate"><strong>Business vs passive (the one it can't decide):</strong> ${escapeHtml(gate.statement || "")} ${gate.evidenceSeen ? `<span class="tax-gate-ev">${escapeHtml(gate.evidenceSeen)}</span>` : ""}</div>` : ""}
+
+    ${overClaim.length ? `<h4 class="tax-ledger-h">⚠ Over-claim / audit risk</h4>${overClaim.map((f) => findingCard(f, f.triggerType === "engine-deterministic" ? "Rule check" : "AI judgement")).join("")}` : `<p class="tax-ledger-empty">No over-claim issues found in the entered records.</p>`}
+
+    ${missed.length ? `<h4 class="tax-ledger-h">↑ Missed relief — you may be overpaying</h4>${missed.map((f) => findingCard(f, f.triggerType === "engine-deterministic" ? "Rule check" : "AI judgement")).join("")}` : ""}
+
+    ${prompts.length ? `<h4 class="tax-ledger-h">Revenue & completeness (confirm yourself)</h4><ul class="tax-prompts">${prompts.map((p) => `<li>${escapeHtml(p)}</li>`).join("")}</ul>` : ""}
+
+    <details class="tax-not-evaluated">
+      <summary>Checks that could not run (${checksNotEvaluated.length}) — not a pass</summary>
+      <ul>${checksNotEvaluated.map((c) => `<li><strong>${escapeHtml(c.checkId)}:</strong> needs ${escapeHtml(c.missingInput)} — ${escapeHtml(c.consequence)}</li>`).join("")}</ul>
+    </details>
+
+    ${standing.length ? `<details class="tax-standing"><summary>Always get a professional check on these</summary><ul>${standing.map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul></details>` : ""}
+
+    <p class="scan-disclaimer">${escapeHtml(TAX_REVIEW_DISCLAIMER)}</p>
+  `;
+}
+
+function renderMonthButtons() {
+  if (els.mobileMonthLabel) els.mobileMonthLabel.textContent = monthLabel(selectedMonth);
+  if (!els.monthButtonGrid) return;
+  const [year, selectedMonthNumber] = selectedMonth.split("-").map(Number);
+  if (els.monthYearLabel) els.monthYearLabel.textContent = String(year);
+  els.monthButtonGrid.innerHTML = Array.from({ length: 12 }, (_, index) => {
+    const monthNumber = index + 1;
+    const monthValue = `${year}-${String(monthNumber).padStart(2, "0")}`;
+    const monthTotals = totalsFor(monthValue);
+    const isActive = monthNumber === selectedMonthNumber;
+    const hasBookings = monthTotals.bookings > 0;
+    return `
+      <button class="month-button ${isActive ? "active" : ""} ${hasBookings ? "has-bookings" : ""}" type="button" data-month-value="${monthValue}" aria-pressed="${isActive}" title="${shortMonthName(index)} ${year}${hasBookings ? ` · ${monthTotals.bookings} booking${monthTotals.bookings === 1 ? "" : "s"}` : ""}">
+        <span class="month-name">${shortMonthName(index)}</span>
+        <span class="month-count">${hasBookings ? monthTotals.bookings : ""}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function setSelectedMonth(monthValue, syncBookingFilter = true) {
+  selectedMonth = monthValue;
+  if (syncBookingFilter) {
+    appSettings = { ...appSettings, bookingMonthFilter: "Selected" };
+    if (els.bookingMonthFilter) els.bookingMonthFilter.value = "Selected";
+    saveAppSettings();
+  }
+}
+
+// Improvement #1: guests arriving soon who still need their check-in info OR a phone number.
+// Typed Send-today items across the guest lifecycle. Each type ages out naturally
+// (no extra stored flags) so the list stays a clean "what to message right now".
+function sendTodayItems() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = isoDate(today);
+  const horizon7 = addDays(today, 7);
+  const items = [];
+  scopedBookings().forEach((b) => {
+    if (isTentativeBooking(b)) return; // no check-in info / deposit chasing for unconfirmed leads
+    const arr = dateObj(b.arrival);
+    const dep = dateObj(departureFor(b));
+    const hasPhone = !!formatPhoneForWhatsapp(b.contact);
+    // 1) Pre-arrival check-in info (≤7 days out, not yet sent OR phone missing)
+    if (arr >= today && arr <= horizon7 && !hasCheckinBeenSent(b)) {
+      items.push({ booking: b, type: "checkin", label: `arrives ${shortDate(b.arrival)} · check-in info` });
+    }
+    // 2) Deposit not received (current/future booking with an expected deposit)
+    if (dep >= today && Number(b.depositAmount || 0) > 0 && !b.depositPaid) {
+      items.push({ booking: b, type: "deposit", label: `arrives ${shortDate(b.arrival)} · deposit ${money(b.depositAmount)} unpaid` });
+    }
+    // 3) Mid-stay check-in (stay ≥3 nights, the day after arrival only) — clears once sent today
+    if (Number(b.nights || 0) >= 3 && isoDate(addDays(arr, 1)) === todayIso && b.sentLog?.midstay !== todayIso) {
+      items.push({ booking: b, type: "midstay", label: `in-house · mid-stay check` });
+    }
+    // 4) Review request (departed today or in the last 2 days) — clears once sent today; not nagged beyond the window
+    if (dep <= today && dep >= addDays(today, -2) && !b.sentLog?.review) {
+      items.push({ booking: b, type: "review", label: `checked out ${shortDate(departureFor(b))} · ask for review` });
+    }
+  });
+  const order = { checkin: 0, deposit: 1, midstay: 2, review: 3 };
+  return items.sort((a, b) => (order[a.type] - order[b.type]) || a.booking.arrival.localeCompare(b.booking.arrival));
+}
+
+// Improvement #3: open / gap nights in the active villa's calendar for the next window.
+// "gap" = empty nights bounded by bookings on both sides (hardest to fill); "open" = open-ended.
+function upcomingVacancies(daysAhead = 45) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const horizon = addDays(today, daysAhead);
+  const intervals = scopedBookings()
+    .filter((b) => !isTentativeBooking(b)) // a lead doesn't occupy the night — it's still open
+    .map((b) => ({ start: dateObj(b.arrival), end: dateObj(departureFor(b)) }))
+    .filter((iv) => iv.end > today)
+    .sort((a, b) => a.start - b.start);
+  const merged = [];
+  intervals.forEach((iv) => {
+    const last = merged[merged.length - 1];
+    if (last && iv.start <= last.end) {
+      if (iv.end > last.end) last.end = iv.end;
+    } else {
+      merged.push({ start: new Date(iv.start), end: new Date(iv.end) });
+    }
+  });
+  const clip = (d) => (d < today ? today : d > horizon ? horizon : d);
+  const out = [];
+  let cursor = today;
+  let passed = false;
+  merged.forEach((iv) => {
+    const gapStart = clip(cursor);
+    const gapEnd = clip(iv.start);
+    if (gapEnd > gapStart) {
+      const nights = Math.round((gapEnd - gapStart) / 86400000);
+      if (nights > 0) out.push({ start: isoDate(gapStart), end: isoDate(gapEnd), nights, type: passed ? "gap" : "open" });
+    }
+    if (iv.end > cursor) {
+      cursor = iv.end;
+      passed = true;
+    }
+  });
+  if (cursor < horizon) {
+    const s = clip(cursor);
+    const nights = Math.round((horizon - s) / 86400000);
+    if (nights > 0) out.push({ start: isoDate(s), end: isoDate(horizon), nights, type: "open" });
+  }
+  return out;
+}
+
+function renderToday() {
+  const bookings = scopedBookings();
+  const stays = bookings.filter(booking => !isTentativeBooking(booking));
+  const host = document.querySelector("#todayContent");
+  if (!host) return;
+  const todayIso = isoDate(new Date());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const fmtNights = (n) => `${n} night${Number(n) === 1 ? "" : "s"}`;
+
+  const arrivals = stays.filter((b) => b.arrival === todayIso).sort((a, b) => a.guest.localeCompare(b.guest));
+  const departures = stays.filter((b) => departureFor(b) === todayIso);
+  const inhouse = stays.filter((b) => overlapsDate(b, todayIso));
+
+  const daysFromToday = (iso) => Math.round((dateObj(iso) - today) / 86400000);
+  const airbnbPayouts = [];
+  const directBalances = [];
+  const depositRefunds = [];
+  bookings.forEach((b) => {
+    if (isExcludedBooking(b)) return;
+    const dep = dateObj(departureFor(b));
+    const bal = balanceFor(b);
+    if (b.channel === "Airbnb") {
+      // Money owed by Airbnb (held until release ~24h after check-in). Show near-term ones.
+      const release = airbnbReleaseDate(b);
+      const relDays = daysFromToday(release);
+      if (bal > 0 && relDays <= 30) airbnbPayouts.push({ b, release, relDays, amount: bal });
+    } else if (bal > 0) {
+      // Direct: balance still owed (should be settled 2–4 weeks before arrival).
+      directBalances.push({ b, bal, daysToArrival: daysFromToday(b.arrival), depositPaid: b.depositPaid, depositAmount: Number(b.depositAmount || 0) });
+    }
+    // Security deposit to refund after checkout (both channels).
+    if (refundPendingFor(b) > 0 && dep <= today) {
+      depositRefunds.push({ b, dep });
+    }
+  });
+  airbnbPayouts.sort((a, b) => a.release.localeCompare(b.release));
+  directBalances.sort((a, b) => a.b.arrival.localeCompare(b.b.arrival));
+  depositRefunds.sort((a, b) => a.dep - b.dep);
+  const attentionCount = airbnbPayouts.length + directBalances.length + depositRefunds.length;
+
+  const guestRow = (b, meta) => `
+    <div class="today-row row-clickable" data-open-booking="${b.id}" title="Open ${escapeHtml(b.guest)}'s booking">
+      <span class="today-avatar">${prefixFor(b.guest)}</span>
+      <div class="today-row-main">
+        <strong>${escapeHtml(b.guest)} ${returningBadgeHtml(b, bookings)}${blocklistBadgeHtml(b)}</strong>
+        <span>${b.villa === "Windmill" ? "Windmill" : "Sunrise"} · ${meta}</span>
+      </div>
+      ${channelBadgeFor(b)}
+    </div>`;
+
+  const emptyMsg = (t) => `<div class="today-empty">${t}</div>`;
+  const col = (title, count, rowsHtml, emptyText) => `
+    <section class="today-card">
+      <div class="today-card-head"><h3>${title}</h3><span class="count-pill">${count}</span></div>
+      <div class="today-card-body">${rowsHtml || emptyMsg(emptyText)}</div>
+    </section>`;
+
+  // --- "Send today": typed lifecycle nudges with inline phone capture ---
+  const fmtN = (n) => `${n} night${Number(n) === 1 ? "" : "s"}`;
+  const sendList = sendTodayItems();
+  const sendBtnLabel = { checkin: "Send check-in", deposit: "Request deposit", midstay: "Mid-stay check", review: "Ask for review" };
+  const sendRows = sendList
+    .map(({ booking: b, type, label }) => {
+      const villa = b.villa === "Windmill" ? "Windmill" : "Sunrise";
+      const hasPhone = !!formatPhoneForWhatsapp(b.contact);
+      const sentToday = !!(b.sentLog && b.sentLog[type] === todayIso);
+      const btnText = sentToday ? "✓ Sent · resend" : type === "checkin" && b.checkinSentAt ? "Resend check-in" : sendBtnLabel[type];
+      const action = hasPhone
+        ? `<div class="message-task-actions"><button class="small-action wa-action" type="button" data-send="${type}" data-send-id="${b.id}">Open WhatsApp</button><button class="small-action" type="button" data-mark-sent="${type}" data-send-id="${b.id}">${sentToday ? "Marked sent" : "Mark sent"}</button></div>`
+        : `<div class="send-phone">
+             <input type="tel" inputmode="tel" placeholder="+60 12-345 6789" data-contact-input="${b.id}" aria-label="WhatsApp number for ${escapeHtml(b.guest)}" />
+             <button class="small-action" type="button" data-set-contact="${b.id}">Save</button>
+           </div>`;
+      return `
+        <div class="today-row send-row send-${type}${sentToday ? " sent" : ""}">
+          <span class="today-avatar">${prefixFor(b.guest)}</span>
+          <div class="today-row-main">
+            <strong>${escapeHtml(b.guest)} ${returningBadgeHtml(b, bookings)}${blocklistBadgeHtml(b)}</strong>
+            <span>${villa} · ${label}${hasPhone ? "" : " · <em>needs WhatsApp number</em>"}</span>
+          </div>
+          ${action}
+        </div>`;
+    })
+    .join("");
+  const sendCard = `
+    <section class="today-card today-send">
+      <div class="today-card-head"><h3>Send today</h3><span class="count-pill">${sendList.length}</span></div>
+      <div class="today-card-body">${sendRows || emptyMsg("Nothing to send right now.")}</div>
+    </section>`;
+
+  // --- Improvement #3: open / gap nights ahead ---
+  const vacancies = upcomingVacancies(45);
+  const vacRows = vacancies
+    .slice(0, 6)
+    .map((v) => {
+      const tight = v.type === "gap" && v.nights <= 2;
+      const tag = v.type === "gap" ? "gap between stays" : "open";
+      return `
+        <div class="today-row vacancy-row${tight ? " tight" : ""}">
+          <div class="today-row-main">
+            <strong>${shortDate(v.start)} → ${shortDate(v.end)}</strong>
+            <span>${fmtN(v.nights)} free · ${tag}</span>
+          </div>
+          ${tight ? `<span class="today-flag due">Hard to fill</span>` : ""}
+        </div>`;
+    })
+    .join("");
+  const vacancyCard = `
+    <section class="today-card today-vacancy">
+      <div class="today-card-head"><h3>Open nights ahead</h3><span class="count-pill">${vacancies.length}</span></div>
+      <div class="today-card-body">${vacRows || emptyMsg("Fully booked for the next 6 weeks. 🎉")}</div>
+    </section>`;
+
+  // --- Needs your attention: split by money type (Airbnb payouts / Direct balances / refunds) ---
+  const attnRow = (b, flag, sub) => `
+    <div class="today-row row-clickable" data-open-booking="${b.id}" title="Open ${escapeHtml(b.guest)}'s booking">
+      <span class="today-avatar">${prefixFor(b.guest)}</span>
+      <div class="today-row-main"><strong>${escapeHtml(b.guest)} ${returningBadgeHtml(b, bookings)}${blocklistBadgeHtml(b)}</strong><span>${b.villa === "Windmill" ? "Windmill" : "Sunrise"} · ${sub}</span></div>
+      ${flag}
+    </div>`;
+  const relText = (d) => d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? "today" : `in ${d}d`;
+  // Pills show the amount only — the group label above already names the type (payout / balance / refund).
+  const airbnbRowsHtml = airbnbPayouts
+    .map(({ b, release, relDays, amount }) => attnRow(b, `<span class="today-flag pend">${money(amount)}</span>`, `expected ${shortDate(release)} (${relText(relDays)})`))
+    .join("");
+  const arrivalText = (d) => (d > 0 ? `arrives in ${d} day${d === 1 ? "" : "s"}` : d === 0 ? "arrives today" : "balance overdue");
+  const depositText = (paid, amt) => (amt > 0 ? (paid ? `deposit ${money(amt)} ✓ held` : `deposit ${money(amt)} ⚠ not collected`) : "");
+  const directRowsHtml = directBalances
+    .map(({ b, bal, daysToArrival, depositPaid, depositAmount }) => {
+      // Red only when payment is genuinely pressing: overdue, or inside the firm 2-week deadline.
+      const tone = daysToArrival < 0 || daysToArrival <= 28 ? "due" : "pend";
+      const dep = depositText(depositPaid, depositAmount);
+      return attnRow(b, `<span class="today-flag ${tone}">${money(bal)}</span>`, `${arrivalText(daysToArrival)}${dep ? " · " + dep : ""}`);
+    })
+    .join("");
+  const refundRowsHtml = depositRefunds
+    .map(({ b }) => attnRow(b, `<span class="today-flag pend">${money(refundPendingFor(b))}</span>`, `checked out ${shortDate(departureFor(b))}`))
+    .join("");
+  const groupLabel = (t) => `<div class="attn-group-label">${t}</div>`;
+  const attentionBody = attentionCount
+    ? [
+        airbnbRowsHtml ? groupLabel("Airbnb — payout pending") + airbnbRowsHtml : "",
+        directRowsHtml ? groupLabel("Direct — balance due") + directRowsHtml : "",
+        refundRowsHtml ? groupLabel("Deposit refunds due") + refundRowsHtml : "",
+      ].join("")
+    : emptyMsg("All caught up — nothing needs action.");
+
+  host.innerHTML = `
+    <div class="today-headline">
+      <p class="eyebrow">Daily operations</p>
+      <h3 class="today-date">${new Date().toLocaleDateString("en-MY", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).replace("Sept", "Sep")}</h3>
+    </div>
+    <div class="today-columns">
+      ${col("Arrivals today", arrivals.length, arrivals.map((b) => guestRow(b, `${fmtNights(b.nights)} · out ${shortDate(departureFor(b))}`)).join(""), "No arrivals today.")}
+      ${col("In-house now", inhouse.length, inhouse.map((b) => guestRow(b, `until ${shortDate(departureFor(b))}`)).join(""), "No guests in-house.")}
+      ${col("Departures today", departures.length, departures.map((b) => guestRow(b, "checking out")).join(""), "No departures today.")}
+    </div>
+    <div class="today-action-grid">
+      ${sendCard}
+      ${vacancyCard}
+    </div>
+    <section class="today-card today-attention">
+      <div class="today-card-head"><h3>Needs your attention</h3><span class="count-pill">${attentionCount}</span></div>
+      <div class="today-card-body">${attentionBody}</div>
+    </section>`;
+}
+
+function renderAll() {
+  applyAccent();
+  renderVillaSwitch();
+  renderBookingCandidates();
+  renderToday();
+  els.monthPicker.value = selectedMonth;
+  renderMonthButtons();
+  renderCalendar();
+  renderIcalSettings();
+  renderDetails();
+  renderDashboard();
+  renderBookingsTable();
+  renderGuests();
+  renderGuide();
+  renderMessageGenerator();
+  renderDataHealth();
+  renderDocuments();
+  renderTaxPlan();
+  setupDashboardToggles();
+  applyDashboardMode();
+}
+
+function renderActiveView() {
+  const renderers = { today: renderToday, calendar: () => { renderCalendar(); renderDetails(); }, dashboard: renderDashboard,
+    bookings: renderBookingsTable, guests: renderGuests, messages: renderMessageGenerator, guide: renderGuide, documents: renderDocuments, tax: renderTaxPlan };
+  renderers[activeView]?.();
+  renderDataHealth();
+}
+
+document.querySelectorAll(".nav-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    setView(button.dataset.view);
+    renderActiveView();
+  });
+});
+
+els.icalSyncBtn?.addEventListener("click", syncIcalNow);
+els.icalSunriseUrl?.addEventListener("change", persistIcalSources);
+els.icalWindmillUrl?.addEventListener("change", persistIcalSources);
+
+document.querySelectorAll(".villa-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    appSettings = { ...appSettings, activeVilla: tab.dataset.villa === "Windmill" ? "Windmill" : "Sunrise" };
+    saveAppSettings();
+    loadVillaMessageIntoForm(); // show the active villa's own message block (no Sunrise↔Windmill bleed)
+    renderAll();
+  });
+});
+
+els.airbnbAutofillBtn?.addEventListener("click", autofillBookingFromAirbnbEmail);
+
+document.querySelector("#bookingCandidatesQueue")?.addEventListener("click", (event) => {
+  const add = event.target.closest("[data-add-candidate]");
+  const dismiss = event.target.closest("[data-dismiss-candidate]");
+  if (add) importBookingCandidate(add.dataset.addCandidate);
+  else if (dismiss) dismissBookingCandidate(dismiss.dataset.dismissCandidate);
+});
+
+els.monthPicker.addEventListener("change", () => {
+  setSelectedMonth(els.monthPicker.value);
+  renderAll();
+});
+
+els.monthButtonGrid?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-month-value]");
+  if (!button) return;
+  setSelectedMonth(button.dataset.monthValue);
+  renderAll();
+});
+
+els.prevMonth.addEventListener("click", () => {
+  const [year, month] = selectedMonth.split("-").map(Number);
+  setSelectedMonth(`${year - 1}-${String(month).padStart(2, "0")}`);
+  renderAll();
+});
+
+els.nextMonth.addEventListener("click", () => {
+  const [year, month] = selectedMonth.split("-").map(Number);
+  setSelectedMonth(`${year + 1}-${String(month).padStart(2, "0")}`);
+  renderAll();
+});
+
+// Mobile month stepper (the sidebar picker is hidden ≤760px). Steps ONE month,
+// wrapping the year — so a phone user isn't stuck on the current month.
+function stepSelectedMonth(delta) {
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const d = new Date(year, month - 1 + delta, 1);
+  setSelectedMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  renderAll();
+}
+els.mobilePrevMonth?.addEventListener("click", () => stepSelectedMonth(-1));
+els.mobileNextMonth?.addEventListener("click", () => stepSelectedMonth(1));
+
+document.querySelector("#openAddBooking").addEventListener("click", () => openBookingDialog());
+document.querySelector("#addFromTable").addEventListener("click", () => openBookingDialog());
+document.querySelector("#closeBookingDialog")?.addEventListener("click", () => els.dialog.close());
+document.querySelector("#cancelBookingDialog")?.addEventListener("click", () => els.dialog.close());
+els.addFromBookingsGuide?.addEventListener("click", () => openBookingDialog());
+els.showDashboardSections?.addEventListener("click", () => {
+  appSettings = { ...appSettings, dashboardHidden: {} };
+  saveAppSettings();
+  applyDashboardToggles();
+});
+
+document.querySelectorAll("[data-dashboard-mode]").forEach((button) => {
+  button.addEventListener("click", (event) => {
+    const modeButton = event.currentTarget;
+    appSettings = { ...appSettings, dashboardMode: modeButton.dataset.dashboardMode === "annual" ? "annual" : "monthly" };
+    saveAppSettings();
+    applyDashboardMode();
+    renderAll();
+  });
+});
+
+document.querySelectorAll("[data-form-channel]").forEach((button) => {
+  button.addEventListener("click", () => {
+    els.channelInput.value = button.dataset.formChannel;
+    syncBookingChannelChoice();
+    applyChannelDepositDefault();
+  });
+});
+
+document.querySelectorAll("[data-title-choice]").forEach((button) => {
+  button.addEventListener("click", () => {
+    els.guestTitleInput.value = button.dataset.titleChoice;
+    syncGuestTitleChoice();
+  });
+});
+
+document.querySelectorAll("[data-nights-choice]").forEach((button) => {
+  button.addEventListener("click", () => setNightsChoice(button.dataset.nightsChoice));
+});
+
+els.nightsManualInput?.addEventListener("input", () => {
+  els.nightsInput.value = Math.max(4, Number(els.nightsManualInput.value || 4));
+  syncNightsChoice();
+});
+
+els.guestInput?.addEventListener("input", () => els.guestInput.setCustomValidity(""));
+els.arrivalInput?.addEventListener("change", updateCheckoutEcho);
+
+els.excludeCalculationsInput?.addEventListener("change", applyExcludedBookingDefaults);
+
+els.form.addEventListener("submit", (event) => {
+  if (event.submitter?.value === "cancel") return;
+  event.preventDefault();
+  els.guestInput.setCustomValidity(els.guestInput.value.trim() ? "" : "Enter a guest name.");
+  if (!els.form.reportValidity()) return;
+  const id = safeRecordId(els.bookingId.value);
+  const excluded = els.excludeCalculationsInput.checked;
+  // Guard the costliest data-entry mistake: a paying booking saved at RM 0 silently
+  // corrupts every downstream total. Confirm before allowing it (skip for complimentary).
+  if (!excluded && Number(els.revenueInput.value || 0) === 0) {
+    if (!window.confirm("Accommodation fee is RM 0 for this booking. Save it as a zero-revenue booking?")) {
+      els.revenueInput.focus();
+      return;
+    }
+  }
+  const existing = bookings.find((booking) => booking.id === id);
+  let nextBooking = {
+    ...existing,
+    id,
+    channel: els.channelInput.value,
+    guestTitle: els.guestTitleInput?.value === "Ms" ? "Ms" : "Mr",
+    guest: els.guestInput.value.trim(),
+    contact: els.contactInput.value.trim(),
+    excludeFromCalculations: excluded,
+    arrival: els.arrivalInput.value,
+    nights: Number(els.nightsInput.value),
+    revenue: excluded ? 0 : Number(els.revenueInput.value),
+    paid: excluded ? 0 : Number(els.paidInput.value),
+    depositAmount: excluded ? 0 : Number(els.depositAmountInput.value || 0),
+    depositPaid: excluded ? false : els.depositPaidInput.checked,
+    depositRefunded: excluded ? false : els.depositPaidInput.checked && els.depositRefundedInput.checked,
+    // additive automation/CRM fields
+    villa: els.villaInput?.value === "Windmill" ? "Windmill" : "Sunrise",
+    status: els.statusInput?.value || "confirmed",
+    guestEmail: els.guestEmailInput?.value.trim() || "",
+    checkinSentAt: existing?.checkinSentAt ?? null,
+    reminderSentAt: existing?.reminderSentAt ?? null,
+    incidentLog: els.incidentLogInput?.value.trim() ?? (existing?.incidentLog || ""),
+  };
+
+  if (Array.isArray(existing?.paymentLedger)) nextBooking = VillaLedger.setTotal({ ...nextBooking, paid: existing.paid }, nextBooking.paid);
+  if (!nextBooking.guestId) nextBooking.guestId = guestKeyFor(existing || nextBooking);
+  const conflicts = conflictingBookings(nextBooking);
+  if (conflicts.length && !window.confirm("These dates overlap an existing stay: " + conflicts.map(booking => booking.guest).join(", ") + ". Save this booking anyway?")) return;
+  bookings = bookings.some((booking) => booking.id === id)
+    ? bookings.map((booking) => (booking.id === id ? nextBooking : booking))
+    : [...bookings, nextBooking];
+
+  setSelectedMonth(nextBooking.arrival.slice(0, 7));
+  saveBookings();
+  els.dialog.close();
+  renderAll();
+});
+
+// Calendar: a manual booking chip opens that booking (it looked clickable but was inert).
+els.calendarGrid?.addEventListener("click", (event) => {
+  const chip = event.target.closest(".booking-chip.clickable");
+  if (!chip || !chip.dataset.bookingId) return;
+  const booking = bookings.find((b) => b.id === chip.dataset.bookingId);
+  if (booking) openBookingDialog(booking);
+});
+els.calendarGrid?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const chip = event.target.closest?.(".booking-chip.clickable");
+  if (!chip || !chip.dataset.bookingId) return;
+  event.preventDefault();
+  const booking = bookings.find((b) => b.id === chip.dataset.bookingId);
+  if (booking) openBookingDialog(booking);
+});
+
+els.bookingRows.addEventListener("click", (event) => {
+  const editId = event.target.dataset.edit;
+  const deleteId = event.target.dataset.delete;
+  const waId = event.target.dataset.wa;
+  if (waId) {
+    const booking = bookings.find((item) => item.id === waId);
+    if (booking) openWhatsappForBooking(booking, "checkin"); // one-click: opens WhatsApp with the check-in message
+    return;
+  }
+  if (editId) {
+    const booking = bookings.find((item) => item.id === editId);
+    if (booking) openBookingDialog(booking, true);
+  }
+  if (deleteId) {
+    const booking = bookings.find((item) => item.id === deleteId);
+    if (!window.confirm(`Delete booking for ${booking?.guest || "this guest"}?`)) return;
+    createRecoverySnapshot("Before booking deleted");
+    bookings = bookings.filter((item) => item.id !== deleteId);
+    saveBookings();
+    renderAll();
+  }
+});
+
+// Improvement #1 + #2: "Send today" card — one-click check-in send + inline phone capture.
+const todayContentEl = document.querySelector("#todayContent");
+todayContentEl?.addEventListener("click", (event) => {
+  // A clickable attention / arrival / in-house / departure row opens that booking.
+  const openRow = event.target.closest("[data-open-booking]");
+  if (openRow && !event.target.closest("button, input, a")) {
+    const booking = bookings.find((b) => b.id === openRow.dataset.openBooking);
+    if (booking) openBookingDialog(booking);
+    return;
+  }
+  const markSent = event.target.closest("[data-mark-sent]");
+  if (markSent) {
+    markNudgeSent(markSent.dataset.sendId, markSent.dataset.markSent);
+    renderDetails();
+    return;
+  }
+  const sendBtn = event.target.closest("[data-send]");
+  if (sendBtn) {
+    const type = sendBtn.dataset.send;
+    const booking = bookings.find((b) => b.id === sendBtn.dataset.sendId);
+    if (booking) {
+      openWhatsappForBooking(booking, type);
+    }
+    return;
+  }
+  const saveBtn = event.target.closest("[data-set-contact]");
+  if (saveBtn) {
+    const id = saveBtn.dataset.setContact;
+    const input = todayContentEl.querySelector(`[data-contact-input="${id}"]`);
+    const value = input?.value || "";
+    if (!formatPhoneForWhatsapp(value)) {
+      window.alert("Enter a valid WhatsApp number first.");
+      input?.focus();
+      return;
+    }
+    setBookingContact(id, value);
+  }
+});
+todayContentEl?.addEventListener("keydown", (event) => {
+  const input = event.target.closest?.("[data-contact-input]");
+  if (input && event.key === "Enter") {
+    event.preventDefault();
+    if (!formatPhoneForWhatsapp(input.value)) {
+      window.alert("Enter a valid WhatsApp number first.");
+      return;
+    }
+    setBookingContact(input.dataset.contactInput, input.value);
+  }
+});
+
+els.bookingRows.addEventListener("change", (event) => {
+  const fullReceivedId = event.target.dataset.fullReceived;
+  if (fullReceivedId) setFullReceived(fullReceivedId, event.target.checked);
+  const refundId = event.target.dataset.refundToggle;
+  if (refundId) setDepositRefunded(refundId, event.target.checked);
+});
+
+els.detailsList.addEventListener("change", (event) => {
+  const fullReceivedId = event.target.dataset.fullReceived;
+  if (fullReceivedId) setFullReceived(fullReceivedId, event.target.checked);
+  const refundId = event.target.dataset.refundToggle;
+  if (refundId) setDepositRefunded(refundId, event.target.checked);
+  const whatsappId = event.target.dataset.whatsappSent;
+  if (whatsappId) setWhatsappSent(whatsappId, event.target.checked);
+});
+
+els.upcomingRows?.addEventListener("change", (event) => {
+  const fullReceivedId = event.target.dataset.fullReceived;
+  if (fullReceivedId) setFullReceived(fullReceivedId, event.target.checked);
+  const refundId = event.target.dataset.refundToggle;
+  if (refundId) setDepositRefunded(refundId, event.target.checked);
+});
+
+els.downloadQuickView.addEventListener("click", () => {
+  const canvas = drawQuickViewImage();
+  const link = document.createElement("a");
+  link.download = `sunrise-villa-${selectedMonth}-quick-view.png`;
+  link.href = canvas.toDataURL("image/png");
+  link.click();
+});
+
+document.querySelector("#exportJson").addEventListener("click", () => {
+  downloadBackup();
+});
+
+// Guest Book (CRM) wiring
+const guestsListEl = document.querySelector("#guestsList");
+guestsListEl?.addEventListener("change", (event) => {
+  const card = event.target.closest("[data-guest-key]");
+  if (!card) return;
+  const key = card.dataset.guestKey;
+  if (event.target.matches("[data-guest-notes]")) { setGuestProfile(key, { notes: event.target.value }); flashSaved(event.target); }
+  else if (event.target.matches("[data-guest-tags]")) { setGuestProfile(key, { tags: event.target.value.split(",").map((s) => s.trim()).filter(Boolean) }); flashSaved(event.target); }
+  else if (event.target.matches("[data-guest-blocklist]")) { setGuestProfile(key, { blocklist: event.target.checked }); renderGuests(); }
+  else if (event.target.matches("[data-guest-consent]")) setGuestProfile(key, { consent: event.target.checked });
+});
+guestsListEl?.addEventListener("click", (event) => {
+  const wa = event.target.closest("[data-guest-wa]");
+  if (wa) openWhatsappMessage(wa.dataset.guestWa, wa.dataset.guestName ? `Hi ${wa.dataset.guestName}, ` : ""); // open with a greeting, not a blank chat
+});
+document.querySelector("#guestSearch")?.addEventListener("input", renderGuests);
+document.querySelector("#guestReturningOnly")?.addEventListener("change", renderGuests);
+document.querySelector("#exportGuestRegister")?.addEventListener("click", exportGuestRegister);
+
+// Digital guidebook wiring
+document.querySelector("#guideView")?.addEventListener("input", (event) => {
+  const field = event.target.dataset.guide;
+  if (field) setGuidebookField(field, event.target.value);
+});
+document.querySelector("#guideView")?.addEventListener("change", (event) => {
+  if (event.target.dataset.guide) flashSaved(event.target); // confirm the silent per-keystroke save on blur
+});
+document.querySelector("#previewGuidebook")?.addEventListener("click", previewGuidebook);
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function downloadCsv(filename, rows) {
+  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const link = document.createElement("a");
+  link.download = filename;
+  link.href = URL.createObjectURL(blob);
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+document.querySelector("#exportSheets").addEventListener("click", () => {
+  const headers = [
+    "Channel",
+    "Record Type",
+    "Guest Title",
+    "Guest Name",
+    "Guest Contact",
+    "Prefix",
+    "Arrival",
+    "Nights",
+    "Departure",
+    "Accommodation Fees",
+    "Damage Deposit Amount",
+    "Total Amount to Receive",
+    "Amount Received",
+    "Amount Received Excluding Deposit",
+    "Damage Deposit Paid",
+    "Damage Deposit Refunded",
+    "Balance",
+  ];
+  const rows = bookings
+    .slice()
+    .sort((a, b) => a.arrival.localeCompare(b.arrival))
+    .map((booking) => [
+      booking.channel,
+      isExcludedBooking(booking) ? "Influencer / Complimentary" : "Financial",
+      booking.guestTitle,
+      booking.guest,
+      booking.contact,
+      prefixFor(booking.guest),
+      booking.arrival,
+      booking.nights,
+      departureFor(booking),
+      booking.revenue,
+      booking.depositAmount,
+      totalToReceiveFor(booking),
+      booking.paid,
+      accommodationPaidFor(booking),
+      booking.depositPaid ? "Yes" : "No",
+      booking.depositRefunded ? "Yes" : "No",
+      balanceFor(booking),
+    ]);
+  downloadCsv("sunrise-villa-google-sheets-export.csv", [headers, ...rows]);
+});
+
+
+[els.bookingMonthFilter, els.bookingSearch, els.channelFilter, els.paymentFilter, els.depositFilter, els.contactFilter].forEach((control) => {
+  control?.addEventListener("input", renderBookingsTable);
+  control?.addEventListener("change", () => {
+    if (control === els.bookingMonthFilter) {
+      appSettings = { ...appSettings, bookingMonthFilter: els.bookingMonthFilter.value };
+      saveAppSettings();
+    }
+    renderBookingsTable();
+  });
+});
+
+els.bookingColumnControls?.addEventListener("change", (event) => {
+  const key = event.target.dataset.bookingColumn;
+  if (!key) return;
+  appSettings = {
+    ...appSettings,
+    bookingColumns: {
+      ...(appSettings.bookingColumns || {}),
+      [key]: event.target.checked,
+    },
+  };
+  saveAppSettings();
+  renderBookingsTable();
+});
+
+els.quickColumnControls?.addEventListener("change", (event) => {
+  const key = event.target.dataset.quickColumn;
+  if (!key) return;
+  appSettings = {
+    ...appSettings,
+    quickColumns: {
+      ...(appSettings.quickColumns || {}),
+      [key]: event.target.checked,
+    },
+  };
+  saveAppSettings();
+  renderDetails();
+});
+
+[
+  els.expenseCleaning,
+  els.expenseUtilities,
+  els.expenseMaintenance,
+  els.expenseSupplies,
+  els.expensePlatform,
+  els.expenseOther,
+  els.expenseNotes,
+].forEach((control) => {
+  control?.addEventListener("input", () => {
+    const current = profitMonth(selectedMonth);
+    saveSelectedProfitMonth({
+      ...current,
+      cleaning: Number(els.expenseCleaning.value || 0),
+      utilities: Number(els.expenseUtilities.value || 0),
+      maintenance: Number(els.expenseMaintenance.value || 0),
+      supplies: Number(els.expenseSupplies.value || 0),
+      platform: Number(els.expensePlatform.value || 0),
+      other: Number(els.expenseOther.value || 0),
+      notes: els.expenseNotes.value,
+    });
+    renderDashboard();
+  });
+});
+
+els.addOneOffCost?.addEventListener("click", () => {
+  showFinanceSection("expenses");
+  clearTaxExpenseForm();
+  els.taxExpenseDate.value = selectedMonth === isoDate(new Date()).slice(0, 7) ? isoDate(new Date()) : selectedMonth + "-01";
+  document.querySelector("#expenseEntryDisclosure").open = true;
+  els.taxExpenseVendor.focus();
+});
+
+els.oneOffCostList?.addEventListener("change", (event) => {
+  const receiptId = event.target.dataset.receiptUpload;
+  if (receiptId) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const receiptMonth = selectedMonth;
+    const receiptVilla = activeVillaKey();
+    receiptImageFromFile(file)
+      .then((receiptImage) => {
+        const current = profitMonth(receiptMonth, receiptVilla);
+        saveSelectedProfitMonth({
+          ...current,
+          oneOffCosts: current.oneOffCosts.map((cost) => (cost.id === receiptId ? normalizeOneOffCost({ ...cost, receiptImage, receiptName: file.name }) : cost)),
+        }, receiptMonth, receiptVilla);
+        renderDashboard();
+        document.querySelector(".one-off-block")?.setAttribute("open", "");
+      })
+      .catch((error) => window.alert(error.message || "Could not attach receipt image."));
+    return;
+  }
+  const id = event.target.dataset.oneOffId;
+  const field = event.target.dataset.oneOffField;
+  if (!id || !field) return;
+  const current = profitMonth(selectedMonth);
+  if (field === "amount" && typeof linkedLegacyExpense === "function" && linkedLegacyExpense(profitMonthKey(selectedMonth), id)) {
+    window.alert("This cost is linked to an expense record. Update its amount from Finance > Expenses to keep both records aligned.");
+    renderOneOffCosts();
+    return;
+  }
+  saveSelectedProfitMonth({
+    ...current,
+    oneOffCosts: current.oneOffCosts.map((cost) =>
+      cost.id === id
+        ? normalizeOneOffCost({
+            ...cost,
+            [field]: field === "amount" ? Number(event.target.value || 0) : event.target.value,
+          })
+        : cost,
+    ),
+  });
+  renderDashboard();
+  document.querySelector(".one-off-block")?.setAttribute("open", "");
+});
+
+els.oneOffCostList?.addEventListener("click", (event) => {
+  const linkedCost = event.target.dataset.openLinkedCost;
+  if (linkedCost) { openLegacyCostRecord(profitMonthKey(selectedMonth), linkedCost); return; }
+  const receiptId = event.target.dataset.removeReceipt;
+  if (receiptId) {
+    const current = profitMonth(selectedMonth);
+    saveSelectedProfitMonth({
+      ...current,
+      oneOffCosts: current.oneOffCosts.map((cost) => (cost.id === receiptId ? normalizeOneOffCost({ ...cost, receiptImage: "", receiptName: "" }) : cost)),
+    });
+    renderDashboard();
+    document.querySelector(".one-off-block")?.setAttribute("open", "");
+    return;
+  }
+  const id = event.target.dataset.deleteOneOff;
+  if (!id) return;
+  if (typeof linkedLegacyExpense === "function" && linkedLegacyExpense(profitMonthKey(selectedMonth), id)) {
+    window.alert("This cost is linked to an expense record. Delete or unlink that receipt record first. No cost was deleted.");
+    return;
+  }
+  createRecoverySnapshot("Before one-off cost deleted");
+  const current = profitMonth(selectedMonth);
+  saveSelectedProfitMonth({
+    ...current,
+    oneOffCosts: current.oneOffCosts.filter((cost) => cost.id !== id),
+  });
+  renderDashboard();
+  document.querySelector(".one-off-block")?.setAttribute("open", "");
+});
+
+document.querySelector("#retryCloudLoad")?.addEventListener("click", () => loadCloudSnapshot());
+document.querySelector("#syncNoticeRetry")?.addEventListener("click", syncCloudNow);
+document.querySelector("#syncNoticeBackup")?.addEventListener("click", downloadBackup);
+async function reloadCloudCopy() {
+  if (!cloudUser || !cloudReady || cloudLoadPromise) return false;
+  const generation = authGeneration;
+  const ownerId = cloudUser.id;
+  const button = document.querySelector("#syncNoticeReload");
+  if (button?.disabled) return false;
+  if (button) button.disabled = true;
+  try {
+    if (cloudSavePromise) await cloudSavePromise;
+    if (!cloudReady || generation !== authGeneration || cloudUser?.id !== ownerId) return false;
+    if (cloudDirty && !window.confirm("Replace these local records with the cloud copy? Download a full backup first. Browser recovery keeps records but omits receipt images.")) return false;
+    return await loadCloudSnapshot({ replaceLocal: true });
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+document.querySelector("#syncNoticeReload")?.addEventListener("click", reloadCloudCopy);
+window.addEventListener("beforeunload", event => {
+  if (!cloudDirty && !documentHasUnsavedChanges) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+window.addEventListener("online", () => {
+  if (cloudDirty && cloudReady && !cloudConflict) saveCloudSnapshot();
+});
+document.querySelectorAll("[data-document-workspace]").forEach(button => {
+  button.addEventListener("click", () => setDocumentWorkspace(button.dataset.documentWorkspace));
+});
+document.querySelectorAll("[data-document-type]").forEach(button => {
+  button.addEventListener("click", () => {
+    const type = button.dataset.documentType;
+    if (documents.some(doc => doc.id === els.documentId.value) && els.docType.value !== type) {
+      fillDocumentForm({ ...formDocument(), id: crypto.randomUUID(), code: "", type, status: "Draft" });
+    } else {
+      els.docType.value = type;
+    }
+    updateReceiptVisibility();
+    renderDocumentPreview();
+    setDocumentFeedback("Unsaved changes", true);
+  });
+});
+document.querySelector("#jumpToPayments")?.addEventListener("click", () => {
+  els.receiptPaymentSection.scrollIntoView({ behavior: "smooth", block: "center" });
+  els.paymentRows.querySelector("input")?.focus({ preventScroll: true });
+});
+els.documentForm?.addEventListener("input", () => setDocumentFeedback("Unsaved changes", true));
+els.backupNow?.addEventListener("click", downloadBackup);
+els.syncCloudNow?.addEventListener("click", syncCloudNow);
+
+els.restoreBackup?.addEventListener("change", (event) => restoreJsonFromInput(event, "backup file"));
+
+els.restoreRecoverySnapshot?.addEventListener("click", () => {
+  const snapshot = selectedRecoverySnapshot();
+  if (!snapshot?.data) return;
+  try {
+    openRestorePreview(snapshot.data, { label: recoverySnapshotLabel(snapshot), ownerId: snapshot.ownerId, recordsOnly: true });
+  } catch (error) { window.alert(error.message); }
+});
+
+els.downloadRecoverySnapshot?.addEventListener("click", () => {
+  const snapshot = selectedRecoverySnapshot();
+  if (!snapshot?.data) return;
+  downloadJsonFile(`sunrise-villa-recovery-${isoDate(new Date(snapshot.createdAt))}.json`, snapshot.data);
+});
+
+els.messageBookingSelect?.addEventListener("change", () => fillMessageFromBooking(true));
+
+document.querySelectorAll("[data-message-flow]").forEach((button) => {
+  button.addEventListener("click", () => setMessageFlow(button.dataset.messageFlow));
+});
+
+document.querySelectorAll("[data-tax-inner-tab]").forEach((button) => {
+  button.addEventListener("click", () => setTaxInnerTab(button.dataset.taxInnerTab));
+});
+
+[els.messageGuestTitle, els.messageGuestName, els.messagePhone, els.messageSecurityCode, els.messageCheckinTime, els.messageAddress, els.messageMapsLink, els.messageGuideLink, els.quoteGuestTitle, els.quoteGuestName, els.quotePhone, els.quoteTemplateInput, els.checkinTemplateInput, els.guideTemplateInput].forEach((control) => {
+  control?.addEventListener("input", renderCheckinMessage);
+  control?.addEventListener("change", renderCheckinMessage);
+});
+
+[
+  els.quoteWeekdayNights,
+  els.quoteWeekendNights,
+  els.quoteHolidayNights,
+  els.quoteWeekdayRate,
+  els.quoteWeekendRate,
+  els.quoteHolidayRate,
+  els.quoteCleaningFee,
+  els.quoteDamageDeposit,
+  els.quoteActualCharge,
+].forEach((control) => {
+  control?.addEventListener("input", () => {
+    renderQuickQuote(false);
+    renderCheckinMessage();
+  });
+});
+
+[els.quoteCheckIn, els.quoteCheckOut].forEach((control) => {
+  control?.addEventListener("change", () => {
+    syncQuoteNightsFromDates(true);
+    renderCheckinMessage();
+  });
+});
+
+els.copyQuoteMessage?.addEventListener("click", async () => {
+  renderQuickQuote(false);
+  renderCheckinMessage();
+  await copyMessageWithFeedback(quoteMessageText(), els.copyQuoteMessage, "Copy Quote");
+});
+
+els.copyCheckinMessage?.addEventListener("click", async () => {
+  await copyMessageWithFeedback(checkinMessageText(), els.copyCheckinMessage, "Copy Check-in");
+});
+
+els.copyGuideMessage?.addEventListener("click", async () => {
+  const booking = selectedMessageBooking();
+  const message = booking ? guestGuideMessageTextForBooking(booking) : applyTemplate(appSettings.message.templates?.guide || defaultMessageTemplates.guide, templateValuesForBooking());
+  await copyMessageWithFeedback(message, els.copyGuideMessage, "Copy Guide");
+});
+
+els.openWhatsappMessage?.addEventListener("click", () => {
+  renderCheckinMessage();
+  const booking = selectedMessageBooking();
+  if (booking) openWhatsappForBooking(booking, "checkin");
+});
+
+els.openQuoteMessage?.addEventListener("click", () => {
+  renderQuickQuote(false);
+  renderCheckinMessage();
+  openWhatsappForQuote();
+});
+
+els.ackInquiry?.addEventListener("click", openInquiryAck);
+
+// Quote → booking handoff: the lead he just quoted becomes a QUOTED booking in
+// one tap (dashed on the calendar, excluded from revenue until confirmed) —
+// previously every field had to be re-typed and unrecorded leads evaporated.
+document.querySelector("#quoteToBooking")?.addEventListener("click", () => {
+  const q = quoteCalculation();
+  openBookingDialog(null);
+  if (els.guestTitleInput && els.quoteGuestTitle?.value) els.guestTitleInput.value = els.quoteGuestTitle.value === "Ms" ? "Ms" : "Mr";
+  if (els.guestInput) els.guestInput.value = String(els.quoteGuestName?.value || "").trim();
+  if (els.contactInput && els.quotePhone?.value) els.contactInput.value = els.quotePhone.value.trim();
+  if (els.arrivalInput && q.checkIn) els.arrivalInput.value = q.checkIn;
+  const nights = q.checkIn && q.checkOut ? Math.max(1, Math.round((dateObj(q.checkOut) - dateObj(q.checkIn)) / 86400000)) : 0;
+  if (nights) setNightsChoice(nights);
+  if (els.revenueInput) els.revenueInput.value = q.actualCharge || 0;
+  if (els.paidInput) els.paidInput.value = 0;
+  const depositInput = els.depositAmountInput || document.querySelector("#depositAmountInput");
+  if (depositInput && q.damageDeposit) depositInput.value = q.damageDeposit;
+  if (els.statusInput) els.statusInput.value = "quoted";
+  if (typeof updateCheckoutEcho === "function") updateCheckoutEcho();
+});
+
+// AI guest Q&A drafter wiring
+els.aiDraftBtn?.addEventListener("click", draftGuestReply);
+els.aiCopyBtn?.addEventListener("click", () => {
+  if (els.aiDraft?.value?.trim()) copyMessageWithFeedback(els.aiDraft.value, els.aiCopyBtn, "Copy");
+});
+els.aiSendBtn?.addEventListener("click", () => {
+  const text = els.aiDraft?.value?.trim();
+  if (!text) {
+    setAiStatus("Draft a reply first.", "err");
+    return;
+  }
+  if (!formatPhoneForWhatsapp(els.aiPhone?.value)) {
+    setAiStatus("Add the guest's WhatsApp number first.", "err");
+    els.aiPhone?.focus();
+    return;
+  }
+  openWhatsappMessage(els.aiPhone.value, text);
+});
+els.aiDraft?.addEventListener("input", syncAiActionButtons);
+
+els.openGuideMessage?.addEventListener("click", () => {
+  renderCheckinMessage();
+  const booking = selectedMessageBooking();
+  if (booking) openWhatsappForBooking(booking, "guide");
+});
+
+els.openReminderMessage?.addEventListener("click", () => {
+  renderCheckinMessage();
+  const booking = selectedMessageBooking();
+  if (booking) openWhatsappForBooking(booking, "reminder");
+});
+
+els.copyReminderMessage?.addEventListener("click", async () => {
+  const booking = selectedMessageBooking();
+  const message = booking
+    ? reminderMessageTextForBooking(booking)
+    : applyTemplate(appSettings.message.templates?.reminder || defaultMessageTemplates.reminder, templateValuesForBooking());
+  await copyMessageWithFeedback(message, els.copyReminderMessage, "Copy Reminder");
+});
+
+els.addCommitment?.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  appSettings = {
+    ...appSettings,
+    commitments: [
+      ...(appSettings.commitments || []),
+      normalizeCommitment({ name: "New Commitment", amount: 0, category: "Other", villa: activeVillaKey(), starts: selectedMonth, expires: "" }),
+    ],
+  };
+  saveAppSettings();
+  renderDashboard();
+  const drawer = document.querySelector(".commitments-block");
+  if (drawer) drawer.open = true;
+});
+
+els.commitmentList?.addEventListener("change", (event) => {
+  const id = event.target.dataset.commitmentId;
+  const field = event.target.dataset.commitmentField;
+  if (!id || !field) return;
+  appSettings = {
+    ...appSettings,
+    commitments: (appSettings.commitments || []).map((commitment) =>
+      commitment.id === id ? normalizeCommitment({ ...commitment, [field]: field === "amount" ? Number(event.target.value || 0) : event.target.value }) : commitment,
+    ),
+  };
+  saveAppSettings();
+  renderDashboard();
+});
+
+els.commitmentList?.addEventListener("click", (event) => {
+  const id = event.target.dataset.deleteCommitment;
+  if (!id) return;
+  createRecoverySnapshot("Before monthly commitment deleted");
+  appSettings = {
+    ...appSettings,
+    commitments: (appSettings.commitments || []).filter((commitment) => commitment.id !== id),
+  };
+  saveAppSettings();
+  renderDashboard();
+});
+
+els.annualCommitmentRows?.addEventListener("change", (event) => {
+  const id = event.target.dataset.annualCommitmentId;
+  const monthValue = event.target.dataset.annualMonth;
+  if (!id || !monthValue) return;
+  appSettings = {
+    ...appSettings,
+    commitments: (appSettings.commitments || []).map((commitment) =>
+      commitment.id === id
+        ? normalizeCommitment({
+            ...commitment,
+            overrides: { ...(commitment.overrides || {}), [monthValue]: Number(event.target.value || 0) },
+          })
+        : commitment,
+    ),
+  };
+  saveAppSettings();
+  renderDashboard();
+  const drawer = document.querySelector(".commitments-block");
+  if (drawer) drawer.open = true;
+  const annual = document.querySelector(".annual-commitments");
+  if (annual) annual.open = true;
+});
+
+document.querySelector("#dashboardView")?.addEventListener("click", (event) => {
+  const key = event.target.dataset.dashboardToggle;
+  if (!key) return;
+  appSettings = {
+    ...appSettings,
+    dashboardHidden: {
+      ...(appSettings.dashboardHidden || {}),
+      [key]: !appSettings.dashboardHidden?.[key],
+    },
+  };
+  saveAppSettings();
+  applyDashboardToggles();
+});
+
+[
+  els.docType,
+  els.docIssuer,
+  els.docDate,
+  els.docStatus,
+  els.docBookingType,
+  els.docGuestName,
+  els.docGuestContact,
+  els.docBillTo,
+  els.docBillAddress,
+  els.docProperty,
+  els.docAccommodationFee,
+  els.docDepositAmount,
+  els.docInvoiceScope,
+  els.docPreviouslyReceived,
+  els.docLinkedReceiptCode,
+  els.docRemarks,
+].forEach((control) => {
+  control?.addEventListener("input", () => renderDocumentPreview(formDocument()));
+  control?.addEventListener("change", () => {
+    updateReceiptVisibility();
+    renderDocumentPreview(formDocument());
+  });
+});
+
+els.docCheckIn?.addEventListener("change", () => {
+  syncDocumentCheckout();
+  renderDocumentPreview(formDocument());
+});
+
+els.docCheckOut?.addEventListener("change", () => {
+  syncDocumentDates();
+  renderDocumentPreview(formDocument());
+});
+
+els.docNights?.addEventListener("input", () => {
+  syncDocumentCheckout();
+  renderDocumentPreview(formDocument());
+});
+
+els.paymentRows?.addEventListener("input", () => renderDocumentPreview(formDocument()));
+
+els.paymentRows?.addEventListener("click", (event) => {
+  const fillIndex = event.target.dataset.fillPayment;
+  if (fillIndex !== undefined) {
+    const rows = [...els.paymentRows.querySelectorAll(".payment-row")];
+    const i = Number(fillIndex);
+    const others = rows.reduce((sum, row, idx) =>
+      idx === i ? sum : sum + Number(row.querySelector("[data-payment-amount]")?.value || 0), 0);
+    const outstanding = Math.max(0, receiptTotalFromForm() - others);
+    const amtInput = rows[i]?.querySelector("[data-payment-amount]");
+    if (amtInput) amtInput.value = outstanding;
+    const dateInput = rows[i]?.querySelector("[data-payment-date]");
+    if (dateInput && !dateInput.value) dateInput.value = isoDate(new Date());
+    renderDocumentPreview(formDocument());
+    return;
+  }
+  const removeIndex = event.target.dataset.removePayment;
+  if (removeIndex === undefined) return;
+  const payments = paymentRowsFromForm(true);
+  payments.splice(Number(removeIndex), 1);
+  renderPaymentRows(payments.length ? payments : [normalizePayment({})]);
+  renderDocumentPreview(formDocument());
+});
+
+els.addPaymentRow?.addEventListener("click", () => {
+  renderPaymentRows([...paymentRowsFromForm(true), normalizePayment({})]);
+});
+
+els.generateDocument?.addEventListener("click", () => { if (validateDocumentForm()) renderDocumentPreview(formDocument()); });
+els.saveDocument?.addEventListener("click", saveCurrentDocument);
+els.docFromBooking?.addEventListener("change", (event) => {
+  const id = event.target.value;
+  if (!confirmDocumentReplacement()) {
+    event.target.value = event.target.dataset.currentId || "";
+    return;
+  }
+  if (id) prefillDocFromBooking(id);
+  else fillDocumentForm({ ...defaultDocumentDraft(), type: els.docType.value });
+  setDocumentFeedback("Unsaved changes", true);
+});
+els.newDocument?.addEventListener("click", () => { if (confirmDocumentReplacement()) fillDocumentForm(defaultDocumentDraft()); });
+els.duplicateDocument?.addEventListener("click", duplicateCurrentDocument);
+els.printDocument?.addEventListener("click", printDocumentPreview);
+els.printOwnerReport?.addEventListener("click", printOwnerReport);
+window.addEventListener("afterprint", () => {
+  document.body.classList.remove("printing-document", "printing-owner-report");
+});
+
+[els.documentSearch, els.documentTypeFilter].forEach((control) => {
+  control?.addEventListener("input", renderDocumentArchive);
+  control?.addEventListener("change", renderDocumentArchive);
+});
+
+els.documentArchiveRows?.addEventListener("click", (event) => {
+  const openId = event.target.dataset.openDocument;
+  const duplicateId = event.target.dataset.duplicateDocument;
+  const deleteId = event.target.dataset.deleteDocument;
+  const printId = event.target.dataset.printDocument;
+  const balanceInvoiceId = event.target.dataset.balanceInvoiceDocument;
+  if (openId) openSavedDocument(openId);
+  if (duplicateId) duplicateSavedDocument(duplicateId);
+  if (deleteId) deleteSavedDocument(deleteId);
+  if (balanceInvoiceId) createBalanceInvoiceFromReceipt(balanceInvoiceId);
+  if (printId) {
+    openSavedDocument(printId);
+    printDocumentPreview();
+  }
+});
+
+[els.taxYearInput, els.sdnStartInput, els.enterpriseExpenseInput, els.sdnExpenseInput, els.salaryInput, els.personalReliefInput].forEach((control) => {
+  control?.addEventListener("input", () => {
+    taxPlan = {
+      ...taxPlan,
+      year: Number(els.taxYearInput.value || currentYear()),
+      sdnStart: els.sdnStartInput.value || `${els.taxYearInput.value || currentYear()}-06`,
+      enterpriseExpenses: Number(els.enterpriseExpenseInput.value || 0),
+      sdnExpenses: Number(els.sdnExpenseInput.value || 0),
+      monthlySalary: Number(els.salaryInput.value || 0),
+      personalReliefs: Number(els.personalReliefInput.value || 0),
+    };
+    saveTaxPlan();
+    renderTaxPlan();
+  });
+});
+
+[els.taxNoteBooks, els.taxNoteSalary, els.taxNoteCp204, els.taxNoteDocs].forEach((control) => {
+  control?.addEventListener("change", () => {
+    taxPlan = {
+      ...taxPlan,
+      notes: {
+        books: els.taxNoteBooks.checked,
+        salary: els.taxNoteSalary.checked,
+        cp204: els.taxNoteCp204.checked,
+        docs: els.taxNoteDocs.checked,
+      },
+    };
+    saveTaxPlan();
+  });
+});
+
+els.taxExpenseForm?.addEventListener("submit", saveTaxExpense);
+els.clearTaxExpense?.addEventListener("click", clearTaxExpenseForm);
+els.removeTaxExpenseAttachment?.addEventListener("click", () => {
+  pendingTaxExpenseAttachment = null;
+  removePendingTaxExpenseAttachment = true;
+  if (els.taxExpenseAttachment) els.taxExpenseAttachment.value = "";
+  if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "Attachment will be removed";
+});
+els.taxExpenseAttachment?.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (file.size > 2_500_000) {
+    event.target.value = "";
+    if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "File too large. Use below 2.5 MB.";
+    return;
+  }
+  try {
+    pendingTaxExpenseAttachment = await fileToTaxAttachment(file);
+    removePendingTaxExpenseAttachment = false;
+    if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = `Ready: ${file.name}`;
+  } catch {
+    pendingTaxExpenseAttachment = null;
+    if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "Could not read file";
+  }
+});
+[els.taxExpenseYearFilter, els.taxExpenseMonthFilter, els.taxExpenseCategoryFilter, els.taxExpenseReceiptFilter, els.taxExpenseSearch].forEach((control) => {
+  control?.addEventListener("input", renderTaxExpenses);
+  control?.addEventListener("change", renderTaxExpenses);
+});
+els.taxExpenseRows?.addEventListener("click", (event) => {
+  const editId = event.target.dataset.editTaxExpense;
+  if (editId) fillTaxExpenseForm(editId);
+  const deleteId = event.target.dataset.deleteTaxExpense;
+  if (deleteId) deleteTaxExpense(deleteId);
+});
+els.exportTaxExpensesExcel?.addEventListener("click", exportTaxExpensesExcel);
+els.exportTaxExpensesPdf?.addEventListener("click", exportTaxExpensesPdf);
+
+// Live treatment hint as the host edits the expense form.
+[els.taxExpenseCategory, els.taxExpenseDeductible].forEach((c) => c?.addEventListener("change", renderTaxExpenseHint));
+[els.taxExpenseAmount, els.taxExpenseBizPct].forEach((c) => c?.addEventListener("input", renderTaxExpenseHint));
+
+// Receipt thumbnails: one delegated listener opens the lightbox (click + keyboard).
+document.addEventListener("click", (event) => {
+  const thumb = event.target.closest?.(".receipt-thumb");
+  if (thumb) openReceiptLightbox(thumb.src, thumb.title || "");
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const thumb = event.target.closest?.(".receipt-thumb");
+  if (thumb) { event.preventDefault(); openReceiptLightbox(thumb.src, thumb.title || ""); }
+});
+
+// ---------------- AI receipt scanner ----------------
+els.taxScanInput?.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (els.taxScanFileName) els.taxScanFileName.textContent = file ? file.name : "No file chosen";
+  if (els.taxScanBtn) els.taxScanBtn.disabled = !file;
+  setScanStatus("");
+});
+els.taxScanBtn?.addEventListener("click", scanReceipt);
+
+// Batch receipt intake
+els.taxBatchInput?.addEventListener("change", (event) => {
+  const files = Array.from(event.target.files || []);
+  if (els.taxBatchFileName) els.taxBatchFileName.textContent = files.length ? `${files.length} file(s) chosen` : "No files chosen";
+  if (els.taxBatchScanBtn) els.taxBatchScanBtn.disabled = !files.length;
+  setBatchStatus("");
+});
+els.taxBatchScanBtn?.addEventListener("click", scanBatch);
+
+// ---------------- Capital assets ----------------
+els.taxAssetForm?.addEventListener("submit", saveTaxAsset);
+els.clearTaxAsset?.addEventListener("click", clearTaxAssetForm);
+els.taxAssetClass?.addEventListener("change", () => {
+  updateAssetConditionVisibility();
+  renderTaxAssetHint();
+});
+[els.taxAssetCost, els.taxAssetBizPct, els.taxAssetDate, els.taxAssetCondition].forEach((c) =>
+  c?.addEventListener("input", renderTaxAssetHint),
+);
+els.taxAssetCondition?.addEventListener("change", renderTaxAssetHint);
+els.removeTaxAssetAttachment?.addEventListener("click", () => {
+  pendingTaxAssetAttachment = null;
+  removePendingTaxAssetAttachment = true;
+  if (els.taxAssetAttachment) els.taxAssetAttachment.value = "";
+  if (els.taxAssetAttachmentStatus) els.taxAssetAttachmentStatus.textContent = "Attachment will be removed";
+});
+els.taxAssetAttachment?.addEventListener("change", async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (file.size > 2_500_000) {
+    event.target.value = "";
+    if (els.taxAssetAttachmentStatus) els.taxAssetAttachmentStatus.textContent = "File too large. Use below 2.5 MB.";
+    return;
+  }
+  try {
+    pendingTaxAssetAttachment = await fileToTaxAttachment(file);
+    removePendingTaxAssetAttachment = false;
+    if (els.taxAssetAttachmentStatus) els.taxAssetAttachmentStatus.textContent = `Ready: ${file.name}`;
+  } catch {
+    pendingTaxAssetAttachment = null;
+    if (els.taxAssetAttachmentStatus) els.taxAssetAttachmentStatus.textContent = "Could not read file";
+  }
+});
+els.taxAssetCards?.addEventListener("click", (event) => {
+  const editId = event.target.dataset.editTaxAsset;
+  if (editId) fillTaxAssetForm(editId);
+  const deleteId = event.target.dataset.deleteTaxAsset;
+  if (deleteId) deleteTaxAsset(deleteId);
+});
+
+// ---------------- Year-of-assessment summary ----------------
+els.taxYaInput?.addEventListener("input", renderTaxYa);
+els.taxYaInput?.addEventListener("change", renderTaxYa);
+els.exportTaxYaExcel?.addEventListener("click", exportTaxYaExcel);
+
+// LHDN document analyzer
+els.taxDocInput?.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (els.taxDocFileName) els.taxDocFileName.textContent = file ? file.name : "No file chosen";
+  setDocStatus("");
+});
+els.taxDocAnalyzeBtn?.addEventListener("click", analyzeTaxDoc);
+
+// ---------------- Past earnings importer ----------------
+els.taxEarningsInput?.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (els.taxEarningsFileName) els.taxEarningsFileName.textContent = file ? file.name : "No file chosen";
+  if (els.taxEarningsBtn) els.taxEarningsBtn.disabled = !file;
+  setEarningsStatus("");
+});
+els.taxEarningsBtn?.addEventListener("click", importEarningsCsv);
+els.taxEarnDocInput?.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  if (els.taxEarnDocStatus) els.taxEarnDocStatus.textContent = file ? `Ready: ${file.name}` : "No file attached";
+});
+els.taxEarnDocSaveBtn?.addEventListener("click", saveEarningsDoc);
+
+// ---------------- AI tax review ----------------
+els.runTaxReviewBtn?.addEventListener("click", runTaxReview);
+els.taxClassifyAffirm?.addEventListener("change", () => {
+  // Persist immediately; if a review is already on screen, re-run the verdict gate.
+  const affirmed = els.taxClassifyAffirm.checked;
+  const prev = taxPlan.review || {};
+  taxPlan = { ...taxPlan, review: { classificationAffirmed: affirmed, affirmedAt: affirmed ? prev.affirmedAt || new Date().toISOString() : "" } };
+  saveTaxPlan();
+  if (lastTaxReview && els.taxReviewResult && !els.taxReviewResult.hidden) {
+    const fresh = buildTaxReview(reviewYa());
+    lastTaxReview = fresh;
+    // Re-render with the CACHED AI findings so ticking this box doesn't wipe the
+    // paid AI review results (it only re-runs the deterministic verdict gate).
+    renderTaxReview(fresh, lastTaxReviewAi
+      ? { aiState: "done", ai: lastTaxReviewAi }
+      : { aiState: supabaseClient ? "done" : "offline" });
+  }
+});
+
+// ---------------- Theme picker (8 accents, persisted in appSettings.accent -> cloud) ----------------
+const SV_THEMES = [
+  // `ink` = a darkened accent that stays AA-readable (>=4.5:1 on white) for small text.
+  { name: "Sage", hex: "#4B6B5B", ink: "#3E5A4C" },
+  { name: "Meadow", hex: "#3FAE7C", ink: "#1F7048" },
+  { name: "Teal", hex: "#2FAFA3", ink: "#1B6F67" },
+  { name: "Sky", hex: "#4C9FD6", ink: "#2A6A99" },
+  { name: "Lavender", hex: "#8A7BD8", ink: "#574BA0" },
+  { name: "Blossom", hex: "#E175A4", ink: "#A83C68" },
+  { name: "Coral", hex: "#F26D5B", ink: "#B23F2E" },
+  { name: "Honey", hex: "#E0A23C", ink: "#7E5A12" },
+];
+
+function svActiveAccent() {
+  return (appSettings && typeof appSettings.accent === "string" && appSettings.accent) || "#4B6B5B";
+}
+function svActiveInk() {
+  const a = svActiveAccent().toLowerCase();
+  const theme = SV_THEMES.find((t) => t.hex.toLowerCase() === a);
+  return (theme && theme.ink) || a; // custom accent (no theme match) falls back to the raw accent
+}
+
+function applyAccent() {
+  const a = svActiveAccent();
+  const root = document.documentElement;
+  root.style.setProperty("--accent", a);
+  root.style.setProperty("--accent-soft", a + "22");
+  root.style.setProperty("--cbc", a);
+  root.style.setProperty("--accent-ink", svActiveInk());
+  // faint accent wash over the warm page base (matches the reference prototypes)
+  document.body.style.background = `linear-gradient(${a}12, ${a}12), #F8F8F5`;
+  const dot = document.querySelector(".theme-swatch-dot");
+  if (dot) dot.style.background = a;
+  document.querySelectorAll(".theme-swatch").forEach((sw) => {
+    sw.classList.toggle("selected", (sw.dataset.accent || "").toLowerCase() === a.toLowerCase());
+  });
+}
+
+function initThemePicker() {
+  const wrap = document.querySelector("#themeSwatches");
+  const trigger = document.querySelector("#themeTrigger");
+  const popover = document.querySelector("#themePopover");
+  if (wrap && !wrap.childElementCount) {
+    wrap.innerHTML = SV_THEMES.map(
+      (t) => `<button class="theme-swatch" type="button" data-accent="${t.hex}" style="--sw:${t.hex}" title="${t.name}" aria-label="${t.name}"></button>`,
+    ).join("");
+    wrap.addEventListener("click", (event) => {
+      const swatch = event.target.closest("[data-accent]");
+      if (!swatch) return;
+      appSettings = { ...appSettings, accent: swatch.dataset.accent };
+      saveAppSettings();
+      applyAccent();
+    });
+  }
+  if (trigger && popover) {
+    const close = () => {
+      popover.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+    };
+    trigger.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const willOpen = popover.hidden;
+      popover.hidden = !willOpen;
+      trigger.setAttribute("aria-expanded", String(willOpen));
+    });
+    document.addEventListener("click", (event) => {
+      if (!popover.hidden && !popover.contains(event.target) && !trigger.contains(event.target)) close();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") close();
+    });
+  }
+  applyAccent();
+}
+
+// ---------------- Sidebar: reference hover-expand + pin model (persisted via appSettings.sidebarPinned -> cloud) ----------------
+function initSidebar() {
+  const shell = document.querySelector("#appShell");
+  const sidebar = shell?.querySelector(".sidebar");
+  const toggle = document.querySelector("#sidebarToggle");
+  if (!shell || !sidebar) return;
+
+  // Default rail = not pinned. Restore the persisted pin preference.
+  const pinnedInitial = !!(appSettings && appSettings.sidebarPinned);
+
+  // Scrim behind the hover overlay (created once, toggled via CSS class).
+  let scrim = shell.querySelector(".sidebar-scrim");
+  if (!scrim) {
+    scrim = document.createElement("div");
+    scrim.className = "sidebar-scrim";
+    scrim.setAttribute("aria-hidden", "true");
+    shell.appendChild(scrim);
+  }
+
+  const setPinned = (pinned) => {
+    shell.classList.toggle("sidebar-pinned", pinned);
+    if (pinned) shell.classList.remove("sidebar-hover"); // pinned overrides hover
+    appSettings = { ...appSettings, sidebarPinned: pinned };
+    saveAppSettings();
+  };
+
+  // Apply persisted state on boot.
+  shell.classList.toggle("sidebar-pinned", pinnedInitial);
+
+  // Hover-to-expand as overlay — only when NOT pinned (mouse + keyboard focus).
+  const openHover = () => {
+    if (!shell.classList.contains("sidebar-pinned")) shell.classList.add("sidebar-hover");
+  };
+  const closeHover = () => shell.classList.remove("sidebar-hover");
+
+  sidebar.addEventListener("mouseenter", openHover);
+  sidebar.addEventListener("mouseleave", closeHover);
+  sidebar.addEventListener("focusin", openHover);
+  sidebar.addEventListener("focusout", (e) => {
+    if (!sidebar.contains(e.relatedTarget)) closeHover();
+  });
+  scrim.addEventListener("click", closeHover);
+
+  // The toggle pins / unpins and persists.
+  toggle?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setPinned(!shell.classList.contains("sidebar-pinned"));
+  });
+}
+
+// ---------------- Login UI niceties (greeting, date, show/hide password) ----------------
+function initLoginUi() {
+  const ui = cloudEls();
+  if (ui.greeting || ui.dateLine) {
+    const now = new Date();
+    const hour = now.getHours();
+    const part = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+    if (ui.greeting) ui.greeting.textContent = `${part}, Austin`;
+    if (ui.dateLine) ui.dateLine.textContent = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  }
+  if (ui.passwordToggle && ui.password) {
+    ui.passwordToggle.addEventListener("click", () => {
+      const reveal = ui.password.type === "password";
+      ui.password.type = reveal ? "text" : "password";
+      ui.passwordToggle.textContent = reveal ? "Hide" : "Show";
+      ui.passwordToggle.setAttribute("aria-label", reveal ? "Hide password" : "Show password");
+    });
+  }
+  if (ui.remember) ui.remember.checked = svRememberSession;
+}
+
+;
+let bookingWorkspaceId = '';
+let bookingWorkspaceTab = 'overview';
+let financeSection = 'reports';
+let workspacePaymentDirty = false;
+
+function bookingReceiptPayments(booking) {
+  return VillaLedger.entries(booking).filter(entry => !entry.voidedAt && entry.kind === 'payment' && entry.date)
+    .map(entry => normalizePayment({ ...entry, amount: VillaLedger.amount(entry.amountSen) }));
+}
+
+function updateBookingRecord(next, reason) {
+  createRecoverySnapshot(reason);
+  bookings = bookings.map(booking => booking.id === next.id ? next : booking);
+  saveBookings();
+  renderAll();
+}
+
+function openBookingWorkspace(id, tab = 'overview') {
+  if (!bookings.some(booking => booking.id === id)) return;
+  bookingWorkspaceId = id;
+  bookingWorkspaceTab = tab;
+  workspacePaymentDirty = false;
+  renderBookingWorkspace();
+  const dialog = document.querySelector('#bookingWorkspace');
+  if (!dialog.open) dialog.showModal();
+}
+
+function closeBookingWorkspace() {
+  if (workspacePaymentDirty && !window.confirm('Discard the unrecorded payment?')) return false;
+  document.querySelector('#bookingWorkspace').close();
+  workspacePaymentDirty = false;
+  return true;
+}
+
+function renderBookingWorkspace() {
+  const booking = bookings.find(item => item.id === bookingWorkspaceId);
+  if (!booking) return;
+  const host = document.querySelector('#bookingWorkspace');
+  const ledger = VillaLedger.entries(booking);
+  const unresolved = ledger.filter(entry => entry.kind === 'opening' && !entry.voidedAt).reduce((sum, entry) => sum + entry.amountSen, 0);
+  const docs = documents.filter(doc => doc.bookingId === booking.id);
+  host.innerHTML = `
+    <header class="booking-workspace-head"><div><h2 id="bookingWorkspaceTitle">${escapeHtml(booking.guest)}</h2><p>${escapeHtml(villaOf(booking))} Villa · ${shortDate(booking.arrival)} to ${shortDate(departureFor(booking))}</p></div><button class="ghost-button" type="button" data-workspace-close aria-label="Close booking">Close</button></header>
+    <div class="workspace-metrics"><span>Total due<strong>${money(totalToReceiveFor(booking))}</strong></span><span>Received<strong>${money(booking.paid)}</strong></span><span>Outstanding<strong>${money(balanceFor(booking))}</strong></span><span>Deposit to refund<strong>${money(refundPendingFor(booking))}</strong></span></div>
+    <nav class="workspace-tabs" aria-label="Booking sections">${['overview', 'payments', 'documents', 'messages'].map(tab => `<button type="button" class="ghost-button ${tab === bookingWorkspaceTab ? 'active' : ''}" aria-pressed="${tab === bookingWorkspaceTab}" data-booking-section="${tab}">${tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}</nav>
+    <section ${bookingWorkspaceTab === 'overview' ? '' : 'hidden'}>
+      <dl class="booking-facts"><div><dt>Contact</dt><dd>${escapeHtml(booking.contact || 'Not recorded')}</dd></div><div><dt>Channel</dt><dd>${escapeHtml(booking.channel)}</dd></div><div><dt>Stay status</dt><dd>${escapeHtml(booking.status)}</dd></div><div><dt>Nights</dt><dd>${booking.nights}</dd></div><div><dt>Accommodation</dt><dd>${money(booking.revenue)}</dd></div><div><dt>Security deposit</dt><dd>${money(booking.depositAmount)}</dd></div></dl>
+      <button type="button" class="primary-button" data-workspace-edit>Edit booking</button>
+      ${booking.incidentLog ? `<h3>Notes</h3><p>${escapeMultiline(booking.incidentLog)}</p>` : ''}
+    </section>
+    <section ${bookingWorkspaceTab === 'payments' ? '' : 'hidden'}>
+      ${unresolved ? `<p class="workspace-notice">${money(VillaLedger.amount(unresolved))} was recorded before transaction details. Match transfers below to preserve the received total.</p>` : ''}
+      <form id="workspacePaymentForm" class="workspace-payment-form">
+        <label>Payment action<select name="action"><option value="new">New money received</option>${unresolved ? '<option value="match">Match previously recorded money</option>' : ''}</select></label>
+        <label>Amount (RM)<input name="amount" type="number" min="0.01" step="0.01" required /></label>
+        <label>Transaction date<input name="date" type="date" required value="${isoDate(new Date())}" /></label>
+        <label>Bank / method<input name="bank" placeholder="Bank transfer, cash" /></label>
+        <label class="wide-field">Reference<input name="reference" autocomplete="off" /></label>
+        <label class="workspace-check"><input name="deposit" type="checkbox" ${booking.depositPaid ? 'checked' : ''} /> Security deposit received</label>
+        <button class="primary-button" type="submit">Record payment</button>
+      </form>
+      <p id="workspacePaymentStatus" role="status"></p>
+      <div class="workspace-table-scroll"><table class="workspace-table"><thead><tr><th>Date</th><th>Bank / reference</th><th>Amount</th><th>Status</th></tr></thead><tbody>${ledger.length ? ledger.map(entry => `<tr><td>${entry.date ? shortDate(entry.date) : 'Not recorded'}</td><td>${escapeHtml(entry.bank || entry.note || 'Payment')}<small>${escapeHtml(entry.reference)}</small></td><td class="money-cell">${money(VillaLedger.amount(entry.amountSen))}</td><td>${entry.voidedAt ? 'Voided' : entry.kind === 'opening' ? 'To reconcile' : entry.kind === 'adjustment' ? 'Correction' : `<button type="button" class="small-action danger" data-void-payment="${escapeHtml(entry.id)}">Void</button>`}</td></tr>`).join('') : '<tr><td colspan="4">No money recorded.</td></tr>'}</tbody></table></div>
+    </section>
+    <section ${bookingWorkspaceTab === 'documents' ? '' : 'hidden'}>
+      <div class="workspace-actions"><button class="primary-button" type="button" data-booking-document="Official Receipt">Create receipt</button><button class="ghost-button" type="button" data-booking-document="Invoice">Create invoice</button></div>
+      <div class="workspace-document-list">${docs.length ? docs.map(doc => `<button class="workspace-document-row" type="button" data-booking-open-document="${doc.id}"><strong>${escapeHtml(doc.code)}</strong><span>${escapeHtml(doc.type)} · ${shortDate(doc.date)} · ${escapeHtml(doc.status)}</span></button>`).join('') : '<p>No linked documents.</p>'}</div>
+    </section>
+    <section ${bookingWorkspaceTab === 'messages' ? '' : 'hidden'}>
+      ${[['checkin', 'Check-in details'], ['guide', 'Guest guide'], ['review', 'Review request']].map(([type, label]) => `<div class="workspace-message-row"><span><strong>${label}</strong><small>${type === 'checkin' ? hasCheckinBeenSent(booking) ? 'Marked sent' : 'Not marked sent' : booking.sentLog?.[type] ? 'Marked sent ' + shortDate(booking.sentLog[type]) : 'Not marked sent'}</small></span><button type="button" class="ghost-button" data-booking-message="${type}">Open WhatsApp</button><button type="button" class="ghost-button" data-booking-message-done="${type}">Mark sent</button></div>`).join('')}
+    </section>`;
+}
+
+function recordWorkspacePayment(event) {
+  event.preventDefault();
+  const form = event.target;
+  if (!form.reportValidity()) return;
+  const booking = bookings.find(item => item.id === bookingWorkspaceId);
+  const values = new FormData(form);
+  const payment = VillaLedger.normalize({ amount: values.get('amount'), date: values.get('date'), bank: values.get('bank'), reference: values.get('reference') });
+  try {
+    rejectDuplicateTransfer(booking, [payment]);
+    let next = values.get('action') === 'match' ? VillaLedger.reconcile(booking, [payment], '') : VillaLedger.append(booking, payment);
+    next.depositPaid = Boolean(values.get('deposit'));
+    if (!next.depositPaid) next.depositRefunded = false;
+    updateBookingRecord(next, 'Before recording payment');
+    workspacePaymentDirty = false;
+    renderBookingWorkspace();
+    document.querySelector('#workspacePaymentStatus').textContent = 'Payment recorded. Check cloud save status before closing.';
+  } catch (error) { document.querySelector('#workspacePaymentStatus').textContent = error.message; }
+}
+
+function rejectDuplicateTransfer(booking, entries) {
+  const existing = VillaLedger.entries(booking);
+  const seen = [];
+  entries.forEach(entry => {
+    const sameId = existing.find(item => item.id === entry.id);
+    if (sameId && (sameId.voidedAt || sameId.amountSen !== entry.amountSen || sameId.date !== entry.date || sameId.reference !== entry.reference || sameId.bank !== entry.bank)) throw new Error('A linked transfer was changed or voided. Correct it in the booking payment history first.');
+    if (!sameId && [...existing, ...seen].some(item => !item.voidedAt && item.reference && item.reference === entry.reference && item.date === entry.date && item.amountSen === entry.amountSen)) throw new Error('A transfer with this date, reference and amount is already recorded.');
+    seen.push(entry);
+  });
+}
+
+function recordReceiptPayments() {
+  if (!validateDocumentForm()) return;
+  const doc = formDocument();
+  const booking = bookings.find(item => item.id === doc.bookingId);
+  if (!booking) { setDocumentFeedback('Select a booking before recording these payments.'); return; }
+  const incoming = doc.payments.map(payment => VillaLedger.normalize({ ...payment, receiptId: doc.id }));
+  try {
+    rejectDuplicateTransfer(booking, incoming);
+    const mode = document.querySelector('#receiptPostingMode').value;
+    const fresh = incoming.filter(entry => !VillaLedger.entries(booking).some(item => item.id === entry.id));
+    if (!fresh.length) { setDocumentFeedback('These payments are already recorded.'); return; }
+    const total = VillaLedger.total(fresh);
+    if (!window.confirm(`${mode === 'match' ? 'Match' : 'Record'} ${money(total)} for ${booking.guest}? ${mode === 'match' ? 'The received total will stay unchanged.' : 'This increases the booking received total.'}`)) return;
+    const next = mode === 'match' ? VillaLedger.reconcile(booking, incoming, doc.id) : fresh.reduce((current, payment) => VillaLedger.append(current, payment), booking);
+    updateBookingRecord(next, 'Before posting receipt payments');
+    setDocumentFeedback('Payments recorded in the booking. Save the receipt to keep this document.', true);
+    renderDocumentPreview();
+  } catch (error) { setDocumentFeedback(error.message); }
+}
+
+function receiptPreviouslyReceived(doc) {
+  const booking = bookings.find(item => item.id === doc.bookingId);
+  if (!booking || !Array.isArray(booking.paymentLedger)) return Number(doc.previouslyReceived || 0);
+  const ids = new Set(doc.payments.map(payment => payment.id));
+  return Math.max(0, VillaLedger.total(VillaLedger.entries(booking).filter(entry => !ids.has(entry.id))));
+}
+
+function financeExpenses(monthValue, villa = activeVillaKey()) {
+  return (taxPlan.expenses || []).filter(expense => ['additional', 'commitment'].includes(expense.financeMode)
+    && expense.property === villa + ' Villa' && expense.date.slice(0, 7) === monthValue);
+}
+
+function unifiedExpenseBreakdown(monthValue, baseline) {
+  const breakdown = { ...baseline };
+  const rows = financeExpenses(monthValue);
+  rows.filter(expense => expense.financeMode === 'additional').forEach(expense => {
+    const bucket = oneOffCostBucket({ category: expense.category, description: expense.notes });
+    breakdown[bucket] += Number(expense.amount || 0);
+    breakdown.adHoc += Number(expense.amount || 0);
+  });
+  const replacements = new Map();
+  rows.filter(expense => expense.financeMode === 'commitment').forEach(expense => {
+    replacements.set(expense.commitmentId, (replacements.get(expense.commitmentId) || 0) + Number(expense.amount || 0));
+  });
+  replacements.forEach((actual, id) => {
+    const commitment = (appSettings.commitments || []).find(item => item.id === id && (item.villa || 'Sunrise') === activeVillaKey());
+    if (!commitment) { breakdown.other += actual; breakdown.adHoc += actual; return; }
+    const planned = commitmentActiveInMonth(commitment, monthValue) ? commitmentAmountFor(commitment, monthValue) : 0;
+    breakdown[commitmentBucket(commitment)] += actual - planned;
+    breakdown.commitments += actual - planned;
+  });
+  breakdown.total = ['housekeeping', 'maintenance', 'utilities', 'propertyLoan', 'loans', 'supplies', 'other'].reduce((sum, key) => sum + breakdown[key], 0);
+  return breakdown;
+}
+
+function renderExpenseFinanceOptions(expense) {
+  const select = document.querySelector('#expenseFinanceMode');
+  if (!select) return;
+  select.value = expense ? expense.financeMode || 'unreviewed' : 'additional';
+  const commitments = appSettings.commitments || [];
+  document.querySelector('#expenseCommitment').innerHTML = '<option value="">Choose commitment</option>' + commitments.map(item => `<option value="${item.id}">${escapeHtml(item.name)} · ${escapeHtml(item.villa || 'Sunrise')}</option>`).join('');
+  document.querySelector('#expenseCommitment').value = expense?.commitmentId || '';
+  document.querySelector('#expenseCommitmentLabel').hidden = select.value !== 'commitment';
+  if (typeof renderLegacyExpenseOptions === 'function') renderLegacyExpenseOptions(expense);
+}
+
+function showFinanceSection(mode) {
+  financeSection = ['reports', 'payments', 'expenses'].includes(mode) ? mode : 'reports';
+  setView('dashboard');
+  document.querySelectorAll('[data-finance-section]').forEach(button => {
+    const selected = button.dataset.financeSection === financeSection;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+  document.querySelector('#financeReports').hidden = financeSection !== 'reports';
+  document.querySelector('#financePayments').hidden = financeSection !== 'payments';
+  document.querySelector('#financeExpenses').hidden = financeSection !== 'expenses';
+  if (financeSection === 'reports') renderDashboard();
+  if (financeSection === 'payments') renderFinancePayments();
+  if (financeSection === 'expenses') { renderTaxExpenses(); renderExpenseFinanceOptions((taxPlan.expenses || []).find(item => item.id === els.taxExpenseId.value)); }
+}
+
+function renderFinancePayments() {
+  const host = document.querySelector('#financePayments');
+  if (!host) return;
+  const list = scopedBookings().filter(booking => !isExcludedBooking(booking));
+  const cash = list.flatMap(booking => VillaLedger.entries(booking)).filter(entry => !entry.voidedAt && entry.kind === 'payment' && entry.date.startsWith(selectedMonth));
+  const legacy = list.flatMap(booking => VillaLedger.entries(booking)).filter(entry => !entry.voidedAt && entry.kind === 'opening');
+  const open = list.filter(booking => balanceFor(booking) > 0 || refundPendingFor(booking) > 0).sort((a, b) => a.arrival.localeCompare(b.arrival));
+  host.innerHTML = `<div class="workspace-metrics"><span>Recorded transfers · ${escapeHtml(monthLabel(selectedMonth))}<strong>${money(VillaLedger.total(cash))}</strong></span><span>Historical receipts to reconcile · all dates<strong>${money(VillaLedger.total(legacy))}</strong></span></div><h3>Open balances and deposits · all dates</h3><div class="workspace-table-scroll"><table class="workspace-table"><thead><tr><th>Guest</th><th>Arrival</th><th>Received</th><th>Outstanding</th><th>Deposit to refund</th></tr></thead><tbody>${open.map(booking => `<tr><td><button type="button" class="workspace-link" data-workspace-booking="${booking.id}">${escapeHtml(booking.guest)}</button></td><td>${shortDate(booking.arrival)}</td><td class="money-cell">${money(booking.paid)}</td><td class="money-cell">${money(balanceFor(booking))}</td><td class="money-cell">${money(refundPendingFor(booking))}</td></tr>`).join('') || '<tr><td colspan="5">No open balances or deposits.</td></tr>'}</tbody></table></div>`;
+}
+
+function renderWorkflowShell() {
+  document.body.dataset.workspaceView = activeView;
+  document.body.dataset.financeSection = financeSection;
+  document.querySelector('[data-view="bookings"]')?.classList.toggle("active", activeView === "bookings" || activeView === "guests");
+  if (activeView === 'dashboard') els.pageTitle.textContent = 'Finance';
+  if (activeView === 'guide') els.pageTitle.textContent = 'Settings';
+  if (activeView === 'dashboard' && financeSection === 'payments') renderFinancePayments();
+}
+
+function initializeWorkflowUI() {
+  const dialog = document.createElement('dialog');
+  dialog.id = 'bookingWorkspace';
+  dialog.className = 'booking-workspace';
+  dialog.setAttribute('aria-labelledby', 'bookingWorkspaceTitle');
+  document.body.append(dialog);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeBookingWorkspace(); });
+  dialog.addEventListener('input', event => { if (event.target.closest('#workspacePaymentForm')) workspacePaymentDirty = true; });
+  dialog.addEventListener('submit', event => { if (event.target.id === 'workspacePaymentForm') recordWorkspacePayment(event); });
+  dialog.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button) return;
+    const booking = bookings.find(item => item.id === bookingWorkspaceId);
+    if (button.hasAttribute('data-workspace-close')) closeBookingWorkspace();
+    if (button.dataset.bookingSection) {
+      if (workspacePaymentDirty && !window.confirm('Discard the unrecorded payment?')) return;
+      workspacePaymentDirty = false;
+      bookingWorkspaceTab = button.dataset.bookingSection;
+      renderBookingWorkspace();
+    }
+    if (button.hasAttribute('data-workspace-edit') && closeBookingWorkspace()) openBookingDialog(booking, true);
+    if (button.dataset.voidPayment && window.confirm('Void this transfer? Its history will remain and the received total will decrease. Any issued receipt must be amended separately.')) {
+      const ledger = VillaLedger.entries(booking).map(entry => entry.id === button.dataset.voidPayment ? { ...entry, voidedAt: new Date().toISOString() } : entry);
+      try { updateBookingRecord(VillaLedger.withEntries(booking, ledger), 'Before voiding payment'); renderBookingWorkspace(); }
+      catch (error) { window.alert(error.message); }
+    }
+    if (button.dataset.bookingDocument && confirmDocumentReplacement() && closeBookingWorkspace()) {
+      setView('documents');
+      els.docType.value = button.dataset.bookingDocument;
+      prefillDocFromBooking(booking.id);
+      setDocumentFeedback('Unsaved document', true);
+    }
+    if (button.dataset.bookingOpenDocument && confirmDocumentReplacement() && closeBookingWorkspace()) {
+      setView('documents');
+      fillDocumentForm(documents.find(doc => doc.id === button.dataset.bookingOpenDocument));
+    }
+    if (button.dataset.bookingMessage) openWhatsappForBooking(booking, button.dataset.bookingMessage);
+    if (button.dataset.bookingMessageDone) { markNudgeSent(booking.id, button.dataset.bookingMessageDone); renderDetails(); renderBookingWorkspace(); }
+  });
+  document.addEventListener('click', event => {
+    const target = event.target.closest('[data-workspace-booking]');
+    if (target) openBookingWorkspace(target.dataset.workspaceBooking, 'payments');
+  });
+  window.addEventListener('beforeunload', event => {
+    if (workspacePaymentDirty) { event.preventDefault(); event.returnValue = ''; }
+  });
+
+  const receiptTools = document.createElement('div');
+  receiptTools.className = 'receipt-posting-tools';
+  receiptTools.innerHTML = '<label>Booking payment action<select id="receiptPostingMode"><option value="match">Match previously recorded money</option><option value="new">New money received</option></select></label><button type="button" class="ghost-button" id="recordReceiptPayments">Record in booking</button><span class="helper-text">Saving or duplicating a document does not record money.</span>';
+  els.receiptPaymentSection.append(receiptTools);
+  document.querySelector('#recordReceiptPayments').addEventListener('click', recordReceiptPayments);
+
+  const dashboard = document.querySelector('#dashboardView');
+  const reports = document.createElement('div');
+  reports.id = 'financeReports';
+  while (dashboard.firstChild) reports.append(dashboard.firstChild);
+  const nav = document.createElement('nav');
+  nav.className = 'workspace-tabs';
+  nav.setAttribute('aria-label', 'Finance');
+  nav.innerHTML = ['reports', 'payments', 'expenses'].map(mode => `<button type="button" class="ghost-button ${mode === 'reports' ? 'active' : ''}" data-finance-section="${mode}" aria-pressed="${mode === 'reports'}">${mode[0].toUpperCase() + mode.slice(1)}</button>`).join('');
+  nav.addEventListener('click', event => { if (event.target.dataset.financeSection) showFinanceSection(event.target.dataset.financeSection); });
+  const payments = document.createElement('section');
+  payments.id = 'financePayments'; payments.hidden = true;
+  const expenses = document.createElement('section');
+  expenses.id = 'financeExpenses'; expenses.hidden = true;
+  const expensePanel = document.querySelector('[data-tax-inner-panel="expenses"]');
+  expensePanel.classList.add('unified-expenses');
+  expenses.append(expensePanel);
+  dashboard.append(nav, reports, payments, expenses);
+  document.querySelector('[data-view="dashboard"]').lastChild.textContent = 'Finance';
+
+  const imports = document.createElement('details');
+  imports.className = 'expense-imports';
+  imports.innerHTML = '<summary>Import receipts</summary>';
+  imports.append(document.querySelector('#taxScanCard'), document.querySelector('#taxBatchCard'));
+  expensePanel.append(imports);
+  const entry = document.querySelector('.tax-expense-entry');
+  const entryDisclosure = document.createElement('details');
+  entryDisclosure.id = 'expenseEntryDisclosure';
+  entryDisclosure.className = 'expense-entry-disclosure';
+  entryDisclosure.innerHTML = '<summary>Add / edit expense</summary>';
+  entry.before(entryDisclosure);
+  entryDisclosure.append(entry);
+  const financeFields = document.createElement('div');
+  financeFields.className = 'form-grid two-col';
+  financeFields.innerHTML = '<label>Finance reporting<select id="expenseFinanceMode"><option value="additional">Additional actual expense</option><option value="commitment">Replaces a recurring commitment</option><option value="legacy">Already in monthly costs</option><option value="tax-only">Tax record only</option><option value="unreviewed">Existing record: not reconciled</option></select></label><label id="expenseCommitmentLabel" hidden>Recurring commitment<select id="expenseCommitment"></select></label>';
+  els.taxExpenseForm.querySelector('.tax-expense-grid').after(financeFields);
+  document.querySelector('#expenseFinanceMode').addEventListener('change', event => {
+    document.querySelector('#expenseCommitmentLabel').hidden = event.target.value !== 'commitment';
+  });
+  renderExpenseFinanceOptions();
+
+  const guideNav = document.querySelector('[data-view="guide"]');
+  guideNav.lastChild.textContent = 'Settings';
+  guideNav.title = 'Settings';
+  document.querySelector('.nav-tabs').append(guideNav);
+  const settingsTools = document.createElement('div');
+  settingsTools.className = 'workspace-settings-tools';
+  settingsTools.append(document.querySelector('#themeMenu'));
+  const backup = document.createElement('button');
+  backup.type = 'button'; backup.className = 'ghost-button'; backup.textContent = 'Download backup';
+  backup.addEventListener('click', downloadBackup);
+  settingsTools.append(backup);
+  document.querySelector('#guideView').prepend(settingsTools);
+
+  const bookingSource = els.docFromBooking.closest("label");
+  bookingSource.classList.add("document-booking-source");
+  bookingSource.querySelector(".form-hint")?.remove();
+  document.querySelector(".document-editor-tools").prepend(bookingSource);
+  const documentPreviewSwitch = document.createElement('div');
+  documentPreviewSwitch.className = 'workspace-tabs document-mobile-switch';
+  documentPreviewSwitch.innerHTML = '<button type="button" class="ghost-button active" data-mobile-document="editor">Editor</button><button type="button" class="ghost-button" data-mobile-document="preview">Preview</button><button type="button" class="ghost-button" data-mobile-print>Print / PDF</button>';
+  documentPreviewSwitch.addEventListener('click', event => {
+    if (event.target.hasAttribute('data-mobile-print')) {
+      if (!els.documentForm.checkValidity()) {
+        document.querySelector('#documentsView').dataset.mobileDocument = 'editor';
+        documentPreviewSwitch.querySelector('[data-mobile-document="editor"]').click();
+      }
+      printDocumentPreview();
+      return;
+    }
+    const mode = event.target.dataset.mobileDocument;
+    if (!mode) return;
+    document.querySelector('#documentsView').dataset.mobileDocument = mode;
+    documentPreviewSwitch.querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.mobileDocument === mode));
+    if (mode === 'preview') renderDocumentPreview();
+  });
+  document.querySelector('.documents-layout').before(documentPreviewSwitch);
+  const propertyFilter = document.createElement("label");
+  propertyFilter.innerHTML = '<span>Property</span><select id="expensePropertyFilter"><option value="Selected">Selected property</option><option value="All">All properties</option><option>Sunrise Villa</option><option>Windmill Villa</option><option>Shared</option></select>';
+  document.querySelector(".tax-expense-toolbar").prepend(propertyFilter);
+  propertyFilter.querySelector("select").addEventListener("change", renderTaxExpenses);
+
+  const rates = document.createElement("details");
+  rates.className = "quote-rate-options";
+  rates.innerHTML = '<summary>Rates and night breakdown</summary><div class="quote-grid"></div>';
+  const quoteGrid = document.querySelector(".quote-card > .quote-grid");
+  quoteGrid.after(rates);
+  ["quoteWeekdayNights", "quoteWeekendNights", "quoteHolidayNights", "quoteWeekdayRate", "quoteWeekendRate", "quoteHolidayRate", "quoteCleaningFee"].forEach(id => rates.querySelector(".quote-grid").append(document.querySelector("#" + id).closest("label")));
+  ["quoteTemplateInput", "checkinTemplateInput", "guideTemplateInput", "reminderTemplateInput"].forEach(id => {
+    const label = document.querySelector("#" + id)?.closest("label");
+    if (!label) return;
+    const editor = document.createElement("details");
+    editor.className = "template-editor";
+    editor.innerHTML = "<summary>Edit template</summary>";
+    label.before(editor);
+    editor.append(label);
+    const hint = editor.nextElementSibling;
+    if (hint?.classList.contains("helper-text")) editor.append(hint);
+  });
+  [["openQuoteMessage", "Open WhatsApp"], ["openWhatsappMessage", "Open WhatsApp"], ["openGuideMessage", "Open WhatsApp"], ["openReminderMessage", "Open WhatsApp"]].forEach(([id, label]) => {
+    const button = document.querySelector("#" + id); if (button) button.textContent = label;
+  });
+  const guestTab = document.querySelector('[data-view="guests"]');
+  const bookingTabs = document.createElement("div");
+  bookingTabs.className = "workspace-tabs booking-subnav";
+  bookingTabs.append(guestTab);
+  document.querySelector("#bookingsView").prepend(bookingTabs);
+  const returnToBookings = document.createElement("button");
+  returnToBookings.type = "button"; returnToBookings.className = "ghost-button"; returnToBookings.textContent = "All bookings";
+  returnToBookings.addEventListener("click", () => { setView("bookings"); renderBookingsTable(); });
+  document.querySelector("#guestsView").prepend(returnToBookings);
+  renderWorkflowShell();
+}
+
+initializeWorkflowUI();
+
+;
+let pendingRestore = null;
+
+function workspaceFingerprint() {
+  return JSON.stringify([bookings, documents, taxPlan, profitData, appSettings]);
+}
+
+function restoreCollections(data) {
+  return [
+    ['Bookings', data.bookings || []],
+    ['Documents', data.documents || []],
+    ['Expense records', data.taxPlan?.expenses || []],
+    ['Assets', data.taxPlan?.assets || []],
+    ['Past earnings', data.taxPlan?.earnings || []],
+    ['Earnings files', data.taxPlan?.earningsDocs || []],
+    ['Tax reference files', data.taxPlan?.lhdnDocs || []],
+    ['Recurring commitments', data.appSettings?.commitments || []],
+    ['Guest profiles', Object.entries(data.appSettings?.guestProfiles || {}).map(([id, value]) => ({ ...value, id }))],
+    ['Calendar connections', data.appSettings?.ical?.sources || []],
+    ['Imported calendar blocks', data.appSettings?.ical?.imported || []],
+    ['Tax year rules', Object.entries(data.taxPlan?.yearProfiles || {}).map(([id, value]) => ({ ...value, id }))],
+    ['Monthly cost records', Object.entries(data.profitData || {}).map(([id, value]) => ({ ...value, id }))],
+    ['Booking transfers', (data.bookings || []).flatMap(booking => (booking.paymentLedger || []).map(entry => ({ ...entry, id: booking.id + ':' + entry.id })))],
+  ];
+}
+
+function restoreComparison(before, after) {
+  const previous = new Map(restoreCollections(before));
+  return restoreCollections(after).map(([label, rows]) => {
+    const oldRows = previous.get(label);
+    const old = new Map(oldRows.map((item, index) => [item.id || 'row:' + index, item]));
+    const next = new Map(rows.map((item, index) => [item.id || 'row:' + index, item]));
+    return { label, before: oldRows.length, after: rows.length,
+      added: [...next.keys()].filter(id => !old.has(id)).length,
+      removed: [...old.keys()].filter(id => !next.has(id)).length,
+      changed: [...next.keys()].filter(id => old.has(id) && JSON.stringify(old.get(id)) !== JSON.stringify(next.get(id))).length };
+  });
+}
+
+// Only recover an attachment from the same record AND filename, never another guest's file.
+function attachmentSlots(data) {
+  const slots = [];
+  for (const key of ['expenses', 'assets']) {
+    for (const row of data.taxPlan?.[key] || []) if (row.attachment) slots.push({ key: key + ':' + row.id, object: row.attachment, field: 'dataUrl', name: row.attachment.name });
+  }
+  for (const key of ['earningsDocs', 'lhdnDocs']) {
+    for (const row of data.taxPlan?.[key] || []) slots.push({ key: key + ':' + row.id, object: row, field: 'dataUrl', name: row.name || row.filename || '' });
+  }
+  for (const [month, record] of Object.entries(data.profitData || {})) {
+    for (const cost of record.oneOffCosts || []) slots.push({ key: 'cost:' + month + ':' + cost.id, object: cost, field: 'receiptImage', name: cost.receiptName });
+  }
+  return slots;
+}
+
+function prepareRestorePreview(data, keepAttachments = true) {
+  const staged = JSON.parse(JSON.stringify(prepareRestoreData(data)));
+  const current = new Map(attachmentSlots(allAppData()).map(slot => [slot.key, slot]));
+  let retained = 0;
+  for (const slot of attachmentSlots(staged)) {
+    const old = current.get(slot.key);
+    if (keepAttachments && !slot.object[slot.field] && slot.name && slot.name === old?.name && old.object[old.field]) {
+      slot.object[slot.field] = old.object[old.field];
+      retained += 1;
+    }
+  }
+  const slots = attachmentSlots(staged);
+  return { staged, retained, attached: slots.filter(slot => slot.object[slot.field]).length,
+    missing: slots.filter(slot => slot.name && !slot.object[slot.field]).length,
+    comparisons: restoreComparison(allAppData(), staged) };
+}
+
+function closeRestorePreview() {
+  pendingRestore = null;
+  const dialog = document.querySelector('#restorePreview');
+  if (dialog?.open) dialog.close();
+  dialog?.replaceChildren();
+}
+
+function openRestorePreview(data, source = {}) {
+  if (!cloudUser || !cloudReady) throw new Error('Log in and load your workspace before restoring.');
+  if (cloudConflict) throw new Error('Resolve the cloud save conflict before restoring a backup.');
+  validateBackupData(data);
+  const owner = source.ownerId || data.ownerId;
+  if (owner && owner !== cloudUser.id) throw new Error('This backup belongs to a different account. No records were changed.');
+  pendingRestore = { data: JSON.parse(JSON.stringify(data)), source, ownerId: cloudUser.id, baseline: workspaceFingerprint() };
+  const dialog = document.querySelector('#restorePreview');
+  dialog.innerHTML = `<header class="booking-workspace-head"><div><h2 id="restorePreviewTitle">Review backup restore</h2><p>${escapeHtml(source.label || 'Backup file')}</p></div><button class="ghost-button" type="button" data-restore-close>Cancel</button></header>
+    <p class="workspace-notice">This replaces records in the backup's collections; it does not merge them. Collections absent from older backups stay unchanged.${source.recordsOnly ? ' Browser recovery points may not contain receipt images.' : ''}</p>
+    <label class="recovery-option"><input type="checkbox" id="restoreKeepAttachments" checked /> Keep matching current attachments missing from this backup</label>
+    <div id="restoreComparison"></div>
+    <div class="recovery-protection"><div class="workspace-actions"><button class="ghost-button" type="button" id="restoreDownloadEncrypted">Encrypted current backup</button><button class="ghost-button" type="button" id="restoreDownloadCurrent">Plain JSON current backup</button></div><label class="recovery-option"><input id="restoreBackupConfirmed" type="checkbox" /> I have saved a full copy of the current records</label></div>
+    <p id="restorePreviewStatus" role="status"></p><div class="workspace-actions"><button class="ghost-button" type="button" data-restore-close>Cancel</button><button class="primary-button" type="button" id="confirmRestore">Restore reviewed backup</button></div>`;
+  renderRestoreComparison();
+  if (!dialog.open) dialog.showModal();
+}
+
+function renderRestoreComparison() {
+  if (!pendingRestore) return;
+  const preview = prepareRestorePreview(pendingRestore.data, document.querySelector('#restoreKeepAttachments').checked);
+  pendingRestore.staged = preview.staged;
+  const totals = data => (data.bookings || []).reduce((sum, booking) => sum + VillaLedger.cents(booking.paid || 0), 0);
+  const beforeFiles = attachmentSlots(allAppData()).filter(slot => slot.object[slot.field]).length;
+  const visibleRows = preview.comparisons.filter(row => row.before || row.after || row.label === 'Bookings');
+  const emptyCount = preview.comparisons.length - visibleRows.length;
+  document.querySelector('#restoreComparison').innerHTML = `<div class="workspace-table-scroll"><table class="workspace-table recovery-table"><thead><tr><th>Records</th><th>Now</th><th>After</th><th>Added</th><th>Changed</th><th>Removed</th></tr></thead><tbody>${visibleRows.map(row => `<tr><th scope="row">${row.label}</th><td data-label="Now">${row.before}</td><td data-label="After">${row.after}</td><td data-label="Added">${row.added}</td><td data-label="Changed">${row.changed}</td><td data-label="Removed" class="${row.removed ? 'restore-removals' : ''}">${row.removed}</td></tr>`).join('')}</tbody></table></div>${emptyCount ? `<p class="recovery-fineprint">${emptyCount} empty collections unchanged.</p>` : ''}
+    <dl class="booking-facts"><div><dt>Booking received totals (all records)</dt><dd>${money(VillaLedger.amount(totals(allAppData())))} → ${money(VillaLedger.amount(totals(preview.staged)))}</dd></div><div><dt>Attached files</dt><dd>${beforeFiles} → ${preview.attached}${preview.retained ? ' (' + preview.retained + ' retained)' : ''}</dd></div></dl>
+    ${preview.missing ? `<p class="workspace-notice">${preview.missing} attachment(s) have a filename but no file content. Their images cannot be recovered from this backup.</p>` : ''}
+    <p class="recovery-fineprint">Settings and templates in the backup will also be restored. Cloud saves are not an independent backup.</p>`;
+}
+
+async function confirmRestorePreview() {
+  const pending = pendingRestore;
+  if (!pending) return;
+  const status = document.querySelector('#restorePreviewStatus');
+  const button = document.querySelector('#confirmRestore');
+  try {
+    if (!document.querySelector('#restoreBackupConfirmed').checked && hasMeaningfulAppData()) throw new Error('Save a full backup of the current records and confirm above before restoring.');
+    button.disabled = true;
+    if (cloudSavePromise) await cloudSavePromise;
+    if (pendingRestore !== pending) return;
+    if (!cloudReady || cloudUser?.id !== pending.ownerId || cloudConflict) throw new Error('Your cloud session changed. Close this preview and check the cloud status.');
+    if (workspaceFingerprint() !== pending.baseline) throw new Error('Your records changed after this preview opened. Cancel and reopen the backup to review the latest differences.');
+    restoreAppData(pending.staged);
+    closeRestorePreview();
+    window.alert('Backup restored locally. Check that the cloud status says all changes saved before closing. Your previous records remain in browser recovery history.');
+  } catch (error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+}
+
+function initializeRestorePreview() {
+  const dialog = document.createElement('dialog');
+  dialog.id = 'restorePreview';
+  dialog.className = 'booking-workspace restore-preview';
+  dialog.setAttribute('aria-labelledby', 'restorePreviewTitle');
+  document.body.append(dialog);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeRestorePreview(); });
+  dialog.addEventListener('change', event => { if (event.target.id === 'restoreKeepAttachments') renderRestoreComparison(); });
+  dialog.addEventListener('click', event => {
+    if (event.target.closest('[data-restore-close]')) closeRestorePreview();
+    if (event.target.id === 'confirmRestore') confirmRestorePreview();
+    if (event.target.id === 'restoreDownloadEncrypted') openEncryptedBackup({ track: false });
+    if (event.target.id === 'restoreDownloadCurrent') downloadJsonFile(`sunrise-villa-before-restore-${isoDate(new Date())}.json`, allAppData());
+  });
+}
+
+initializeRestorePreview();
+
+;
+function legacyMonthlyCosts(data = profitData) {
+  return Object.entries(data || {}).flatMap(([monthKey, record]) => {
+    if (!/^(Windmill:)?\d{4}-(0[1-9]|1[0-2])$/.test(monthKey)) return [];
+    const villa = monthKey.startsWith('Windmill:') ? 'Windmill' : 'Sunrise';
+    return (record.oneOffCosts || []).map(cost => ({ monthKey, month: monthKey.slice(-7), property: villa + ' Villa', cost }));
+  });
+}
+
+function sameLegacySource(a, b) {
+  return Boolean(a && b && a.monthKey === b.monthKey && a.costId === b.costId);
+}
+
+function linkedLegacyExpense(monthKey, costId, expenses = taxPlan.expenses || []) {
+  return expenses.find(expense => expense.financeMode === 'legacy' && sameLegacySource(expense.legacyCost, { monthKey, costId }));
+}
+
+function legacySourceFor(expense, costs = legacyMonthlyCosts()) {
+  return costs.find(row => sameLegacySource(expense.legacyCost, { monthKey: row.monthKey, costId: row.cost.id }));
+}
+
+function validateLegacyExpenseLinks(data) {
+  const seen = new Set();
+  const costs = legacyMonthlyCosts(data.profitData);
+  for (const expense of data.taxPlan?.expenses || []) {
+    if (expense.financeMode !== 'legacy') continue;
+    const row = legacySourceFor(expense, costs);
+    const key = JSON.stringify(expense.legacyCost);
+    if (!row || row.property !== expense.property || row.month !== expense.date.slice(0, 7) || VillaLedger.cents(row.cost.amount) !== VillaLedger.cents(expense.amount) || seen.has(key)) {
+      throw new Error('A linked monthly cost is missing, duplicated or no longer matches its expense record. No records were changed.');
+    }
+    seen.add(key);
+  }
+}
+
+function selectedLegacyExpenseSource() {
+  try { return JSON.parse(document.querySelector('#expenseLegacyCost')?.value || 'null'); }
+  catch { return null; }
+}
+
+function legacyExpenseCandidates(expense) {
+  return legacyMonthlyCosts().filter(row => row.property === expense.property && row.month === expense.date.slice(0, 7)
+    && VillaLedger.cents(row.cost.amount) === VillaLedger.cents(expense.amount));
+}
+
+function renderLegacyExpenseOptions(expense) {
+  const select = document.querySelector('#expenseLegacyCost');
+  if (!select) return;
+  const saved = (taxPlan.expenses || []).find(item => item.id === els.taxExpenseId.value);
+  const source = expense?.legacyCost || selectedLegacyExpenseSource() || saved?.legacyCost;
+  const draft = { id: els.taxExpenseId.value, date: els.taxExpenseDate.value, property: els.taxExpenseProperty.value, amount: Number(els.taxExpenseAmount.value) };
+  const rows = legacyMonthlyCosts().filter(row => {
+    const linked = linkedLegacyExpense(row.monthKey, row.cost.id);
+    const isExisting = saved?.financeMode === 'legacy' && sameLegacySource(saved.legacyCost, { monthKey: row.monthKey, costId: row.cost.id });
+    return (!linked || linked.id === draft.id) && (isExisting || (row.property === draft.property && row.month === draft.date.slice(0, 7) && VillaLedger.cents(row.cost.amount) === VillaLedger.cents(draft.amount)));
+  });
+  select.innerHTML = '<option value="">Select matching monthly cost</option>' + rows.map(row => `<option value="${escapeHtml(JSON.stringify({ monthKey: row.monthKey, costId: row.cost.id }))}">${escapeHtml(row.cost.description || row.cost.category)} · ${escapeHtml(monthLabel(row.month))} · ${money(row.cost.amount)}</option>`).join('');
+  select.value = source ? JSON.stringify(source) : '';
+  const visible = document.querySelector('#expenseFinanceMode').value === 'legacy';
+  document.querySelector('#expenseLegacyCostLabel').hidden = !visible;
+  select.required = visible;
+}
+
+function validateExpenseFinanceChange(expense) {
+  const existing = (taxPlan.expenses || []).find(item => item.id === expense.id);
+  if (expense.financeMode === 'legacy') {
+    const row = legacySourceFor(expense);
+    const linked = row && linkedLegacyExpense(row.monthKey, row.cost.id);
+    const editingLink = existing?.financeMode === 'legacy' && sameLegacySource(existing.legacyCost, expense.legacyCost);
+    if (!row || row.property !== expense.property || row.month !== expense.date.slice(0, 7) || (linked && linked.id !== expense.id)
+      || (!editingLink && VillaLedger.cents(row.cost.amount) !== VillaLedger.cents(expense.amount))) {
+      throw new Error('Choose an unlinked monthly cost with the same property, month and amount. For an existing link, keep its property and month unchanged.');
+    }
+  }
+  if (expense.financeMode === 'legacy' && existing?.financeMode === 'additional') {
+    if (!window.confirm('Link these as the same cost? Finance currently includes both entries. Removing the duplicate charge will reduce Finance costs by ' + money(existing.amount) + '.')) return false;
+  }
+  const additionalChanged = !existing || existing.financeMode !== 'additional' || existing.property !== expense.property || existing.date.slice(0, 7) !== expense.date.slice(0, 7) || VillaLedger.cents(existing.amount) !== VillaLedger.cents(expense.amount);
+  if (expense.financeMode === 'additional' && additionalChanged && legacyExpenseCandidates(expense).length) {
+    if (!window.confirm('A monthly cost with the same property, month and amount already exists. Choose "Already in monthly costs" to link it without adding another charge. Is this definitely a separate additional cost?')) return false;
+  }
+  if (existing?.financeMode === 'legacy' && expense.financeMode !== 'legacy') {
+    if (!window.confirm('Unlink this expense? The original monthly cost will stay in Finance. An additional expense will count separately.')) return false;
+  }
+  return true;
+}
+
+function prepareExpenseFinanceChange(expense) {
+  if (expense.financeMode !== 'legacy') return profitData;
+  const row = legacySourceFor(expense);
+  if (!row) throw new Error('The linked monthly cost is no longer available.');
+  return { ...profitData, [row.monthKey]: { ...profitData[row.monthKey], oneOffCosts: profitData[row.monthKey].oneOffCosts.map(cost => cost.id === row.cost.id ? { ...cost, amount: expense.amount } : cost) } };
+}
+
+function openLegacyCostRecord(monthKey, costId, expenseId) {
+  const row = legacyMonthlyCosts().find(item => item.monthKey === monthKey && item.cost.id === costId);
+  if (!row) return;
+  const linked = linkedLegacyExpense(monthKey, costId);
+  const matches = (taxPlan.expenses || []).filter(expense => ['unreviewed', 'tax-only', 'additional'].includes(expense.financeMode)
+    && expense.property === row.property && expense.date.slice(0, 7) === row.month && VillaLedger.cents(expense.amount) === VillaLedger.cents(row.cost.amount));
+  if (!linked && expenseId === undefined && matches.length) {
+    const dialog = document.querySelector('#legacyExpenseMatch');
+    dialog.innerHTML = `<header class="booking-workspace-head"><h2 id="legacyMatchTitle">Possible existing receipts</h2><button class="ghost-button" type="button" data-match-cancel>Cancel</button></header><p class="workspace-notice">${escapeHtml(row.cost.description || row.cost.category)} · ${money(row.cost.amount)} · ${escapeHtml(monthLabel(row.month))}</p><div class="expense-review-list">${matches.map(expense => `<div class="expense-review-row"><span><strong>${escapeHtml(expense.vendor || expense.category)}</strong><small>${shortDate(expense.date)} · ${escapeHtml(expense.receipt || 'No reference')}</small></span><button type="button" class="ghost-button" data-match-expense="${escapeHtml(expense.id)}" data-match-month="${escapeHtml(monthKey)}" data-match-cost="${escapeHtml(costId)}">Use existing</button></div>`).join('')}</div><button type="button" class="ghost-button" data-match-expense="" data-match-month="${escapeHtml(monthKey)}" data-match-cost="${escapeHtml(costId)}">None match: new receipt record</button>`;
+    dialog.showModal();
+    return;
+  }
+  showFinanceSection('expenses');
+  if (linked) fillTaxExpenseForm(linked.id);
+  else if (expenseId && matches.some(expense => expense.id === expenseId)) {
+    fillTaxExpenseForm(expenseId);
+    document.querySelector('#expenseFinanceMode').value = 'legacy';
+    renderLegacyExpenseOptions({ legacyCost: { monthKey, costId } });
+  } else {
+    clearTaxExpenseForm();
+    els.taxExpenseDate.value = '';
+    els.taxExpenseProperty.value = row.property;
+    els.taxExpenseAmount.value = row.cost.amount;
+    els.taxExpenseNotes.value = row.cost.description;
+    els.taxExpenseCategory.value = taxExpenseCategories.includes(row.cost.category) ? row.cost.category : 'Other';
+    document.querySelector('#expenseFinanceMode').value = 'legacy';
+    if (row.cost.receiptImage) {
+      pendingTaxExpenseAttachment = { name: row.cost.receiptName || 'Receipt', type: 'image/jpeg', dataUrl: row.cost.receiptImage, attachedAt: new Date().toISOString() };
+      els.taxExpenseAttachmentStatus.textContent = 'Attached: ' + pendingTaxExpenseAttachment.name;
+    }
+    renderLegacyExpenseOptions();
+    showSaveStatus(els.taxExpenseSaveStatus, 'Monthly cost: ' + monthLabel(row.month) + '. Enter the actual receipt date before linking.');
+  }
+  document.querySelector('#expenseEntryDisclosure').open = true;
+  els.taxExpenseDate.focus();
+  els.taxExpenseForm.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
+function renderExpenseReview() {
+  const host = document.querySelector('#expenseReview');
+  if (!host) return;
+  const filters = taxExpenseFilters();
+  const property = filters.property === 'Selected' ? activeVillaKey() + ' Villa' : filters.property;
+  const legacy = legacyMonthlyCosts().filter(row => Number(row.month.slice(0, 4)) === filters.year && (property === 'All' || row.property === property) && (filters.month === 'All' || row.month.slice(5) === filters.month));
+  const pending = filteredTaxExpenses().filter(expense => expense.financeMode === 'unreviewed');
+  const unlinked = legacy.filter(row => !linkedLegacyExpense(row.monthKey, row.cost.id));
+  host.querySelector('summary').textContent = `Review older costs · ${pending.length} awaiting review · ${unlinked.length} unlinked costs`;
+  host.querySelector('.expense-review-body').innerHTML = `<h3>Expense records awaiting Finance review</h3><div class="expense-review-list">${pending.map(expense => `<div class="expense-review-row"><span><strong>${escapeHtml(expense.vendor || expense.category)}</strong><small>${shortDate(expense.date)} · ${escapeHtml(expense.property)} · ${money(expense.amount)}</small></span><button type="button" class="ghost-button" data-review-expense="${expense.id}">Review</button></div>`).join('') || '<p class="recovery-fineprint">No unreconciled expense records in this filter.</p>'}</div>
+    <h3>Monthly costs already included in Finance</h3><div class="expense-review-list">${legacy.map(row => {
+      const linked = linkedLegacyExpense(row.monthKey, row.cost.id);
+      return `<div class="expense-review-row"><span><strong>${escapeHtml(row.cost.description || row.cost.category)}</strong><small>${escapeHtml(monthLabel(row.month))} · ${escapeHtml(row.property)} · ${money(row.cost.amount)}${linked ? ' · Linked' : ''}</small></span><button type="button" class="ghost-button" data-legacy-month="${escapeHtml(row.monthKey)}" data-legacy-cost="${escapeHtml(row.cost.id)}">${linked ? 'Open record' : 'Link receipt'}</button></div>`;
+    }).join('') || '<p class="recovery-fineprint">No older itemized monthly costs in this period.</p>'}</div>`;
+}
+
+function initializeExpenseReview() {
+  const label = document.createElement('label');
+  label.id = 'expenseLegacyCostLabel'; label.hidden = true;
+  label.innerHTML = 'Original monthly cost<select id="expenseLegacyCost"><option value="">Select matching monthly cost</option></select>';
+  document.querySelector('#expenseFinanceMode').closest('.form-grid').append(label);
+  [els.taxExpenseDate, els.taxExpenseAmount, els.taxExpenseProperty, document.querySelector('#expenseFinanceMode')].forEach(control => control.addEventListener('change', () => renderLegacyExpenseOptions()));
+  const review = document.createElement('details');
+  review.id = 'expenseReview'; review.className = 'expense-imports expense-review';
+  review.innerHTML = '<summary>Review older costs</summary><div class="expense-review-body"></div>';
+  document.querySelector('.expense-imports').before(review);
+  review.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (button?.dataset.reviewExpense) { fillTaxExpenseForm(button.dataset.reviewExpense); els.taxExpenseForm.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+    if (button?.dataset.legacyCost) openLegacyCostRecord(button.dataset.legacyMonth, button.dataset.legacyCost);
+  });
+  const dialog = document.createElement('dialog');
+  dialog.id = 'legacyExpenseMatch'; dialog.className = 'booking-workspace';
+  dialog.setAttribute('aria-labelledby', 'legacyMatchTitle');
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => dialog.replaceChildren());
+  dialog.addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (button?.hasAttribute('data-match-cancel')) dialog.close();
+    if (button?.hasAttribute('data-match-expense')) {
+      const { matchMonth, matchCost, matchExpense } = button.dataset;
+      dialog.close();
+      openLegacyCostRecord(matchMonth, matchCost, matchExpense || null);
+    }
+  });
+  renderExpenseReview();
+}
+
+initializeExpenseReview();
+
+;
+let backupOperation = null;
+
+function closeBackupDialog() {
+  backupOperation = null;
+  const dialog = document.querySelector('#encryptedBackupDialog');
+  if (dialog?.open) dialog.close();
+  dialog?.replaceChildren();
+}
+
+function canUseBackup(job) {
+  return Boolean(job && backupOperation === job && cloudReady && cloudUser?.id === job.ownerId);
+}
+
+function openBackupPasswordDialog(job) {
+  if (!cloudUser || !cloudReady) throw new Error('Log in and load your workspace first.');
+  backupOperation = { ...job, ownerId: cloudUser.id };
+  const exporting = job.mode === 'export';
+  const title = exporting ? 'Encrypted backup' : job.verifyOnly ? 'Check encrypted backup' : 'Unlock backup';
+  const dialog = document.querySelector('#encryptedBackupDialog');
+  dialog.innerHTML = `<header class="booking-workspace-head"><h2 id="encryptedBackupTitle">${title}</h2><button class="ghost-button" type="button" data-close-backup>Cancel</button></header>
+    <p class="workspace-notice">${exporting ? 'Choose a separate backup passphrase and keep it in your password manager. A lost passphrase cannot be reset. It does not change your website login.' : escapeHtml(job.source.label || 'Encrypted file') + '. Enter the passphrase used when this backup was created.'}</p>
+    <form id="backupPasswordForm" class="backup-password-form">
+      <label>Backup passphrase<input id="backupPassphrase" type="password" autocomplete="new-password" minlength="${exporting ? 14 : 1}" maxlength="1024" required ${exporting ? 'placeholder="At least 14 characters"' : ''} /></label>
+      ${exporting ? '<label>Confirm passphrase<input id="backupPassphraseConfirm" type="password" autocomplete="new-password" maxlength="1024" required /></label>' : ''}
+      <label class="recovery-option"><input id="backupShowPassphrase" type="checkbox" /> Show passphrase</label>
+      <p id="backupPasswordStatus" role="status" aria-live="polite"></p>
+      <div class="workspace-actions"><button class="ghost-button" type="button" data-close-backup>Cancel</button><button id="submitBackupPassword" class="primary-button" type="submit">${exporting ? 'Download encrypted backup' : job.verifyOnly ? 'Check file' : 'Unlock and review'}</button></div>
+    </form>`;
+  if (!dialog.open) dialog.showModal();
+  document.querySelector('#backupPassphrase').focus();
+}
+
+function openEncryptedBackup(options = {}) {
+  openBackupPasswordDialog({ mode: 'export', track: options.track !== false });
+}
+
+function openEncryptedImport(envelope, source, verifyOnly = false) {
+  VillaBackup.inspect(envelope);
+  openBackupPasswordDialog({ mode: 'import', envelope, source, verifyOnly });
+}
+
+function renderBackupSafety() {
+  const node = document.querySelector('#backupFileCheckStatus');
+  if (node) node.textContent = appSettings.lastBackupCheckAt ? 'File last checked: ' + shortDateTimeLabel(appSettings.lastBackupCheckAt) : 'No backup file checked yet';
+}
+
+function showBackupVerification(data, source) {
+  if (!cloudUser || !cloudReady) throw new Error('Log in before checking private backups.');
+  validateBackupData(data);
+  if (data.ownerId && data.ownerId !== cloudUser.id) throw new Error('This backup belongs to a different account.');
+  prepareRestoreData(data);
+  const payload = Array.isArray(data) ? { bookings: data } : data;
+  const counts = recoveryCounts(payload);
+  const files = attachmentSlots(payload);
+  const missing = files.filter(slot => slot.name && !slot.object[slot.field]).length;
+  const dialog = document.querySelector('#encryptedBackupDialog');
+  backupOperation = null;
+  dialog.innerHTML = `<header class="booking-workspace-head"><h2 id="encryptedBackupTitle">Backup file checked</h2><button class="ghost-button" type="button" data-close-backup>Close</button></header><p>${escapeHtml(source.label || 'Backup file')}</p><p class="workspace-notice">The file opened and its structure is valid. Nothing was restored. This does not certify a server backup or a complete disaster-recovery test.</p><dl class="booking-facts"><div><dt>Bookings</dt><dd>${counts.bookings}</dd></div><div><dt>Documents</dt><dd>${counts.documents}</dd></div><div><dt>Expenses</dt><dd>${counts.expenses}</dd></div><div><dt>Attached files</dt><dd>${files.filter(slot => slot.object[slot.field]).length}</dd></div></dl>${missing ? `<p class="workspace-notice">${missing} named attachment(s) are missing their file contents.</p>` : ''}`;
+  if (!dialog.open) dialog.showModal();
+  appSettings = { ...appSettings, lastBackupCheckAt: new Date().toISOString() };
+  saveAppSettings();
+  renderBackupSafety();
+}
+
+async function submitBackupPassword(event) {
+  event.preventDefault();
+  const job = backupOperation;
+  if (!canUseBackup(job) || job.busy) return;
+  const form = event.target;
+  if (!form.reportValidity()) return;
+  const password = document.querySelector('#backupPassphrase').value;
+  const status = document.querySelector('#backupPasswordStatus');
+  const submit = document.querySelector('#submitBackupPassword');
+  try {
+    if (job.mode === 'export' && password !== document.querySelector('#backupPassphraseConfirm').value) throw new Error('The passphrases do not match.');
+    job.busy = true;
+    submit.disabled = true;
+    status.textContent = job.mode === 'export' ? 'Encrypting...' : 'Checking password and file...';
+    if (job.mode === 'export') {
+      const data = allAppData();
+      validateBackupData(data);
+      const envelope = await VillaBackup.encrypt(data, password);
+      if (!canUseBackup(job)) return;
+      downloadJsonFile(`sunrise-villa-${new Date().toISOString().replace(/[:.]/g, '-')}.svbackup.json`, envelope);
+      if (job.track) {
+        appSettings = { ...appSettings, lastBackupAt: new Date().toISOString() };
+        saveAppSettings(); renderBackupStatus();
+      }
+      form.querySelectorAll('input[type="password"], input[type="text"]').forEach(input => { input.value = ''; input.type = 'password'; });
+      document.querySelector('#backupShowPassphrase').checked = false;
+      status.textContent = 'Encrypted download requested. Confirm it is in Downloads, keep a separate copy, and use Check backup file to test it.';
+    } else {
+      const data = await VillaBackup.decrypt(job.envelope, password);
+      if (!canUseBackup(job)) return;
+      // Validate before closing the dialog so an invalid payload leaves a visible error.
+      validateBackupData(data);
+      if (data.ownerId && data.ownerId !== cloudUser.id) throw new Error('This backup belongs to a different account.');
+      if (job.verifyOnly) showBackupVerification(data, job.source);
+      else { openRestorePreview(data, job.source); closeBackupDialog(); }
+    }
+  } catch (error) {
+    if (canUseBackup(job)) {
+      status.textContent = error.message;
+      form.querySelectorAll('input[type="password"], input[type="text"]').forEach(input => { input.value = ''; });
+    }
+  } finally { job.busy = false; if (submit.isConnected) submit.disabled = false; }
+}
+
+async function checkBackupFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const ownerId = cloudUser?.id;
+  try {
+    if (!cloudReady || !ownerId) throw new Error('Log in before checking a backup.');
+    if (file.size > VillaBackup.MAX_FILE_BYTES) throw new Error('This file exceeds the 90 MB import limit.');
+    const payload = JSON.parse(await file.text());
+    if (!cloudReady || cloudUser?.id !== ownerId) return;
+    if (VillaBackup.isEncrypted(payload)) openEncryptedImport(payload, { label: file.name }, true);
+    else showBackupVerification(payload, { label: file.name });
+  } catch (error) {
+    if (cloudReady && cloudUser?.id === ownerId) window.alert(error instanceof SyntaxError ? 'This file is not valid JSON. No records were changed.' : error.message || 'This backup could not be checked. No records were changed.');
+  }
+  finally { event.target.value = ''; }
+}
+
+function initializeBackupSecurity() {
+  const dialog = document.createElement('dialog');
+  dialog.id = 'encryptedBackupDialog'; dialog.className = 'booking-workspace backup-password-dialog';
+  dialog.setAttribute('aria-labelledby', 'encryptedBackupTitle');
+  document.body.append(dialog);
+  dialog.addEventListener('cancel', event => { event.preventDefault(); closeBackupDialog(); });
+  dialog.addEventListener('click', event => { if (event.target.closest('[data-close-backup]')) closeBackupDialog(); });
+  dialog.addEventListener('submit', submitBackupPassword);
+  dialog.addEventListener('change', event => {
+    if (event.target.id === 'backupShowPassphrase') dialog.querySelectorAll('#backupPassphrase, #backupPassphraseConfirm').forEach(input => { input.type = event.target.checked ? 'text' : 'password'; });
+  });
+  const exportButton = document.createElement('button');
+  exportButton.id = 'exportEncryptedBackup'; exportButton.type = 'button'; exportButton.className = 'ghost-button'; exportButton.textContent = 'Encrypted backup';
+  exportButton.addEventListener('click', () => openEncryptedBackup());
+  document.querySelector('#exportJson').before(exportButton);
+  document.querySelector('#exportJson').textContent = 'Plain JSON backup';
+  const section = document.createElement('section');
+  section.className = 'backup-safety-section'; section.setAttribute('aria-label', 'Backups');
+  section.innerHTML = '<h2>Backups</h2><div class="workspace-actions"><button id="settingsEncryptedBackup" type="button" class="primary-button">Encrypted backup</button><label class="ghost-button file-button">Check backup file<input id="checkBackupFile" type="file" accept="application/json,.json" /></label></div><p id="backupFileCheckStatus" class="recovery-fineprint"></p><p class="recovery-fineprint">Server backup coverage is not verified here. Keep a separate copy outside this browser and Supabase project.</p>';
+  document.querySelector('.workspace-settings-tools').after(section);
+  section.querySelector('#settingsEncryptedBackup').addEventListener('click', () => openEncryptedBackup());
+  section.querySelector('#checkBackupFile').addEventListener('change', checkBackupFile);
+  renderBackupSafety();
+}
+
+initializeBackupSecurity();
+
+createStartupRecoverySnapshot();
+fillDocumentForm(defaultDocumentDraft());
+setMessageFlow("quote");
+setTaxInnerTab("plan");
+setView(activeView);
+initThemePicker();
+initSidebar();
+initLoginUi();
+renderAll();
+initCloudStorage();
+
+// Coming back to the tab re-pulls what the servers refreshed while it was
+// hidden (hourly iCal blocks, new booking candidates) — no manual sync tap.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && supabaseClient && cloudUser) {
+    mergeServerIcalBlocks();
+    loadBookingCandidates();
+  }
+});
+
+window.PropertyOperations={save:saveCloudSnapshot,export:allAppData,pending:()=>cloudDirty || documentHasUnsavedChanges || localStorage.pending(),flush:()=>localStorage.flush()};
+for(const [selector,label,cls] of [['.month-switcher','Period','property-period'],['.focus-panel','Payment summary','property-payment-summary']]){
+  const section=document.querySelector(selector);if(section){const details=document.createElement('details'),summary=document.createElement('summary');details.className=cls;summary.textContent=label;section.before(details);details.append(summary,section);}
+}
+document.getElementById('cloudLogout').textContent='Life OS account';
+for(const id of ['aiDraftBtn','taxScanInput','taxScanBtn','taxBatchScanBtn','taxEarningsBtn','taxDocAnalyzeBtn','runTaxReviewBtn']){const control=document.getElementById(id);if(control){control.disabled=true;control.title='AI disabled. Manual records remain available.';}}
+const aiNotice=document.createElement('p');aiNotice.className='property-ai-notice';aiNotice.textContent='AI tools are off. No guest, receipt or tax records are sent to an AI provider.';document.querySelector('.topbar').after(aiNotice);
+window.addEventListener('beforeunload',event=>{if(cloudDirty || documentHasUnsavedChanges || localStorage.pending()){event.preventDefault();event.returnValue='';}});
+} catch(error) { window.PropertyHost.failed(error); }
+})();

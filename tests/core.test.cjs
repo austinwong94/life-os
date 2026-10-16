@@ -82,6 +82,11 @@ test('same-field conflict keeps both values for recovery',()=>{
 test('explicit board deletion cannot be resurrected by stale remote',()=>{
  const b=base(),l=clone(b),r=clone(b);l.boards.splice(1,1);l.deletedBoardIds={b:now};r.boards[1].name='Stale edit';const m=M.merge(b,l,r);assert.deepEqual(m.boards.map(x=>x.id),['a']);
 });
+test('inherited object properties are not board deletion records; only explicit own tombstones remove a board',()=>{
+ const b={boards:['toString','hasOwnProperty','constructor','__proto__'].map(id=>({id,name:id,cards:[{id:'diary',text:'Keep every original'}]}))},l=clone(b),r=clone(b);l.boards[0].name='Local title';r.boards[1].name='Remote title';
+ const result=M.merge(b,l,r);assert.equal(result.conflicts.length,0);assert.deepEqual(result.boards.map(b=>b.id),b.boards.map(b=>b.id));assert(result.boards.every(b=>b.cards[0].text==='Keep every original'));
+ l.boards.splice(3,1);l.deletedBoardIds=JSON.parse('{"__proto__":100}');assert.deepEqual(M.merge(b,l,r).boards.map(b=>b.id),['toString','hasOwnProperty','constructor']);
+});
 test('separate newly added task IDs survive simultaneous additions',()=>{
  const b=base(),l=clone(b),r=clone(b);l.boards[1].cards.push({id:'x',title:'One'});r.boards[1].cards.push({id:'y',title:'Two'});const m=M.merge(b,l,r);assert.equal(m.conflicts.length,0);assert.equal(m.boards[1].cards.length,2);
 });

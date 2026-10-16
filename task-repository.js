@@ -30,6 +30,30 @@
     const c=target.taskCompletion;
     return target.done && c?.done===true && validDate(c.on) && Number.isFinite(c.at) && c.at>0 && Number.isFinite(new Date(c.at).getTime()) ? c : null;
   }
+  function expireTimer(card,now=Date.now()) {
+    if(!eligible(card) || !usableId(card.id) || card.type!=='single' || card.timerMode!=='hours')return null;
+    const start=card.runningSince,seconds=card.remaining;
+    if(!Number.isFinite(now) || !Number.isFinite(new Date(now).getTime()) || !Number.isFinite(start) || start<=0 || !Number.isFinite(seconds) || seconds<0)return null;
+    const at=start+seconds*1000;
+    if(at>now || !Number.isFinite(new Date(at).getTime()))return null;
+    const next=copy(card);
+    // An already completed legacy card must not acquire an invented completion date.
+    if(!next.done){
+      if(Object.hasOwn(next,'taskCompletion')){
+        const previous=next.taskCompletion;
+        if(!previous || previous.done!==false || previous.on!=='' || previous.at!==0 || !Number.isFinite(previous.recordedAt) || previous.recordedAt<=0 || !Number.isFinite(new Date(previous.recordedAt).getTime()))throw new Error('Completion history needs review. The original record was kept.');
+      }
+      // A later explicit reopen takes precedence over an expiry noticed late.
+      if(!next.taskCompletion || next.taskCompletion.recordedAt<at){
+        const event=complete(next,true,dateOf(at),at);
+        event.id='timer:'+JSON.stringify([card.id,start,seconds]);
+        event.at=at;event.recordedAt=now;
+        next.taskCompletion.at=at;next.taskCompletion.recordedAt=now;
+      }
+    }
+    next.remaining=0;next.runningSince=null;
+    return next;
+  }
   function cards(board) {return Array.isArray(board?.cards) ? board.cards : [];}
   function collect(board,{includeArchived=false}={}) {
     return cards(board).filter(card=>eligible(card,includeArchived)).flatMap(card=>{
@@ -81,7 +105,7 @@
     else {card.title=transaction.before.title;card.done=transaction.before.done;for(const key of completionKeys){delete card[key];if(Object.hasOwn(transaction.before,key))card[key]=copy(transaction.before[key]);}}
     return {ref:transaction.ref,before:transaction.after,after:transaction.before};
   }
-  const api={collect,resolve,change,restore,complete,knownCompletion,validDate};
+  const api={collect,resolve,change,restore,complete,knownCompletion,validDate,expireTimer};
   root.LifeTaskRepository=api;
   if(typeof module!=="undefined" && module.exports)module.exports=api;
 })(typeof globalThis!=="undefined" ? globalThis : this);

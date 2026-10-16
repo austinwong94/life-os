@@ -1,0 +1,377 @@
+/* Presentation boundary. Record formats and domain writers stay unchanged. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #fff;
+  --surface-strong: #fff;
+  --ink: #24282d;
+  --muted: #616973;
+  --line: #dce1e6;
+  --action: #196b61;
+  --action-soft: #e9f3ef;
+  --scheduled: #286aa6;
+  --completed: #33794a;
+  --waiting: #926800;
+  --danger: #a6324d;
+  --reference: #7048a0;
+  --radius: 8px;
+  --inner-radius: 6px;
+  --shadow: 0 1px 3px #24282d08;
+}
+body { background: var(--bg); color: var(--ink); }
+.app-shell { transition: none; }
+button, input, select, textarea { letter-spacing: 0; }
+button { touch-action: manipulation; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--scheduled); outline-offset: 3px; }
+.workspace { padding: 20px 24px 64px; }
+.workspace-header { margin-bottom: 8px; }
+.workspace-navigation { padding: 0 0 6px; margin-bottom: 12px; border-bottom: 1px solid var(--line); gap: 12px; }
+.board-kicker-row > p { color: var(--muted); font-size: 11px; font-weight: 500; }
+#boardSwitcherButton { font-size: 20px; line-height: 1.35; color: var(--ink); }
+.stats .stat-toggle, .column-picker button { border-radius: 6px; }
+.workspace .column-picker button[aria-pressed=true], .workspace .column-picker button.is-active { color: var(--action); background: var(--action-soft); border-color: #ced9f6; }
+.save-indicator { color: var(--muted); min-height: 44px; max-width: 360px; }
+.save-indicator[data-status=error] { color: var(--danger); }
+.sidebar { background: #fff; backdrop-filter: none; box-shadow: none; }
+.sidebar-toggle, .rail-button { box-shadow: none; background: transparent; border-radius: 6px; }
+.sidebar-toggle:hover, .rail-button:hover, .rail-button:focus-visible { box-shadow: none; transform: none; background: #f0f3f5; }
+.sidebar .workspace-modes { flex-direction: column; width: 100%; gap: 3px; border: 0; }
+.sidebar .workspace-modes button { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; padding: 10px; border: 0; border-radius: 6px; color: var(--muted); font-size: 14px; font-weight: 500; text-align: left; }
+.sidebar .workspace-modes svg { width: 18px; height: 18px; flex: 0 0 18px; stroke-width: 1.8; }
+.sidebar .workspace-modes button[aria-pressed=true] { background: var(--action-soft); color: var(--action); font-weight: 650; }
+.sidebar .workspace-modes button:hover { background: #f0f3f5; }
+.sidebar .rail-nav { border-top: 1px solid var(--line); padding-top: 14px; }
+.sidebar .rail-primary { color: var(--action); border-color: var(--line); }
+.task-card { background: var(--card-fill,#fff); border-radius: 8px; box-shadow: var(--shadow); }
+.card-main h3 { font-size: 16px; font-weight: 650; }
+.card-topline { gap: 6px; }
+.card-type, .card-category, .card-percent { font-size: 11px; font-weight: 600; }
+.card-description { font-size: 13px; }
+.planning-workspace, .money-workspace { color: var(--ink); max-width: none; }
+.plan-workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.plan-workspace-heading h2 { font-size: 28px; font-weight: 650; margin: 0; }
+.plan-workspace-heading .plan-view-switch, .records-head + .planning-tabs { display: flex; gap: 4px; background: #f3f4f7; padding: 4px; border: 0; border-radius: 6px; width: fit-content; }
+.plan-workspace-heading .plan-view-switch { margin: 0; }
+.plan-workspace-heading .plan-view-switch button, .records-head + .planning-tabs button { background: transparent; border: 1px solid transparent; min-height: 44px; font-size: 13px; padding: 8px 14px; border-radius: 4px; color: var(--muted); }
+.plan-workspace-heading .plan-view-switch button[aria-pressed=true], .records-head + .planning-tabs button[aria-pressed=true] { color: var(--ink); background: #fff; border-color: #e4e7ed; box-shadow: 0 1px 3px #20242d12; }
+.task-heading > h2 { display: none; }
+.task-heading { grid-template-columns: minmax(0,1fr) minmax(200px,300px); }
+.task-heading > .planning-field { margin-right: auto; width: 200px; }
+.task-workspace .task-toolbar { margin-bottom: 14px; }
+.task-workspace .task-capture { grid-template-columns: minmax(0,1fr) 44px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; gap: 6px 8px; margin-bottom: 12px; }
+.task-capture-main { grid-column: 1; grid-row: 1; }
+.task-capture .task-capture-submit { grid-column: 2; grid-row: 1; }
+.task-capture-details { grid-column: 1 / -1; grid-row: 2; }
+.task-capture-details > summary { color: var(--muted); font-size: 12px; cursor: pointer; min-height: 44px; padding: 12px 4px; box-sizing: border-box; overflow-wrap: anywhere; }
+.task-capture-details .task-capture-options { margin: 0 0 6px; }
+.task-capture .planning-optional-date button { background: transparent; color: var(--muted); border-color: transparent; }
+@media (min-width: 701px) and (hover: hover) and (pointer: fine) {
+  .task-workspace .task-capture { grid-template-columns: minmax(0,1fr) 36px; }
+  .task-capture-details > summary { min-height: 36px; padding-block: 8px; }
+}
+@media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+  .task-workspace .task-capture:not(:has(.task-capture-details[open])) { grid-template-columns: minmax(0,1fr) minmax(120px,auto) 36px; }
+  .task-capture:not(:has(.task-capture-details[open])) .task-capture-details { grid-column: 2; grid-row: 1; max-width: 240px; }
+  .task-capture:not(:has(.task-capture-details[open])) .task-capture-submit { grid-column: 3; }
+}
+.planning-heading h2, .daily-head h2, .money-heading h2, .coaching-heading h2, .records-head h2 { font-size: 22px; font-weight: 650; line-height: 1.35; }
+.planning-button { color: var(--ink); border-color: var(--line); font-weight: 500; border-radius: 6px; }
+.planning-button:disabled { opacity: .45; cursor: not-allowed; }
+.planning-field, .journal-field { font-weight: 500; }
+.planning-field input, .planning-field select, .planning-field textarea, .planning-search, .task-capture-main input, .planning-date-nav input { border-color: var(--line); color: var(--ink); background: #fbfcfb; }
+.planning-field input:focus, .planning-field select:focus, .planning-field textarea:focus, .planning-search:focus, .task-capture-main input:focus { background: #fff; }
+.planning-count, .planning-empty, .calendar-timezone, .daily-muted { color: var(--muted); }
+.workspace-task-list .planner-linked-item { border-radius: 0; background: transparent; }
+.workspace-task-list .planner-linked-item:hover { background: #f8faf8; }
+.workspace-task-list .planner-linked-check { accent-color: var(--action); }
+.task-capture { background: #f8faf8; border-color: var(--line); box-shadow: none; }
+.task-capture-main input { background: #fff; }
+.planning-workspace .planning-tabs { border-bottom-color: var(--line); }
+.money-stats { box-shadow: none; border-color: var(--line); }
+.money-stats strong { font-weight: 600; font-variant-numeric: tabular-nums; }
+.money-section-tabs { border-bottom-color: var(--line); }
+.record-entry > summary:hover { color: var(--action); }
+.records-editor { padding-top: 12px; }
+.records-editor .diary-thoughts { border-color: var(--line); }
+.planner-date-select-row { grid-template-columns: repeat(auto-fit,minmax(min(100%,160px),1fr)); gap: 6px 12px; }
+.planner-date-select-row span { overflow: visible; white-space: normal; text-overflow: clip; font-size: 11px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.planner-date-input, .planner-task-input { height: 44px; min-height: 44px; border-radius: 6px; border-color: var(--line); background: #fbfcfb; font-size: 14px; font-weight: 400; }
+.planner-add-row { grid-template-columns: minmax(0,1fr) 44px; }
+.planner-submit-button { width: 44px; height: 44px; }
+.planning-button.is-primary { background: var(--action); border-color: var(--action); color: #fff; }
+.planning-tabs button[aria-pressed=true] { color: var(--action); border-color: var(--action); }
+.task-status { color: var(--waiting); }
+.task-area { color: var(--scheduled); }
+.task-goal { color: var(--reference); background: #f0ecf8; }
+.planner-linked-carryover { color: var(--waiting); background: #f8f1df; }
+.planner-linked-completed { color: var(--completed); background: #eaf4eb; }
+.task-capture, .workspace-task-list, .planner-linked-item { border-color: var(--line); }
+.workspace-task-list .planner-linked-copy { font-size: 14px; font-weight: 500; line-height: 1.5; }
+.daily-layout { display: grid; gap: 20px; align-items: start; }
+.daily-layout .daily-columns { display: block; }
+.daily-layout .daily-journals { margin-top: 0; gap: 16px; }
+.daily-focus-section { border: 0; padding-top: 0; }
+.daily-focus-section .daily-section-head { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.daily-journals .task-card { padding: 16px; }
+.daily-journals .card-main h3 { font-size: 16px; }
+.daily-context { gap: 20px; }
+.daily-completed { border-color: var(--line); }
+.journal-field { display: grid; gap: 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.journal-field textarea { margin: 0; color: var(--ink); font-weight: 400; }
+.diary-card { gap: 10px; }
+.diary-thoughts, .diary-sentence, .side-note-input { font-size: 14px; font-weight: 400; line-height: 1.65; border-radius: 6px; }
+.mood-picker { display: flex; flex-wrap: nowrap; gap: 4px; }
+.mood-picker button { flex: 1 1 0; min-width: 0; max-width: 48px; height: 44px; padding: 0; border-radius: 6px; font-size: 20px; }
+.records-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.records-head h2 { margin: 0; }
+.records-filters { display: grid; grid-template-columns: minmax(140px,180px) minmax(0,1fr) minmax(170px,210px); gap: 12px; }
+.records-options { display: flex; gap: 12px 24px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.records-preferences { border-bottom: 1px solid var(--line); margin-block: 6px 12px; }
+.records-preferences > summary { cursor: pointer; min-height: 44px; padding-block: 14px; color: var(--muted); font-size: 12px; }
+.records-preferences .records-options { border-bottom: 0; padding-top: 0; }
+.records-head h2 { font-size: 28px; }
+.record-entry > summary { padding-block: 18px; }
+.record-meta time { font-size: 14px; }
+.record-meta > span { font-size: 12px; }
+.records-check { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 13px; cursor: pointer; }
+.records-check input { width: 18px; height: 18px; accent-color: var(--action); }
+.records-history { max-width: 980px; }
+.records-count { color: var(--muted); font-size: 13px; }
+.record-entry { border-bottom: 1px solid var(--line); }
+.record-entry > summary { min-height: 56px; padding: 14px 0; cursor: pointer; }
+.record-meta { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 6px 16px; max-width: calc(100% - 20px); font-size: 13px; color: var(--muted); vertical-align: middle; overflow-wrap: anywhere; }
+.record-meta time { color: var(--ink); font-weight: 600; }
+.record-archived { color: var(--waiting); }
+.record-preview { margin: 8px 0 0 20px; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.record-content { display: grid; gap: 12px; padding: 8px 0 20px 20px; max-width: 780px; }
+.record-content p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 1.75; }
+.record-content .planning-button { justify-self: start; }
+.record-content .record-feeling { color: var(--muted); font-size: 13px; }
+.record-sentence { font-weight: 600; }
+.records-write-options { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+.records-write-options .planning-field { flex: 1; max-width: 480px; }
+.records-editor { max-width: 780px; min-width: 0; }
+.records-editor .diary-nav { border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.records-editor .diary-thoughts { min-height: 260px; font-size: 16px; }
+.records-editor .side-note-input { min-height: 120px; font-size: 16px; }
+.records-editor .mood-picker { justify-content: flex-start; }
+.records-editor .mood-picker button { flex: 0 1 44px; }
+@media (min-width: 981px) {
+  .sidebar { position: sticky; top: 0; height: 100dvh; min-height: 0; overflow-y: auto; }
+  .sidebar .sidebar-toggle { display: none; }
+  .sidebar .rail-nav { gap: 4px; }
+  .rail-button small { font-size: 11px; font-weight: 500; max-width: 100%; white-space: normal; overflow: visible; }
+}
+@media (min-width: 1201px) {
+  .app-shell, .app-shell.sidebar-collapsed { grid-template-columns: 184px minmax(0,1fr); }
+  .sidebar, .sidebar-collapsed .sidebar { padding: 24px 14px; align-items: stretch; gap: 24px; }
+  .brand-main { display: flex; gap: 12px; justify-content: flex-start; }
+  .brand-mark { width: 32px; height: 32px; }
+  .brand-main > div:last-child { display: block; }
+  .brand-main .eyebrow { font-size: 16px; font-weight: 650; color: var(--ink); margin: 0; text-transform: none; }
+  .brand-main h1 { display: none; }
+  .sidebar .rail-button { width: 100%; min-height: 44px; height: 44px; display: flex; justify-content: flex-start; align-items: center; gap: 10px; padding: 10px; border: 0; }
+  .sidebar .rail-button small { max-width: none; width: auto; text-align: left; font-size: 13px; }
+  .sidebar .rail-primary { background: var(--action-soft); }
+  .sidebar .rail-button.mobile-daily-nav { display: none; }
+  .brand-main { align-items: center; }
+  .brand-main .brand-mark { width: 32px; height: 32px; padding: 0; border: 0; grid-template-columns: repeat(2,14px); grid-template-rows: repeat(2,14px); gap: 4px; box-shadow: none; }
+}
+@media (min-width: 981px) and (max-width: 1200px) {
+  .sidebar .workspace-modes button { flex-direction: column; justify-content: center; gap: 5px; padding: 8px 2px; font-size: 11px; }
+}
+@media (min-width: 1300px) {
+  .daily-layout { grid-template-columns: minmax(260px,.9fr) minmax(0,1.6fr); gap: 24px; }
+}
+@media (max-width: 980px) {
+  .sidebar .workspace-modes { display: none; }
+  .sidebar .rail-nav { border: 0; padding: 0; }
+  .workspace, .sidebar-collapsed .workspace { padding: 16px 16px calc(90px + env(safe-area-inset-bottom)); }
+  .workspace-navigation { gap: 8px; padding-bottom: 8px; margin-bottom: 14px; }
+  .save-indicator { max-width: none; font-size: 11px; }
+  .sidebar { overflow: visible; }
+  .rail-button small { font-size: 11px; font-weight: 500; }
+  .records-filters { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .records-filters > :nth-child(2) { grid-column: 1 / -1; grid-row: 1; }
+  .daily-layout { gap: 12px; }
+}
+@media (max-width: 700px) {
+  .workspace, .sidebar-collapsed .workspace { padding-inline: 12px; }
+  .daily-head h2, .planning-heading h2, .money-heading h2, .records-head h2 { font-size: 20px; }
+  .plan-workspace-heading h2 { font-size: 24px; }
+  .task-heading { grid-template-columns: minmax(0,1fr) 44px; }
+  .daily-layout .daily-journals { grid-template-columns: minmax(0,1fr); }
+  .journal-field textarea, .side-note-input { font-size: 16px; }
+  .planner-date-input, .planner-task-input { font-size: 16px; }
+  .records-head .planning-button { font-size: 12px; }
+  .records-filters { gap: 10px; }
+  .records-options { gap: 4px; flex-direction: column; }
+  .record-content { padding-left: 0; }
+  .record-meta { gap: 4px 10px; }
+  .record-meta > :nth-child(3) { flex-basis: 100%; }
+  .records-write-options .planning-field { flex-basis: 100%; max-width: none; }
+}
+@media print {
+  .sidebar, .workspace-navigation, .records-filters, .records-options, .records-write-options, .records-head button { display: none !important; }
+  .app-shell { display: block; }
+}
+@media (max-width: 420px) {
+  .records-filters { grid-template-columns: minmax(0,1fr); }
+}
+
+/* Health editors share the workspace controls; layout follows card width,
+   including three-column boards on portrait displays. */
+.fitness-log, .food-tracker { gap: 16px; color: var(--ink); font-weight: 400; }
+.fitness-log *, .food-tracker * { min-width: 0; }
+.fitness-nav, .food-nav { gap: 6px; }
+.fitness-nav input, .food-nav input { border-radius: 6px; border-color: var(--line); font-size: 14px; font-weight: 500; color: var(--ink); }
+.fitness-nav button, .food-nav button { border-radius: 6px; border-color: var(--line); background: white; color: var(--muted); box-shadow: none; }
+.fitness-nav .health-save-status, .food-nav .health-save-status { font-size: 11px; font-weight: 400; color: var(--muted); }
+.fitness-parts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; }
+.fitness-parts button { justify-content: flex-start; padding: 8px; border-color: var(--line); font-size: 12px; font-weight: 500; color: var(--muted); background: white; }
+.fitness-parts button.is-active { border-color: #bdd8cb; background: #f4faf6; color: var(--completed); }
+.fitness-parts button.is-selected { background: var(--action-soft); border-color: #c9d6f5; color: var(--action); }
+.fitness-part-mark { width: 12px; flex-basis: 12px; }
+.fitness-part-mark svg { width: 12px; }
+.fitness-empty, .food-empty { padding: 10px 0; margin: 0; border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.5; }
+.fitness-active { gap: 8px; }
+.fitness-section { border-color: var(--line); padding-top: 12px; gap: 10px; }
+.fitness-section-header h4 { font-size: 14px; font-weight: 600; color: var(--ink); }
+.fitness-remove-part { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.fitness-remove-part svg { width: 16px; height: 16px; }
+.fitness-exercise-row { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.fitness-exercise-row .fitness-field:first-child { grid-column: 1 / 4; }
+.fitness-exercise-row .fitness-field:not(:first-child) { grid-column: auto; grid-row: 2; }
+.fitness-exercise-row .fitness-remove-exercise { grid-column: 4; grid-row: 1; justify-self: end; }
+.fitness-field-grid, .fitness-metric-grid { gap: 10px; }
+.fitness-field > span, .food-field > span { text-transform: none; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.4; }
+.fitness-field input, .fitness-field select, .fitness-field textarea,
+.food-field input, .food-item-row input, .food-item-row select, .food-meal-header input {
+  border-color: var(--line); border-radius: 6px; color: var(--ink); font-size: 14px; font-weight: 400; background: white; padding: 8px;
+}
+.fitness-readonly-value, .fitness-pace { min-height: 44px; border: 0; border-radius: 6px; background: #f4f5f7; color: var(--ink); font-size: 13px; font-weight: 500; }
+.fitness-readonly-value strong { font-size: 14px; font-weight: 500; }
+.fitness-log input[type=number], .food-tracker input[type=number] { appearance: textfield; -moz-appearance: textfield; }
+.fitness-log input[type=number]::-webkit-inner-spin-button, .fitness-log input[type=number]::-webkit-outer-spin-button,
+.food-tracker input[type=number]::-webkit-inner-spin-button, .food-tracker input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.fitness-readonly-value small { text-transform: none; color: var(--muted); font-weight: 400; }
+.fitness-add-exercise, .food-add-meal, .food-library-add, .food-meal-custom button { border-radius: 6px; border-color: var(--line); background: white; color: var(--action); font-size: 13px; font-weight: 500; box-shadow: none; }
+.fitness-remove-exercise, .food-item-remove, .food-meal-remove, .food-library-top > button { border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.fitness-metrics-hint, .food-source-note { color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.5; }
+.food-target-panel, .food-library-panel, .food-add-food-panel, .food-meal-details,
+.fitness-day-overview, .fitness-notes-panel { border: 0; border-radius: 0; background: transparent; padding: 0; }
+.food-target-panel, .food-library-panel, .fitness-metrics { border-top: 1px solid var(--line); padding-top: 4px; }
+.fitness-log summary, .food-tracker summary { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--ink); font-size: 13px; font-weight: 500; list-style: none; cursor: pointer; }
+.fitness-log summary::-webkit-details-marker, .food-tracker summary::-webkit-details-marker { display: none; }
+.fitness-log summary strong, .food-tracker summary strong { flex: 1; color: var(--ink); font-size: 13px; font-weight: 500; line-height: 1.5; }
+.fitness-log summary > span, .food-tracker summary > span { color: var(--muted); font-size: 11px; font-weight: 400; white-space: normal; overflow: visible; }
+.fitness-log summary::after, .food-tracker summary::after { content: "+"; flex: 0 0 16px; width: 16px; height: auto; border-radius: 0; background: transparent; text-align: center; color: var(--muted); }
+.fitness-log details[open] > summary::after, .food-tracker details[open] > summary::after { content: "-"; }
+.fitness-summary-strip { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; padding-block: 4px 12px; }
+.fitness-summary-pill { padding: 0; }
+.fitness-summary-pill strong { font-size: 12px; font-weight: 500; color: var(--ink); }
+.fitness-summary-pill small { font-size: 11px; font-weight: 400; color: var(--muted); white-space: normal; }
+.food-summary-panel { gap: 14px; padding: 0; }
+.food-summary-header strong { color: var(--ink); font-size: 14px; font-weight: 500; }
+.food-summary-header span { color: var(--muted); font-size: 11px; font-weight: 400; }
+.food-calories strong { color: var(--ink); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.food-macro-grid { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+.food-macro { gap: 3px; }
+.food-macro span, .food-macro small { font-size: 11px; font-weight: 400; color: var(--muted); }
+.food-macro strong { color: var(--ink); font-size: 14px; font-weight: 500; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.food-macro i { margin-top: 3px; height: 3px; border-radius: 0; background: var(--line); }
+.food-macro i::before { border-radius: 0; background: var(--completed); }
+.food-target-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+.food-target-grid .food-field:first-child { grid-column: 1 / -1; }
+.food-add-panel { gap: 10px; }
+.food-add-head strong { font-size: 14px; font-weight: 500; color: var(--ink); }
+.food-add-head span { font-size: 11px; font-weight: 400; color: var(--muted); }
+.food-meal-nav { grid-template-columns: 44px minmax(0,1fr) 44px; align-items: center; }
+.food-meal-nav-button { min-height: 44px; height: 44px; border-radius: 6px; border-color: var(--line); color: var(--muted); }
+.food-meal-tabs { grid-auto-columns: minmax(116px,136px); padding-bottom: 5px; }
+.food-meal-tabs button { min-height: 60px; padding: 8px 10px; border-radius: 6px; border-color: var(--line); color: var(--ink); font-size: 12px; font-weight: 500; box-shadow: none; }
+.food-meal-tabs button small { font-size: 11px; font-weight: 400; opacity: 1; color: var(--muted); }
+.food-meal-tabs button.is-active { border-color: #c9d6f5; background: var(--action-soft); color: var(--action); box-shadow: none; }
+.food-meal-tabs button.is-active small { color: var(--action); opacity: 1; }
+.food-chip-row { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+.food-chip-row button { border-radius: 6px; border-color: var(--line); color: var(--ink); background: white; font-size: 12px; font-weight: 400; line-height: 1.5; box-shadow: none; }
+.food-chip-row button span { white-space: normal; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; }
+.food-meal-picker { padding: 10px 0; border: 0; border-radius: 0; background: transparent; gap: 10px; }
+.food-reuse-button { justify-self: start; }
+.food-reuse-dialog, .exercise-reuse-dialog { width: min(520px, calc(100vw - 24px)); }
+.food-reuse-dialog > .daily-section-head, .exercise-reuse-dialog > .daily-section-head { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; }
+.food-reuse-dialog h2, .exercise-reuse-dialog h2 { font-size: 18px; font-weight: 600; line-height: 1.35; }
+.food-reuse-dialog > .daily-muted, .exercise-reuse-dialog > .daily-muted { font-size: 13px; line-height: 1.5; }
+.food-reuse-dialog .daily-form, .exercise-reuse-dialog .daily-form { margin-top: 16px; grid-template-columns: minmax(0,1fr); }
+.food-reuse-dialog .daily-form > label, .food-reuse-dialog select, .exercise-reuse-dialog select { min-width: 0; max-width: 100%; }
+.food-reuse-dialog select, .exercise-reuse-dialog select { width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.fitness-exercise-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.fitness-exercise-actions .planning-button { font-size: 13px; font-weight: 500; }
+.exercise-reuse-preview { margin: 0; border: 0; padding: 0; min-width: 0; }
+.exercise-reuse-preview legend { font-size: 14px; font-weight: 600; }
+.exercise-reuse-preview .daily-check { align-items: center; }
+.exercise-reuse-preview .daily-check > span { min-width: 0; overflow-wrap: anywhere; }
+.exercise-reuse-preview input[type=checkbox] { flex: 0 0 18px; width: 18px; height: 18px; }
+.exercise-reuse-dialog .daily-form > .daily-muted { font-size: 12px; line-height: 1.5; }
+.food-reuse-preview { border-block: 1px solid var(--line); padding-block: 12px; }
+.food-reuse-preview h3 { margin: 0 0 12px; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.food-reuse-items { margin: 12px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.food-meal-preset-row button, .food-meal-name-presets button { border-radius: 6px; background: white; border-color: var(--line); color: var(--action); font-size: 12px; font-weight: 500; }
+.food-meal-custom input { font-weight: 400; border-radius: 6px; }
+.food-meal, .food-item-row { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.food-meal.is-active { box-shadow: none; }
+.food-meal-header { gap: 10px; }
+.food-meal-header > input { font-size: 14px; font-weight: 500; }
+.food-meal-summary { grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; padding-bottom: 6px; }
+.food-meal-summary > span { gap: 2px; }
+.food-meal-summary strong { font-size: 11px; color: var(--muted); font-weight: 400; }
+.food-meal-summary small { font-size: 13px; color: var(--ink); font-weight: 500; }
+.food-meal-summary > span:first-child { align-items: center; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.food-meal-details { gap: 0; }
+.food-items { gap: 0; }
+.food-item-row { gap: 8px; border-top: 1px solid var(--line); padding: 10px 0; }
+.food-item-top { gap: 4px 8px; }
+.food-item-top > strong { font-size: 13px; font-weight: 500; color: var(--ink); }
+.food-item-macros { font-size: 11px; line-height: 1.6; font-weight: 400; color: var(--muted); }
+.food-library-list { gap: 0; }
+.food-library-row { padding: 4px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; }
+.food-library-row > summary { display: grid; grid-template-columns: minmax(0,1fr) 16px; gap: 0 8px; padding: 6px 0; }
+.food-library-row > summary strong { grid-column: 1; grid-row: 1; overflow-wrap: anywhere; }
+.food-library-row > summary span { grid-column: 1; grid-row: 2; }
+.food-library-row > summary::after { grid-column: 2; grid-row: 1 / 3; }
+.food-library-row[open] { padding-bottom: 12px; }
+.food-library-row > .food-library-top { margin-top: 8px; }
+.food-library-top { grid-template-columns: minmax(0,1fr) 44px; }
+.food-library-top > button { width: 44px; height: 44px; }
+.food-library-serving-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.food-library-serving-grid > :first-child { grid-column: 1 / -1; }
+.food-library-macro-grid { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.food-library-row small { white-space: normal; font-size: 11px; font-weight: 400; color: var(--muted); }
+.food-library-guide { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.food-library-guide strong, .food-library-guide span { font-size: 12px; font-weight: 400; line-height: 1.5; color: var(--muted); }
+.fitness-log button:focus-visible, .food-tracker button:focus-visible,
+.fitness-log summary:focus-visible, .food-tracker summary:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
+@container (max-width: 310px) {
+  .fitness-exercise-row { grid-template-columns: repeat(2,minmax(0,1fr)) 44px; }
+  .fitness-exercise-row .fitness-field:first-child { grid-column: 1 / 3; }
+  .fitness-exercise-row .fitness-field:nth-child(2), .fitness-exercise-row .fitness-field:nth-child(4) { grid-column: 1; }
+  .fitness-exercise-row .fitness-field:nth-child(3), .fitness-exercise-row .fitness-field:nth-child(5) { grid-column: 2; }
+  .fitness-exercise-row .fitness-field:nth-child(4), .fitness-exercise-row .fitness-field:nth-child(5) { grid-row: 3; }
+  .fitness-exercise-row .fitness-remove-exercise { grid-column: 3; }
+  .fitness-parts button { padding-inline: 4px; gap: 3px; font-size: 11px; }
+}
+@media (min-width: 981px) and (pointer: fine) {
+  .fitness-log button, .food-tracker button, .fitness-log summary, .food-tracker summary { min-height: 36px; }
+  .fitness-nav, .food-nav, .food-meal-nav { grid-template-columns: 36px minmax(0,1fr) 36px; }
+  .fitness-nav button, .food-nav button, .food-meal-nav-button, .fitness-remove-part,
+  .fitness-remove-exercise, .food-item-remove, .food-meal-remove, .food-library-top > button { width: 36px; min-width: 36px; height: 36px; }
+  .fitness-field input, .fitness-field select, .food-field input, .food-item-row input, .food-item-row select, .food-meal-header input,
+  .fitness-nav input, .food-nav input, .fitness-readonly-value, .fitness-pace { min-height: 36px; }
+  .food-meal-tabs button { min-height: 56px; }
+}
+@media (max-width: 980px), (pointer: coarse) {
+  .food-reuse-dialog button, .food-reuse-dialog select, .exercise-reuse-dialog button, .exercise-reuse-dialog select { min-height: 44px; min-width: 44px; }
+  .food-reuse-dialog select, .exercise-reuse-dialog select { height: 44px; font-size: 16px; }
+  .fitness-field input, .fitness-field select, .fitness-field textarea, .food-field input, .food-item-row input, .food-item-row select,
+  .food-meal-header input, .food-meal-custom input, .fitness-nav input, .food-nav input { font-size: 16px; }
+  .fitness-log button, .food-tracker button, .fitness-log summary, .food-tracker summary { min-height: 44px; }
+}

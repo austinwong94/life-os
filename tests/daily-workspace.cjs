@@ -93,7 +93,7 @@ const results=[];
   await p.evaluate(()=>flushDeviceWrites());await p.reload();await workspace(p,'today');
   assert.equal(await p.getByRole('checkbox',{name:'Programme week: Rest',exact:true}).isChecked(),true);
   assert.equal(await p.evaluate(()=>LifeCoaching.latestWeeks(coachingProgram(),getTodayKey()).some(e=>e.rest)),true);
-  await p.locator('#weeklyReviewButton').click();assert.match(await p.locator('#dailyDialog').innerText(),/Next step 0/);assert.equal(await p.evaluate(()=>coachingProgram().entries.filter(e=>e.kind==='measurement').length),0);
+  await p.locator('#weeklyReviewButton').click();await p.locator('.daily-review-evidence > summary').click();assert.match(await p.locator('#dailyDialog').innerText(),/Next step 0/);assert.equal(await p.evaluate(()=>coachingProgram().entries.filter(e=>e.kind==='measurement').length),0);
  });
  await run('Today chooses between diary cards without rewriting either diary and remembers hidden sections',async p=>{
   await p.evaluate(()=>{state.cards.push(makeCard({type:'diary',title:'Private second diary',thoughts:'Every old thought stays.'}));saveState();});await workspace(p,'today');await p.getByRole('button',{name:'Customize Today',exact:true}).click();

@@ -2,3 +2,23 @@
 # Google cannot provide a Supabase JWT at the OAuth callback.
 # All non-callback actions explicitly validate the user's JWT in the function.
 verify_jwt = false
+
+# Properties shares Life OS sign-in. Unused external callbacks remain private.
+[functions.property-ical-import]
+verify_jwt = true
+[functions.property-ical-cron-sync]
+verify_jwt = true
+[functions.property-ota-email-ingest]
+verify_jwt = true
+[functions.property-daily-digest]
+verify_jwt = true
+[functions.property-earnings-import]
+verify_jwt = true
+[functions.property-guest-reply-draft]
+verify_jwt = true
+[functions.property-receipt-scan]
+verify_jwt = true
+[functions.property-tax-doc-analyze]
+verify_jwt = true
+[functions.property-tax-review]
+verify_jwt = true

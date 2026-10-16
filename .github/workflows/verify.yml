@@ -11,21 +11,78 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm test
+      - name: Measure isolated small-history save and reload in Chromium
+        run: npm run test:performance
+        env:
+          PERF_PROFILES: small
+          PERF_SAMPLES: '1'
+          TEST_OUTPUT: test-results/performance-chromium
+      - name: Measure isolated small-history save and reload in WebKit
+        run: npm run test:performance
+        env:
+          TEST_BROWSER: webkit
+          PERF_PROFILES: small
+          PERF_SAMPLES: '1'
+          TEST_OUTPUT: test-results/performance-webkit
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.5.4
       - name: Type-check the private Calendar backend without secrets
         run: deno check --no-config --node-modules-dir=none supabase/functions/google-calendar/index.ts
+      - name: Verify inactive incremental storage prototype in Chromium
+        run: npm run test:delta-store
+        env:
+          TEST_OUTPUT: test-results/experimental-delta-chromium
+      - name: Verify inactive incremental storage prototype in WebKit
+        run: npm run test:delta-store
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/experimental-delta-webkit
+      - name: Verify inactive ordered capture and retry in Chromium
+        run: npm run test:capture-queue
+        env:
+          TEST_OUTPUT: test-results/capture-queue-chromium
+      - name: Verify inactive ordered capture and retry in WebKit
+        run: npm run test:capture-queue
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/capture-queue-webkit
+      - name: Verify inactive board reconciliation in Chromium
+        run: npm run test:board-reconcile
+        env:
+          TEST_OUTPUT: test-results/board-reconcile-chromium
+      - name: Verify inactive board reconciliation in WebKit
+        run: npm run test:board-reconcile
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/board-reconcile-webkit
       - name: Build complete public artifact
         run: npm run build
+      - name: Check cached and incomplete startup in Chromium
+        run: npm run test:release-startup
+        env:
+          TEST_OUTPUT: test-results/release-startup
+      - name: Check cached and incomplete startup in WebKit
+        run: npm run test:release-startup
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/release-startup-webkit
       - name: Start isolated preview
         run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-server.log 2>&1 &
+      - name: Repeat three-tab coherent HTTP startup in WebKit
+        run: npm run test:startup-repeat
+        env:
+          TEST_BROWSER: webkit
+          TEST_URL: http://127.0.0.1:5180/?liveReload=0
+          TEST_OUTPUT: test-results/startup-repeat-webkit
       - run: npm run test:planner-archive
         env:
           TEST_OUTPUT: test-results/planner-archive
@@ -58,15 +115,60 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/password-webkit
-      - name: Check cloud copy preservation in WebKit
+      - name: Check complete cloud and device preservation in WebKit
         run: npm run test:sync
         env:
           TEST_BROWSER: webkit
-          TEST_CASE_PATTERN: "missing|changes during|quota failure prevents|cloud readback truncation|baseline storage failure|cancelled cloud comparison|native storage quota|older tab rewriting legacy|JSONB-reordered|recovery vault|emergency downloads|automatic capacity repair|connected account hides"
           TEST_OUTPUT: test-results/cloud-copies-webkit
+          TEST_SAVE_TRACE: '1'
+      - name: Check device checkpoint refusals and recovery in Chromium
+        run: npm run test:device-concurrency
+        env:
+          TEST_OUTPUT: test-results/device-concurrency
+      - name: Check session renewal receipts and sign-out in Chromium
+        run: npm run test:session-renewal
+        env:
+          TEST_OUTPUT: test-results/session-renewal
+      - name: Check session renewal receipts and sign-out in WebKit
+        run: npm run test:session-renewal
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/session-renewal-webkit
+      - name: Check device checkpoint refusals and recovery in WebKit
+        run: npm run test:device-concurrency
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/device-concurrency-webkit
       - run: npm run test:features
         env:
           TEST_OUTPUT: test-results
+      - name: Check readable pending-copy downloads in Chromium
+        run: npm run test:readable-export
+        env:
+          TEST_OUTPUT: test-results/readable-export
+      - name: Check readable pending-copy downloads in WebKit
+        run: npm run test:readable-export
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/readable-export-webkit
+      - name: Check safe updates and pinned-release coexistence in Chromium
+        run: npm run test:version-compatibility
+        env:
+          TEST_OUTPUT: test-results/version-compatibility
+      - name: Check safe updates and pinned-release coexistence in WebKit
+        run: npm run test:version-compatibility
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/version-compatibility-webkit
+      - name: Check interrupted cloud saves in Chromium
+        run: npm run test:cloud-reconnect
+        env:
+          TEST_OUTPUT: test-results/cloud-reconnect
+      - name: Check interrupted cloud saves in WebKit
+        run: npm run test:cloud-reconnect
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/cloud-reconnect-webkit
       - run: npm run test:usability
         env:
           TEST_OUTPUT: test-results
@@ -82,6 +184,42 @@ jobs:
       - run: npm run test:health-review
         env:
           TEST_OUTPUT: test-results
+      - name: Check health-card editing and responsive layouts in Chromium
+        run: npm run test:health-interface
+        env:
+          TEST_OUTPUT: test-results/health-interface
+      - name: Check meal reuse and original nutrition preservation in Chromium
+        run: npm run test:meal-reuse
+        env:
+          TEST_OUTPUT: test-results/meal-reuse
+      - name: Check meal reuse and original nutrition preservation in WebKit
+        run: npm run test:meal-reuse
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/meal-reuse-webkit
+      - name: Check appearance and preserved board records in Chromium
+        run: npm run test:appearance
+        env:
+          TEST_OUTPUT: test-results/appearance
+      - name: Check exercise-name reuse without copying performance in Chromium
+        run: npm run test:exercise-reuse
+        env:
+          TEST_OUTPUT: test-results/exercise-reuse
+      - name: Check exercise-name reuse without copying performance in WebKit
+        run: npm run test:exercise-reuse
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/exercise-reuse-webkit
+      - name: Check appearance and preserved board records in WebKit
+        run: npm run test:appearance
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/appearance-webkit
+      - name: Check health-card editing and responsive layouts in WebKit
+        run: npm run test:health-interface
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/health-interface-webkit
       - run: npm run test:responsive
         env:
           TEST_OUTPUT: test-results
@@ -163,6 +301,71 @@ jobs:
       - run: npm run test:design
         env:
           TEST_OUTPUT: test-results/design
+      - run: npm run test:redesign
+        env:
+          TEST_OUTPUT: test-results/redesign
+      - name: Check record writing and navigation in WebKit
+        run: npm run test:redesign
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/redesign-webkit
+      - run: npm run test:shell
+        env:
+          TEST_OUTPUT: test-results/shell
+      - run: npm run test:momentum
+        env:
+          TEST_OUTPUT: test-results/momentum
+      - run: npm run test:interface-polish
+        env:
+          TEST_OUTPUT: test-results/interface-polish
+      - run: npm run test:workspace-structure
+        env:
+          TEST_OUTPUT: test-results/workspace-structure
+      - name: Check workspace structure and retained writing in WebKit
+        run: npm run test:workspace-structure
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/workspace-structure-webkit
+      - name: Check interface actions, contrast and touch targets in WebKit
+        run: npm run test:interface-polish
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/interface-polish-webkit
+      - run: npm run test:daily-support
+        env:
+          TEST_OUTPUT: test-results/daily-support
+      - name: Check live clocks without replacing editors in Chromium
+        run: npm run test:timer-rendering
+        env:
+          TEST_OUTPUT: test-results/timer-rendering
+      - name: Check live clocks without replacing editors in WebKit
+        run: npm run test:timer-rendering
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/timer-rendering-webkit
+      - name: Check daily selection, draft guards and weekly reviews in WebKit
+        run: npm run test:daily-support
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/daily-support-webkit
+      - name: Check progress summaries and responsive charts in WebKit
+        run: npm run test:momentum
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/momentum-webkit
+      - run: npm run test:navigation-saving
+        env:
+          TEST_OUTPUT: test-results/navigation-saving
+      - name: Check navigation during pending saves in WebKit
+        run: npm run test:navigation-saving
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/navigation-saving-webkit
+      - name: Check grouped navigation and feature access in WebKit
+        run: npm run test:shell
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/shell-webkit
       - run: npm run test:follow-through
         env:
           TEST_OUTPUT: test-results/follow-through
@@ -176,6 +379,15 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/design-webkit
+      - name: Check Properties booking and payment workflows
+        run: npm run test:properties
+        env:
+          TEST_OUTPUT: test-results/properties-chromium
+      - name: Check Properties in WebKit
+        run: npm run test:properties
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/properties-webkit
       - uses: actions/upload-artifact@v4
         with:
           name: verified-life-os-site

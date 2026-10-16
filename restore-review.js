@@ -113,7 +113,7 @@ async function applyReviewedRestore(restored, expected, source) {
   await LifeDeviceStore.cloudLocked(async () => {
     if (hasUnfinishedRestoreEditor()) throw new Error('Finish or close the current editor before restoring. Your unfinished writing has not been replaced.');
     if (!corruptLocalStateDetected && (!lastLocalSaveOk || !await flushDeviceWrites())) throw new Error('Saving needs attention. Download your writing before restoring.');
-    await LifeDeviceStore.locked(() => {
+    await LifeDeviceStore.locked(({checkpoint}={}) => {
       if (LifeDeviceStore.pending().length) throw new Error('Another edit is still saving. Refresh the comparison and try again.');
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!LifeStateMerge.equal(restoreComparable(raw), expected)) throw new Error('Records changed while this review was open. Refresh the comparison before restoring.');
@@ -125,7 +125,8 @@ async function applyReviewedRestore(restored, expected, source) {
         throw new Error('The recovery copy could not be saved. Nothing was replaced.');
       }
       const next = LifeStateMerge.copy(restored);
-      next.deviceWriteHeads = readStoredStateSnapshot()?.deviceWriteHeads || {};
+      next.deviceWriteHeads = {...(checkpoint?.deviceWriteHeads || {}),...(readStoredStateSnapshot()?.deviceWriteHeads || {})};
+      if(corruptLocalStateDetected && checkpoint && !saveCloudRecoveryPoint('before-restore-verified-checkpoint',checkpoint))throw new Error('The verified checkpoint could not be backed up. Nothing was replaced.');
       next.updatedAt = Date.now();
       const previousGuard = localStorage.getItem(RESTORE_GUARD_KEY);
       // Write the fail-closed guard first. It also keeps older diary safety
@@ -136,11 +137,13 @@ async function applyReviewedRestore(restored, expected, source) {
         try { if (previousGuard === null) localStorage.removeItem(RESTORE_GUARD_KEY); else localStorage.setItem(RESTORE_GUARD_KEY, previousGuard); } catch {}
         throw new Error('Restore could not be saved. The original records remain unchanged.');
       }
+      LifeDeviceStore.acceptRestoredSnapshot(next);
       state = next; restoreTabBoardSelection();
       localMergeBase = getStateForStorage(); corruptLocalStateDetected = false; lastLocalSaveOk = true; localStateSource = 'stored';
       cloudConflictPending = Boolean(state.syncConflicts?.length); cloudSaveEnabled = source === 'cloud' && Boolean(cloudSession?.access_token);
       window.clearTimeout(cloudSaveTimer); cloudPushAgain = false;
-    });
+      cloudSyncRetry.reset();unverifiedCloudWrite=null;
+    },{recover:corruptLocalStateDetected});
   });
   resetFormState(); render();
   setSaveStatus(source === 'cloud' ? 'Cloud copy saved on device' : 'Restored on device - cloud paused', 'local');
