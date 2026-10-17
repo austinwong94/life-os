@@ -220,6 +220,32 @@ jobs:
       - run: npm run test:planner-review
         env:
           TEST_OUTPUT: test-results
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-core-manifest
+          path: dist/release.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-core-results
+          path: test-results/
+  verify-features:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Build complete public artifact
+        run: npm run build
+      - name: Start isolated preview
+        run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-server.log 2>&1 &
       - run: npm run test:health-review
         env:
           TEST_OUTPUT: test-results
@@ -435,11 +461,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: synthetic-regression-results
+          name: synthetic-feature-results
           path: test-results/
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [verify, property-ui-preflight]
+    needs: [verify, verify-features, property-ui-preflight]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -456,6 +482,26 @@ jobs:
         with:
           name: verified-life-os-site
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-core-manifest
+          path: verification/core
+      - name: Verify both test jobs accepted identical complete release bytes
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto');
+          const core=JSON.parse(fs.readFileSync('verification/core/release.json','utf8'));
+          const site=JSON.parse(fs.readFileSync('dist/release.json','utf8'));
+          assert.deepStrictEqual(site,core,'The test jobs verified different artifacts');
+          assert.match(site.id,/^[a-f0-9]{16}$/);
+          assert.deepStrictEqual(fs.readdirSync('dist').sort(),[...Object.keys(site.files),'release.json'].sort(),'Unexpected public artifact files');
+          for(const [file,hash] of Object.entries(site.files)){
+            assert.match(file,/^[a-z0-9-]+\.(html|js|css)$/);assert.match(hash,/^[a-f0-9]{64}$/);
+            const actual=crypto.createHash('sha256').update(fs.readFileSync(path.join('dist',file))).digest('hex');
+            assert.strictEqual(actual,hash,file+' failed its accepted fingerprint');
+          }
+          console.log('Both test jobs verified release '+site.id+' and every public file matches.');
+          NODE
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:
