@@ -100,7 +100,11 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
     await p.evaluate(()=>flushDeviceWrites());await p.reload();await workspace(p,'priorities');assert.equal(await p.locator('.momentum-outcome[data-priority-id="work"] .momentum-outcome-value').innerText(),'6%');assert.equal(await p.evaluate(()=>coachingSession().draft.note),'Keep every word');
   });
   await run('pending comparisons are clearly provisional and malformed saved programmes remain untouched',async p=>{
-    await seed(p);await p.evaluate(()=>{state.syncConflicts=[{segments:['boards','another-board','coachingPrograms','synthetic-coaching']}];});await workspace(p,'priorities');assert.equal(await p.locator('.momentum-outcome-warning').count(),0);
+    await seed(p);await workspace(p,'priorities');
+    // Finish the view-preference checkpoint before injecting provisional state.
+    // A pending commit can otherwise correctly replace this unsaved fixture.
+    assert.equal(await p.evaluate(()=>flushDeviceWrites()),true);
+    await p.evaluate(()=>{state.syncConflicts=[{segments:['boards','another-board','coachingPrograms','synthetic-coaching']}];renderCardsOnly({force:true});});assert.equal(await p.locator('.momentum-outcome-warning').count(),0);
     await p.evaluate(()=>{state.syncConflicts=[{segments:['boards',state.activeBoardId,'coachingPrograms','synthetic-coaching']}];renderCardsOnly({force:true});});assert.match(await p.locator('.momentum-outcome-warning').innerText(),/not verified cloud totals/);
     await p.evaluate(()=>{coachingProgram().priorities[0].krs[0].metrics[0].target=-1;window.invalidOriginal=JSON.stringify(coachingProgram());renderCardsOnly({force:true});});
     assert.match(await p.locator('.progress-home').innerText(),/priority records need review/);assert.equal(await p.locator('.momentum-outcome').count(),0);assert(await p.evaluate(()=>invalidOriginal===JSON.stringify(coachingProgram())));

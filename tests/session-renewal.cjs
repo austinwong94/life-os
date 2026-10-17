@@ -95,10 +95,15 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
    calls++;return route.fulfill({json:{access_token:'synthetic-renewed-'+calls,refresh_token:'synthetic-next-'+calls,expires_in:3600,user:{id:owner}}});
   });
   await p.evaluate(()=>saveCloudSession({...cloudSession,expires_at:1}));
-  await q.evaluate(()=>{
+  // Freeze the expired session, not WebKit's briefly cached valid predecessor.
+  // Application storage events remain held throughout this fault injection.
+  await q.waitForFunction(()=>JSON.parse(localStorage.getItem(CLOUD_SESSION_KEY))?.expires_at===1);
+  const expiredFixture=await q.evaluate(()=>{
    window.originalSessionRead=Storage.prototype.getItem;window.oldSessionRaw=originalSessionRead.call(localStorage,CLOUD_SESSION_KEY);window.staleSessionView=true;
    Storage.prototype.getItem=function(key){return staleSessionView && this===localStorage && key===CLOUD_SESSION_KEY?oldSessionRaw:originalSessionRead.call(this,key);};
+   return JSON.parse(oldSessionRaw).expires_at===1;
   });
+  assert.equal(expiredFixture,true);
   assert.equal(await ensure(p),'synthetic-renewed-1');
   const error=await q.evaluate(async()=>{try{await ensureCloudSession();return null;}catch(error){return {message:error.message,retryable:error.retryable};}});
   assert(error);assert.match(error.message,/another tab|Waiting/i);assert.equal(error.retryable,true);assert.equal(calls,1);
