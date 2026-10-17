@@ -11,7 +11,13 @@ function moneyFormat(cents){return new Intl.NumberFormat('en-MY',{style:'currenc
 function moneySession(boardId=state.activeBoardId) {
   const key=LifeStorageScope.key('life-os-money:'+boardId);
   let saved={};try{saved=JSON.parse(sessionStorage.getItem(key) || '{}');}catch{}
-  return {owner:['personal','villa','all'].includes(saved?.owner)?saved.owner:'personal',view:['overview','table','transactions','upcoming','loans','credit','spending','accounts','budgets'].includes(saved?.view)?saved.view:'overview',sectionViews:Object.fromEntries(moneySections.map(section=>[section.id,section.views.includes(saved?.sectionViews?.[section.id])?saved.sectionViews[section.id]:section.views[0]])),horizon:['month','30','90'].includes(saved?.horizon)?saved.horizon:'month',month:/^\d{4}-(0[1-9]|1[0-2])$/.test(saved?.month)?saved.month:getTodayKey().slice(0,7),purchaseCategory:typeof saved?.purchaseCategory==='string'?saved.purchaseCategory:'',sheetBucket:['paid','received','confirmed','considering','expected','transfer','adjustment'].includes(saved?.sheetBucket)?saved.sheetBucket:'all',sheetEdit:typeof saved?.sheetEdit==='string'?saved.sheetEdit:'',drafts:saved?.drafts && typeof saved.drafts==='object'?saved.drafts:{}};
+  const sheetDefaults={};for(const owner of Object.keys(moneyOwners)){
+    const value=saved?.sheetDefaults?.[owner];if(typeof value?.accountId==='string' && typeof value?.category==='string' && value.category.trim())sheetDefaults[owner]={accountId:value.accountId,category:value.category};
+  }
+  return {
+    sheetKeepDetails:saved?.sheetKeepDetails===true,sheetDefaults,
+    sheetQuery:typeof saved?.sheetQuery==='string'?saved.sheetQuery:'',sheetQueryDraft:typeof saved?.sheetQueryDraft==='string'?saved.sheetQueryDraft:typeof saved?.sheetQuery==='string'?saved.sheetQuery:'',sheetOrder:saved?.sheetOrder==='newest'?'newest':'oldest',
+    owner:['personal','villa','all'].includes(saved?.owner)?saved.owner:'personal',view:['overview','table','transactions','upcoming','loans','credit','spending','accounts','budgets'].includes(saved?.view)?saved.view:'overview',sectionViews:Object.fromEntries(moneySections.map(section=>[section.id,section.views.includes(saved?.sectionViews?.[section.id])?saved.sectionViews[section.id]:section.views[0]])),horizon:['month','30','90'].includes(saved?.horizon)?saved.horizon:'month',month:/^\d{4}-(0[1-9]|1[0-2])$/.test(saved?.month)?saved.month:getTodayKey().slice(0,7),purchaseCategory:typeof saved?.purchaseCategory==='string'?saved.purchaseCategory:'',sheetBucket:['paid','received','confirmed','considering','expected','transfer','adjustment'].includes(saved?.sheetBucket)?saved.sheetBucket:'all',sheetEdit:typeof saved?.sheetEdit==='string'?saved.sheetEdit:'',drafts:saved?.drafts && typeof saved.drafts==='object'?saved.drafts:{}};
 }
 function saveMoneySession(session,boardId=state.activeBoardId){sessionStorage.setItem(LifeStorageScope.key('life-os-money:'+boardId),JSON.stringify(session));}
 function moneyEnd(session) {
@@ -421,18 +427,65 @@ function renderMoneyLoans(root,ledger,owner) {
 }
 const moneySheetLabels={paid:'Paid',received:'Received',confirmed:'Confirmed upcoming',considering:'Considering',expected:'Expected income',transfer:'Transfers / repayments',adjustment:'Balance adjustments'};
 function moneySheetEditable(entry){return ['expense','income'].includes(entry.kind) && entry.repeat==='none' && !entry.virtual && !['scheduleId','loan','paymentPlan','monthBill','billId','linkedPlanId'].some(key=>entry[key]);}
+async function discardMoneySheetDraft(boardId,key,expected,{close=false}={}) {
+  if(!await confirmTaskAction('Discard this row draft?','Your saved money record will not change. Only this unsaved row draft will be discarded.','Discard draft',{danger:true}))return;
+  if(boardId!==state.activeBoardId)throw new Error('Return to the original board before discarding this draft.');
+  const current=moneySession(boardId);
+  if(!LifeMoney.equal(current.drafts[key],expected))throw new Error('This draft changed. Reopen it before discarding.');
+  delete current.drafts[key];if(close && key==='sheet-'+current.sheetEdit)current.sheetEdit='';
+  saveMoneySession(current,boardId);renderCardsOnly({force:true});
+}
+function moneySheetDrafts(root,ledger,session) {
+  const drafts=Object.entries(session.drafts).filter(([key,draft])=>draft?.expected?.id && key==='sheet-'+draft.expected.id);
+  if(!drafts.length)return;
+  const boardId=state.activeBoardId,panel=planningNode('details','money-sheet-drafts');panel.append(planningNode('summary','','Unsaved row edits · '+drafts.length));
+  const list=planningNode('ul'),error=planningNode('p','money-message');error.setAttribute('role','status');
+  const report=e=>{error.textContent=e.message;if(!error.isConnected)setSaveStatus(e.message,'error');};
+  for(const [key,draft] of drafts){
+    const entry=ledger.entries.find(e=>e.id===draft.expected.id),available=entry && !entry.voidedAt && moneySheetEditable(entry);
+    const title=draft.title || draft.expected.title || 'Untitled row',row=planningNode('li'),copy=planningNode('div','money-sheet-draft-copy'),actions=planningNode('div','money-actions');
+    copy.append(planningNode('strong','money-sheet-draft-title',title),planningNode('small','',[draft.amount?'RM '+draft.amount:'',draft.date,'Unsaved · this tab'].filter(Boolean).join(' · ')));
+    if(!available){copy.append(planningNode('small','','Saved row unavailable for table editing'));if(draft.note)copy.append(planningNode('p','money-sheet-draft-note',draft.note));}
+    else if(!LifeMoney.equal(entry,draft.expected))copy.append(planningNode('small','','Saved row changed. Review before saving.'));
+    if(available){const resume=planningButton('Resume',()=>{
+      try{
+        if(boardId!==state.activeBoardId)throw new Error('Return to the original board to resume this draft.');
+        const current=moneySession(boardId),latest=moneyLedger(boardId).entries.find(e=>e.id===draft.expected.id);
+        if(!current.drafts[key] || !latest || latest.voidedAt || !moneySheetEditable(latest))throw new Error('This row changed. Reopen the draft list.');
+        // Follow the saved row, not the draft date; the existing stale-record guard still applies.
+        current.month=(latest.status==='settled'?latest.date:latest.dueDate).slice(0,7);current.owner=moneyLedger(boardId).accounts.find(a=>a.id===latest.accountId).owner;
+        current.purchaseCategory='';current.sheetBucket='all';current.sheetQuery='';current.sheetQueryDraft='';current.sheetEdit=latest.id;saveMoneySession(current,boardId);renderCardsOnly({force:true});document.querySelector('.money-sheet-edit-row input')?.focus();
+      }catch(e){report(e);}
+    },'pencil');resume.setAttribute('aria-label','Resume draft: '+title);actions.append(resume);}
+    const discard=planningIcon('Discard draft: '+title,async()=>{try{await discardMoneySheetDraft(boardId,key,LifeMoney.copy(draft),{close:true});}catch(e){report(e);}},'trash-2');actions.append(discard);row.append(copy,actions);list.append(row);
+  }
+  panel.append(list,error);root.append(panel);
+}
 function moneySheetEditor(root,ledger,session,entry) {
   const boardId=state.activeBoardId,key='sheet-'+(entry?.id || 'new'),saved=session.drafts[key];
   const date=getTodayKey().startsWith(session.month)?getTodayKey():session.month+'-01';
-  const draft=saved || {id:entry?.id || createId(),expected:entry?LifeMoney.copy(entry):null,title:entry?.title || '',amount:entry?(entry.amountCents/100).toFixed(2):'',accountId:entry?.accountId || ledger.accounts.find(a=>session.owner==='all' || a.owner===session.owner)?.id || '',date:entry?(entry.status==='settled'?entry.date:entry.dueDate):date,category:entry?.category || session.purchaseCategory || (session.owner==='villa'?'Sunrise Villa':'Personal Spending'),stage:entry?(entry.kind==='income'?(entry.status==='settled'?'received':'expected'):entry.status==='settled'?'paid':entry.purchaseIntent==='considering'?'considering':'confirmed'):date>getTodayKey()?'confirmed':'paid',note:entry?.note || ''};
+  const preference=!entry && session.sheetKeepDetails?session.sheetDefaults[session.owner]:null;
+  const retained=preference && ledger.accounts.some(a=>a.id===preference.accountId && (session.owner==='all' || a.owner===session.owner))?preference:null;
+  const draft=saved || {id:entry?.id || createId(),expected:entry?LifeMoney.copy(entry):null,title:entry?.title || '',amount:entry?(entry.amountCents/100).toFixed(2):'',accountId:entry?.accountId || retained?.accountId || ledger.accounts.find(a=>session.owner==='all' || a.owner===session.owner)?.id || '',date:entry?(entry.status==='settled'?entry.date:entry.dueDate):date,category:entry?.category || session.purchaseCategory || retained?.category || (session.owner==='villa'?'Sunrise Villa':'Personal Spending'),stage:entry?(entry.kind==='income'?(entry.status==='settled'?'received':'expected'):entry.status==='settled'?'paid':entry.purchaseIntent==='considering'?'considering':'confirmed'):date>getTodayKey()?'confirmed':'paid',note:entry?.note || ''};
   const form=planningNode('form','money-sheet-editor');form.setAttribute('aria-label',entry?'Edit table row: '+entry.title:'New money row');
   const error=planningNode('p','money-message');error.setAttribute('role','status');
-  const remember=()=>{try{const current=moneySession(boardId);current.drafts[key]=draft;saveMoneySession(current,boardId);}catch{error.textContent='Draft could not be retained. Keep this row open until saved.';}};
+  let discard;
+  const draftState=planningNode('small','money-sheet-draft-state',saved?'Unsaved · this tab':'');
+  const remember=()=>{try{const current=moneySession(boardId);current.drafts[key]=draft;saveMoneySession(current,boardId);draftState.textContent='Unsaved · this tab';if(discard)discard.disabled=false;}catch{error.textContent='Draft could not be retained. Keep this row open until saved.';}};
+  form.addEventListener('invalid',event=>{
+    event.preventDefault();if(event.target!==form.querySelector(':invalid'))return;
+    for(let parent=event.target.parentElement;parent && parent!==form;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
+    error.textContent=event.target.validationMessage;requestAnimationFrame(()=>{if(form.isConnected)event.target.focus();});
+  },true);
   let fieldRoot=form;
   const field=(label,property,type='text',options)=>{
     const input=options?moneySelect(options,draft[property],value=>{draft[property]=value;remember();}):planningInput(type,draft[property],value=>{draft[property]=value;remember();});
     if(property==='amount')input.inputMode='decimal';
-    const wrapper=planningField(label,input);fieldRoot.append(wrapper);return input;
+    const wrapper=planningField(label,input);
+    if(input.tagName==='SELECT'){
+      const frame=planningNode('span','money-sheet-select');input.replaceWith(frame);frame.append(input);
+    }
+    fieldRoot.append(wrapper);return input;
   };
   field('Item','title').required=true;field('Amount (RM)','amount').required=true;
   const stages=entry?entry.status==='settled'?[draft.stage]:entry.kind==='income'?['expected']:['confirmed','considering']:['paid','confirmed','considering','received','expected'];
@@ -440,35 +493,47 @@ function moneySheetEditor(root,ledger,session,entry) {
   const details=planningNode('details','money-sheet-details'),detailsHead=planningNode('summary','','Row details');detailsHead.setAttribute('aria-label','Row details');
   const detailsCopy=planningNode('small');detailsHead.append(detailsCopy);details.append(detailsHead);form.append(details);
   const detailFields=planningNode('div','money-sheet-detail-fields');details.append(detailFields);fieldRoot=detailFields;
-  field('Category','category','text',moneyCategoryOptions());field('Paid / due date','date','date').required=true;
+  const categories=moneyCategoryOptions();if(draft.category && !categories.some(([value])=>value===draft.category))categories.push([draft.category,draft.category]);
+  field('Category','category','text',categories);const dateInput=field('Paid / due date','date','date');dateInput.required=true;
   // Keep an existing/drafted account available across owner filters; never silently reassign it.
   field('Account','accountId','text',ledger.accounts.filter(a=>session.owner==='all' || a.owner===session.owner || a.id===draft.accountId).map(a=>[a.id,a.name+' · '+moneyOwners[a.owner]]));
+  if(!entry){
+    const keep=planningNode('input');keep.type='checkbox';keep.checked=session.sheetKeepDetails;keep.setAttribute('aria-label','Keep account and category');
+    const label=planningNode('label','money-sheet-keep');label.append(keep,planningNode('span','','Keep account and category'));detailFields.append(label);
+    const settingError='Repeat-entry setting was not saved. Your current row is unchanged.';
+    keep.onchange=()=>{
+      if(boardId!==state.activeBoardId){keep.checked=moneySession(boardId).sheetKeepDetails;error.textContent='Return to the original board before changing repeat-entry settings.';return;}
+      const current=moneySession(boardId),before=current.sheetKeepDetails;current.sheetKeepDetails=keep.checked;
+      try{saveMoneySession(current,boardId);if(error.textContent===settingError)error.textContent='';}catch{keep.checked=before;error.textContent=settingError;}
+    };
+  }
   const updateDetails=()=>{detailsCopy.textContent=[draft.category,ledger.accounts.find(a=>a.id===draft.accountId)?.name,draft.date].filter(Boolean).join(' · ');};form.addEventListener('input',updateDetails);form.addEventListener('change',updateDetails);updateDetails();
   const notes=planningNode('details','money-sheet-notes');notes.append(planningNode('summary','','Notes'));
   const note=planningNode('textarea');note.value=draft.note;note.setAttribute('aria-label','Row notes');note.oninput=()=>{draft.note=note.value;remember();};notes.append(note);detailFields.append(notes);form.append(error);
   const actions=planningNode('div','money-actions'),save=planningButton(entry?'Save row':'Add row',null,entry?'check':'plus');save.type='submit';
-  if(entry)actions.append(planningButton('Use latest saved row',async()=>{
-    if(!await confirmTaskAction('Discard this row draft?','Your saved money record will not change. Only this unsaved row draft will be discarded.','Discard draft',{danger:true}))return;
-    if(boardId!==state.activeBoardId){error.textContent='Return to the original board before discarding this draft.';return;}
-    try{const current=moneySession(boardId);delete current.drafts[key];saveMoneySession(current,boardId);renderCardsOnly({force:true});}catch(e){error.textContent=e.message;}
-  },'rotate-ccw'),planningButton('Close row',()=>{const current=moneySession();current.sheetEdit='';saveMoneySession(current);renderCardsOnly({force:true});},'x'));
-  actions.append(save);form.append(actions);root.append(form);
+  const discardDraft=async()=>{try{await discardMoneySheetDraft(boardId,key,LifeMoney.copy(draft));}catch(e){error.textContent=e.message;if(!error.isConnected)setSaveStatus(e.message,'error');}};
+  discard=entry?planningButton('Use latest saved row',discardDraft,'rotate-ccw'):planningIcon('Discard new row draft',discardDraft,'trash-2');discard.disabled=!saved;actions.append(discard);
+  if(entry)actions.append(planningButton('Close row',()=>{const current=moneySession();current.sheetEdit='';saveMoneySession(current);renderCardsOnly({force:true});},'x'));
+  actions.prepend(draftState);actions.append(save);form.append(actions);root.append(form);
   form.onsubmit=event=>{
     event.preventDefault();save.disabled=true;remember();
     try {
       const expected=draft.expected || undefined;
       if(entry && (!expected || expected.id!==entry.id))throw new Error('Reopen this row before editing.');
       const settled=['paid','received'].includes(draft.stage),kind=['received','expected'].includes(draft.stage)?'income':'expense';
-      if(!LifeMoney.validDate(draft.date))throw new Error('Choose a valid paid or due date.');
-      if(settled && draft.date>getTodayKey())throw new Error('A future payment is not paid yet. Choose an upcoming status.');
+      if(!LifeMoney.validDate(draft.date) || settled && draft.date>getTodayKey()){
+        details.open=true;dateInput.focus();throw new Error(!LifeMoney.validDate(draft.date)?'Choose a valid paid or due date.':'A future payment is not paid yet. Choose an upcoming status.');
+      }
       const next={...expected,id:draft.id,title:draft.title.trim(),amountCents:LifeMoney.cents(draft.amount),kind,accountId:draft.accountId,status:settled?'settled':expected?.status==='released'?'released':'planned',repeat:'none',date:settled?draft.date:expected?.date || draft.date,dueDate:settled?expected?.dueDate || draft.date:draft.date,category:draft.category,note:draft.note};
       if(kind==='expense' && !settled)next.purchaseIntent=draft.stage==='considering'?'considering':'committed';
       // Clear only this draft before the successful commit renders the next row.
-      const current=moneySession(boardId),previousView={month:current.month,owner:current.owner,purchaseCategory:current.purchaseCategory,sheetBucket:current.sheetBucket};
+      const current=moneySession(boardId),previousView={month:current.month,owner:current.owner,purchaseCategory:current.purchaseCategory,sheetBucket:current.sheetBucket,sheetQuery:current.sheetQuery,sheetQueryDraft:current.sheetQueryDraft,sheetDefaults:current.sheetDefaults};
       delete current.drafts[key];if(entry)current.sheetEdit='';
       current.month=(settled?next.date:next.dueDate).slice(0,7);
       const accountOwner=ledger.accounts.find(a=>a.id===next.accountId)?.owner;if(current.owner!=='all' && current.owner!==accountOwner)current.owner=accountOwner;
+      if(!entry && current.sheetKeepDetails && accountOwner)current.sheetDefaults={...current.sheetDefaults,[current.owner]:{accountId:next.accountId,category:next.category}};
       if(current.purchaseCategory && current.purchaseCategory!==next.category)current.purchaseCategory='';if(current.sheetBucket!==draft.stage)current.sheetBucket='all';
+      if(current.sheetQuery.trim() && ![next.title,next.note].some(text=>text.toLowerCase().includes(current.sheetQuery.trim().toLowerCase()))){current.sheetQuery='';current.sheetQueryDraft='';}
       saveMoneySession(current,boardId);
       try{commitMoney(boardId,value=>{
         if(next.source==='Airbnb' && next.reference && value.entries.some(e=>!e.voidedAt && e.id!==next.id && e.kind==='income' && e.source==='Airbnb' && e.reference===next.reference && e.accountId===next.accountId && e.dueDate===next.dueDate))throw new Error('A payout with this reference, account and expected date already exists. Edit it instead.');
@@ -479,6 +544,25 @@ function moneySheetEditor(root,ledger,session,entry) {
     }catch(e){error.textContent=e.message;save.disabled=false;}
   };
 }
+function moneySheetSearch(root,session) {
+  const boardId=state.activeBoardId,tools=planningNode('div','money-controls money-sheet-tools'),form=planningNode('form','money-sheet-search');form.setAttribute('role','search');form.setAttribute('aria-label','Search money table');
+  const error=planningNode('p','money-message');error.setAttribute('role','status');
+  const apply=(patch,focus=false)=>{
+    try{
+      if(boardId!==state.activeBoardId)throw new Error('Return to the original board before changing this search.');
+      const current=moneySession(boardId);Object.assign(current,patch);saveMoneySession(current,boardId);renderCardsOnly({force:true});if(focus)document.querySelector('.money-sheet-search input')?.focus({preventScroll:true});
+    }catch(e){error.textContent=e.message;}
+  };
+  let clear;
+  const input=planningInput('text',session.sheetQueryDraft,value=>{
+    clear.disabled=!value && !session.sheetQuery;
+    try{const current=moneySession(boardId);current.sheetQueryDraft=value;saveMoneySession(current,boardId);}catch{error.textContent='Search text could not be retained in this tab.';}
+  });input.setAttribute('enterkeyhint','search');
+  const submit=planningIcon('Search money rows',null,'search');submit.type='submit';
+  clear=planningIcon('Clear money search',()=>apply({sheetQuery:'',sheetQueryDraft:''},true),'x');clear.disabled=!session.sheetQuery && !session.sheetQueryDraft;
+  form.append(planningField('Search item or notes',input),submit,clear,error);form.onsubmit=event=>{event.preventDefault();apply({sheetQuery:input.value.trim(),sheetQueryDraft:input.value},true);};
+  tools.append(form,planningField('Table order',moneySelect([['oldest','Date: oldest first'],['newest','Date: newest first']],session.sheetOrder,value=>apply({sheetOrder:value}))));root.append(tools);
+}
 function renderMoneySheet(root,ledger,session,change,summary,end) {
   const filters=planningNode('div','money-controls money-sheet-filters'),extra=planningNode('details','money-sheet-filter-panel');extra.append(planningNode('summary','',session.purchaseCategory || session.sheetBucket!=='all'?'Filters · active':'Filters'));
   const filterFields=planningNode('div','money-controls');filterFields.append(planningField('Table category',moneySelect([['','All categories'],...moneyCategoryOptions()],session.purchaseCategory,value=>change('purchaseCategory',value))),planningField('Table status',moneySelect([['all','All statuses'],...Object.entries(moneySheetLabels)],session.sheetBucket,value=>change('sheetBucket',value))));extra.append(filterFields);extra.open=Boolean(session.purchaseCategory || session.sheetBucket!=='all');
@@ -487,10 +571,11 @@ function renderMoneySheet(root,ledger,session,change,summary,end) {
   const balances=planningNode('div','money-stats money-sheet-balances');balances.setAttribute('aria-label','Account balances');
   balances.append(moneyStat('Current cash',summary.actualCents,'All categories · bank / cash only'),moneyStat('After commitments',summary.availableCents,'Through '+end+' · after reserves and unscheduled card debt',summary.availableCents<0),moneyStat('Projected cash',summary.projectedCents,'Through '+end+' · includes expected income',summary.projectedCents<0));
   if(!moneyConflict()){const panel=planningNode('details','money-sheet-balance-panel');panel.append(planningNode('summary','','Current cash · '+moneyFormat(summary.actualCents)),planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))),balances);root.append(panel);}
-  let sheet;try{sheet=LifeMoney.worksheet(ledger,session.month,getTodayKey(),session.owner,session.purchaseCategory,session.sheetBucket);}catch(e){root.append(planningNode('p','money-alert',e.message));return;}
+  let sheet;try{sheet=LifeMoney.worksheet(ledger,session.month,getTodayKey(),session.owner,session.purchaseCategory,session.sheetBucket,session.sheetQuery,session.sheetOrder);}catch(e){root.append(planningNode('p','money-alert',e.message));return;}
   if(!moneyConflict())moneySheetEditor(root,ledger,session);
+  moneySheetSearch(root,session);
   const scroll=planningNode('div','money-sheet-scroll'),table=planningNode('table','money-sheet');table.setAttribute('aria-label','Monthly money table');
-  table.append(planningNode('caption','',session.month+' · '+moneyOwners[session.owner]+' · '+sheet.rows.length+' rows'));
+  table.append(planningNode('caption','',session.month+' · '+moneyOwners[session.owner]+' · '+sheet.rows.length+' rows'+(session.sheetQuery?' · Search: '+session.sheetQuery:'')));
   const labels=['Item','Amount (RM)','Status','Category','Account','Paid / due date','Actions'],head=planningNode('thead'),header=planningNode('tr');
   for(const label of labels){const cell=planningNode('th','',label);cell.scope='col';header.append(cell);}head.append(header);table.append(head);
   const body=planningNode('tbody');table.append(body);
@@ -513,7 +598,7 @@ function renderMoneySheet(root,ledger,session,change,summary,end) {
   if(!moneyConflict()){
     const totals=planningNode('dl','money-sheet-totals');totals.setAttribute('aria-label','Filtered monthly totals');
     for(const key of ['paid','confirmed','considering','received','expected']){const group=planningNode('div');group.append(planningNode('dt','',key==='paid'?'Spent':moneySheetLabels[key]),planningNode('dd','',moneyFormat(sheet.totals[key])));totals.append(group);}root.append(totals);
-    const categories=planningNode('details','money-category-breakdown');categories.append(planningNode('summary','','Category totals · '+session.month));
+    const categories=planningNode('details','money-category-breakdown');categories.append(planningNode('summary','','Spending by category · '+session.month));
     const categoryTable=planningNode('table'),categoryHead=planningNode('thead'),categoryHeader=planningNode('tr');for(const label of ['Category','Spent','Confirmed','Considering']){const th=planningNode('th','',label);th.scope='col';categoryHeader.append(th);}categoryHead.append(categoryHeader);categoryTable.append(categoryHead);
     const categoryBody=planningNode('tbody');for(const group of sheet.categories){const row=planningNode('tr');for(const value of [group.name,moneyFormat(group.paid),moneyFormat(group.confirmed),moneyFormat(group.considering)])row.append(planningNode('td','',value));categoryBody.append(row);}categoryTable.append(categoryBody);categories.append(categoryTable);root.append(categories);
   }
@@ -537,6 +622,7 @@ function renderMoneyWorkspace() {
   if(session.view==='accounts')controls.append(planningButton('Add summary card',addMoneySummaryCard,'layout-grid'));
   root.append(controls);
   if(moneyConflict())root.append(planningNode('p','money-alert','Balances need review: conflicting financial records are not confirmed.'),planningButton('Review changes',openRecovery));
+  if(session.view==='table' && !moneyConflict())moneySheetDrafts(root,ledger,session);
   if(!summary.hasAccounts){root.append(planningNode('p','money-empty','Add a bank or cash account with its opening balance. No income or spending is assumed.'),planningButton('Add account',()=>openMoneyAccount(),'plus'));return;}
   const stats=planningNode('div','money-stats');stats.append(moneyStat('Recorded balance',summary.actualCents,'Bank / cash only, not credit limits',summary.actualCents<0),moneyStat('Upcoming payments',summary.committedCents,'Dated cash commitments through '+formatReadableDateKey(end)),moneyStat('After commitments',summary.availableCents,'After reserve and '+moneyFormat(summary.unscheduledCardCents)+' card debt / charges without scheduled payment',summary.availableCents<0),moneyStat('Projected balance',summary.projectedCents,'Cash after dated payments + '+moneyFormat(summary.incomingCents)+' expected income; not guaranteed',summary.projectedCents<0));if(!moneyConflict() && session.view==='overview')root.append(stats);
   const body=planningNode('div','money-content');root.append(body);
