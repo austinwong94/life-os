@@ -9,6 +9,7 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
   const server=http.createServer((req,res)=>{const name=new URL(req.url,'http://test').pathname.slice(1);if(name==='harness.html'){res.setHeader('content-type','text/html');return res.end(harness);}const file=name || 'index.html';if(!/^[a-z0-9-]+\.(html|js|css|json)$/.test(file) || !fs.existsSync(path.join(artifact,file)))return res.writeHead(404).end();res.setHeader('content-type',({'html':'text/html','js':'text/javascript','css':'text/css','json':'application/json'})[file.split('.').pop()]);res.end(fs.readFileSync(path.join(artifact,file)));});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const url='http://127.0.0.1:'+server.address().port+'/',browser=await browsers[engine].launch({headless:true}),results=[];
   async function run(name,fn){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1440,height:1000},timezoneId:'Asia/Kuala_Lumpur'}),page=await context.newPage(),errors=[],logs=[];await page.clock.install({time:new Date('2026-10-17T08:00:00+08:00')});page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')logs.push(m.text());});
     let row={id,user_id:owner,updated_at:'2026-10-16T00:00:00+00:00',data:structuredClone(base)},writes=0,stale=false;
     await context.route('https://**/*',async route=>{
@@ -46,6 +47,33 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
   });
   await run('desktop, portrait and phone operations stay within the viewport',async({page})=>{
     await open(page);for(const width of [1440,1080,768,390,320]){await page.setViewportSize({width,height:1000});await page.waitForTimeout(80);const sizes=await page.evaluate(()=>{const w=document.querySelector('iframe').contentWindow;return {page:document.documentElement.scrollWidth,width:innerWidth,child:w.document.documentElement.scrollWidth,childWidth:w.innerWidth};});assert(sizes.page<=sizes.width+1);assert(sizes.child<=sizes.childWidth+1,JSON.stringify(sizes));await page.screenshot({path:path.join(out,'properties-'+width+'.png'),fullPage:true});}
+  });
+  await run('imported calendar links refuse unsafe destinations without hiding or rewriting availability',async({page,getRow,writes})=>{
+    const urls=['https://www.airbnb.com/hosting/reservations/details/SYNTHETIC?source=calendar','https://admin.booking.com/hotel/hoteladmin/reservation.html?res_id=SYNTHETIC','javascript:window.propertyLinkExecuted=true','https://airbnb.com.evil.invalid/reservation','https://user:password@airbnb.com/reservation','http://airbnb.com/reservation','https://booking.com:8443/reservation',''];
+    const imported=urls.map((reservationUrl,i)=>({villa:'Sunrise',uid:'synthetic-link-'+i,start:'2026-10-'+String(i+1).padStart(2,'0'),end:'2026-10-'+String(i+2).padStart(2,'0'),reservationUrl,customHistory:{keep:true}}));
+    getRow().data.appSettings.ical={sources:[],imported:structuredClone(imported)};const original=JSON.stringify(getRow().data),frame=await open(page);await frame.locator('[data-view="calendar"]').click();
+    const chips=frame.locator('.airbnb-import');assert.equal(await chips.count(),urls.length);assert.equal(await frame.locator('a.airbnb-import').count(),2);
+    assert.deepEqual(await frame.locator('a.airbnb-import').evaluateAll(nodes=>nodes.map(n=>({href:n.href,target:n.target,rel:n.rel}))),urls.slice(0,2).map(href=>({href,target:'_blank',rel:'noopener noreferrer'})));
+    assert.match(await chips.nth(0).innerText(),/Airbnb/);assert.match(await chips.nth(1).innerText(),/Booking\.com/);
+    for(let i=2;i<urls.length;i++){assert.equal(await chips.nth(i).evaluate(node=>node.tagName),'DIV');assert.match(await chips.nth(i).innerText(),/Imported/);assert.equal(await chips.nth(i).getAttribute('href'),null);}
+    assert.equal(JSON.stringify(getRow().data),original);assert.equal(writes(),0);
+    assert.deepEqual(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export().appSettings.ical.imported),imported);
+    for(const width of [1440,768,390,320]){
+      await page.setViewportSize({width,height:1000});await page.screenshot({path:path.join(out,'property-calendar-links-'+width+'.png'),fullPage:true});assert.equal(await chips.count(),urls.length);
+      const layout=await page.evaluate(()=>{const w=document.querySelector('iframe').contentWindow;return {width:w.innerWidth,scroll:w.document.documentElement.scrollWidth};});assert(layout.scroll<=layout.width+1,JSON.stringify(layout));
+    }
+    assert.equal(await frame.getByRole('checkbox',{name:'WhatsApp sent',exact:true}).count(),1);
+    const tableScroll=await frame.locator('.quick-view-card').evaluate(node=>{node.scrollLeft=node.scrollWidth;return {left:node.scrollLeft,last:node.querySelector('th:last-child').getBoundingClientRect().right,right:node.getBoundingClientRect().right};});assert(tableScroll.left>0);assert(tableScroll.last<=tableScroll.right+1);
+    await page.reload();await open(page);assert.equal(await frame.locator('a.airbnb-import').count(),2);assert.equal(JSON.stringify(getRow().data),original);assert.equal(writes(),0);
+  });
+  await run('server-refreshed reservation links use the same rendering guard without changing saved records',async({page,context,getRow})=>{
+    const rows=[{villa:'Sunrise',uid:'server-safe',start_date:'2026-10-02',end_date:'2026-10-03',reservation_url:'https://admin.booking.com/reservation/SYNTHETIC',synced_at:'2026-10-17T00:00:00Z'},{villa:'Sunrise',uid:'server-unsafe',start_date:'2026-10-03',end_date:'2026-10-04',reservation_url:'data:text/html,SYNTHETIC',synced_at:'2026-10-17T00:00:00Z'}];
+    await context.route('https://**/rest/v1/property_ical_blocks?**',route=>route.fulfill({json:rows}));const frame=await open(page);await frame.locator('[data-view="calendar"]').click();await frame.locator('.airbnb-import').nth(1).waitFor();
+    assert.equal(await frame.locator('a.airbnb-import').count(),1);assert.match(await frame.locator('a.airbnb-import').innerText(),/Booking\.com/);
+    assert.equal(await frame.locator('.airbnb-import').nth(1).evaluate(n=>n.tagName),'DIV');
+    await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);
+    for(const key of ['bookings','documents'])for(const original of base[key]){const saved=getRow().data[key].find(row=>row.id===original.id);for(const [field,value] of Object.entries(original))assert.deepEqual(saved[field],value);}
+    assert.equal(getRow().data.appSettings.ical.imported[1].reservationUrl,rows[1].reservation_url);
   });
   await run('direct operations access is refused without an authorized parent',async({page})=>{const requests=[];page.on('request',r=>{if(r.url().includes('/rest/v1/'))requests.push(r.url());});await page.goto(url+'property-operations.html');await page.getByRole('alert').waitFor();assert.equal(await page.locator('#appShell').isVisible(),false);assert.deepEqual(requests,[]);});
   await run('payments are recorded once, persist through reload and retain historical receipts',async({page,getRow})=>{
