@@ -305,6 +305,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .food-reuse-dialog .daily-form > .planning-field, .exercise-reuse-dialog .daily-form > .planning-field { display: grid; grid-template-columns: minmax(0,1fr); min-width: 0; }
 .food-reuse-dialog .daily-form > label, .food-reuse-dialog select, .exercise-reuse-dialog select { min-width: 0; max-width: 100%; }
 .food-reuse-dialog select, .exercise-reuse-dialog select { display: block; box-sizing: border-box; width: 100%; min-inline-size: 0; max-inline-size: 100%; overflow: hidden; text-overflow: ellipsis; }
+.food-reuse-dialog .planning-field:has(select), .exercise-reuse-dialog .planning-field:has(select) { overflow-x: clip; }
+.food-reuse-dialog select:focus-visible, .exercise-reuse-dialog select:focus-visible { outline-offset: -3px; }
 .fitness-exercise-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .fitness-exercise-actions .planning-button { font-size: 13px; font-weight: 500; }
 .exercise-reuse-preview { margin: 0; border: 0; padding: 0; min-width: 0; }
