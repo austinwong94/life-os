@@ -179,7 +179,7 @@
     const pending=[...upcoming(ledger,end),...considering].filter(e=>e.dueDate.startsWith(month) && (ids.has(e.accountId) || e.kind==='transfer' && ids.has(e.toAccountId)));
     const rows=[...actual.rows,...pending].map(value=>{
       const entry=copy(value),amountCents=entry.remainingCents ?? entry.amountCents;delete entry.remainingCents;
-      const group=entry.kind==='transfer'?'transfer':entry.kind==='adjustment'?'adjustment':entry.kind==='income'?(entry.status==='settled'?'received':'expected'):entry.status==='settled'?'paid':entry.purchaseIntent==='considering'?'considering':'confirmed';
+      const group=entry.kind==='transfer'?'transfer':entry.kind==='adjustment'?'adjustment':entry.kind==='income'?(entry.status==='settled'?'received':'expected'):entry.status==='settled'?'paid':entry.purchaseIntent==='considering' && !entry.scheduleId?'considering':'confirmed';
       return {entry,amountCents,bucket:group,date:entry.status==='settled'?entry.date:entry.dueDate};
     }).filter(row=>(!category || row.entry.category===category) && (bucket==='all' || row.bucket===bucket)).sort((a,b)=>a.date.localeCompare(b.date)||a.entry.id.localeCompare(b.entry.id));
     const totals=items=>Object.fromEntries(buckets.map(key=>[key,checkedSum(items.filter(row=>row.bucket===key).map(row=>row.amountCents))]));

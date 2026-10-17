@@ -30,3 +30,7 @@ test('worksheet filters totals and category totals together, including legacy ca
   const s=M.worksheet(l,month,today,'personal','Legacy','paid');assert.equal(s.totals.paid,30);assert.equal(s.totals.confirmed,0);assert.equal(s.rows.length,2);assert.equal(s.categories.length,1);assert.equal(s.categories[0].paid,30);
   assert.throws(()=>M.worksheet(l,'invalid',today));assert.throws(()=>M.worksheet(l,month,today,'invalid'));assert.throws(()=>M.worksheet(l,month,today,'personal','','invalid'));
 });
+test('worksheet ignores stale considering metadata on recurring obligations, income and repayments',()=>{
+  const l=ledger();l.entries=[entry('monthly',{repeat:'monthly',purchaseIntent:'considering'}),entry('payout',{kind:'income',status:'released',purchaseIntent:'considering'}),entry('repayment',{kind:'transfer',toAccountId:'card',purchaseIntent:'considering'})];
+  const s=M.worksheet(l,month,today,'personal');assert.equal(s.rows.length,3);assert.equal(s.totals.confirmed,1234);assert.equal(s.totals.considering,0);assert.equal(s.totals.expected,1234);assert.equal(s.totals.transfer,1234);assert.equal(s.categories[0].confirmed,1234);assert.deepEqual(s.rows.find(row=>row.entry.scheduleId==='monthly').bucket,'confirmed');
+});
