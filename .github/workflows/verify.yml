@@ -76,6 +76,8 @@ jobs:
           deno-version: v2.5.4
       - name: Type-check the private Calendar backend without secrets
         run: deno check --no-config --node-modules-dir=none supabase/functions/google-calendar/index.ts
+      - name: Type-check protected property calendar imports without secrets
+        run: deno check --no-config --node-modules-dir=none supabase/functions/property-ical-import/index.ts supabase/functions/property-ical-cron-sync/index.ts
       - name: Verify inactive incremental storage prototype in Chromium
         run: npm run test:delta-store
         env:

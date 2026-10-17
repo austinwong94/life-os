@@ -26,5 +26,5 @@ test('disabled AI functions cannot read records, make provider calls or expose a
   for(const name of ['earnings-import','guest-reply-draft','receipt-scan','tax-doc-analyze','tax-review']){const source=fs.readFileSync('supabase/functions/property-'+name+'/index.ts','utf8');assert.match(source,/ai_disabled/);assert.doesNotMatch(source,/fetch\(|req\.json|ANTHROPIC_API_KEY|api\.anthropic/);}
 });
 test('scheduled iCal refresh is atomic and never deletes the last good snapshot after a feed error',()=>{
-  const source=fs.readFileSync('supabase/functions/property-ical-cron-sync/index.ts','utf8');assert.match(source,/if \(!fetchError\)/);assert.match(source,/property_replace_ical_blocks/);assert.doesNotMatch(source,/method: "DELETE"/);assert.match(source,/redirect: "error"/);
+  const source=fs.readFileSync('supabase/functions/property-ical-cron-sync/index.ts','utf8'),reader=fs.readFileSync('supabase/functions/_shared/property-ical.ts','utf8');assert.match(source,/if \(!fetchError\)/);assert.match(source,/property_replace_ical_blocks/);assert.doesNotMatch(source,/method: "DELETE"/);assert.match(source,/fetchPropertyIcs/);assert.match(reader,/redirect: "error"/);
 });

@@ -1,5 +1,6 @@
 // Mechanical source transfer; private backups are inputs only, never public assets.
 const fs=require('node:fs'),path=require('node:path');
+const {hardenPropertyCalendar}=require('./property-calendar-hardening.cjs');
 const input=process.argv[2];if(!input)throw new Error('Provide the protected function-source backup path.');
 const data=JSON.parse(fs.readFileSync(input,'utf8')),root=path.resolve(__dirname,'../supabase/functions');
 const callbacks=['ical-cron-sync','ota-email-ingest','daily-digest'];
@@ -49,6 +50,7 @@ for(const fn of data.functions){
         code='import {propertyServe} from "../_shared/property-auth.ts";\n'+code.replace('Deno.serve(','propertyServe(');
       }
     }
+    if(!shared)code=hardenPropertyCalendar(code,fn.slug);
     fs.mkdirSync(path.join(root,dir),{recursive:true});fs.writeFileSync(path.join(root,dir,name),code);
   }
 }
