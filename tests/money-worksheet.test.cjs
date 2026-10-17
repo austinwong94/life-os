@@ -46,3 +46,23 @@ test('worksheet treats search as literal Unicode text and supports reversible da
   assert.deepEqual(oldest.rows.map(r=>r.entry.id),['early','same','late']);assert.deepEqual(newest.rows.map(r=>r.entry.id),['late','early','same']);assert.deepEqual(oldest.totals,newest.totals);assert.deepEqual(oldest.categories,newest.categories);assert.equal(M.worksheet(l,month,today,'personal','','all','\u65c5\u884c').rows.length,3);assert.deepEqual(l,before);
   assert.throws(()=>M.worksheet(l,month,today,'personal','','all',{}));assert.throws(()=>M.worksheet(l,month,today,'personal','','all','','invalid'));
 });
+test('worksheet CSV exports the applied view in date order without drafts, duplicate totals or source changes',()=>{
+  const l=ledger();l.entries=[entry('early',{title:'Cake order',dueDate:'2026-10-02',amountCents:20}),entry('late',{title:'Cake tasting',dueDate:'2026-10-22',amountCents:10}),entry('villa',{title:'Cake private villa',accountId:'villa'}),entry('other',{title:'Other'}),entry('next-month',{title:'Cake next month',dueDate:'2026-11-02'})];
+  const before=M.copy(l),csv=M.worksheetCsv(l,month,today,'personal','Personal Spending','confirmed','cake','newest');
+  assert(csv.startsWith('\ufeff"Item","Amount (RM)","Status"'));
+  const lines=csv.slice(1).split('\r\n');assert.equal(lines.length,3);assert.match(lines[1],/^"Cake tasting","0.10","Confirmed upcoming"/);assert.match(lines[2],/^"Cake order","0.20","Confirmed upcoming"/);
+  assert(lines.slice(1).every(line=>line.endsWith('"2026-10","Personal","Personal Spending","Confirmed upcoming","cake","Newest first","2026-10-18"')));
+  assert.doesNotMatch(csv,/private villa|next month|"Other"|Subtotal|Current cash/);assert.deepEqual(l,before);
+  assert.equal(M.worksheetCsv(l,month,today,'personal','','all','no match').split('\r\n').length,1);
+});
+test('worksheet CSV matches recurring occurrences, card charges, unpaid bill remainders and signed adjustments',()=>{
+  let l=ledger();l.entries=[entry('monthly',{repeat:'monthly',dueDate:'2026-09-15',endDate:'2026-12-15',title:'Internet'}),entry('charge',{status:'settled',accountId:'card',title:'Card purchase',amountCents:10}),entry('adjust',{kind:'adjustment',status:'settled',title:'Reconciled',amountCents:-25}),entry('bill',{kind:'transfer',toAccountId:'card',title:'Card bill',amountCents:10000,monthBill:month})];
+  l=M.payBill(l,l.entries.find(e=>e.id==='bill'),3000,today,today,'partial');const before=M.copy(l),csv=M.worksheetCsv(l,month,today,'personal');
+  assert.match(csv,/"Internet","12.34","Confirmed upcoming"/);assert.match(csv,/"Card purchase","0.10","Charged to card"/);assert.match(csv,/"Reconciled","-0.25","Balance adjustments"/);assert.match(csv,/"Card bill","70.00","Transfer due"/);assert.match(csv,/"Card bill \(partial payment\)","30.00","Transfer recorded"/);assert.deepEqual(l,before);
+  assert.throws(()=>M.worksheetCsv(l,'invalid',today));assert.throws(()=>M.worksheetCsv(l,month,today,'invalid'));
+});
+test('money CSV quotes Unicode, commas, quotes and multiline notes while protecting formula-like cells',()=>{
+  assert.equal(M.csv([['Name','Amount'],['A "quoted", \u65c5\u884c note\nAnother line','12.34']]),'\ufeff"Name","Amount"\r\n"A ""quoted"", \u65c5\u884c note\nAnother line","12.34"');
+  for(const value of ['=HYPERLINK("https://invalid.test")',' +SUM(1,2)','-cmd','@test','\t=1','\r=1','\n=1','\uFF1D1+1','\uFF0BSUM(1)','\uFF0D1','\uFF20test'])assert.equal(M.csv([[value]]),'\ufeff"\''+value.replaceAll('"','""')+'"');
+  assert.equal(M.csv([['-0.25','0.10','123456.78']]),'\ufeff"-0.25","0.10","123456.78"');
+});
