@@ -301,6 +301,11 @@ jobs:
       - run: npm run test:restore
         env:
           TEST_OUTPUT: test-results
+      - name: Check full-backup recovery and restore safeguards in WebKit
+        run: npm run test:restore
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/restore-webkit
       - run: npm run test:planning
         env:
           TEST_OUTPUT: test-results

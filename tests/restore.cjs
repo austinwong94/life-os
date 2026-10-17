@@ -1,4 +1,4 @@
-const {chromium} = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const engines = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const URL = process.env.TEST_URL || 'http://127.0.0.1:5180/';
@@ -6,8 +6,9 @@ const OUT = process.env.TEST_OUTPUT || 'test-results';
 fs.mkdirSync(OUT, {recursive:true});
 const results = [];
 (async () => {
-  const browser = await chromium.launch({headless:true});
+  const browser = await engines[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name, fn) {
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context = await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*', route => route.fulfill({status:503,body:'No live accounts in tests'}));
     const p = await context.newPage(), errors = [], alerts = [];
@@ -35,6 +36,42 @@ const results = [];
     await p.waitForFunction(()=>!document.querySelector('.restore-consent input').disabled);
   }
   async function confirm(p) {await p.locator('.restore-consent input').check(); await p.getByRole('button',{name:'Restore on this device',exact:true}).click();}
+  await run('Large full backup recovery history reaches review, cancels safely and restores only after consent', async (p,context,alerts) => {
+    const backup=await seed(p);
+    await p.evaluate(backup=>{
+      window.largeBackupFile=new File([JSON.stringify({app:'Life OS',format:'life-os-full-backup-v2',state:backup,localRecovery:{originalRecoveryCache:JSON.stringify([{reason:'older-version',state:{boards:[{id:'old-history',cards:[{id:'old-note',type:'quote',description:'Historical note. '.repeat(1700000)}]}]}}])}})],'large-full-backup.json',{type:'application/json'});
+      window.beforeLargeImport=LifeCloudCopies.records(getStateForStorage());
+      window.restoreResult=null;importBoardBackup(largeBackupFile).then(result=>{window.restoreResult=result;});
+    },backup);
+    assert.ok(await p.evaluate(()=>largeBackupFile.size)>25000000);
+    await p.waitForFunction(()=>Boolean(document.getElementById('restoreReviewModal')) || window.restoreResult===false);
+    assert.equal(await p.getByRole('dialog',{name:'Review backup restore'}).isVisible(),true,alerts.join('\n'));
+    assert.ok(await p.getByRole('button',{name:'Cancel restore',exact:true}).locator('svg').evaluate(e=>{const r=e.getBoundingClientRect(),b=e.parentElement.getBoundingClientRect();return r.width===18&&r.height===18&&r.left>=b.left&&r.right<=b.right&&r.top>=b.top&&r.bottom<=b.bottom;}),'Cancel icon must be visible inside its touch target');
+    await p.waitForFunction(()=>!document.querySelector('.restore-consent input').disabled);
+    assert.match(await p.locator('.restore-recovery-note').innerText(),/not automatically merged/);
+    assert.equal(await p.getByRole('button',{name:'Restore on this device',exact:true}).isDisabled(),true);
+    for(const width of [320,390,1080]){
+      await p.setViewportSize({width,height:844});
+      await p.locator('.restore-recovery-note').scrollIntoViewIfNeeded();
+      assert.ok(await p.locator('#restoreReviewModal').evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight&&e.scrollWidth<=e.clientWidth+1;}));
+      assert.ok(await p.locator('.restore-recovery-note').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
+      await p.screenshot({path:OUT+'/large-backup-review-'+width+'.png'});
+    }
+    await p.getByRole('button',{name:'Cancel restore',exact:true}).click();
+    await p.waitForFunction(()=>window.restoreResult===false);
+    assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),await p.evaluate(()=>beforeLargeImport));
+    assert.equal(await p.evaluate(()=>localStorage.getItem(RESTORE_GUARD_KEY)),null);
+    await p.setViewportSize({width:1280,height:900});
+    await p.evaluate(()=>{window.restoreResult=null;importBoardBackup(largeBackupFile).then(result=>{window.restoreResult=result;});});
+    await p.waitForFunction(()=>Boolean(document.querySelector('.restore-consent input')) && !document.querySelector('.restore-consent input').disabled);
+    await confirm(p);await p.waitForFunction(()=>window.restoreResult===true);await p.reload();
+    assert.equal(await p.locator('.diary-thoughts').inputValue(),'An older diary entry.');
+    assert.equal(await p.evaluate(()=>state.boards.length),1);
+    assert.equal(await p.evaluate(()=>isRestoreSyncPaused()),true);
+    assert.match(await p.evaluate(()=>JSON.stringify(readLocalJsonValue(CLOUD_RECOVERY_KEY,[]))),/Current writing/);
+    assert.equal(await p.evaluate(()=>state.boards.some(b=>b.id==='old-history')),false);
+    assert.deepEqual(alerts,[]);
+  });
   await run('backup preview identifies replaced and absent boards; cancel changes nothing', async p => {
     const backup=await seed(p), before=await p.evaluate(()=>getStateForStorage().boards);
     await open(p,backup); assert.equal(await p.getByRole('button',{name:'Restore on this device',exact:true}).isDisabled(),true);
