@@ -9,6 +9,7 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname));fs.mkdirSync(o
   const data=p=>p.evaluate(()=>LifeStateMerge.copy({entries:state.cards.find(c=>c.id==='routine-fitness').fitnessEntries,food:state.cards.find(c=>c.id==='routine-food'),archive:state.archivedCards,other:state.boards.find(b=>b.id==='routine-other')}));
   const totals=p=>p.evaluate(()=>getFitnessReportTotals(collectFitnessSessions({startKey:'2026-10-16',endKey:'2026-10-16'})));
   async function run(name,fn,options={}){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1080,height:1100},timezoneId:'Asia/Kuala_Lumpur',...options});await context.route('https://**/*',r=>r.fulfill({status:503,body:'Synthetic exercise reuse; cloud blocked'}));
     const p=await context.newPage(),errors=[];p.setDefaultTimeout(8000);p.on('pageerror',e=>errors.push(e.stack));await p.clock.setFixedTime(new Date('2026-10-16T04:00:00Z'));
     try{
@@ -83,6 +84,23 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname));fs.mkdirSync(o
   await run('no earlier exercises has a non-destructive empty state',async p=>{
     await p.evaluate(async()=>{const c=state.cards.find(c=>c.id==='routine-fitness');c.fitnessEntries['2026-10-14'].parts.chest.active=false;c.fitnessEntries['2026-10-10'].parts.chest.active=false;saveState();await flushDeviceWrites();renderCardsOnly({force:true});});const before=await data(p);await open(p);assert.match(await modal(p).innerText(),/No earlier chest exercises/);assert.equal(await modal(p).getByRole('button',{name:'Add exercises',exact:true}).count(),0);await modal(p).getByRole('button',{name:'Close',exact:true}).click();assert.deepEqual(await data(p),before);
   });
+  await run('a delayed board scroll restore cannot move an exercise control away from the next click',async p=>{
+    const before=await data(p),diary=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='routine-diary')));
+    await p.evaluate(()=>{
+      window.exerciseRestoreCallbacks=[];const original=requestAnimationFrame;
+      window.requestAnimationFrame=callback=>{exerciseRestoreCallbacks.push(callback);return exerciseRestoreCallbacks.length;};
+      try{renderCardsOnly({force:true});}finally{window.requestAnimationFrame=original;}
+    });
+    const button=card(p).getByRole('button',{name:'Reuse Chest exercises',exact:true});await button.scrollIntoViewIfNeeded();
+    const reached=await p.evaluate(()=>captureScrollPosition());assert(reached.windowY+reached.workspaceTop>0,'Exercise control must require scrolling in this fixture');
+    const target=await button.boundingBox();assert(target);const point={x:target.x+target.width/2,y:target.y+target.height/2};
+    await p.evaluate(()=>{exerciseRestoreCallbacks.splice(0).forEach(callback=>callback(performance.now()));});
+    assert.deepEqual(await p.evaluate(()=>captureScrollPosition()),reached,'A stale scroll callback moved the control after the user reached it');
+    assert(await button.evaluate(n=>{const r=n.getBoundingClientRect();return n.contains(n.ownerDocument.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));
+    await p.mouse.click(point.x,point.y);await modal(p).waitFor();assert.deepEqual(await data(p),before);
+    assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='routine-diary'))),diary);
+    await p.screenshot({path:out+'/delayed-scroll-exercise.png',fullPage:false});
+  },{viewport:{width:1080,height:844},isMobile:true,hasTouch:true});
   await run('touch-tablet names remain inert, wrapped and reachable with 44px controls',async p=>{
     const name='<img src=x onerror=alert(1)> A long exercise name for a full readable preview that stays inside its dialog';await p.evaluate(async name=>{state.cards.find(c=>c.id==='routine-fitness').fitnessEntries['2026-10-14'].parts.chest.exercises[1].name=name;saveState();await flushDeviceWrites();},name);await open(p);const dialog=modal(p);
     assert.equal(await dialog.locator('img').count(),0);assert.match(await dialog.innerText(),/A long exercise name/);assert(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1));
