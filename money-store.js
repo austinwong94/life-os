@@ -168,6 +168,23 @@
     const categories=[...new Set(expenses.map(e=>e.category))].sort().map(name=>({name,spentCents:checkedSum(expenses.filter(e=>e.category===name).map(e=>e.amountCents))}));
     return {rows,spentCents,receivedCents,repaymentsCents,categories};
   }
+  function worksheet(input,month,today,owner='all',category='',bucket='all') {
+    const ledger=validate(input),actual=monthly(ledger,month,today,owner);
+    const buckets=['paid','received','confirmed','considering','expected','transfer','adjustment'];
+    if(typeof category!=='string' || !['all',...buckets].includes(bucket))throw new Error('Choose a valid table filter.');
+    const last=new Date(month+'-01T12:00:00Z');last.setUTCMonth(last.getUTCMonth()+1);last.setUTCDate(0);
+    const end=month+'-'+last.getUTCDate();
+    const ids=new Set(ledger.accounts.filter(a=>owner==='all' || a.owner===owner).map(a=>a.id));
+    const considering=ledger.entries.filter(e=>e.kind==='expense' && e.purchaseIntent==='considering' && e.status==='planned' && e.repeat==='none' && !e.scheduleId && !e.voidedAt);
+    const pending=[...upcoming(ledger,end),...considering].filter(e=>e.dueDate.startsWith(month) && (ids.has(e.accountId) || e.kind==='transfer' && ids.has(e.toAccountId)));
+    const rows=[...actual.rows,...pending].map(value=>{
+      const entry=copy(value),amountCents=entry.remainingCents ?? entry.amountCents;delete entry.remainingCents;
+      const group=entry.kind==='transfer'?'transfer':entry.kind==='adjustment'?'adjustment':entry.kind==='income'?(entry.status==='settled'?'received':'expected'):entry.status==='settled'?'paid':entry.purchaseIntent==='considering'?'considering':'confirmed';
+      return {entry,amountCents,bucket:group,date:entry.status==='settled'?entry.date:entry.dueDate};
+    }).filter(row=>(!category || row.entry.category===category) && (bucket==='all' || row.bucket===bucket)).sort((a,b)=>a.date.localeCompare(b.date)||a.entry.id.localeCompare(b.entry.id));
+    const totals=items=>Object.fromEntries(buckets.map(key=>[key,checkedSum(items.filter(row=>row.bucket===key).map(row=>row.amountCents))]));
+    return {rows,totals:totals(rows),categories:[...new Set(rows.map(row=>row.entry.category))].sort().map(name=>({name,...totals(rows.filter(row=>row.entry.category===name))}))};
+  }
   function cardPlans(input,today,owner='all') {
     const ledger=validate(input);
     if(!validDate(today) || ![...owners,'all'].includes(owner))throw new Error('Choose a valid card view.');
@@ -252,6 +269,6 @@
     }
     return change(input,'entries',{...copy(entry),amountCents,date,status:'settled'},entry,now);
   }
-  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,monthly,cardPlans,payBill,billRemaining,coveringBill,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
+  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,monthly,worksheet,cardPlans,payBill,billRemaining,coveringBill,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
   if(typeof module!=='undefined' && module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
