@@ -6,6 +6,45 @@ concurrency:
   group: life-os-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  property-ui-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run build
+      - name: Start isolated artifact preview
+        run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-preflight.log 2>&1 &
+      - name: Check long meal selects on touch WebKit
+        run: npm run test:meal-reuse
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/preflight-meal-webkit
+      - name: Check exercise reuse on touch WebKit
+        run: npm run test:exercise-reuse
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/preflight-exercise-webkit
+      - name: Check Properties workflows in Chromium
+        run: npm run test:properties
+        env:
+          TEST_OUTPUT: test-results/preflight-properties-chromium
+      - name: Check Properties workflows in WebKit
+        run: npm run test:properties
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/preflight-properties-webkit
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: properties-preflight-results
+          path: test-results/
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -400,7 +439,7 @@ jobs:
           path: test-results/
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: verify
+    needs: [verify, property-ui-preflight]
     runs-on: ubuntu-latest
     permissions:
       contents: read
