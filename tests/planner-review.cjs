@@ -1,14 +1,22 @@
-const {chromium}=require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const browsers=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const URL=process.env.TEST_URL || 'http://127.0.0.1:5180/';
+assert(['localhost','127.0.0.1'].includes(new global.URL(URL).hostname),'Planner fixtures must stay in disposable local profiles');
 const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-test-results';
 fs.mkdirSync(out,{recursive:true});const results=[];
 
 async function seed(page,{conflict=true,archived=false,remotePatch={}}={}) {
   // Leave the old app first so its in-flight journal cannot repopulate a fixture.
   await page.goto(URL+'__test_reset__');
-  await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();});await page.goto(URL+'?preview=1');
+  await page.evaluate(async()=>{
+    localStorage.clear();sessionStorage.clear();
+    // Reset both stores; an older verified checkpoint must reject an erased
+    // shared snapshot in real use, but each synthetic fixture is independent.
+    for(const {name} of await indexedDB.databases())await new Promise((resolve,reject)=>{
+      const request=indexedDB.deleteDatabase(name);request.onsuccess=resolve;request.onerror=()=>reject(request.error);request.onblocked=()=>reject(new Error('Fixture database is still open'));
+    });
+  });await page.goto(URL+'?preview=1&liveReload=0');
   return page.evaluate(async({conflict,archived,remotePatch})=>{
     const source=makeCard({type:'planner',title:'Personal planner',category:'Personal'});source.id='review-source';
     LifePlanner.add(source,'2026-09-01','Call the clinic','review-task',1000);
@@ -26,6 +34,7 @@ async function seed(page,{conflict=true,archived=false,remotePatch={}}={}) {
       state.syncConflicts=LifeStateMerge.registerConflicts(LifeStateMerge.merge(base,getStateForStorage(),remote).conflicts.map(c=>({...c,source:'device'})),{},createId);
       saveState({skipCloud:true});await flushDeviceWrites();
     }
+    if(!await flushDeviceWrites())throw new Error('Planner fixture did not finish saving');
     render();if(conflict)openRecovery();
     return {task:LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]),other:JSON.stringify(state.boards[1].cards),independent:JSON.stringify(getPlannerSourceCards()[0].plannerTasks[1])};
   },{conflict,archived,remotePatch});
@@ -37,14 +46,18 @@ async function choose(page,label) {
   await page.getByRole('button',{name:'Save task version',exact:true}).click();
 }
 (async()=>{
-  const browser=await chromium.launch({headless:true});
+  const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name,fn){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
+    const repetitions=Math.min(20,Math.max(1,Number(process.env.TEST_REPETITIONS) || 1));
+    for(let repetition=0;repetition<repetitions;repetition++){
     const context=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',route=>route.fulfill({status:503,body:'No external services in tests'}));
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(8000);page.on('pageerror',e=>errors.push(e.stack));page.on('dialog',d=>d.accept());
     try {await page.goto(URL+'?preview=1');await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
-    catch(error){results.push({name,pass:false,error:error.stack,pageErrors:errors});await page.screenshot({path:out+'/planner-review-failure-'+results.length+'.png'}).catch(()=>{});}
+    catch(error){const diagnostics=await page.evaluate(()=>({lastLocalSaveOk,corruptLocalStateDetected,lastDeviceSaveError,pending:LifeDeviceStore.pending().map(({entry})=>({writerId:entry.writerId,sequence:entry.sequence,previousSequence:entry.previousSequence})),messages:[...document.querySelectorAll('.conflict-message')].map(e=>e.textContent)})).catch(()=>null);results.push({name,pass:false,error:error.stack,pageErrors:errors,diagnostics});await page.screenshot({path:out+'/planner-review-failure-'+results.length+'.png'}).catch(()=>{});}
     console.log(JSON.stringify(results.at(-1)));await context.close();
+    }
   }
   await run('Complete task versions require explicit choice and consent, then survive reload without changing other records',async page=>{
     const before=await seed(page);assert.equal(await page.locator('.planner-conflict-form').count(),1);
@@ -67,8 +80,12 @@ async function choose(page,label) {
     assert.equal(await page.evaluate(()=>LifePlanner.forDay(getPlannerSourceCards()[0],'2026-09-07').find(t=>t.id==='review-task').done),true);
   });
   await run('A newer edit blocks stale review and refresh requires a new selection and consent',async page=>{
-    await seed(page);await page.evaluate(async()=>{LifePlanner.change(getPlannerSourceCards()[0],'review-task',{title:'Newer wording'});saveState({skipCloud:true});await flushDeviceWrites();});
-    await choose(page,'Other tab version');await page.getByText(/task changed after you opened/).waitFor();assert.equal((await task(page)).title,'Newer wording');
+    await seed(page);const original=await page.evaluate(()=>{const conflict=LifeStateMerge.copy(state.syncConflicts[0]);return {conflict,expected:LifeStateMerge.inspectPlannerTaskConflict(getStateForStorage(),conflict).current};});
+    await page.evaluate(async()=>{LifePlanner.change(getPlannerSourceCards()[0],'review-task',{title:'Newer wording'});saveState({skipCloud:true});await flushDeviceWrites();});
+    // A device commit may refresh the visible form. Exercise the captured old
+    // comparison rather than accidentally submitting its refreshed successor.
+    const refusal=await page.evaluate(async({conflict,expected})=>{try{await applyPlannerTaskChoice(conflict,expected,conflict.remote);return 'Unexpected success';}catch(error){return error.message;}},original);
+    assert.match(refusal,/task changed after you opened/);assert.equal((await task(page)).title,'Newer wording');
     await page.getByRole('button',{name:'Refresh comparison',exact:true}).click();await page.getByText(/Current task refreshed/).waitFor();
     assert.equal(await page.getByRole('button',{name:'Save task version',exact:true}).isDisabled(),true);
     assert.equal(await page.getByRole('radio',{checked:true}).count(),0);
@@ -77,7 +94,11 @@ async function choose(page,label) {
   await run('Failed recovery or primary storage writes preserve the original task and unresolved comparison',async page=>{
     for(const key of ['recovery','primary']){
       await seed(page);const before=await task(page);
-      await page.evaluate(key=>{window.nativeSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(name,value){if(name===(key==='recovery'?CLOUD_RECOVERY_KEY:STORAGE_KEY))throw new DOMException('Injected full storage','QuotaExceededError');return window.nativeSetItem.call(this,name,value);};},key);
+      await page.evaluate(key=>{window.nativeSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(name,value){
+        const resolving=key==='primary' && name===STORAGE_KEY && JSON.parse(value).syncConflicts?.length===0 && Object.keys(JSON.parse(value).conflictResolutions || {}).length>0;
+        if((key==='recovery' && name===CLOUD_RECOVERY_KEY) || resolving)throw new DOMException('Injected full storage','QuotaExceededError');
+        return window.nativeSetItem.call(this,name,value);
+      };},key);
       await choose(page,'Other tab version');await page.getByText(key==='recovery'?/recovery copy could not be saved/:/choice could not be saved/).waitFor();
       assert.deepEqual(await task(page),before);assert.equal(await page.evaluate(()=>state.syncConflicts.length),1);
       await page.evaluate(()=>{Storage.prototype.setItem=window.nativeSetItem;});await page.getByRole('button',{name:'Close recovery',exact:true}).click();
