@@ -481,7 +481,11 @@ function moneySheetEditor(root,ledger,session,entry) {
   const field=(label,property,type='text',options)=>{
     const input=options?moneySelect(options,draft[property],value=>{draft[property]=value;remember();}):planningInput(type,draft[property],value=>{draft[property]=value;remember();});
     if(property==='amount')input.inputMode='decimal';
-    const wrapper=planningField(label,input);fieldRoot.append(wrapper);return input;
+    const wrapper=planningField(label,input);
+    if(input.tagName==='SELECT'){
+      const frame=planningNode('span','money-sheet-select');input.replaceWith(frame);frame.append(input);
+    }
+    fieldRoot.append(wrapper);return input;
   };
   field('Item','title').required=true;field('Amount (RM)','amount').required=true;
   const stages=entry?entry.status==='settled'?[draft.stage]:entry.kind==='income'?['expected']:['confirmed','considering']:['paid','confirmed','considering','received','expected'];

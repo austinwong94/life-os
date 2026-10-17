@@ -164,6 +164,8 @@
 .money-sheet-editor :is(input,select,textarea) { width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--money-line); border-radius: 6px; background: var(--surface,#fff); color: inherit; padding: 10px; font-size: 14px; font-weight: 400; }
 .money-sheet-editor input[inputmode=decimal] { font-variant-numeric: tabular-nums; }
 .money-sheet-editor select { overflow: hidden; text-overflow: ellipsis; }
+.money-sheet-editor .planning-field > .money-sheet-select { display: block; max-width: 100%; overflow: hidden; color: inherit; border-radius: 6px; }
+.money-sheet-select:focus-within { outline: 2px solid var(--money-accent); outline-offset: 2px; }
 .money-sheet-editor > .money-message { grid-column: 1 / -1; }
 .money-sheet-editor > .money-actions { grid-column: 1 / -1; justify-content: end; align-self: start; }
 .money-sheet-editor .money-actions button { min-height: 44px; }
