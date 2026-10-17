@@ -6,6 +6,7 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-interface-polish';fs.
 (async()=>{
   const browser=await ({chromium,webkit}[process.env.TEST_BROWSER || 'chromium']).launch({headless:true}),results=[];
   async function run(name,action){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1440,height:1000},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'Synthetic design checks; external services blocked'}));
     const p=await context.newPage(),errors=[];p.setDefaultTimeout(8000);p.on('pageerror',e=>errors.push(e.message));
@@ -65,11 +66,11 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-interface-polish';fs.
     for(const width of [320,390,1080,1440]){
       await p.setViewportSize({width,height:1000});await workspace(p,'board');
       await p.waitForFunction(()=>{const n=document.querySelector('.planner-date-select-row span');return n && getComputedStyle(n).whiteSpace==='normal';});
-      const meta=await p.evaluate(()=>{const n=document.querySelector('.planner-date-select-row span');return {wrap:getComputedStyle(n).whiteSpace,fits:n.scrollWidth<=n.clientWidth+1};});
+      const meta=await p.evaluate(()=>{const n=elements.boardGrid.querySelector('.planner-date-select-row span');return {wrap:getComputedStyle(n).whiteSpace,fits:n.scrollWidth<=n.clientWidth+1,controls:[...elements.boardGrid.querySelectorAll('.planner-date-input, .planner-task-input, .planner-submit-button')].map(n=>({className:n.className,height:n.getBoundingClientRect().height})),columns:elements.boardGrid.querySelectorAll('.board-column').length,overflow:document.documentElement.scrollWidth>innerWidth+1};});
       assert.equal(meta.wrap,'normal');assert(meta.fits,'date is clipped at '+width);
-      assert(await p.locator('.planner-date-input, .planner-task-input, .planner-submit-button').evaluateAll(ns=>ns.every(n=>n.getBoundingClientRect().height>=44)));
-      if(width===1080)assert.equal(await p.locator('.board-column').count(),3);
-      assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+      assert.equal(meta.controls.length,3,'one visible-board date, task and submit control');assert(meta.controls.every(n=>n.height>=44),JSON.stringify({width,controls:meta.controls}));
+      if(width===1080)assert.equal(meta.columns,3);
+      assert(!meta.overflow);
       await p.screenshot({path:out+'/planner-'+width+'.png',fullPage:false});
     }
   });

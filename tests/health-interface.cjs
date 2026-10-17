@@ -22,6 +22,7 @@ fs.mkdirSync(out,{recursive:true});
     saveState({skipCloud:true});await flushDeviceWrites();render();
   });
   async function run(name,fn){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1440,height:1100},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'External services blocked in synthetic tests'}));
     const p=await context.newPage(),errors=[];p.setDefaultTimeout(8000);p.on('pageerror',e=>errors.push(e.stack));
@@ -57,6 +58,25 @@ fs.mkdirSync(out,{recursive:true});
     await p.locator('.food-add-food-panel > summary').click();await p.locator('.food-meal-details > summary').click();
     await p.screenshot({path:out+'/compact-desktop.png',fullPage:false});
     await p.setViewportSize({width:390,height:844});await p.waitForTimeout(220);await p.screenshot({path:out+'/compact-phone.png',fullPage:true});
+  });
+  await run('multiline workout and session notes retain indentation through typing, part switches, reload and readable exports',async p=>{
+    await p.setViewportSize({width:390,height:844});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await p.waitForFunction(()=>!boardResizeFrame && !pendingBoardRenderOptions);
+    const notes='  First sample thought.\n\tSecond sample line.\n',session='  A complete session note.\nAnother line, kept exactly.\n';
+    await p.locator('.fitness-active .fitness-notes-panel > summary').click();await p.getByLabel('Chest notes',{exact:true}).fill(notes);
+    await p.getByRole('button',{name:'Running',exact:true}).click();await p.locator('.fitness-active .fitness-notes-panel > summary').click();await p.getByLabel('Running notes',{exact:true}).fill(notes);
+    await p.locator('.fitness-metrics > summary').click();await p.locator('.fitness-metrics .fitness-notes-panel > summary').click();await p.getByLabel('Session notes',{exact:true}).fill(session);await p.locator('.fitness-metrics > summary').click();
+    await p.getByRole('button',{name:'Chest',exact:true}).click();assert.equal(await p.getByLabel('Chest notes',{exact:true}).inputValue(),notes);assert.equal(await p.locator('.fitness-metrics').getAttribute('open'),null);
+    await p.evaluate(()=>flushDeviceWrites());await p.reload();assert.equal(await p.getByLabel('Chest notes',{exact:true}).inputValue(),notes);
+    await p.getByRole('button',{name:'Running',exact:true}).click();assert.equal(await p.getByLabel('Running notes',{exact:true}).inputValue(),notes);
+    await p.locator('.fitness-metrics > summary').click();assert.equal(await p.getByLabel('Session notes',{exact:true}).inputValue(),session);
+    const html=await p.evaluate(()=>buildReadableDataArchive(getStateForStorage()));assert.ok(html.includes(notes));assert.ok(html.includes(session));
+    await p.clock.setFixedTime(new Date('2026-10-16T04:00:05Z'));await p.evaluate(()=>flushDeviceWrites());await p.waitForFunction(()=>!boardResizeFrame && !pendingBoardRenderOptions);
+    for(const width of [320,390,1080]){
+      await p.setViewportSize({width,height:844});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await p.waitForFunction(()=>!boardResizeFrame && !pendingBoardRenderOptions);
+      const field=await p.evaluate(()=>{const e=elements.boardGrid.querySelector('.fitness-metrics .fitness-notes-panel textarea');if(!e)return {missing:true};e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();return {value:e.value,connected:e.isConnected,metricsOpen:e.closest('.fitness-metrics').open,notesOpen:e.closest('.fitness-notes-panel').open,left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight};});
+      assert.equal(field.value,session);assert.ok(field.connected&&field.metricsOpen&&field.notesOpen&&field.height>=44&&field.left>=0&&field.right<=field.viewportWidth&&field.top>=0&&field.bottom<=field.viewportHeight,JSON.stringify({width,field}));
+      await p.screenshot({path:out+'/multiline-notes-'+width+'.png'});assert.equal(await p.getByLabel('Session notes',{exact:true}).inputValue(),session);
+    }
   });
   await run('multi-digit workout edits retain focus, metric disclosure and historical records through navigation and reload',async p=>{
     await p.setViewportSize({width:390,height:844});const metrics=p.locator('.fitness-metrics');await metrics.locator(':scope > summary').click();
