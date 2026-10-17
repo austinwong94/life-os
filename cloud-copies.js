@@ -40,6 +40,22 @@
     }
     return {boards,deletedBoardIds:snapshot?.deletedBoardIds || {},cloudOwnerId:snapshot?.cloudOwnerId || '',syncConflicts:snapshot?.syncConflicts || [],conflictResolutions:snapshot?.conflictResolutions || {}};
   }
+  function changedBoardIds(current,baseline) {
+    const index=snapshot=>{
+      if(!Array.isArray(snapshot?.boards) || snapshot.deletedBoardIds!==undefined && (!snapshot.deletedBoardIds || typeof snapshot.deletedBoardIds!=='object' || Array.isArray(snapshot.deletedBoardIds)))throw new Error('Board records cannot be compared safely.');
+      const rows=new Map();
+      for(const board of snapshot.boards){
+        if(!board || typeof board.id!=='string' || !board.id || rows.has(board.id))throw new Error('Board identities cannot be compared safely.');
+        rows.set(board.id,board);
+      }
+      const normalized=records(snapshot);
+      return {boards:new Map(normalized.boards.map(board=>[board.id,board])),deleted:normalized.deletedBoardIds};
+    };
+    const local=index(current),base=index(baseline);
+    const ids=new Set([...local.boards.keys(),...base.boards.keys(),...Object.keys(local.deleted),...Object.keys(base.deleted)]);
+    const receipt=(map,id)=>Object.hasOwn(map,id)?{value:map[id]}:null;
+    return [...ids].filter(id=>!equal(local.boards.get(id),base.boards.get(id)) || !equal(receipt(local.deleted,id),receipt(base.deleted,id)));
+  }
   function retained(snapshot) {
     return (snapshot.boards || []).flatMap(board=>cards(board).filter(card=>card.preservedCloudSnapshot?.format==='life-os-preserved-cloud-v1').map(card=>card.preservedCloudSnapshot));
   }
@@ -61,7 +77,7 @@
     next.cloudOwnerId=ownerId;
     return next;
   }
-  const api={canonical,equal,records,counts,retained,preserve,encodeBase,decodeBase};
+  const api={canonical,equal,records,changedBoardIds,counts,retained,preserve,encodeBase,decodeBase};
   if(typeof module==='object' && module.exports)module.exports=api;
   else root.LifeCloudCopies=api;
 })(typeof window==='object'?window:globalThis);

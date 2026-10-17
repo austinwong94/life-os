@@ -76,7 +76,40 @@ const results=[];
   const other=await context.newPage();await other.goto(url+'?preview=1&liveReload=0');await other.evaluate(()=>switchBoard('daily-other'));await p.locator('#weeklyReviewButton').click();await other.locator('#weeklyReviewButton').click();await p.getByLabel('What mattered?').fill('Board A reflection');await other.getByLabel('What mattered?').fill('Board B reflection');await p.getByRole('button',{name:'Keep reflection',exact:true}).click();await other.getByRole('button',{name:'Keep reflection',exact:true}).click();await p.evaluate(()=>flushDeviceWrites());await other.evaluate(()=>flushDeviceWrites());await p.reload();await other.reload();assert.equal(await p.evaluate(()=>dailyRecords().at(-1).mattered),'Board A reflection');assert.equal(await other.evaluate(()=>dailyRecords().at(-1).mattered),'Board B reflection');assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);await other.close();
  });
  await run('saving details distinguish preview, pending, conflicts and cloud version without contacting cloud',async p=>{
-  await p.locator('#headerSaveStatus').click();assert.match(await p.locator('.daily-save-details').innerText(),/cloud disabled/);assert.ok((await p.locator('.daily-save-details').innerText()).includes(await p.evaluate(()=>LIFE_OS_BUILD)));assert.equal(await p.evaluate(()=>cloudSession),null);await p.getByRole('button',{name:'Recovery',exact:true}).click();await p.locator('#recoveryModal').waitFor({state:'visible'});assert.equal(await p.locator('#recoveryModal').isVisible(),true);
+  const expected=await p.evaluate(()=>{const script=[...document.scripts].find(s=>new URL(s.src || location.href).pathname.endsWith('/index-startup.js'));return script?new URL(script.src).searchParams.get('v'):'Unversioned source';});
+  await p.evaluate(()=>{const address=new URL(location.href);address.searchParams.set('v','0000000000000000');history.replaceState(null,'',address);});
+  await p.locator('#headerSaveStatus').click();assert.match(await p.locator('.daily-save-details').innerText(),/cloud disabled/);
+  assert.equal(await p.locator('.daily-save-details dt').filter({hasText:/^Loaded version$/}).evaluate(el=>el.nextElementSibling.textContent),expected);
+  assert((await p.locator('#headerSaveStatus').getAttribute('title')).includes(expected));
+  assert.equal(await p.evaluate(()=>cloudSession),null);await p.getByRole('button',{name:'Recovery',exact:true}).click();await p.locator('#recoveryModal').waitFor({state:'visible'});assert.equal(await p.locator('#recoveryModal').isVisible(),true);
+ });
+ await run('save diagnostics ignore advancing archived clocks but reveal real task changes without writing either copy',async p=>{
+  await p.clock.install();
+  await p.evaluate(async()=>{
+   state.boards.push(createBoardRecord({id:'clock-history',name:'Clock history',cards:[],archivedCards:[{...makeCard({type:'routine',title:'Archived daily routine'}),id:'diagnostic-clock',timerMode:'daily',targetAt:'2026-10-17T12:00:00Z',duration:100,remaining:90,runningSince:null,items:[{id:'tick',text:'Keep original tick',done:false}],history:[]}]}));
+   saveState({skipCloud:true});await flushDeviceWrites();
+   cloudSession={user:{id:'synthetic-diagnostics'}};cloudMergeBase={ownerId:'synthetic-diagnostics',state:getStateForStorage()};
+   Object.assign(cloudMergeBase.state.boards.find(b=>b.id==='clock-history').archivedCards[0],{duration:200,remaining:190});
+   window.diagnosticOriginalState=JSON.stringify(state);window.diagnosticOriginalBase=JSON.stringify(cloudMergeBase);window.diagnosticOriginalStorage=localStorage.getItem(STORAGE_KEY);
+  });
+  await p.locator('#headerSaveStatus').click();
+  const count=p.locator('.daily-save-details dt').filter({hasText:/^Boards (with record changes|changed since cloud comparison)$/});
+  assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'0');
+  assert.equal(await count.innerText(),'Boards with record changes');
+  await p.clock.runFor(1600);assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'0');
+  assert.equal(await p.evaluate(()=>JSON.stringify(state)===diagnosticOriginalState && JSON.stringify(cloudMergeBase)===diagnosticOriginalBase && localStorage.getItem(STORAGE_KEY)===diagnosticOriginalStorage),true);
+  for(const width of [320,390,1080]){
+   await p.setViewportSize({width,height:1000});assert(await p.locator('#dailyDialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1 && el.getBoundingClientRect().right<=innerWidth+1));
+   await p.screenshot({path:out+'/save-diagnostics-zero-'+(process.env.TEST_BROWSER || 'chromium')+'-'+width+'.png'});
+  }
+  await p.evaluate(()=>{state.boards.find(b=>b.id==='clock-history').archivedCards[0].items[0].done=true;});
+  await p.clock.runFor(1600);assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'1');
+  assert.equal(await p.evaluate(()=>JSON.stringify(cloudMergeBase)===diagnosticOriginalBase && localStorage.getItem(STORAGE_KEY)===diagnosticOriginalStorage),true);
+  await p.evaluate(()=>{cloudMergeBase.state.boards.push({...cloudMergeBase.state.boards[0]});});
+  await p.clock.runFor(1600);assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'Unable to compare');
+  assert.equal(await p.evaluate(()=>localStorage.getItem(STORAGE_KEY)===diagnosticOriginalStorage),true);
+  for(const width of [320,390,1080]){await p.setViewportSize({width,height:1000});assert(await p.locator('#dailyDialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1 && el.getBoundingClientRect().right<=innerWidth+1));}
+  await p.screenshot({path:out+'/save-diagnostics-'+(process.env.TEST_BROWSER || 'chromium')+'.png'});
  });
  await run('failed weekly save retains its draft, rollback is clean and board backup normalization retains reflections',async p=>{
   await p.locator('#weeklyReviewButton').click();await p.getByLabel('What mattered?').fill('Everything I meant to keep.');await p.evaluate(()=>{window.reviewStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw new Error('Full');};});
