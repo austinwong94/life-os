@@ -209,8 +209,7 @@ function openSaveDetails() {
   const feedback=planningNode('p','daily-message');feedback.setAttribute('role','status');
   const retry=planningButton('Retry device save',async()=>{
     retry.disabled=true;feedback.textContent='Checking pending device copies...';
-    const staged=lastLocalSaveOk || saveState({touch:false,skipCloud:true});
-    const saved=staged && await flushDeviceWrites();
+    const saved=await retryDeviceSave();
     if(saved){
       lastDeviceSaveError=null;
       setSaveStatus(cloudConflictPending?'Changes need review':isRestoreSyncPaused()?'Saved on device - cloud paused':navigator.onLine?'Saved on device':'Offline - saved on device',cloudConflictPending?'error':'local');

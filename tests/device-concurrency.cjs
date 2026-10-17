@@ -24,6 +24,22 @@ const results=[];
   const saved=p=>p.evaluate(()=>JSON.parse(localStorage.getItem(STORAGE_KEY)));
   const text=(snapshot,id)=>snapshot.boards.find(b=>b.id===id).cards[0].diaryEntries['2026-10-16']?.thoughts;
   async function write(p,words){return p.evaluate(async words=>{updateDiaryEntry(state.cards[0],'2026-10-16',{thoughts:words});return flushDeviceWrites();},words);}
+  await run('retry drains verified queued writes before restaging an unstaged full draft when the queue blocks staging',async p=>{
+    const words='Every character of my unstaged draft\nSecond line, not its first character';
+    const result=await p.evaluate(async words=>{
+      await flushDeviceWrites();LifeDeviceStore.configure(()=>false);
+      const before=getStateForStorage();LifeDeviceStore.stage(before,before);
+      state.cards[0].diaryEntries['2026-10-16']={thoughts:words};syncActiveBoard({touchBoard:false});lastLocalSaveOk=false;
+      const stage=LifeDeviceStore.stage;let refusals=0;
+      LifeDeviceStore.stage=(...args)=>{if(LifeDeviceStore.pending().length){refusals++;throw new DOMException('Queue fills synthetic staging budget','QuotaExceededError');}return stage(...args);};
+      LifeDeviceStore.configure(commitDeviceWrites);
+      const ok=await retryDeviceSave({recoverSpace:false});LifeDeviceStore.stage=stage;
+      return {ok,refusals,pending:LifeDeviceStore.pending().length,visible:state.cards[0].diaryEntries['2026-10-16'].thoughts,stored:JSON.parse(localStorage.getItem(STORAGE_KEY))};
+    },words);
+    assert.equal(result.ok,true);assert.equal(result.refusals,1);assert.equal(result.pending,0);assert.equal(result.visible,words);assert.equal(text(result.stored,'one'),words);
+    assert.equal(result.stored.boards.find(board=>board.id==='two').cards[0].diaryEntries['2026-10-16'],undefined);
+    await p.reload();assert.equal(text(await saved(p),'one'),words);
+  });
   await run('a stale shared-storage view cannot replace a newer checkpoint; retry keeps both board diaries',async(p,context)=>{
     const q=await context.newPage();await q.goto(url.href);await q.evaluate(()=>switchBoard('two'));await q.evaluate(()=>flushDeviceWrites());
     await p.evaluate(()=>{

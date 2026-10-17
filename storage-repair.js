@@ -17,7 +17,7 @@
   repair.onclick=async()=>{
     repair.disabled=true;status.textContent='Preserving complete recovery copies and verifying readback...';
     const before=localStorage.getItem(activeKey);
-    try{const result=await vault.compact();show({...result,activeChanged:localStorage.getItem(activeKey)!==before});status.textContent=result.changed?'Another tab wrote a recovery copy during verification. Its copy was kept. Run the check again.':'Recovery archive verified. Active records were not replaced. Your original tab can retry device and cloud saving now.';}
+    try{const result=await vault.compact({releaseCache:true});show({...result,activeChanged:localStorage.getItem(activeKey)!==before});status.textContent=result.changed?'Another tab wrote a recovery copy during verification. Its copy was kept. Run the check again.':'Recovery archive verified. Active records were not replaced. Your original tab can retry device and cloud saving now.';}
     catch(error){status.textContent='Recovery could not complete. Original copies were kept. '+error.message;show();}
     finally{repair.disabled=false;}
   };

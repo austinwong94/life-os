@@ -816,6 +816,7 @@ function commitDeviceWrites(entries) {
   saved.syncConflicts=conflicts;saved.conflictResolutions=resolutions;
   if ((entries.length || conflictMetadataChanged) && !writeLocalJson(STORAGE_KEY, saved, {silent:true})) {
     setSaveStatus("Pending copy saved - main storage full", "error");
+    if(lastDeviceSaveError?.name==='QuotaExceededError' && typeof scheduleRecoveryVault==='function')scheduleRecoveryVault();
     return false;
   }
   // All edits from this JS context were staged synchronously before acquiring
