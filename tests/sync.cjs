@@ -92,6 +92,49 @@ const clone=x=>JSON.parse(JSON.stringify(x));
    return {failed,unchanged:localStorage.getItem(key)===raw,active:localStorage.getItem('active')};
   });assert.deepEqual(result,{failed:true,unchanged:true,active:'original'});
  });
+ await run('quota recovery releases the final duplicate only after strict archive commit and complete restart readback',async context=>{
+  const p=await vaultPage(context);
+  const result=await p.evaluate(async()=>{
+   const key='single-recovery',row={id:'single',savedAt:'2026-10-17',state:{diary:'Every original line\n第二行',padding:'Complete retained history\n'.repeat(50000)}},raw=JSON.stringify([row]);
+   localStorage.setItem(key,raw);localStorage.setItem('active','Untouched active records');localStorage.setItem('pending','Untouched pending packet');
+   for(let i=0;i<200;i++){try{localStorage.setItem('padding-'+i,'x'.repeat(32768));}catch{break;}}
+   const transaction=IDBDatabase.prototype.transaction,modes=[];
+   IDBDatabase.prototype.transaction=function(...args){if(this.name==='single-vault' && args[1]==='readwrite')modes.push(args[2]?.durability);return transaction.apply(this,args);};
+   let refused=false;try{localStorage.setItem('new-writing','x'.repeat(200000));}catch{refused=true;}
+   const options={name:'single-vault',key,locked:fn=>navigator.locks.request('single-vault-lock',fn)},vault=LifeRecoveryVault.create(options);
+   await vault.initialize();const keptOne=localStorage.getItem(key)===raw;
+   const repair=await vault.compact({releaseCache:true});localStorage.setItem('new-writing','x'.repeat(200000));
+   const restarted=LifeRecoveryVault.create(options);await restarted.refresh();IDBDatabase.prototype.transaction=transaction;
+   return {refused,keptOne,bytes:repair.movedBytes,cache:localStorage.getItem(key),all:JSON.stringify(restarted.all([]))===raw,active:localStorage.getItem('active'),pending:localStorage.getItem('pending'),modes};
+  });
+  assert.equal(result.refused,true);assert.equal(result.keptOne,true);assert(result.bytes>2000000);assert.equal(result.cache,'[]');assert.equal(result.all,true);
+  assert.equal(result.active,'Untouched active records');assert.equal(result.pending,'Untouched pending packet');assert(result.modes.length>0);assert(result.modes.every(value=>value==='strict'));
+ });
+ await run('quota recovery never releases a cache whose archive transaction aborts',async context=>{
+  const p=await vaultPage(context);
+  const result=await p.evaluate(async()=>{
+   const key='single-abort',raw=JSON.stringify([{id:'only',state:{diary:'Full original writing\nSecond line'}}]);localStorage.setItem(key,raw);
+   const transaction=IDBDatabase.prototype.transaction;
+   IDBDatabase.prototype.transaction=function(...args){const tx=transaction.apply(this,args);if(args[1]==='readwrite')queueMicrotask(()=>tx.abort());return tx;};
+   let refused=false;try{await LifeRecoveryVault.create({name:'single-abort-vault',key,locked:fn=>fn()}).compact({releaseCache:true});}catch{refused=true;}
+   IDBDatabase.prototype.transaction=transaction;return {refused,unchanged:localStorage.getItem(key)===raw};
+  });assert.deepEqual(result,{refused:true,unchanged:true});
+ });
+ await run('stalled recovery reads release the shared lock at their deadline without reducing the original cache',async context=>{
+  const p=await vaultPage(context);await p.clock.install();
+  await p.evaluate(()=>{
+   window.originalCache=JSON.stringify([{id:'stalled',state:{diary:'All original words'}}]);localStorage.setItem('stalled-cache',originalCache);
+   window.originalGetAll=IDBObjectStore.prototype.getAll;window.held=false;window.finished=null;
+   IDBObjectStore.prototype.getAll=function(...args){const req=originalGetAll.apply(this,args);Object.defineProperty(req,'onsuccess',{set(){req.addEventListener('success',()=>{held=true;});}});return req;};
+   window.vault=LifeRecoveryVault.create({name:'stalled-vault',key:'stalled-cache',locked:fn=>navigator.locks.request('stalled-lock',fn)});
+   vault.compact({releaseCache:true}).then(()=>finished='unexpected success',error=>finished=error.name);
+  });
+  await p.waitForFunction(()=>held);await p.clock.runFor(11000);await p.waitForFunction(()=>finished==='RecoveryVaultTimeoutError');
+  assert.equal(await p.evaluate(()=>localStorage.getItem('stalled-cache')===originalCache),true);
+  assert.equal(await p.evaluate(()=>navigator.locks.request('stalled-lock',{ifAvailable:true},lock=>Boolean(lock))),true);
+  await p.evaluate(()=>IDBObjectStore.prototype.getAll=originalGetAll);await p.clock.resume();
+  assert.equal(await p.evaluate(async()=>{await vault.compact({releaseCache:true});return JSON.stringify(vault.all([]))===originalCache;}),true);
+ });
  await run('recovery vault detects concurrent legacy writes and reloads other tabs complete archives',async context=>{
   const p=await vaultPage(context);
   const result=await p.evaluate(async()=>{
@@ -147,6 +190,46 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   await a.evaluate(()=>openRecovery());assert.ok(await a.getByRole('button',{name:'Read / download',exact:true}).count()>=5);
   const originals=await a.evaluate(()=>readLocalJsonValue(CLOUD_RECOVERY_KEY,[]).filter(c=>c.reason==='synthetic-capacity-test').map(c=>c.padding));
   assert.equal(originals.length,5);assert.ok(originals.every(s=>s.length>400000));
+ });
+ await run('a full single-copy cache and six queued packets recover complete new writing without resetting another board',async context=>{
+  const {a,base,backend}=await setup(context);
+  await a.evaluate(async base=>{
+   await flushDeviceWrites();
+   const snapshot=getStateForStorage();for(let i=0;i<6;i++)LifeDeviceStore.stage(snapshot,snapshot);
+   localStorage.setItem(CLOUD_RECOVERY_KEY,JSON.stringify([{id:'last-duplicate',reason:'single-cache-quota-test',savedAt:'2026-10-17',state:base,padding:'Complete original recovery\n'.repeat(50000)}]));
+   await recoveryVault.refresh();
+   for(let i=0;i<200;i++){try{localStorage.setItem('single-padding-'+i,'x'.repeat(32768));}catch{break;}}
+   cloudSaveEnabled=true;
+  },base);
+  let seed=12345;const writing=Array.from({length:60000},()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return String.fromCharCode(33+(seed>>>16)%90);}).join('')+'\nEvery final character retained.';
+  await a.locator('.diary-thoughts').fill(writing);
+  await a.waitForFunction(()=>lastLocalSaveOk && LifeDeviceStore.pending().length===0,{},{timeout:30000});
+  assert.equal(await a.evaluate(()=>flushDeviceWrites()),true);
+  assert.equal(await a.locator('.diary-thoughts').inputValue(),writing);
+  const beforeOther=base.boards.find(board=>board.id==='work');
+  assert.deepEqual(await a.evaluate(()=>JSON.parse(localStorage.getItem(STORAGE_KEY)).boards.find(board=>board.id==='work')),beforeOther);
+  assert.equal(await a.evaluate(()=>readLocalJsonValue(CLOUD_RECOVERY_KEY,[]).find(row=>row.id==='last-duplicate')?.padding),'Complete original recovery\n'.repeat(50000));
+  await a.evaluate(()=>pushCloudState({silent:true}));await a.waitForFunction(()=>cloudStatusMessage.startsWith('Cloud saved and readback verified'));
+  assert(backend.writes>0);assert(backend.state.boards.some(board=>board.cards.some(card=>Object.values(card.diaryEntries || {}).some(entry=>entry.thoughts===writing))));
+  await a.reload();assert.equal(await a.locator('.diary-thoughts').inputValue(),writing);assert.equal(await a.evaluate(()=>flushDeviceWrites()),true);assert.equal(await a.evaluate(()=>LifeDeviceStore.pending().length),0);
+ });
+ await run('quota during the shared commit also triggers automatic archive recovery when journal staging succeeded',async context=>{
+  const p=await fresh(await context());await p.evaluate(()=>flushDeviceWrites());
+  await p.evaluate(()=>{
+   localStorage.setItem(CLOUD_RECOVERY_KEY,JSON.stringify([{id:'main-quota',state:{original:'All original recovery text'}}]));
+   window.nativeSet=Storage.prototype.setItem;window.commitQuotaRefusals=0;
+   Storage.prototype.setItem=function(key,raw){
+    if(this===localStorage && key===STORAGE_KEY && localStorage.getItem(CLOUD_RECOVERY_KEY)!=='[]'){
+     commitQuotaRefusals++;throw new DOMException('Synthetic shared snapshot quota','QuotaExceededError');
+    }
+    return nativeSet.call(this,key,raw);
+   };
+  });
+  const writing='Complete writing even when only the shared commit fills storage\nSecond line';await p.locator('.diary-thoughts').fill(writing);
+  await p.waitForFunction(()=>commitQuotaRefusals>0 && lastLocalSaveOk && LifeDeviceStore.pending().length===0);
+  assert.equal(await p.evaluate(()=>flushDeviceWrites()),true);assert.equal(await p.locator('.diary-thoughts').inputValue(),writing);
+  assert.equal(await p.evaluate(()=>readLocalJsonValue(CLOUD_RECOVERY_KEY,[]).find(row=>row.id==='main-quota')?.state.original),'All original recovery text');
+  await p.evaluate(()=>Storage.prototype.setItem=nativeSet);await p.reload();assert.equal(await p.locator('.diary-thoughts').inputValue(),writing);
  });
  await run('recovery vault standalone repair leaves the original open app intact and never contacts cloud',async context=>{
   const c=await context(),p=await fresh(c);let externalCalls=0;
