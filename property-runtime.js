@@ -10663,9 +10663,61 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.PropertyOperations={save:saveCloudSnapshot,export:allAppData,pending:()=>cloudDirty || documentHasUnsavedChanges || localStorage.pending(),flush:()=>localStorage.flush()};
-for(const [selector,label,cls] of [['.month-switcher','Period','property-period'],['.focus-panel','Payment summary','property-payment-summary']]){
+for(const [selector,label,cls] of [['.focus-panel','Payment summary','property-payment-summary']]){
   const section=document.querySelector(selector);if(section){const details=document.createElement('details'),summary=document.createElement('summary');details.className=cls;summary.textContent=label;section.before(details);details.append(summary,section);}
 }
+function initializePropertyPeriod() {
+  const bar = document.getElementById('mobileMonthBar');
+  const section = document.querySelector('.month-switcher');
+  const label = document.getElementById('mobileMonthLabel');
+  if (!bar || !section || !label || bar.querySelector('.property-period')) return;
+  const picker = document.createElement('details');
+  const summary = document.createElement('summary');
+  const current = document.createElement('button');
+  picker.className = 'property-period';
+  summary.title = 'Choose month and year';
+  label.setAttribute('aria-live', 'polite');
+  label.setAttribute('aria-atomic', 'true');
+  summary.append(label);
+  picker.append(summary, section);
+  bar.classList.add('property-month-bar');
+  bar.querySelector('#mobileNextMonth').before(picker);
+  current.type = 'button';
+  current.className = 'ghost-button property-current-month';
+  current.textContent = 'This month';
+  section.append(current);
+  for (const [id, name] of [['prevMonth', 'Previous year'], ['nextMonth', 'Next year']]) {
+    document.getElementById(id).setAttribute('aria-label', name);
+  }
+  function close(returnFocus) {
+    picker.open = false;
+    if (returnFocus) summary.focus();
+  }
+  current.addEventListener('click', () => {
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    if (selectedMonth !== month) {
+      setSelectedMonth(month);
+      renderAll();
+    }
+    close(true);
+  });
+  // Existing delegated month selection runs first; retain its data/save behavior.
+  section.addEventListener('click', event => {
+    if (event.target.closest('[data-month-value]')) close(true);
+  });
+  picker.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && picker.open) {
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    }
+  });
+  document.addEventListener('click', event => {
+    if (picker.open && !picker.contains(event.target)) close(false);
+  });
+}
+initializePropertyPeriod();
 document.getElementById('cloudLogout').textContent='Life OS account';
 for(const id of ['aiDraftBtn','taxScanInput','taxScanBtn','taxBatchScanBtn','taxEarningsBtn','taxDocAnalyzeBtn','runTaxReviewBtn']){const control=document.getElementById(id);if(control){control.disabled=true;control.title='AI disabled. Manual records remain available.';}}
 const aiNotice=document.createElement('p');aiNotice.className='property-ai-notice';aiNotice.textContent='AI tools are off. No guest, receipt or tax records are sent to an AI provider.';document.querySelector('.topbar').after(aiNotice);

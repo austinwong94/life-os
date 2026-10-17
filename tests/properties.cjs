@@ -108,6 +108,30 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     await page.evaluate(()=>saveCloudSession(null));await page.waitForFunction(()=>document.querySelector('#propertyOperationsFrame').hidden && document.querySelector('#propertyOperationsFrame').inert);assert.equal(await dialog.isVisible(),false);
     await page.evaluate(()=>{saveCloudSession({user:{id:'33333333-3333-4333-8333-333333333333',email:'other@example.invalid'},access_token:'synthetic-other',expires_at:Date.now()+3600000});renderPropertiesWorkspace();});await page.getByRole('button',{name:'Reconnect properties',exact:true}).click();assert.equal(await dialog.isVisible(),false);assert.equal(JSON.stringify(getRow().data),original);
   });
+  await run('one month navigator works on desktop and phones without changing business records',async({page,getRow})=>{
+    const raw=structuredClone(getRow().data),frame=await open(page);
+    const fields=data=>({bookings:data.bookings,documents:data.documents,taxPlan:data.taxPlan,profitData:data.profitData,futureRoot:data.futureRoot});
+    const original=fields(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export()));
+    // Sparse test fixtures receive existing normalizer defaults on load. Retain
+    // every original value, then compare the entire loaded model through saves.
+    function retained(actual,expected){for(const [key,value] of Object.entries(expected)){if(value && typeof value==='object')retained(actual[key],value);else assert.equal(actual[key],value);}}
+    retained(original,fields(raw));await frame.getByRole('button',{name:'Calendar',exact:true}).click();
+    const bar=frame.getByRole('group',{name:'Working month',exact:true}),picker=bar.locator('.property-period'),summary=picker.locator('summary');
+    for(const width of [1440,1080,768,390,320]){
+      await page.setViewportSize({width,height:1000});assert.equal(await bar.isVisible(),true);assert.equal(await bar.getByRole('button',{name:'Previous month',exact:true}).count(),1);assert.equal(await frame.locator('.property-period').count(),1);
+      await summary.click();assert.equal(await picker.getAttribute('open'),'');assert.equal(await picker.locator('[data-month-value]').count(),12);
+      const layout=await picker.evaluate(n=>{const r=n.getBoundingClientRect(),d=n.ownerDocument;return {left:r.left,right:r.right,width:d.documentElement.clientWidth,scroll:d.documentElement.scrollWidth,overflow:[...d.querySelectorAll('body *')].filter(e=>e.getBoundingClientRect().right>d.documentElement.clientWidth+1).slice(0,12).map(e=>({tag:e.tagName,id:e.id,cls:e.className,right:e.getBoundingClientRect().right}))};});assert(layout.left>=0 && layout.right<=layout.width+1,JSON.stringify(layout));assert(layout.scroll<=layout.width+1,JSON.stringify(layout));
+      const sizes=await bar.locator('button,summary').evaluateAll(nodes=>nodes.filter(n=>n.getClientRects().length).map(n=>({width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height})));assert(sizes.every(n=>n.width>=44 && n.height>=44),JSON.stringify(sizes));
+      await page.screenshot({path:path.join(out,'property-month-'+width+'.png'),fullPage:true});await summary.press('Escape');assert.equal(await picker.getAttribute('open'),null);assert.equal(await summary.evaluate(n=>n===n.ownerDocument.activeElement),true);
+    }
+    await summary.click();await picker.locator('[data-month-value="2026-12"]').click();assert.match(await summary.innerText(),/December 2026/);assert.equal(await picker.getAttribute('open'),null);assert.equal(await summary.evaluate(n=>n===n.ownerDocument.activeElement),true);
+    await bar.getByRole('button',{name:'Next month',exact:true}).click();assert.match(await summary.innerText(),/January 2027/);await bar.getByRole('button',{name:'Previous month',exact:true}).click();assert.match(await summary.innerText(),/December 2026/);
+    await summary.click();await picker.getByRole('button',{name:'This month',exact:true}).click();assert.match(await summary.innerText(),/October 2026/);assert.equal(await picker.getAttribute('open'),null);
+    await summary.click();await frame.locator('#pageTitle').click();assert.equal(await picker.getAttribute('open'),null);
+    await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);
+    assert.deepEqual(fields(getRow().data),original);retained(getRow().data,fields(raw));
+    await page.reload();await open(page);assert.match(await summary.innerText(),/October 2026/);
+  });
   await run('direct operations access is refused without an authorized parent',async({page})=>{const requests=[];page.on('request',r=>{if(r.url().includes('/rest/v1/'))requests.push(r.url());});await page.goto(url+'property-operations.html');await page.getByRole('alert').waitFor();assert.equal(await page.locator('#appShell').isVisible(),false);assert.deepEqual(requests,[]);});
   await run('payments are recorded once, persist through reload and retain historical receipts',async({page,getRow})=>{
     const frame=await open(page);await booking(frame);await frame.locator('[data-booking-section="payments"]').click();await frame.getByLabel('Amount (RM)',{exact:true}).fill('125.45');await frame.getByLabel('Reference',{exact:true}).fill('SYNTHETIC-REF-1');await frame.getByRole('button',{name:'Record payment',exact:true}).click();
