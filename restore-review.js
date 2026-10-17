@@ -34,6 +34,22 @@ function restoreComparable(raw) {
   } catch { return raw; }
 }
 
+async function readBackupFile(file) {
+  const workspaceLimit=25000000, fileLimit=128*1024*1024;
+  if(!Number.isSafeInteger(file?.size) || file.size<=0)throw new Error('The backup file is empty or unreadable. Nothing was replaced.');
+  if(file.size>fileLimit)throw new Error('This backup exceeds the 128 MiB file limit. Keep the original file unchanged. Nothing was replaced.');
+  let parsed;
+  try{parsed=JSON.parse(await file.text());}
+  catch{throw new Error('This backup could not be read as JSON. Keep the original file unchanged. Nothing was replaced.');}
+  if(!isValidBackup(parsed))throw new Error('This backup has invalid or duplicate records, or unsupported card types. Nothing was replaced. Keep the original file for review.');
+  const fullBackup=parsed.app==='Life OS' && parsed.format==='life-os-full-backup-v2' && parsed.state && typeof parsed.state==='object';
+  // Recovery history can make a supported full export much larger than its workspace.
+  if(file.size>workspaceLimit && !fullBackup)throw new Error('Only a Life OS full-backup-v2 file can exceed 25 MB. Keep the original file unchanged. Nothing was replaced.');
+  const workspace=parsed.state || parsed;
+  if(new Blob([JSON.stringify(workspace)]).size>workspaceLimit)throw new Error('The main workspace exceeds the 25 MB import limit. Keep the complete original backup; nothing was replaced.');
+  return parsed;
+}
+
 function summarizeRestoreBoard(board) {
   const cards = [...(board.cards || []), ...(board.archivedCards || [])];
   const diaryEntries = cards.filter(card => card.type === 'diary').reduce((sum, card) => sum +
@@ -43,7 +59,7 @@ function summarizeRestoreBoard(board) {
   return `${count(board.cards.length, 'card')}, ${(board.archivedCards || []).length} archived, ${count(diaryEntries, 'diary entry', 'diary entries')}, ${count(tasks, 'planner task')}`;
 }
 
-function reviewBackupRestore(restored, filename) {
+function reviewBackupRestore(restored, filename, {hasRecoveryHistory=false}={}) {
   if (document.getElementById('restoreReviewModal')) return Promise.resolve(false);
   return new Promise(resolve => {
     const previousFocus = document.activeElement;
@@ -103,7 +119,13 @@ function reviewBackupRestore(restored, filename) {
       catch (error) { message.textContent = error.message; }
       finally { busy = false; [refresh, close, download, checkbox].forEach(node => { node.disabled = false; }); checkbox.checked = false; apply.disabled = true; }
     };
-    header.append(title, close); body.append(file, warning, boards, message, consent); footer.append(download, refresh, apply); dialog.append(header, body, footer);
+    header.append(title, close); body.append(file, warning);
+    if(hasRecoveryHistory){
+      const note=document.createElement('p');note.className='restore-recovery-note';
+      note.textContent='This restores the main workspace only. Pending, checkpoint and historical recovery versions remain in your original backup file; they are not automatically merged or restored. Keep that complete file.';
+      body.append(note);
+    }
+    body.append(boards, message, consent); footer.append(download, refresh, apply); dialog.append(header, body, footer);
     document.body.append(dialog); dialog.showModal(); syncModalOpenState(); close.focus();
     compare().catch(error => { message.textContent = error.message; checkbox.disabled = true; });
   });

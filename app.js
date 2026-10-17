@@ -14267,12 +14267,10 @@ async function importBoardBackup(file) {
   if (!file) return false;
   try {
     if (hasUnfinishedRestoreEditor()) throw new Error('Finish or close the current editor before restoring. Your unfinished writing has not been replaced.');
+    const parsed = await readBackupFile(file);
     if (!corruptLocalStateDetected && !await flushDeviceWrites()) return;
-    if (file.size > 25000000) throw new Error("The backup is larger than 25 MB. Split large media from the backup before importing.");
-    const parsed = JSON.parse(await file.text());
-    if (!isValidBackup(parsed)) throw new Error("This backup has invalid or duplicate records, or unsupported card types. Nothing was replaced. Keep the original file for review.");
     const restored = rehydrateState(parsed);
-    return await reviewBackupRestore(restored, file.name);
+    return await reviewBackupRestore(restored, file.name, {hasRecoveryHistory:Boolean(parsed.localRecovery)});
   } catch (error) {window.alert(error.message || "This backup could not be restored."); return false;}
   finally {elements.importDataFile.value = "";}
 }
