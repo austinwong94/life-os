@@ -96,6 +96,7 @@ const results=[];
   const count=p.locator('.daily-save-details dt').filter({hasText:/^Boards (with record changes|changed since cloud comparison)$/});
   assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'0');
   assert.equal(await count.innerText(),'Boards with record changes');
+  const labels=await p.locator('.daily-save-details dt').allTextContents();assert(labels.indexOf('Cloud')<labels.indexOf('Browser storage used (estimate)'));assert(labels.indexOf('Changes needing review')<labels.indexOf('Browser storage used (estimate)'));
   await p.clock.runFor(1600);assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'0');
   assert.equal(await p.evaluate(()=>JSON.stringify(state)===diagnosticOriginalState && JSON.stringify(cloudMergeBase)===diagnosticOriginalBase && localStorage.getItem(STORAGE_KEY)===diagnosticOriginalStorage),true);
   for(const width of [320,390,1080]){

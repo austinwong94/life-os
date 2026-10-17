@@ -181,6 +181,14 @@ function openSaveDetails() {
     add('Device',corruptLocalStateDetected?'Recovery required':pending===undefined?'Device copies could not be checked':pending>0?'Pending copies kept - shared save not confirmed':lastLocalSaveOk?'Saved on this device':'Saving failed - export your writing');
     add('Last device write',deviceSavedAt?formatRecordDateTime(deviceSavedAt):'No write recorded in this tab yet');
     add('Pending device copies',pending===undefined?'Unable to read':String(pending));
+    const signedIn=Boolean(cloudSession?.user?.id);
+    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '')?'Sign-in needed':cloudConflictPending?'Paused - review conflicting changes':isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled (not a save receipt)':'Sync paused');
+    add('Last known cloud version',getKnownCloudUpdatedAt()?formatRecordDateTime(getKnownCloudUpdatedAt()):'No cloud version confirmed');
+    if(signedIn && cloudMergeBase?.ownerId===cloudSession.user.id){
+      let count;try{count=String(LifeCloudCopies.changedBoardIds(getStateForStorage(),cloudMergeBase.state).length);}catch{count='Unable to compare';}
+      add('Boards with record changes',count);
+    }
+    add('Changes needing review',String(state.syncConflicts?.length || 0));
     try{
       const storage=LifeDeviceStore.diagnostics(),mb=bytes=>(bytes/1048576).toFixed(2)+' MB';
       add('Browser storage used (estimate)',mb(storage.totalBytes));
@@ -193,14 +201,6 @@ function openSaveDetails() {
       }
       if(lastDeviceSaveError)add('Last device save issue',deviceSaveFailureReason()+' '+formatRecordDateTime(lastDeviceSaveError.at));
     }catch{add('Browser storage','Access unavailable');}
-    const signedIn=Boolean(cloudSession?.user?.id);
-    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '')?'Sign-in needed':cloudConflictPending?'Paused - review conflicting changes':isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled (not a save receipt)':'Sync paused');
-    add('Last known cloud version',getKnownCloudUpdatedAt()?formatRecordDateTime(getKnownCloudUpdatedAt()):'No cloud version confirmed');
-    if(signedIn && cloudMergeBase?.ownerId===cloudSession.user.id){
-      let count;try{count=String(LifeCloudCopies.changedBoardIds(getStateForStorage(),cloudMergeBase.state).length);}catch{count='Unable to compare';}
-      add('Boards with record changes',count);
-    }
-    add('Changes needing review',String(state.syncConflicts?.length || 0));
   };render();const timer=setInterval(render,1500);dialog.addEventListener('close',()=>clearInterval(timer),{once:true});
   const actions=planningNode('div','daily-actions');
   const feedback=planningNode('p','daily-message');feedback.setAttribute('role','status');
