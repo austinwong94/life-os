@@ -1,10 +1,12 @@
 // Reproducible, code-only import. Never reads a browser profile or business backup.
 const fs=require('node:fs'),path=require('node:path'),{Script}=require('node:vm');
+const {hardenPropertyCalendarLinks}=require('./property-calendar-links.cjs');
 const source=path.resolve(process.argv[2] || path.join(__dirname,'../../../2026-04-28/sunrise-villa-dashboard'));
 const root=path.resolve(__dirname,'..');
 function replace(text,from,to){if(!text.includes(from))throw new Error('Property source changed: '+from.slice(0,65));return text.replace(from,to);}
 const files=['backup-crypto.js','workflow-core.js','cloud-copies.js','app.js','workspace.js','recovery.js','expense-review.js','backup-ui.js'];
 let app=fs.readFileSync(path.join(source,'app.js'),'utf8');
+app=hardenPropertyCalendarLinks(app);
 app=replace(app,'const SUPABASE_URL = "https://nigzeyamrzrozftbujmm.supabase.co";','const SUPABASE_URL = window.PropertyHost.url;');
 app=app.replace(/const SUPABASE_PUBLISHABLE_KEY = "[^"]+";/,'const SUPABASE_PUBLISHABLE_KEY = window.PropertyHost.key;');
 app=app.replaceAll('"app_data"','"property_workspaces"').replaceAll('"ical_blocks"','"property_ical_blocks"').replaceAll('"booking_candidates"','"property_booking_candidates"');
