@@ -73,8 +73,8 @@ fs.mkdirSync(out,{recursive:true});
     await p.clock.setFixedTime(new Date('2026-10-16T04:00:05Z'));await p.evaluate(()=>flushDeviceWrites());await p.waitForFunction(()=>!boardResizeFrame && !pendingBoardRenderOptions);
     for(const width of [320,390,1080]){
       await p.setViewportSize({width,height:844});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await p.waitForFunction(()=>!boardResizeFrame && !pendingBoardRenderOptions);
-      const field=await p.getByLabel('Session notes',{exact:true}).evaluate(e=>{e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();return {value:e.value,left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight};});
-      assert.equal(field.value,session);assert.ok(field.height>=44&&field.left>=0&&field.right<=field.viewportWidth&&field.top>=0&&field.bottom<=field.viewportHeight,JSON.stringify({width,field}));
+      const field=await p.evaluate(()=>{const e=elements.boardGrid.querySelector('.fitness-metrics .fitness-notes-panel textarea');if(!e)return {missing:true};e.scrollIntoView({block:'center',behavior:'instant'});const r=e.getBoundingClientRect();return {value:e.value,connected:e.isConnected,metricsOpen:e.closest('.fitness-metrics').open,notesOpen:e.closest('.fitness-notes-panel').open,left:r.left,right:r.right,top:r.top,bottom:r.bottom,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight};});
+      assert.equal(field.value,session);assert.ok(field.connected&&field.metricsOpen&&field.notesOpen&&field.height>=44&&field.left>=0&&field.right<=field.viewportWidth&&field.top>=0&&field.bottom<=field.viewportHeight,JSON.stringify({width,field}));
       await p.screenshot({path:out+'/multiline-notes-'+width+'.png'});assert.equal(await p.getByLabel('Session notes',{exact:true}).inputValue(),session);
     }
   });
