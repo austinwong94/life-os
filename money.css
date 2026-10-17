@@ -160,6 +160,7 @@
 .money-sheet-search .money-message { flex-basis: 100%; margin: 0; }
 .money-sheet-search .money-message:empty { display: none; }
 .money-sheet-tools > .planning-field { flex-basis: 180px; }
+.money-sheet-tools > .planning-icon { flex: 0 0 44px; width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
 .money-sheet-editor { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,1.3fr); gap: 12px; padding: 16px 0; border-block: 1px solid var(--money-line); margin-bottom: 20px; }
 .money-sheet-editor :is(input,select,textarea) { width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--money-line); border-radius: 6px; background: var(--surface,#fff); color: inherit; padding: 10px; font-size: 14px; font-weight: 400; }
 .money-sheet-editor input[inputmode=decimal] { font-variant-numeric: tabular-nums; }

@@ -187,6 +187,29 @@
     const totals=items=>Object.fromEntries(buckets.map(key=>[key,checkedSum(items.filter(row=>row.bucket===key).map(row=>row.amountCents))]));
     return {rows,totals:totals(rows),categories:[...new Set(rows.map(row=>row.entry.category))].sort().map(name=>({name,...totals(rows.filter(row=>row.entry.category===name))}))};
   }
+  const worksheetLabels=Object.freeze({paid:'Paid',received:'Received',confirmed:'Confirmed upcoming',considering:'Considering',expected:'Expected income',transfer:'Transfers / repayments',adjustment:'Balance adjustments'});
+  function worksheetStatus(row,account) {
+    return row.bucket==='transfer'?(row.entry.status==='settled'?'Transfer recorded':'Transfer due'):row.bucket==='paid' && isCredit(account)?'Charged to card':worksheetLabels[row.bucket];
+  }
+  function csv(rows) {
+    const cell=value=>{
+      let text=String(value ?? '');
+      // Quoting alone does not stop spreadsheet formula interpretation.
+      if(/^\s*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20]/.test(text) && !/^-?\d+(?:\.\d{1,2})?$/.test(text) || /^[\t\r\n]/.test(text))text="'"+text;
+      return '"'+text.replaceAll('"','""')+'"';
+    };
+    return '\ufeff'+rows.map(row=>Array.from({length:rows[0].length},(_,i)=>cell(row[i])).join(',')).join('\r\n');
+  }
+  function worksheetCsv(input,month,today,owner='all',category='',bucket='all',query='',order='oldest') {
+    const ledger=validate(input),sheet=worksheet(ledger,month,today,owner,category,bucket,query,order);
+    const names={personal:'Personal',villa:'Sunrise Villa',all:'Combined'},accounts=new Map(ledger.accounts.map(a=>[a.id,a]));
+    const rows=[['Item','Amount (RM)','Status','Category','Account','Destination account','Paid / due date','Notes','Record ID','Financial owner','Table month','Money view','Category filter','Status filter','Applied search','Date order','As of date']];
+    for(const row of sheet.rows){
+      const entry=row.entry,account=accounts.get(entry.accountId);
+      rows.push([entry.title,(row.amountCents/100).toFixed(2),worksheetStatus(row,account),entry.category,account.name,accounts.get(entry.toAccountId)?.name,row.date,entry.note,entry.id,names[account.owner],month,names[owner],category || 'All categories',worksheetLabels[bucket] || 'All statuses',query.trim(),order==='newest'?'Newest first':'Oldest first',today]);
+    }
+    return csv(rows);
+  }
   function cardPlans(input,today,owner='all') {
     const ledger=validate(input);
     if(!validDate(today) || ![...owners,'all'].includes(owner))throw new Error('Choose a valid card view.');
@@ -271,6 +294,6 @@
     }
     return change(input,'entries',{...copy(entry),amountCents,date,status:'settled'},entry,now);
   }
-  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,monthly,worksheet,cardPlans,payBill,billRemaining,coveringBill,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
+  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,monthly,worksheet,worksheetLabels,worksheetStatus,worksheetCsv,csv,cardPlans,payBill,billRemaining,coveringBill,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
   if(typeof module!=='undefined' && module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
