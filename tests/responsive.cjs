@@ -41,6 +41,25 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   const menu=page.locator('#boardSwitcherMenu');assert.equal(await menu.isVisible(),true);
   assert.ok(await menu.locator('[role=menuitemradio]').evaluateAll(nodes=>nodes.every(e=>parseFloat(getComputedStyle(e).fontSize)<=16)));
  });
+ await run('Background save refreshes preserve a board-title press on phone and portrait desktop',async page=>{
+  for(const width of [320,390,1080]){
+   await page.setViewportSize({width,height:width===1080?1920:844});
+   await page.locator('#boardSwitcherName').scrollIntoViewIfNeeded();
+   const box=await page.locator('#boardSwitcherName').boundingBox();
+   await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
+   await page.mouse.down();
+   await page.evaluate(()=>renderBoardMeta());
+   await page.mouse.up();
+   await page.locator('#boardSwitcherMenu').waitFor({state:'visible'});
+   assert.equal(await page.locator('#boardSwitcherButton').getAttribute('aria-expanded'),'true');
+   await page.keyboard.press('Escape');
+   assert.equal(await page.evaluate(()=>document.activeElement.id),'boardSwitcherButton');
+   const next='Renamed board '+width;
+   await page.evaluate(next=>{state.board.name=next;renderBoardMeta();},next);
+   assert.equal(await page.locator('#boardSwitcherName').innerText(),next);
+   assert.equal(await page.locator('#boardSwitcherButton').getAttribute('aria-label'),'Switch board, current: '+next);
+  }
+ });
  await run('Daily inputs, dates and menus stay readable and clickable on phone and portrait desktop',async page=>{
   await workspace(page,'today');
   await page.locator('.diary-thoughts').fill('I took a short walk today.\nIt helped to make a little space for myself.');

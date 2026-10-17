@@ -54,3 +54,38 @@ test('damaged compressed sync history is refused without touching its original b
   assert.throws(()=>copies.decodeBase(broken,codec),/integrity|recovery/);assert.equal(JSON.stringify(broken),before);
  }
 });
+test('board diagnostics ignore only valid daily clock movement and preserve both snapshots exactly',()=>{
+ const before=structuredClone(current);
+ before.boards[0].archivedCards.push({id:'clock',type:'routine',timerMode:'daily',targetAt:'2026-10-17T12:00:00Z',duration:100,remaining:90,runningSince:null,items:[{id:'tick',done:false}],history:[]});
+ const after=structuredClone(before);Object.assign(after.boards[0].archivedCards[0],{targetAt:'2026-10-18T12:00:00Z',duration:200,remaining:190,runningSince:200});
+ const a=JSON.stringify(before),b=JSON.stringify(after);
+ assert.deepEqual(copies.changedBoardIds(after,before),[]);
+ assert.equal(JSON.stringify(before),a);assert.equal(JSON.stringify(after),b);
+ for(const change of [c=>c.items[0].done=true,c=>c.history.push({date:'2026-10-17'}),c=>c.timerMode='hours',c=>c.remaining=-1,c=>c.duration='100',c=>c.targetAt='invalid']){
+  const edited=structuredClone(after);change(edited.boards[0].archivedCards[0]);assert.deepEqual(copies.changedBoardIds(edited,before),['home']);
+ }
+});
+test('board diagnostics count real diary drafts, notes, task edits and unknown fields without double counting a board',()=>{
+ const a=structuredClone(current),b=structuredClone(current);
+ b.boards[0].cards[0].diaryEntries['2026-10-13'].thoughts='All the new writing\nAnother line';
+ b.boards[0].cards[1].plannerDraftText='An unfinished task';
+ b.boards[0].cards[1].plannerTasks[0].archivedAt=200;
+ b.boards.push({id:'notes',cards:[{id:'note',type:'sidenote',sideNoteEntries:{today:{notes:[{text:'An original thought'}]}}}],archivedCards:[],futureField:{important:true}});
+ assert.deepEqual(copies.changedBoardIds(b,a),['home','notes']);
+ const same=structuredClone(b);same.boards[1].futureField.important=false;assert.deepEqual(copies.changedBoardIds(same,b),['notes']);
+});
+test('board additions, removals and deletion receipts remain visible and special IDs are inert',()=>{
+ const a={boards:[{id:'constructor',cards:[],archivedCards:[]},{id:'__proto__',cards:[],archivedCards:[]}],deletedBoardIds:{}},b=structuredClone(a);
+ b.boards.shift();b.deletedBoardIds=JSON.parse('{"constructor":100,"already-removed":200}');
+ assert.deepEqual(copies.changedBoardIds(b,a),['constructor','already-removed']);
+ assert.deepEqual(copies.changedBoardIds(a,b),['constructor','already-removed']);
+ const c=structuredClone(b);delete c.deletedBoardIds.constructor;assert.deepEqual(copies.changedBoardIds(c,b),['constructor']);
+});
+test('diagnostics tolerate JSONB object ordering but do not ignore card order, settings or malformed identities',()=>{
+ const a={boards:[{id:'a',cards:[],archivedCards:[],layout:'manual'},{id:'b',cards:[],archivedCards:[]}],deletedBoardIds:{gone:1}};
+ const reordered=JSON.parse(JSON.stringify(a),(key,value)=>value && typeof value==='object' && !Array.isArray(value)?Object.fromEntries(Object.entries(value).reverse()):value);
+ assert.deepEqual(copies.changedBoardIds(reordered,a),[]);
+ const changed=structuredClone(a);changed.boards[0].layout='auto';assert.deepEqual(copies.changedBoardIds(changed,a),['a']);
+ const ordered=structuredClone(a);ordered.boards[0].cards=[{id:'one'},{id:'two'}];const reversed=structuredClone(ordered);reversed.boards[0].cards.reverse();assert.deepEqual(copies.changedBoardIds(reversed,ordered),['a']);
+ for(const invalid of [null,{}, {boards:[{cards:[]}]},{boards:[{id:'same'},{id:'same'}]},{boards:[],deletedBoardIds:[]},{boards:[],deletedBoardIds:'not receipts'}])assert.throws(()=>copies.changedBoardIds(invalid,a),/cannot be compared/);
+});
