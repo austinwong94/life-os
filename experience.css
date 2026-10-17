@@ -250,6 +250,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .restore-file { font-size: 13px; color: #64716b; overflow-wrap: anywhere; }
 .restore-warning { font-size: 14px; line-height: 1.6; }
 .restore-recovery-note { padding-left: 12px; border-left: 2px solid #dce4df; color: #53605a; font-size: 13px; font-weight: 400; line-height: 1.5; }
+.backup-check-dialog .backup-check-scope, .backup-check-status { font-size: 13px; line-height: 1.5; color: #53605a; }
+.backup-check-summary { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.4fr); gap: 10px 16px; margin: 16px 0; font-size: 13px; line-height: 1.5; }
+.backup-check-summary dt { font-weight: 600; }
+.backup-check-summary dd { margin: 0; overflow-wrap: anywhere; }
+.backup-check-warning { padding-left: 12px; border-left: 2px solid #a86a24; font-size: 13px; line-height: 1.5; }
+.backup-check-boards summary { min-height: 44px; padding: 12px 0; cursor: pointer; font-size: 13px; }
+.backup-check-boards li { overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; }
+.backup-check-dialog input[type=file] { max-width: 100%; }
 .restore-board-row { padding: 14px 0; border-bottom: 1px solid #dce4df; overflow-wrap: anywhere; }
 .restore-board-row h3 { margin: 0 0 6px; font-size: 15px; }
 .restore-board-row p { margin: 4px 0; font-size: 13px; line-height: 1.5; }

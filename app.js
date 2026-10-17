@@ -1326,6 +1326,7 @@ const elements = {
   dataSafetySummary: document.querySelector("#dataSafetySummary"),
   dataSafetyReadableButton: document.querySelector("#dataSafetyReadableButton"),
   dataSafetyDownloadButton: document.querySelector("#dataSafetyDownloadButton"),
+  dataSafetyCheckButton: document.querySelector("#dataSafetyCheckButton"),
   exportDataButton: document.querySelector("#exportDataButton"),
   importDataButton: document.querySelector("#importDataButton"),
   importDataFile: document.querySelector("#importDataFile"),
@@ -1818,6 +1819,10 @@ function bindEvents() {
   elements.downloadAllDataButton.addEventListener("click", exportReadableDataArchive);
   elements.dataSafetyReadableButton.addEventListener("click", exportReadableDataArchive);
   elements.dataSafetyDownloadButton.addEventListener("click", exportBoardBackup);
+  elements.dataSafetyCheckButton?.addEventListener("click", event => {
+    event.currentTarget.focus({preventScroll:true});
+    openBackupCheck();
+  });
   elements.exportDataButton.addEventListener("click", exportBoardBackup);
 
   elements.importDataButton.addEventListener("click", () => {

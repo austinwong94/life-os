@@ -36,6 +36,57 @@ const results = [];
     await p.waitForFunction(()=>!document.querySelector('.restore-consent input').disabled);
   }
   async function confirm(p) {await p.locator('.restore-consent input').check(); await p.getByRole('button',{name:'Restore on this device',exact:true}).click();}
+  const checkedRows=p=>p.locator('.backup-check-summary').evaluate(e=>Object.fromEntries([...e.querySelectorAll('dt')].map(dt=>[dt.textContent,dt.nextElementSibling.textContent])));
+  async function checker(p){await p.locator('#railSettingsButton').click();await p.getByRole('button',{name:'Check a backup',exact:true}).click();return p.getByRole('dialog',{name:'Check a backup',exact:true});}
+  const checkedFile=(name,value)=>({name,mimeType:'application/json',buffer:Buffer.from(JSON.stringify(value))});
+  const fileState=(count=1)=>({boards:Array.from({length:count},(_,i)=>({id:'file-board-'+i,name:'File board '+i,cards:[{id:'file-diary',type:'diary',diaryEntries:{'2026-10-17':{thoughts:'Saved file writing.\nSecond line.'}}}],archivedCards:[]}))});
+  await run('Backup checker reads a large file without saving, restoring, replaying or contacting cloud',async(p,context,alerts)=>{
+    await seed(p);const dialog=await checker(p);
+    await p.evaluate(()=>{
+      window.checkOriginals=Object.fromEntries(['saveState','flushDeviceWrites','rehydrateState','applyReviewedRestore','queueCloudSave','fetch'].map(key=>[key,window[key]]));
+      window.checkBefore={state:JSON.stringify(state),storage:JSON.stringify(Object.entries(localStorage).sort())};
+      for(const key of Object.keys(checkOriginals))window[key]=()=>{throw Error('File check called a write, restore, replay or network path');};
+    });
+    const incoming=fileState();incoming.boards[0].name='<img src=x onerror="throw Error(1)"> File notes';
+    incoming.boards[0].cards.push({id:'file-notes',type:'sidenote',sideNoteEntries:{'2026-10-17':{notes:[{text:'First thought'},{text:'Second thought'}]}}});
+    incoming.boards[0].archivedCards.push({id:'file-archive',type:'diary',diaryEntries:{'2026-09-01':{thoughts:'Archived file writing'}}});
+    const value={app:'Life OS',format:'life-os-full-backup-v2',exportedAt:'2026-10-17T10:00:00Z',state:incoming,localRecovery:{pendingDeviceWrites:[],originalRecoveryCache:JSON.stringify([{state:{oldWriting:'History '.repeat(3200000)}}])}};
+    const file=checkedFile('multiline-notes-'+ 'long-file-name-'.repeat(12)+'.json',value);assert.ok(file.buffer.length>25000000);
+    await dialog.getByLabel('Backup JSON file',{exact:true}).setInputFiles(file);await dialog.getByRole('status').getByText('File read successfully.',{exact:false}).waitFor();
+    const rows=await checkedRows(p);assert.equal(rows.Boards,'1');assert.equal(rows['Diary entries'],'2');assert.equal(rows['Side notes'],'2');assert.equal(rows['Archived cards'],'1');assert.equal(rows['Pending write copies'],'0');
+    assert.match(await dialog.locator('.backup-check-scope').innerText(),/Nothing is restored or uploaded/);assert.match(await dialog.locator('.backup-check-scope').innerText(),/Properties data is separate/);
+    assert.equal(await dialog.getByRole('button',{name:'Restore on this device',exact:true}).count(),0);
+    await dialog.getByText('Boards in file',{exact:true}).click();assert.equal(await dialog.locator('.backup-check-boards img').count(),0);assert.match(await dialog.locator('.backup-check-boards').innerText(),/<img src=x/);
+    assert.deepEqual(await p.evaluate(()=>({state:JSON.stringify(state),storage:JSON.stringify(Object.entries(localStorage).sort())})),await p.evaluate(()=>checkBefore));
+    await p.evaluate(()=>Object.assign(window,checkOriginals));
+    for(const width of [320,390,1080]){
+      await p.setViewportSize({width,height:844});await dialog.evaluate(e=>e.scrollTop=0);
+      assert.ok(await dialog.evaluate(e=>{const r=e.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight&&e.scrollWidth<=e.clientWidth+1;}));
+      assert.ok(await dialog.locator('input[type=file]').evaluate(e=>{const r=e.getBoundingClientRect();return r.width<=e.closest('dialog').clientWidth&&r.height>=44;}));
+      await p.screenshot({path:OUT+'/backup-check-'+width+'.png'});
+    }
+    await dialog.getByRole('button',{name:'Close',exact:true}).click();await dialog.waitFor({state:'detached'});assert.equal(await p.locator('#settingsModal').isVisible(),true);assert.equal(await p.evaluate(()=>document.activeElement.id),'dataSafetyCheckButton');assert.deepEqual(alerts,[]);
+  });
+  await run('Backup checker reports incomplete copies and unfamiliar counts, clears failed previews and accepts legacy files',async(p,context,alerts)=>{
+    await seed(p);const dialog=await checker(p),input=dialog.getByLabel('Backup JSON file',{exact:true});
+    const value={app:'Life OS',format:'life-os-full-backup-v2',state:fileState(),counts:{boards:9},localRecovery:{pendingDeviceWrites:[{state:fileState(2)},{state:fileState(3)}],unreadablePendingDeviceWrites:[{raw:'Broken copy'}],recoveryArchiveError:'Private error text must not appear'}};
+    await input.setInputFiles(checkedFile('partial.json',value));await dialog.getByText('File read with warnings. Nothing was restored.',{exact:true}).waitFor();
+    let rows=await checkedRows(p);assert.equal(rows.Boards,'1');assert.equal(rows['Diary entries'],'1');assert.equal(rows['Pending write copies'],'2');
+    const warnings=await dialog.locator('.backup-check-warning').allTextContents();assert.match(warnings.join(' '),/differs/);assert.match(warnings.join(' '),/unavailable or unreadable/);assert.match(warnings.join(' '),/not a replay/);assert.ok(!warnings.join(' ').includes('Private error text'));
+    await input.setInputFiles({name:'broken.json',mimeType:'application/json',buffer:Buffer.from('{broken')});await dialog.getByRole('status').getByText(/could not be read as JSON/).waitFor();assert.equal(await dialog.locator('.backup-check-summary').count(),0);assert.equal(await dialog.locator('.backup-check-warning').count(),0);
+    const unusual=fileState();unusual.boards[0].cards[0].diaryEntries='Unfamiliar original data';await input.setInputFiles(checkedFile('unfamiliar.json',unusual));await dialog.getByText('File read with warnings. Nothing was restored.',{exact:true}).waitFor();rows=await checkedRows(p);assert.equal(rows['Diary entries'],'Unavailable');
+    await input.setInputFiles(checkedFile('legacy.json',{cards:[{id:'q',type:'quote',description:'Original legacy note'}]}));await dialog.getByRole('status').getByText('File read successfully.',{exact:false}).waitFor();rows=await checkedRows(p);assert.equal(rows.Format,'Legacy workspace');assert.equal(rows['Export date'],'Not recorded');assert.equal(rows['Pending write copies'],'Not recorded');assert.equal(await dialog.locator('.backup-check-warning').count(),0);assert.deepEqual(alerts,[]);
+  });
+  await run('Backup checker ignores older selections, cleared inputs and reads finishing after close',async p=>{
+    await seed(p);let dialog=await checker(p),input=dialog.getByLabel('Backup JSON file',{exact:true});
+    await p.evaluate(()=>{const original=readBackupFile;window.checkWaiters=[];readBackupFile=async file=>{const value=await original(file);await new Promise(resolve=>checkWaiters.push(resolve));return value;};});
+    await input.setInputFiles(checkedFile('older.json',fileState()));await p.waitForFunction(()=>checkWaiters.length===1);
+    await input.setInputFiles(checkedFile('newer.json',fileState(2)));await p.waitForFunction(()=>checkWaiters.length===2);await p.evaluate(()=>checkWaiters[1]());await dialog.getByRole('status').getByText('File read successfully.',{exact:false}).waitFor();assert.equal((await checkedRows(p)).File,'newer.json');
+    await p.evaluate(async()=>{checkWaiters[0]();await Promise.resolve();await Promise.resolve();});assert.equal((await checkedRows(p)).Boards,'2');
+    await input.setInputFiles(checkedFile('cleared.json',fileState(3)));await p.waitForFunction(()=>checkWaiters.length===3);await input.setInputFiles([]);await dialog.getByText('No file selected. Nothing was changed.',{exact:true}).waitFor();await p.evaluate(async()=>{checkWaiters[2]();await Promise.resolve();await Promise.resolve();});assert.equal(await dialog.locator('.backup-check-summary').count(),0);assert.equal(await dialog.locator('.backup-check-result').getAttribute('aria-busy'),null);
+    await input.setInputFiles(checkedFile('closed.json',fileState(4)));await p.waitForFunction(()=>checkWaiters.length===4);await p.keyboard.press('Escape');await dialog.waitFor({state:'detached'});assert.equal(await p.locator('#settingsModal').isVisible(),true);assert.equal(await p.evaluate(()=>document.activeElement.id),'dataSafetyCheckButton');await p.getByRole('button',{name:'Check a backup',exact:true}).click();dialog=p.getByRole('dialog',{name:'Check a backup',exact:true});input=dialog.getByLabel('Backup JSON file',{exact:true});
+    await input.setInputFiles(checkedFile('current.json',fileState(5)));await p.waitForFunction(()=>checkWaiters.length===5);await p.evaluate(async()=>{checkWaiters[3]();await Promise.resolve();await Promise.resolve();});assert.equal(await dialog.locator('.backup-check-summary').count(),0);await p.evaluate(()=>checkWaiters[4]());await dialog.getByRole('status').getByText('File read successfully.',{exact:false}).waitFor();assert.equal((await checkedRows(p)).Boards,'5');assert.equal((await checkedRows(p)).File,'current.json');
+  });
   await run('Large full backup recovery history reaches review, cancels safely and restores only after consent', async (p,context,alerts) => {
     const backup=await seed(p);
     await p.evaluate(backup=>{
