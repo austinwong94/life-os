@@ -30,6 +30,7 @@ async function absent(page) {
   async function run(name,fn){
     if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
+    if(name==='Routine countdown drift in simultaneous tabs creates no false conflicts or lost checkmarks')await context.clock.setFixedTime(new Date('2026-10-18T12:00:00+08:00'));
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'External services blocked in synthetic tests'}));
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(9000);page.on('pageerror',e=>errors.push(e.stack));
     // Exercise archive persistence, not the localhost source-reload watcher.
@@ -212,11 +213,23 @@ async function absent(page) {
     const day=await page.evaluate(()=>getTodayKey());
     for(const p of [page,other])assert.equal(await p.evaluate(async()=>{const saved=await flushDeviceWrites();LifeDeviceStore.configure(()=>false);return saved;}),true);
     assert.equal(await page.evaluate(()=>LifeDeviceStore.pending().length),0);
-    await page.clock.setFixedTime(new Date(day+'T12:01:00+08:00'));
-    assert.equal(await page.evaluate(()=>{const c=state.cards.find(c=>c.id==='clock-routine');c.items[0].done=true;syncRoutineTodayHistory(c);return saveState({skipCloud:true});}),true);
-    await other.clock.setFixedTime(new Date(day+'T12:02:00+08:00'));
-    assert.equal(await other.evaluate(()=>saveState({skipCloud:true})),true);
-    const clocks=await page.evaluate(()=>LifeDeviceStore.pending().map(({entry})=>entry.state.boards[0].cards.find(c=>c.id==='clock-routine').remaining));assert.ok(new Set(clocks).size>1);
+    const stage=async(p,remaining,complete)=>p.evaluate(({remaining,complete})=>{
+      const keys=new Set(LifeDeviceStore.pending().map(item=>item.key));
+      if(complete){const c=state.cards.find(c=>c.id==='clock-routine');c.items[0].done=true;syncRoutineTodayHistory(c);}
+      const saved=saveState({skipCloud:true});
+      const own=LifeDeviceStore.pending().find(item=>!keys.has(item.key) && item.entry.state.boards[0].cards.find(c=>c.id==='clock-routine')?.remaining===remaining);
+      return {saved,receipt:own?{key:own.key,writerId:own.entry.writerId,sequence:own.entry.sequence,remaining}:null};
+    },{remaining,complete});
+    const firstAt=Date.parse(day+'T12:01:00+08:00'),secondAt=Date.parse(day+'T12:02:00+08:00');
+    await context.clock.setFixedTime(new Date(firstAt));
+    assert.deepEqual(await page.evaluate(()=>[Date.now(),new Date().getTime()]),[firstAt,firstAt]);
+    const first=await stage(page,43140,true);assert.equal(first.saved,true);assert.ok(first.receipt,JSON.stringify(first));
+    await context.clock.setFixedTime(new Date(secondAt));
+    assert.deepEqual(await other.evaluate(()=>[Date.now(),new Date().getTime()]),[secondAt,secondAt]);
+    const second=await stage(other,43080,false);assert.equal(second.saved,true);assert.ok(second.receipt,JSON.stringify(second));
+    assert.notEqual(first.receipt.writerId,second.receipt.writerId);
+    await page.waitForFunction(({first,second})=>{const keys=new Set(LifeDeviceStore.pending().map(item=>item.key));return keys.has(first)&&keys.has(second);},{first:first.receipt.key,second:second.receipt.key});
+    const clocks=await page.evaluate(()=>LifeDeviceStore.pending().map(({entry})=>entry.state.boards[0].cards.find(c=>c.id==='clock-routine').remaining));assert.ok(new Set(clocks).size>1,JSON.stringify(clocks));
     assert.ok(clocks.includes(43140)&&clocks.includes(43080),JSON.stringify(clocks));
     await flush(page);await page.reload();const conflicts=await page.evaluate(()=>state.syncConflicts);assert.equal(conflicts.length,0,JSON.stringify(conflicts));
     assert.equal(await page.evaluate(()=>state.cards.find(c=>c.id==='clock-routine').items[0].done),true);
