@@ -50,6 +50,66 @@ async function readBackupFile(file) {
   return parsed;
 }
 
+function summarizeBackupFile(parsed) {
+  const data=parsed.state || parsed;
+  const boards=Array.isArray(data.boards) && data.boards.length?data.boards:[{name:data.board?.name || 'Legacy board',cards:data.cards,archivedCards:data.archivedCards || []}];
+  const cards=boards.flatMap(board=>[...board.cards,...(board.archivedCards || [])]);
+  const recordFields=['diaryEntries','sideNoteEntries','plannerEntries','fitnessEntries','foodEntries'];
+  const object=value=>value!==null && typeof value==='object' && !Array.isArray(value);
+  const unfamiliar=cards.some(card=>recordFields.some(key=>card[key]!=null && !object(card[key])) ||
+    object(card.sideNoteEntries) && Object.values(card.sideNoteEntries).some(entry=>entry!=null && (!object(entry) || entry.notes!=null && !Array.isArray(entry.notes))));
+  const warnings=[];
+  let counts;
+  if(unfamiliar){
+    counts={boards:boards.length,activeCards:boards.reduce((sum,b)=>sum+b.cards.length,0),archivedCards:boards.reduce((sum,b)=>sum+(b.archivedCards || []).length,0),diaryPages:null,sideNotes:null,plannerDates:null,fitnessDays:null,foodDays:null};
+    warnings.push('Some record sections have an unfamiliar structure. Their counts are unavailable; the original file is unchanged.');
+  }else counts=getBackupDataCounts({boards});
+  if(boards.some(board=>board.name!==undefined && typeof board.name!=='string'))warnings.push('Some board names have an unfamiliar structure. The original values were not changed.');
+  if(parsed.counts!==undefined && !object(parsed.counts))warnings.push('Saved count metadata has an unfamiliar structure and was not compared.');
+  if(object(parsed.counts) && Object.keys(counts).some(key=>Object.hasOwn(parsed.counts,key) && counts[key]!==null && parsed.counts[key]!==counts[key]))warnings.push('Saved count metadata differs from the file contents. Review the original file before restoring.');
+  const recovery=object(parsed.localRecovery)?parsed.localRecovery:null;
+  if(recovery?.pendingDeviceWritesUnavailable || recovery?.recoveryArchiveError || Array.isArray(recovery?.unreadablePendingDeviceWrites) && recovery.unreadablePendingDeviceWrites.length)warnings.push('Some recovery copies were unavailable or unreadable when exported. Keep the original browser and complete backup file.');
+  if(recovery && recovery.pendingDeviceWrites!==undefined && !Array.isArray(recovery.pendingDeviceWrites))warnings.push('Pending-copy metadata has an unfamiliar structure and was not counted.');
+  const pendingCopies=Array.isArray(recovery?.pendingDeviceWrites)?recovery.pendingDeviceWrites.length:null;
+  if(pendingCopies)warnings.push('Pending write copies are included separately. These counts describe the main workspace, not a replay or merge of those versions.');
+  const full=parsed.app==='Life OS' && parsed.format==='life-os-full-backup-v2';
+  if(full && !recovery)warnings.push('This full-backup file has no readable recovery section. Only its main workspace was counted.');
+  return {boards,counts,warnings,pendingCopies,full,exportedAt:typeof parsed.exportedAt==='string' && Number.isFinite(Date.parse(parsed.exportedAt))?parsed.exportedAt:null};
+}
+
+function openBackupCheck() {
+  const dialog=dailyDialog('Check a backup');dialog.classList.add('backup-check-dialog');
+  const scope=planningNode('p','backup-check-scope','Local file check only. Nothing is restored or uploaded. Properties data is separate and is not checked here.');
+  const label=planningNode('label','field');label.append(planningNode('span','','Backup JSON file'));
+  const input=document.createElement('input');input.type='file';input.accept='.json,application/json';label.append(input);
+  const status=planningNode('p','backup-check-status','Choose a backup to read its main-workspace contents.');status.setAttribute('role','status');
+  const result=planningNode('div','backup-check-result');let selection=0;
+  dialog.addEventListener('keydown',event=>{if(event.key==='Escape')event.stopPropagation();});
+  dialog.addEventListener('close',()=>{selection++;},{once:true});
+  input.addEventListener('change',async()=>{
+    const token=++selection,file=input.files?.[0];result.replaceChildren();result.removeAttribute('aria-busy');
+    if(!file){status.textContent='No file selected. Nothing was changed.';return;}
+    status.textContent='Reading the file on this device...';result.setAttribute('aria-busy','true');
+    const current=()=>dialog.isConnected && dialog.open && token===selection;
+    try{
+      const parsed=await readBackupFile(file);if(!current())return;
+      const summary=summarizeBackupFile(parsed),list=planningNode('dl','backup-check-summary');
+      const row=(name,value)=>list.append(planningNode('dt','',name),planningNode('dd','',String(value)));
+      row('File',file.name);row('Format',summary.full?'Life OS full backup v2':'Legacy workspace');
+      row('Export date',summary.exportedAt?new Date(summary.exportedAt).toLocaleString():'Not recorded');
+      for(const [key,name] of [['boards','Boards'],['activeCards','Active cards'],['archivedCards','Archived cards'],['diaryPages','Diary entries'],['sideNotes','Side notes'],['plannerDates','Planner dates'],['fitnessDays','Fitness days'],['foodDays','Food days']])row(name,summary.counts[key]===null?'Unavailable':summary.counts[key]);
+      row('Pending write copies',summary.pendingCopies===null?'Not recorded':summary.pendingCopies);
+      result.append(list);
+      for(const warning of summary.warnings)result.append(planningNode('p','backup-check-warning',warning));
+      const details=planningNode('details','backup-check-boards');details.append(planningNode('summary','','Boards in file'));
+      const names=planningNode('ul','');for(const board of summary.boards)names.append(planningNode('li','',typeof board.name==='string' && board.name?board.name:'Untitled board'));details.append(names);result.append(details);
+      status.textContent=summary.warnings.length?'File read with warnings. Nothing was restored.':'File read successfully. No restore, replay or cloud verification was performed.';
+    }catch(error){if(current()){result.replaceChildren();status.textContent=error.message || 'This file could not be checked. Nothing was changed.';}}
+    finally{if(current())result.removeAttribute('aria-busy');}
+  });
+  dialog.append(scope,label,status,result);
+}
+
 function summarizeRestoreBoard(board) {
   const cards = [...(board.cards || []), ...(board.archivedCards || [])];
   const diaryEntries = cards.filter(card => card.type === 'diary').reduce((sum, card) => sum +
