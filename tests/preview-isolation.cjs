@@ -154,7 +154,7 @@ const thoughts=p=>p.evaluate(()=>state.cards.find(card=>card.type==='diary').dia
       const payload=request.postDataJSON();remote=payload.state;stamp=payload.updated_at;writes++;return route.fulfill({json:[{updated_at:stamp}]});
     });
     await normal.evaluate(({base,stamp})=>{
-      cloudSession={user:{id:'synthetic-owner'},access_token:'synthetic-token',expires_at:Date.now()+3600000,cloud_updated_at:stamp};
+      saveCloudSession({user:{id:'synthetic-owner'},access_token:'synthetic-token',expires_at:Date.now()+3600000,cloud_updated_at:stamp});
       cloudSaveEnabled=false;cloudMergeBase={ownerId:'synthetic-owner',state:base};
     },{base,stamp});
     const preview=await open(true);await seed(preview,'PREVIEW-MUST-STAY-LOCAL');

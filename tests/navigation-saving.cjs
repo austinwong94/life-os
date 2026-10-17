@@ -33,6 +33,9 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
     await p.reload();await workspace(p,'today');
     assert.equal(await p.getByRole('textbox',{name:'Diary thoughts',exact:true}).inputValue(),text);
     assert.equal(await p.getByRole('textbox',{name:'Quick note',exact:true}).inputValue(),note);
+    // Opening Today stages its view preference; require its checkpoint before
+    // asserting an empty journal, after verifying the reloaded writing above.
+    assert.equal(await p.evaluate(()=>flushDeviceWrites()),true);
     assert.equal(await p.evaluate(()=>LifeDeviceStore.pending().length),0);
   });
   await run('three independent boards keep live typing, navigation and completed text through reload',async(p,context)=>{
@@ -73,7 +76,8 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
     await p.evaluate(()=>{const stored=JSON.parse(localStorage.getItem(STORAGE_KEY));stored.deviceWriteHeads.syntheticParent=1;localStorage.setItem(STORAGE_KEY,JSON.stringify(stored));});
     await dialog.getByRole('button',{name:'Retry device save',exact:true}).click();await dialog.getByText('Device save confirmed.',{exact:true}).waitFor();await p.keyboard.press('Escape');
     assert.doesNotMatch(await p.locator('#headerSaveStatus').innerText(),/Pending copy kept/);
-    await p.reload();await workspace(p,'today');assert.equal(await p.getByRole('textbox',{name:'Diary thoughts',exact:true}).inputValue(),text);assert.equal(await p.evaluate(()=>LifeDeviceStore.pending().length),0);
+    await p.reload();await workspace(p,'today');assert.equal(await p.getByRole('textbox',{name:'Diary thoughts',exact:true}).inputValue(),text);
+    assert.equal(await p.evaluate(()=>flushDeviceWrites()),true);assert.equal(await p.evaluate(()=>LifeDeviceStore.pending().length),0);
   });
   await run('Retry stages complete writing after a rejected storage write without another keystroke',async p=>{
     await seed(p);await p.evaluate(()=>{window.originalStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw Object.assign(new Error('Synthetic quota failure'),{name:'QuotaExceededError'});};});
