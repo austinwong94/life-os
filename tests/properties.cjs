@@ -90,8 +90,8 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
   }
   await run('migration history verifies and downloads cloud originals and the newer browser backup',async({page,context})=>{
     const payload=JSON.stringify({data:base,updated_at:'2026-10-16T00:00:00Z'}),browserPayload=JSON.stringify({...base,ownerId:owner,exportedAt:'2026-10-17T00:00:00Z'}),digest=s=>createHash('sha256').update(s).digest('hex');
-    await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[{}]}}]}));
-    await context.route('https://**/rest/v1/property_transfer_records?**',r=>r.fulfill({json:[{resource:'public.app_data',payload_text:payload,sha256:digest(payload)}]}));
+    await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[{resource:'public.app_data',source_key:'synthetic-original',sha256:digest(payload)}]}}]}));
+    await context.route('https://**/rest/v1/property_transfer_records?**',r=>r.fulfill({json:[{resource:'public.app_data',source_key:'synthetic-original',payload_text:payload,sha256:digest(payload)}]}));
     await context.route('https://**/rest/v1/property_browser_backups?**',r=>r.fulfill({json:[{payload_text:browserPayload,sha256:digest(browserPayload),comparison:{bookings:1,documents:1,exported_at:'2026-10-17T00:00:00Z'}}]}));
     await native(page);const before=await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage())));
     await page.getByRole('button',{name:'Migration history',exact:true}).click();await page.getByText('1 original cloud records and 1 browser backups verified.',{exact:false}).waitFor();
@@ -104,6 +104,47 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     await native(page);const frame=page.frameLocator('#propertyOperationsFrame');await booking(frame);await frame.locator('[data-booking-section="overview"]').click();await frame.getByRole('button',{name:'Edit booking',exact:true}).click();await frame.locator('#guestInput').fill('Unfinished synthetic draft');
     await page.evaluate(()=>setWorkspaceMode('board'));await page.locator('#propertiesModeButton').click();assert.equal(await frame.locator('#guestInput').inputValue(),'Unfinished synthetic draft');assert.equal(await page.locator('#propertyOperationsFrame').count(),1);
     await page.evaluate(()=>saveCloudSession(null));await page.waitForFunction(()=>document.querySelector('#propertyOperationsFrame').hidden && document.querySelector('#propertyOperationsFrame').inert);assert.equal(await frame.locator('#guestInput').inputValue(),'Unfinished synthetic draft');
+  });
+  await run('reconnecting the original account unlocks the exact unfinished form without rebuilding it',async({page})=>{
+    await native(page);assert.equal(await page.getByRole('button',{name:'Open properties',exact:true}).isVisible(),false);const frame=page.frameLocator('#propertyOperationsFrame');await booking(frame);await frame.locator('[data-booking-section="overview"]').click();await frame.getByRole('button',{name:'Edit booking',exact:true}).click();await frame.locator('#guestInput').fill('Keep this exact unsaved draft');
+    await page.evaluate(()=>{window.originalPropertyFrame=document.querySelector('#propertyOperationsFrame');saveCloudSession(null);});
+    await page.waitForFunction(()=>document.querySelector('#propertyOperationsFrame').hidden);const foreign='33333333-3333-4333-8333-333333333333';
+    await page.evaluate(id=>{saveCloudSession({user:{id,email:'different@example.invalid'},access_token:'different-access',expires_at:Date.now()+3600000});renderPropertiesWorkspace();},foreign);
+    await page.getByRole('button',{name:'Reconnect properties',exact:true}).click();assert.equal(await page.locator('#propertyOperationsFrame').isVisible(),false);assert.equal(await frame.locator('#guestInput').inputValue(),'Keep this exact unsaved draft');
+    await page.evaluate(id=>{saveCloudSession({user:{id,email:'synthetic@example.invalid'},access_token:'synthetic-access',expires_at:Date.now()+3600000});renderPropertiesWorkspace();},owner);
+    await page.getByRole('button',{name:'Reconnect properties',exact:true}).click();
+    await page.locator('#propertyOperationsFrame').waitFor({state:'visible'});assert.equal(await page.evaluate(()=>window.originalPropertyFrame===document.querySelector('#propertyOperationsFrame')),true);assert.equal(await frame.locator('#guestInput').inputValue(),'Keep this exact unsaved draft');assert.equal(await page.getByRole('button',{name:'Open properties',exact:true}).isVisible(),false);
+    await page.setViewportSize({width:390,height:844});await page.evaluate(()=>saveCloudSession(null));await page.waitForFunction(()=>document.querySelector('#propertyOperationsFrame').hidden);await page.screenshot({path:path.join(out,'properties-reconnect-mobile.png'),fullPage:true});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);assert.equal(await page.getByRole('button',{name:'Reconnect properties',exact:true}).isVisible(),true);
+  });
+  await run('migration originals disappear on account change even when the property view is hidden',async({page,context})=>{
+    const payload=JSON.stringify({data:base,updated_at:'PRIVATE-ORIGINAL-SNAPSHOT'}),sha256=createHash('sha256').update(payload).digest('hex');
+    await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[{resource:'public.app_data',source_key:'original',sha256}]}}]}));
+    await context.route('https://**/rest/v1/property_transfer_records?**',r=>r.fulfill({json:[{resource:'public.app_data',source_key:'original',payload_text:payload,sha256}]}));
+    await native(page);await page.getByRole('button',{name:'Migration history',exact:true}).click();await page.getByText('PRIVATE-ORIGINAL-SNAPSHOT',{exact:false}).waitFor();
+    await page.evaluate(()=>{setWorkspaceMode('board');saveCloudSession(null);});await page.waitForFunction(()=>!document.querySelector('#dailyDialog')?.open);
+    assert.equal(await page.locator('body').textContent().then(s=>s.includes('PRIVATE-ORIGINAL-SNAPSHOT')),false);assert.equal(await page.getByRole('button',{name:'Download original migration copies',exact:true}).count(),0);
+  });
+  await run('matching counts and self-consistent payload hashes cannot substitute an original manifest entry',async({page,context})=>{
+    const payload=JSON.stringify({data:base,updated_at:'2026-10-16T00:00:00Z'}),sha256=createHash('sha256').update(payload).digest('hex');
+    await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[{resource:'public.app_data',source_key:'expected-original',sha256}]}}]}));
+    await context.route('https://**/rest/v1/property_transfer_records?**',r=>r.fulfill({json:[{resource:'public.app_data',source_key:'different-original',payload_text:payload,sha256}]}));
+    await native(page);await page.getByRole('button',{name:'Migration history',exact:true}).click();await page.getByText('Could not verify the original copies.',{exact:false}).waitFor();assert.equal(await page.getByRole('button',{name:'Download original migration copies',exact:true}).count(),0);
+  });
+  await run('duplicate originals cannot hide a missing record behind a matching total',async({page,context})=>{
+    const payload=JSON.stringify({data:base,updated_at:'2026-10-16T00:00:00Z'}),sha256=createHash('sha256').update(payload).digest('hex'),record={resource:'public.app_data',source_key:'first',payload_text:payload,sha256};
+    await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[record,{...record,source_key:'second'}]}}]}));
+    await context.route('https://**/rest/v1/property_transfer_records?**',r=>r.fulfill({json:[record,record]}));
+    await native(page);await page.getByRole('button',{name:'Migration history',exact:true}).click();await page.getByText('Could not verify the original copies.',{exact:false}).waitFor();assert.equal(await page.getByRole('button',{name:'Download original migration copies',exact:true}).count(),0);
+  });
+  await run('a late migration response cannot populate a replacement dialog or continue reading after sign-out',async({page,context})=>{
+    let release,requested=false,reads=0;const held=new Promise(resolve=>{release=resolve;});
+    await context.route('https://**/rest/v1/property_transfer_batches?**',async route=>{requested=true;await held;await route.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[]}}]}).catch(()=>{});});
+    await context.route('https://**/rest/v1/property_transfer_records?**',route=>{reads++;return route.fulfill({json:[]});});
+    await native(page);await page.getByRole('button',{name:'Migration history',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#dailyDialog')?.textContent.includes('Loading protected'));
+    const deadline=Date.now()+5000;while(!requested && Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));assert.equal(requested,true);
+    await page.evaluate(()=>{saveCloudSession(null);renderPropertiesWorkspace();dailyDialog('Different action');});release();await page.waitForTimeout(150);
+    assert.equal(reads,0);assert.equal(await page.getByRole('dialog',{name:'Different action',exact:true}).isVisible(),true);assert.equal(await page.getByRole('button',{name:'Download original migration copies',exact:true}).count(),0);assert.doesNotMatch(await page.locator('#dailyDialog').innerText(),/verified|Could not verify/);
   });
   await browser.close();await new Promise(resolve=>server.close(resolve));fs.writeFileSync(path.join(out,'results.json'),JSON.stringify(results,null,2));if(results.some(r=>!r.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});
