@@ -236,6 +236,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .recovery-dialog h2 { font-size: 22px; margin: 0; }
 .recovery-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 16px 0; border-bottom: 1px solid #dde4df; }
 .recovery-row strong, .recovery-row small { grid-column: 1 / -1; }
+.recovery-dialog > .modal-header .icon-button svg { width: 18px; height: 18px; flex: 0 0 18px; stroke-width: 2; }
+.recovery-dialog .recovery-row { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.recovery-dialog .secondary-action { min-width: 0; min-height: 44px; height: auto; border-radius: 6px; padding: 10px 12px; font-size: 14px; font-weight: 600; line-height: 1.4; white-space: normal; }
+.recovery-dialog .recovery-body > p { font-size: 14px; line-height: 1.5; margin: 12px 0; }
 .restore-review-dialog { width: min(680px, calc(100vw - 24px)); max-width: none; max-height: calc(100dvh - 24px); padding: 0; border: 1px solid #dce4df; border-radius: 8px; color: #17231d; overflow: auto; overscroll-behavior: contain; }
 .restore-review-dialog::backdrop { background: rgba(20,35,27,.4); }
 .restore-review-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid #dce4df; }

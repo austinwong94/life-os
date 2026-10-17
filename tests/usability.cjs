@@ -1,5 +1,5 @@
 const {workspace}=require('./navigation.cjs');
-const {chromium} = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const browsers = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const URL = process.env.TEST_URL || 'http://127.0.0.1:5180/';
@@ -8,7 +8,7 @@ fs.mkdirSync(out, {recursive: true});
 const results = [];
 
 (async () => {
-  const browser = await chromium.launch({headless: true});
+  const browser = await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless: true});
   async function run(name, fn) {
     const context = await browser.newContext({viewport: {width: 390, height: 844}, timezoneId: 'Asia/Kuala_Lumpur', hasTouch: true});
     await context.route('https://**/*', r => r.fulfill({status: 503, body: 'No external services in tests'}));
@@ -149,7 +149,8 @@ const results = [];
     assert.equal(await page.locator('.fitness-metrics').getAttribute('open'), null);
     const saved = await page.evaluate(() => getFitnessEntry(state.cards.find(c => c.type === 'fitness')));
     assert.equal(saved.metrics.weightKg, 72.35); assert.equal(saved.parts.running.distanceKm, 5); assert.equal(saved.parts.running.durationMinutes, 30);
-    await page.locator('.type-fitness').screenshot({path: out + '/workout-mobile.png'});
+    await page.locator('.type-fitness').evaluate(e=>e.scrollIntoView({block:'start',behavior:'instant'}));
+    await page.screenshot({path: out + '/workout-mobile.png'});
   });
 
   await run('Read-only detached fitness preview uses its own numbers, not the live card with the same ID', async page => {

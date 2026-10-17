@@ -160,7 +160,7 @@
     }
     const boards = value(base?.boards, local.boards, remote.boards, ["boards"]) || [];
     const deletedBoardIds = {...(remote.deletedBoardIds || {}), ...(local.deletedBoardIds || {})};
-    return {boards: boards.filter(board => !deletedBoardIds[board.id]), deletedBoardIds, conflicts};
+    return {boards: boards.filter(board => !Object.hasOwn(deletedBoardIds,board.id) || !deletedBoardIds[board.id]), deletedBoardIds, conflicts};
   }
   function registerConflicts(records, resolutions = {}, createId = () => crypto.randomUUID()) {
     resolutions=object(resolutions)?resolutions:{};

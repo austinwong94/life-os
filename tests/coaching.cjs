@@ -3,7 +3,7 @@ const browsers=require(process.env.PLAYWRIGHT_PATH || 'playwright'),assert=requi
 const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_OUTPUT || '/private/tmp/life-os-coaching-tests';fs.mkdirSync(out,{recursive:true});
 (async()=>{
  const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true}),results=[];
- const open=p=>workspace(p,'priorities');
+ const open=async p=>{await workspace(p,'priorities');await p.getByRole('navigation',{name:'Progress sections',exact:true}).getByRole('button',{name:'Goals & check-ins',exact:true}).click();};
  const focus=(p,title)=>p.getByRole('button',{name:'Focus on '+title,exact:true}).click();
  const activityEditor=async(p,name,title)=>{await focus(p,title==='Life outside work'?'A fuller life':title);const details=p.locator('details').filter({has:p.getByRole('button',{name:'Log '+name,exact:true,includeHidden:true})}).last();if(await details.getAttribute('open')===null)await details.locator('summary').first().click();await p.getByRole('button',{name:'Log '+name,exact:true}).click();};
  const importPlan=async p=>{await open(p);await p.getByLabel('Import priorities programme',{exact:true}).setInputFiles({name:'synthetic.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(fixture()))});await p.getByRole('button',{name:'Add programme to this board',exact:true}).click();};
@@ -39,7 +39,7 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
  });
  await run('programme, editors and six check-ins fit phone and portrait widths without hidden controls',async p=>{
   await importPlan(p);
-  for(const width of [320,390,768,1079,1440]){await p.setViewportSize({width,height:1000});await p.getByRole('button',{name:'Overview',exact:true}).click();
+  for(const width of [320,390,768,1079,1440]){await p.setViewportSize({width,height:1000});await p.getByRole('button',{name:'Targets',exact:true}).click();
    for(const title of ['A fuller life','Meaningful connections','Real outcomes']){await focus(p,title);assert.ok(await p.locator('.coaching-workspace').evaluate(e=>e.scrollWidth<=e.clientWidth+1));assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));assert.ok(await p.locator('.coaching-goal input, .coaching-goal button').evaluateAll(nodes=>nodes.filter(e=>e.getClientRects().length).every(e=>{const r=e.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth+1;})));await p.screenshot({path:out+'/priorities-'+title.replaceAll(' ','-')+'-'+width+'.png',fullPage:true});}
    await p.getByRole('button',{name:'Prepare check-in',exact:true}).click();await p.getByLabel('What moved forward?',{exact:true}).fill('Longer reflection that should never escape the available screen width.');assert.ok(await p.locator('.coaching-editor').evaluate(e=>e.scrollWidth<=e.clientWidth+1));await p.screenshot({path:out+'/checkin-'+width+'.png',fullPage:true});await p.getByRole('button',{name:'Discard draft',exact:true}).click();assert.equal(await p.locator('.coaching-checkin').count(),6);
   }

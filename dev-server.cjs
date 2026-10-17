@@ -7,7 +7,12 @@ function allowedFiles() {
   // Refresh the manifest so newly added modules do not require a server restart.
   const files=JSON.parse(fs.readFileSync(path.join(__dirname,'release-files.json'),'utf8'));
   if(!Array.isArray(files) || files.some(file=>typeof file!=='string' || !/^[a-z0-9-]+\.(html|js|css)$/.test(file)))throw new Error('Invalid public manifest');
-  const allowed=new Set(files);if(process.env.LIFE_OS_SERVE_RELEASE==='1')allowed.add('release.json');return allowed;
+  const allowed=new Set(files);
+  if(process.env.LIFE_OS_SERVE_RELEASE==='1'){
+    allowed.add('release.json');
+    for(const file of files.filter(file=>file.endsWith('.html')))allowed.add(file.replace('.html','-startup.js'));
+  }
+  return allowed;
 }
 const mime = {'.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css'};
 http.createServer((req, res) => {
@@ -16,7 +21,7 @@ http.createServer((req, res) => {
   if (!allowed.has(file)) {res.writeHead(404); res.end('Not found'); return;}
   fs.readFile(path.join(root, file), (error, bytes) => {
     if (error) {res.writeHead(404); res.end('Not found'); return;}
-    res.writeHead(200, {'Content-Type': mime[path.extname(file)] || 'text/plain', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY'});
+    res.writeHead(200, {'Content-Type': mime[path.extname(file)] || 'text/plain', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': file==='property-operations.html'?'SAMEORIGIN':'DENY'});
     res.end(bytes);
   });
 }).on('error', error => {

@@ -2,6 +2,19 @@ if (window.top !== window.self) {
   document.documentElement.hidden = true;
   throw new Error("Life OS must be opened directly, not inside another website.");
 }
+// Older cached HTML may omit modules introduced by a newer deployment.
+if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeExerciseReuse','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeMomentum'].some(name=>!globalThis[name])){
+  window.LifeStartupBlocked=true;
+  const shell=document.getElementById('appShell');if(shell)shell.hidden=true;
+  const panel=document.createElement('section');panel.setAttribute('aria-label','Website startup');
+  panel.style.cssText='max-width:560px;margin:48px auto;padding:24px;background:white;color:#182321;font:16px/1.5 system-ui,sans-serif;overflow-wrap:anywhere';
+  const heading=document.createElement('h1');heading.textContent='Life OS needs a complete update';heading.style.fontSize='24px';
+  const message=document.createElement('p');message.textContent='This page loaded an older, incomplete set of files. Keep other tabs with unsaved writing open. Your saved records have not been cleared.';
+  const retry=document.createElement('a');retry.textContent='Load the current version';retry.href=location.href;retry.style.cssText='display:inline-flex;align-items:center;min-height:44px;color:#174fbb';
+  retry.onclick=event=>{event.preventDefault();const url=new URL(location.href);url.searchParams.set('startup',String(Date.now()));location.replace(url.href);};
+  panel.append(heading,message,retry);document.body.prepend(panel);
+  throw new Error('Life OS startup stopped: required modules are missing. Saved records were not opened.');
+}
 const PREVIEW_MODE = LifeStorageScope.preview;
 const STORAGE_KEY = LifeStorageScope.key("progress-board-v1");
 const PRE_UPGRADE_KEY = LifeStorageScope.key("life-os-before-storage-v3");
@@ -14,7 +27,8 @@ const AUTO_SAVE_INTERVAL_MS = 30000;
 const CLOUD_SAVE_DEBOUNCE_MS = 1400;
 const CLOUD_CONFLICT_TOLERANCE_MS = 1000;
 const LOCAL_DEV_RELOAD_POLL_MS = 1500;
-const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "coaching.css", "daily-workspace.js", "daily-workspace.css", "app.js", "experience.js", "planning.js", "calendar-sync-core.js", "google-calendar.js", "coaching.js", "storage-scope.js", "planner-store.js", "task-repository.js", "subtask-store.js", "state-merge.js", "device-store.js", "restore-review.js", "note-actions.js"];
+const LOCAL_DEV_RELOAD_FILES = ["index.html", "styles.css", "experience.css", "coaching.css", "daily-workspace.js", "daily-workspace.css", "workspace-design.css", "workspace-shell.css", "workspace-shell.js", "workspace-momentum.css", "momentum.js", "records-workspace.js", "money.css", "money.js", "money-store.js", "app.js", "experience.js", "planning.js", "calendar-sync-core.js", "google-calendar.js", "coaching.js", "storage-scope.js", "planner-store.js", "task-repository.js", "subtask-store.js", "state-merge.js", "device-store.js", "cloud-transport.js", "restore-review.js", "note-actions.js"];
+LOCAL_DEV_RELOAD_FILES.push('device-checkpoint.js','auth-renewal.js','meal-reuse.js','exercise-reuse.js');
 const DIARY_BACKUP_KEY = LifeStorageScope.key("life-os-diary-entry-backups");
 const MAX_IMAGE_FILE_BYTES = 1_500_000;
 const CONTENT_CARD_TYPES = ["planner", "planlist", "diary", "sidenote", "quote", "video", "fitness", "food", "money"];
@@ -45,6 +59,7 @@ let accountPasswordPending = false;
 let cloudSessionMaintenancePending = false;
 let cloudSessionRetryAfter = 0;
 let cloudSessionReauthRequired = false;
+let cloudRenewalReceipts = null;
 let localStateSource = "default";
 // Set when the stored board JSON was present but unreadable (corrupt/truncated).
 // While true, automatic cloud pushes are blocked so a bad local load can never
@@ -1131,8 +1146,10 @@ let localMergeBase = JSON.parse(JSON.stringify(state));
 let cloudMergeBase = null;
 let cloudPushInFlight = false;
 let cloudPushAgain = false;
+let unverifiedCloudWrite = null;
 let lastLocalSaveOk = !corruptLocalStateDetected;
 let cloudConflictPending = false;
+const cloudSyncRetry=LifeCloudTransport.createRetry({allowed:canRetryCloudSave,run:ownerId=>pushCloudState({silent:true,retryOwnerId:ownerId})});
 let draggedCardId = null;
 let editingCardId = null;
 let editingPlannerTaskKey = "";
@@ -1155,6 +1172,8 @@ let localDevSourceSignature = "";
 let localDevReloadPending = false;
 let activeReportType = "fitness";
 let activeMoveCardId = "";
+let timerDisplayBoardId = "";
+let timerDisplayFrames = new Map();
 
 const elements = {
   appShell: document.querySelector("#appShell"),
@@ -1432,8 +1451,7 @@ window.addEventListener("storage", (event) => {
 
 setInterval(() => {
   if (state.cards.some((card) => card.runningSince || shouldTickCountdownEverySecond(card))) {
-    settleExpiredTimers();
-    renderCardsOnly({ reason: "tick" });
+    refreshTimerDisplays();
   }
 }, 1000);
 
@@ -1446,8 +1464,7 @@ setInterval(() => {
     return;
   }
   if (state.cards.some((card) => isAutomaticCountdown(card))) {
-    settleExpiredTimers();
-    renderCardsOnly({ reason: "auto" });
+    refreshTimerDisplays();
   }
 }, 60000);
 
@@ -2665,6 +2682,7 @@ function queueBoardRender() {
 function renderShell() {
   elements.appShell.classList.add("rail-shell");
   syncRailActiveState();
+  window.LifeAppearanceUI?.render();
 }
 
 function toggleBoardControls() {
@@ -2676,7 +2694,7 @@ function toggleBoardControls() {
 
 function renderBoardControls() {
   const controlsOpen = state.ui.controlsOpen !== false;
-  const todayMode = ["today", "tasks", "calendar", "priorities", "money"].includes(state.ui.workspaceMode);
+  const todayMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
   elements.topControlsToggleButton.hidden = todayMode;
   const controlsLabel = controlsOpen ? "Hide filters" : "Show filters";
@@ -2687,6 +2705,7 @@ function renderBoardControls() {
 }
 
 function renderBoardMeta() {
+  window.LifeAppearanceUI?.render();
   elements.boardGrid.inert = corruptLocalStateDetected;
   elements.boardPanel.inert = corruptLocalStateDetected;
   elements.railAddButton.disabled = corruptLocalStateDetected;
@@ -3088,9 +3107,11 @@ function renderCardsOnly(options = {}) {
   // Preserve focus on the same feeling without changing the saved selection.
   const feelingButton = document.activeElement?.closest?.(".mood-picker button");
   const feelingFocus = feelingButton && elements.boardGrid.contains(feelingButton)
-    ? { cardId: feelingButton.closest(".task-card")?.dataset.id, label: feelingButton.getAttribute("aria-label") }
+    ? { cardId: feelingButton.closest(".task-card, .records-editor")?.dataset.id, label: feelingButton.getAttribute("aria-label") }
     : null;
   const taskFocus=elements.boardGrid.contains(document.activeElement)?captureTaskControlFocus():null;
+  const healthFocus = elements.boardGrid.contains(document.activeElement)
+    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button")?.id : "";
   closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
@@ -3112,7 +3133,7 @@ function renderCardsOnly(options = {}) {
 
   const visibleCards = filteredByFocus.filter((card) => matchesCategory(card));
   const todayMode = state.ui.workspaceMode === "today";
-  const planningMode = ["tasks", "calendar", "priorities", "money"].includes(state.ui.workspaceMode);
+  const planningMode = ["tasks", "calendar", "priorities", "money", "records", "properties"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("is-today-view", todayMode);
   elements.workspace.classList.toggle("is-planning-view", planningMode);
   renderBoardControls();
@@ -3122,8 +3143,14 @@ function renderCardsOnly(options = {}) {
   document.getElementById("calendarModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "calendar"));
   document.getElementById("prioritiesModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "priorities"));
   document.getElementById("moneyModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "money"));
+  document.getElementById("recordsModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "records"));
   renderDailyNavigation();
-  if (state.ui.workspaceMode === "money") {
+  window.renderPropertiesWorkspace?.();
+  if (state.ui.workspaceMode === "properties") {
+    // Properties keeps its own mounted editor and separate owner-scoped storage.
+  } else if (state.ui.workspaceMode === "records") {
+    renderRecordsWorkspace();
+  } else if (state.ui.workspaceMode === "money") {
     renderMoneyWorkspace();
   } else if (state.ui.workspaceMode === "priorities") {
     renderProgressHome();
@@ -3146,11 +3173,13 @@ function renderCardsOnly(options = {}) {
   hydrateIcons(elements.boardGrid);
   restoreScrollPosition(scrollSnapshot);
   if (feelingFocus) {
-    const card = Array.from(elements.boardGrid.querySelectorAll(".task-card")).find(node => node.dataset.id === feelingFocus.cardId);
+    const card = Array.from(elements.boardGrid.querySelectorAll(".task-card, .records-editor")).find(node => node.dataset.id === feelingFocus.cardId);
     const button = Array.from(card?.querySelectorAll(".mood-picker button") || []).find(node => node.getAttribute("aria-label") === feelingFocus.label);
     button?.focus({ preventScroll: true });
   }
   restoreTaskControlFocus(taskFocus);
+  if (healthFocus) document.getElementById(healthFocus)?.focus({ preventScroll: true });
+  rememberTimerDisplays();
 }
 
 function isDraftTextElement(element) {
@@ -3520,6 +3549,7 @@ function renderCard(card, options = {}) {
   const hasTimer = hasCountdown(card);
 
   node.dataset.id = card.id;
+  if (hasTimer) node.dataset.clockBoard = state.activeBoardId;
   node.draggable = interactive;
   node.classList.toggle("is-preview", !interactive);
   node.classList.toggle("is-featured", Boolean(options.featured));
@@ -3562,19 +3592,13 @@ function renderCard(card, options = {}) {
     node.querySelector("h3").hidden = true;
     node.querySelector(".card-description").hidden = true;
   }
-  const timerDisplay = node.querySelector(".timer-display");
   const isAutoTimer = isAutomaticCountdown(card);
-  timerDisplay.classList.toggle("is-auto", isAutoTimer);
-  timerDisplay.querySelector("strong").textContent = formatRemaining(card, remaining);
-  node.querySelector(".timer-caption").textContent = getTimerCaption(card, remaining);
+  paintCardClock(node, card, remaining);
   node.querySelector(".progress-track span").style.width = `${progress.percent}%`;
   node.querySelector(".card-progress p").textContent = `${progress.percent}% · ${progress.label}`;
 
   const toggleButton = node.querySelector(".timer-toggle");
   toggleButton.hidden = !hasTimer || isAutoTimer;
-  toggleButton.title = isAutoTimer ? "Automatic countdown" : card.runningSince ? "Pause timer" : "Start timer";
-  toggleButton.setAttribute("aria-label", toggleButton.title);
-  toggleButton.innerHTML = `${ICONS[card.runningSince ? "pause" : "play"]}<span>${card.runningSince ? "Pause" : "Start"}</span>`;
   toggleButton.disabled = !interactive || !hasTimer;
   toggleButton.classList.toggle("is-auto", isAutoTimer);
   if (interactive && hasTimer && !isAutoTimer) {
@@ -4346,7 +4370,9 @@ function renderDiary(card) {
   });
   thoughts.addEventListener("change", () => scheduleDeferredBoardRender(600));
 
-  wrapper.append(nav, moodLabel, moodPicker, sentence, thoughts);
+  const sentenceField=document.createElement('label');sentenceField.className='journal-field';sentenceField.append('One thought (optional)',sentence);
+  const thoughtsField=document.createElement('label');thoughtsField.className='journal-field';thoughtsField.append('Diary',thoughts);
+  wrapper.append(nav, moodLabel, moodPicker, sentenceField, thoughtsField);
   requestAnimationFrame(() => {
     autoGrowTextarea(sentence);
     autoGrowTextarea(thoughts);
@@ -4686,6 +4712,7 @@ function renderFitnessLog(card) {
   });
   const status = document.createElement("span");
   status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "No workout yet";
+  status.className = "health-save-status";
   nav.append(previous, dateInput, next, status);
 
   const parts = document.createElement("div");
@@ -4701,6 +4728,7 @@ function renderFitnessLog(card) {
     button.classList.toggle("is-selected", selectedMeta?.key === meta.key);
     button.setAttribute("aria-pressed", String(selectedMeta?.key === meta.key));
     button.setAttribute("aria-label", meta.label);
+    button.id = `fitness-part-${card.id}-${meta.key}`;
     button.innerHTML = `<span class="fitness-part-mark" aria-hidden="true">${part.active ? ICONS.check : ""}</span><span>${escapeHtml(meta.label)}</span>`;
     button.title = part.active ? `Edit ${meta.label}` : `Log ${meta.label}`;
     button.addEventListener("click", () => {
@@ -4724,7 +4752,12 @@ function renderFitnessLog(card) {
     empty.textContent = "Select the workout parts completed for this date.";
     activeBody.append(empty);
   } else {
-    activeBody.append(renderFitnessSummaryStrip(entry, activeParts));
+    const overview = document.createElement("details");
+    overview.className = "fitness-day-overview health-disclosure";
+    const summary = document.createElement("summary");
+    summary.innerHTML = `<strong>Session overview</strong><span>${activeParts.length} part${activeParts.length === 1 ? "" : "s"}</span>`;
+    overview.append(summary, renderFitnessSummaryStrip(entry, activeParts));
+    activeBody.append(overview);
     activeBody.append(renderFitnessPartEditor(card, dateKey, selectedMeta, entry.parts[selectedMeta.key]));
   }
 
@@ -4841,10 +4874,67 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
       nextPart.exercises.push(normalizeFitnessExercise({ name: fallback, sets: 3, reps: "8-12", rpe: 7 }));
     }, { rerender: true });
   });
-  section.append(list, add, createFitnessNotesDisclosure(`${meta.label} notes`, part.notes, (value) => {
+  const actions=document.createElement('div');actions.className='fitness-exercise-actions';
+  const reuse=planningButton('Reuse',()=>openFitnessExerciseReuse(card,dateKey,meta.key),'rotate-ccw');
+  reuse.title='Reuse exercises from an earlier '+meta.label+' workout';reuse.setAttribute('aria-label','Reuse '+meta.label+' exercises');
+  actions.append(add,reuse);
+  section.append(list, actions, createFitnessNotesDisclosure(`${meta.label} notes`, part.notes, (value) => {
     updateFitnessEntry(card, dateKey, (entry) => { entry.parts[meta.key].notes = value; });
   }));
   return section;
+}
+
+function openFitnessExerciseReuse(card,dateKey,partKey) {
+  const boardId=state.activeBoardId,cardId=card.id,meta=FITNESS_PARTS.find(part=>part.key===partKey && part.type==='strength'),board=()=>({id:state.activeBoardId,cards:state.cards});
+  const matches=state.cards.filter(item=>item.id===cardId);
+  if(!meta || matches.length!==1 || matches[0].type!=='fitness' || matches[0].archivedAt)return;
+  const dialog=dailyDialog('Reuse '+meta.label+' exercises');dialog.classList.add('exercise-reuse-dialog');
+  dialog.append(planningNode('p','daily-muted',meta.label+' · '+formatReadableDateKey(dateKey)));
+  const sources=LifeExerciseReuse.sources(matches[0],partKey,dateKey);
+  if(!sources.length){dialog.append(planningNode('p','','No earlier '+meta.label.toLowerCase()+' exercises in this fitness card.'));return;}
+  const form=planningNode('form','daily-form'),preview=planningNode('fieldset','exercise-reuse-preview'),message=planningNode('p','daily-message');message.setAttribute('role','status');
+  const add=planningButton('Add exercises',null,'plus');add.type='submit';add.classList.add('is-primary');let command=null;
+  const date=planningSelect(sources.map(row=>[row.date,formatReadableDateKey(row.date)+' · '+row.count+' exercise'+(row.count===1?'':'s')]),sources[0].date,()=>refresh());
+  const refresh=()=>{
+    command=null;add.disabled=true;message.textContent='';preview.replaceChildren(planningNode('legend','','Exercises'));
+    try{
+      if(state.activeBoardId!==boardId)throw new Error('The board changed. Reopen exercise reuse on the original board.');
+      command=LifeExerciseReuse.create(board(),cardId,partKey,date.value,dateKey,createId);
+      for(const exercise of command.source.exercises){
+        const row=planningNode('label','daily-check'),check=document.createElement('input');check.type='checkbox';check.checked=command.selectedIds.includes(exercise.id);check.setAttribute('aria-label',exercise.name);
+        const text=planningNode('span','',exercise.name),values=[];
+        if(Number(exercise.sets)>0)values.push(exercise.sets+' sets');if(exercise.reps)values.push(exercise.reps+' reps');if(Number(exercise.weightKg)>=0 && exercise.weightKg!=='')values.push(exercise.weightKg+' kg');if(Number(exercise.rpe)>0)values.push('RPE '+exercise.rpe);
+        if(values.length)text.append(planningNode('small','daily-task-source','Previously: '+values.join(' · ')));
+        if(!check.checked)text.append(planningNode('small','daily-task-source','Already listed on this date'));
+        check.onchange=()=>{command.selectedIds=check.checked?[...command.selectedIds,exercise.id]:command.selectedIds.filter(id=>id!==exercise.id);add.disabled=!command.selectedIds.length;};
+        row.append(check,text);preview.append(row);
+      }
+      add.disabled=!command.selectedIds.length;
+    }catch(error){message.textContent=error.message;}
+  };
+  const actions=planningNode('div','daily-actions');actions.append(planningButton('Cancel',()=>dialog.close()),add);
+  form.append(planningField('Previous workout',date),preview,planningNode('p','daily-muted','New sets, reps, weight and effort: not recorded'),message,actions);
+  form.onsubmit=event=>{
+    event.preventDefault();if(!command)return;
+    try{
+      if(state.activeBoardId!==boardId)throw new Error('The board changed. Reopen exercise reuse on the original board.');
+      const live=state.cards.filter(item=>item.id===cardId);
+      if(live.length!==1 || live[0].activeFitnessDate!==dateKey || live[0].activeFitnessPart!==partKey)throw new Error('The workout date or selected section changed. Reopen exercise reuse.');
+      const transaction=LifeExerciseReuse.apply(board(),command,{conflicts:state.syncConflicts});
+      if(!saveState()){
+        LifeExerciseReuse.restore(board(),transaction);syncActiveBoard({touchBoard:false});message.textContent='Not saved. Nothing was added; keep this preview open and retry.';return;
+      }
+      dialog.close();renderCardsOnly({force:true});
+      showUndoToast({message:'Exercise names added for '+formatReadableDateKey(dateKey)+'.',onUndo:()=>{
+        try{
+          const undo=LifeExerciseReuse.restore(board(),transaction,{conflicts:state.syncConflicts});
+          if(!saveState()){LifeExerciseReuse.restore(board(),undo);syncActiveBoard({touchBoard:false});}
+          clearUndoToast();renderCardsOnly({force:true});
+        }catch(error){clearUndoToast();setSaveStatus(error.message,'error');}
+      }});
+    }catch(error){message.textContent=error.message;}
+  };
+  dialog.append(form);refresh();date.focus();
 }
 
 function renderFitnessSimpleEditor(card, dateKey, meta, part) {
@@ -4888,9 +4978,8 @@ function renderFitnessMetrics(card, dateKey, entry) {
   const summary = document.createElement("summary");
   const summaryText = getFitnessMetricsSummary(entry.metrics);
   summary.innerHTML = `<strong>Body metrics</strong><span>${escapeHtml(summaryText)}</span>`;
-  section.addEventListener("toggle", () => {
-    if (Boolean(card.fitnessMetricsOpen) === section.open) return;
-    card.fitnessMetricsOpen = section.open;
+  bindHealthDisclosure(section, () => Boolean(resolveLiveCard(card).fitnessMetricsOpen), (open) => {
+    resolveLiveCard(card).fitnessMetricsOpen = open;
     saveState({ quiet: true, touch: false });
   });
   const grid = document.createElement("div");
@@ -4942,7 +5031,9 @@ function createFitnessSection(title, onRemove) {
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "fitness-remove-part";
-    remove.textContent = "Remove";
+    remove.innerHTML = ICONS["x"];
+    remove.title = `Remove ${title} from this session`;
+    remove.setAttribute("aria-label", remove.title);
     remove.addEventListener("click", onRemove);
     header.append(remove);
   }
@@ -5067,6 +5158,22 @@ function createFitnessNotesDisclosure(label, value, onInput) {
   });
   details.append(summary, textarea);
   return details;
+}
+
+function bindHealthDisclosure(details, readOpen, writeOpen) {
+  // Native toggle events can arrive after a render or reload. Commit an explicit
+  // summary click synchronously, and ignore events from detached old editors.
+  const commit = () => {
+    if (details.isConnected && Boolean(readOpen()) !== details.open) writeOpen(details.open);
+  };
+  details.addEventListener("click", (event) => {
+    const summary = event.target.closest?.("summary");
+    if (!summary || summary.parentElement !== details) return;
+    event.preventDefault();
+    details.open = !details.open;
+    commit();
+  });
+  details.addEventListener("toggle", commit);
 }
 
 function normalizeFoodCard(card) {
@@ -5234,7 +5341,7 @@ function getFoodEntry(card, dateKey = getActiveFoodDate(card)) {
 }
 
 function getFoodMealById(card, dateKey, mealId) {
-  return getFoodEntry(card, dateKey).meals.find((meal) => meal.id === mealId) || null;
+  return getFoodEntry(resolveLiveCard(card), dateKey).meals.find((meal) => meal.id === mealId) || null;
 }
 
 function getFoodItemById(card, dateKey, mealId, itemId) {
@@ -5369,6 +5476,7 @@ function renderFoodDateNav(card, dateKey, entry) {
     renderCardsOnly({ force: true });
   });
   const status = document.createElement("span");
+  status.className = "health-save-status";
   status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "No meals yet";
   nav.append(previous, dateInput, next, status);
   return nav;
@@ -5380,7 +5488,11 @@ function renderFoodTotalSummary(card, totals, target, dateKey) {
   const header = document.createElement("div");
   header.className = "food-summary-header";
   const title = document.createElement("div");
-  title.innerHTML = `<strong>${escapeHtml(formatFoodDateTitle(dateKey))}</strong><span>${escapeHtml(getFoodStatusLabel(totals, target))}</span>`;
+  const remaining = target.calories - totals.calories;
+  const balance = target.calories > 0
+    ? `${formatFoodNumber(Math.abs(remaining), "calories")} kcal ${remaining < 0 ? "over target" : "remaining"}`
+    : "No calorie target";
+  title.innerHTML = `<strong>Daily intake</strong><span>${escapeHtml(balance)}</span>`;
   const calories = document.createElement("div");
   calories.className = "food-calories";
   calories.innerHTML = `<strong>${formatFoodNumber(totals.calories, "calories")}</strong><span>/ ${formatFoodNumber(target.calories, "calories")} kcal</span>`;
@@ -5397,7 +5509,7 @@ function renderFoodTotalSummary(card, totals, target, dateKey) {
       <span>${escapeHtml(FOOD_NUTRIENT_META[key].label)}</span>
       <strong>${formatFoodNumber(totals[key], key)} g</strong>
       <small>of ${formatFoodNumber(target[key], key)} g</small>
-      <i aria-hidden="true" style="--food-progress:${percent}%"></i>
+      <i aria-hidden="true" style="--food-progress:${Math.min(100, percent)}%"></i>
     `;
     grid.append(item);
   });
@@ -5409,9 +5521,8 @@ function renderFoodTargetEditor(card, dateKey, target) {
   const details = document.createElement("details");
   details.className = "food-target-panel";
   details.open = Boolean(card.foodTargetsOpen);
-  details.addEventListener("toggle", () => {
-    if (Boolean(card.foodTargetsOpen) === details.open) return;
-    card.foodTargetsOpen = details.open;
+  bindHealthDisclosure(details, () => Boolean(resolveLiveCard(card).foodTargetsOpen), (open) => {
+    resolveLiveCard(card).foodTargetsOpen = open;
     saveState({ quiet: true, touch: false });
   });
   const monthLabel = dateKeyToLocalDate(dateKey).toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -5420,15 +5531,18 @@ function renderFoodTargetEditor(card, dateKey, target) {
   const grid = document.createElement("div");
   grid.className = "food-target-grid";
   FOOD_NUTRIENT_KEYS.forEach((key) => {
-    grid.append(createFoodNumberField(FOOD_NUTRIENT_META[key].label, target[key], (value) => {
+    const unit = key === "calories" ? "kcal" : "g";
+    grid.append(createFoodNumberField(`${FOOD_NUTRIENT_META[key].label} (${unit})`, target[key], (value) => {
+      const live = resolveLiveCard(card);
       const monthKey = getFoodMonthKey(dateKey);
-      const currentTarget = normalizeFoodTarget(card.foodTargets[monthKey] || target);
-      card.foodTargets[monthKey] = normalizeFoodTarget({
+      const currentTarget = normalizeFoodTarget(live.foodTargets[monthKey] || target);
+      live.foodTargets[monthKey] = normalizeFoodTarget({
         ...currentTarget,
         [key]: value
       });
-      saveFoodCard(card, dateKey);
-    }, { step: key === "calories" ? "10" : "1", onCommit: () => renderCardsOnly({ force: true }) }));
+      saveState({ quiet: true });
+      refreshFoodView(live, dateKey);
+    }, { step: key === "calories" ? "10" : "0.1", onCommit: () => queueDeferredBoardRender({ reason: "food-target" }) }));
   });
   const note = document.createElement("p");
   note.className = "food-source-note";
@@ -5491,6 +5605,21 @@ function renderFoodAddPanel(card, dateKey, entry) {
     button.setAttribute("aria-selected", String(meal.id === card.activeFoodMealId));
     button.innerHTML = `<span>${escapeHtml(meal.name)}</span><small>${formatFoodNumber(totals.calories, "calories")} kcal · ${itemCount} item${itemCount === 1 ? "" : "s"}</small>`;
     button.title = `Edit ${meal.name}`;
+    button.id = `food-meal-tab-${card.id}-${meal.id}`;
+    button.setAttribute("aria-controls", `food-meal-panel-${card.id}-${meal.id}`);
+    button.tabIndex = meal.id === card.activeFoodMealId ? 0 : -1;
+    button.addEventListener("keydown", (event) => {
+      const index = entry.meals.findIndex((item) => item.id === meal.id);
+      const destination = event.key === "Home" ? 0 : event.key === "End" ? entry.meals.length - 1
+        : event.key === "ArrowRight" ? (index + 1) % entry.meals.length
+        : event.key === "ArrowLeft" ? (index - 1 + entry.meals.length) % entry.meals.length : -1;
+      if (destination < 0) return;
+      event.preventDefault();
+      card.activeFoodMealId = entry.meals[destination].id;
+      saveState();
+      renderCardsOnly({ force: true });
+      document.getElementById(`food-meal-tab-${card.id}-${card.activeFoodMealId}`)?.focus({ preventScroll: true });
+    });
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       card.activeFoodMealId = meal.id;
@@ -5519,18 +5648,21 @@ function renderFoodAddPanel(card, dateKey, entry) {
     renderCardsOnly({ force: true });
   });
   mealNav.append(previousMeal, mealTabs, nextMeal);
+  panel.append(mealHead, mealPicker, mealNav);
+  return panel;
+}
 
+function renderFoodChoices(card, dateKey, meal) {
   const addFoodDetails = document.createElement("details");
   addFoodDetails.className = "food-add-food-panel";
   addFoodDetails.open = card.foodAddOpen !== false;
-  addFoodDetails.addEventListener("toggle", () => {
-    if ((card.foodAddOpen !== false) === addFoodDetails.open) return;
-    card.foodAddOpen = addFoodDetails.open;
+  bindHealthDisclosure(addFoodDetails, () => resolveLiveCard(card).foodAddOpen !== false, (open) => {
+    resolveLiveCard(card).foodAddOpen = open;
     saveState({ quiet: true, touch: false });
   });
   const foodHead = document.createElement("summary");
   foodHead.className = "food-add-subhead";
-  foodHead.innerHTML = `<strong>Add food</strong><span>${card.foodLibrary.length} foods</span>`;
+  foodHead.innerHTML = `<strong>Add food</strong><span>${escapeHtml(meal.name)}</span>`;
   const foodChips = document.createElement("div");
   foodChips.className = "food-chip-row";
   card.foodLibrary.forEach((food) => {
@@ -5540,13 +5672,12 @@ function renderFoodAddPanel(card, dateKey, entry) {
     button.title = `${food.name}: ${formatFoodNumber(food.calories, "calories")} kcal, ${formatFoodNumber(food.protein, "protein")}g protein per ${food.servingUnit}`;
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      addFoodItemToMeal(card, dateKey, card.activeFoodMealId, food.id);
+      addFoodItemToMeal(card, dateKey, meal.id, food.id);
     });
     foodChips.append(button);
   });
   addFoodDetails.append(foodHead, foodChips);
-  panel.append(mealHead, mealPicker, mealNav, addFoodDetails);
-  return panel;
+  return addFoodDetails;
 }
 
 function renderFoodMealPicker(card, dateKey, entry) {
@@ -5588,8 +5719,71 @@ function renderFoodMealPicker(card, dateKey, entry) {
     addCustomMeal();
   });
   custom.append(input, add);
-  picker.append(presets, custom);
+  const reuse=planningButton('Reuse a logged meal',()=>openFoodMealReuse(card,dateKey),'rotate-ccw');
+  reuse.classList.add('food-reuse-button');
+  picker.append(presets, custom, reuse);
   return picker;
+}
+
+function openFoodMealReuse(card,dateKey) {
+  const boardId=state.activeBoardId,cardId=card.id,board=()=>({id:state.activeBoardId,cards:state.cards});
+  const matches=state.cards.filter(item=>item.id===cardId);
+  if(matches.length!==1 || matches[0].type!=='food' || matches[0].archivedAt)return;
+  const sources=LifeMealReuse.sources(matches[0]),dialog=dailyDialog('Reuse a logged meal');
+  dialog.classList.add('food-reuse-dialog');
+  dialog.append(planningNode('p','daily-muted','Add as a new meal on '+formatReadableDateKey(dateKey)));
+  if(!sources.length){dialog.append(planningNode('p','','No logged meals in this food card yet.'));return;}
+  const form=planningNode('form','daily-form'),preview=planningNode('section','food-reuse-preview'),message=planningNode('p','daily-message');message.setAttribute('role','status');
+  const dates=[...new Set(sources.map(row=>row.date))],initial=dates.find(day=>day<dateKey) || dates[0];
+  const date=planningSelect(dates.map(day=>[day,formatReadableDateKey(day)]),initial,()=>fillMeals());
+  const meals=planningSelect([],null,()=>refresh());
+  let command=null;
+  const add=planningButton('Add meal',null,'plus');add.type='submit';add.classList.add('is-primary');
+  const refresh=()=>{
+    command=null;add.disabled=true;preview.replaceChildren();message.textContent='';
+    try{
+      if(state.activeBoardId!==boardId)throw new Error('The board changed. Reopen meal reuse on the original board.');
+      command=LifeMealReuse.create(board(),cardId,date.value,meals.value,dateKey,createId);
+      preview.append(planningNode('h3','',command.meal.name));
+      preview.append(renderFoodMealSummary(getFoodMealTotals(matches[0],command.meal)));
+      const list=planningNode('ul','food-reuse-items');
+      for(const item of command.meal.items)list.append(planningNode('li','',item.name+' · '+item.amount+' '+(item.unit==='g'?'g':item.servingUnit)));
+      preview.append(list);add.disabled=false;
+    }catch(error){message.textContent=error.message;}
+  };
+  const fillMeals=()=>{
+    meals.replaceChildren();
+    for(const row of sources.filter(row=>row.date===date.value)){
+      const option=document.createElement('option');option.value=row.meal.id;option.textContent=row.meal.name;meals.append(option);
+    }
+    refresh();
+  };
+  const actions=planningNode('div','daily-actions');actions.append(planningButton('Cancel',()=>dialog.close()),add);
+  form.append(planningField('Recorded date',date),planningField('Recorded meal',meals),preview,message,actions);
+  form.onsubmit=event=>{
+    event.preventDefault();if(!command)return;
+    try{
+      if(state.activeBoardId!==boardId)throw new Error('The board changed. Reopen meal reuse on the original board.');
+      const live=state.cards.filter(item=>item.id===cardId);if(live.length!==1 || live[0].activeFoodDate!==dateKey)throw new Error('The food card or selected day changed. Reopen meal reuse.');
+      const target=live[0],active=target.activeFoodMealId,picker=target.foodMealPickerOpen;
+      const transaction=LifeMealReuse.apply(board(),command,{conflicts:state.syncConflicts});
+      target.activeFoodMealId=command.meal.id;target.foodMealPickerOpen=false;
+      if(!saveState()){
+        LifeMealReuse.restore(board(),transaction);target.activeFoodMealId=active;target.foodMealPickerOpen=picker;syncActiveBoard({touchBoard:false});
+        message.textContent='Not saved. Nothing was added; keep this preview open and retry.';return;
+      }
+      dialog.close();renderCardsOnly({force:true});
+      showUndoToast({message:'Meal added for '+formatReadableDateKey(dateKey)+'.',onUndo:()=>{
+        try{
+          const undo=LifeMealReuse.restore(board(),transaction,{conflicts:state.syncConflicts}),current=state.cards.find(item=>item.id===cardId),selected=current.activeFoodMealId;
+          if(selected===command.meal.id)current.activeFoodMealId=active;
+          if(!saveState()){LifeMealReuse.restore(board(),undo);current.activeFoodMealId=selected;syncActiveBoard({touchBoard:false});}
+          clearUndoToast();renderCardsOnly({force:true});
+        }catch(error){clearUndoToast();setSaveStatus(error.message,'error');}
+      }});
+    }catch(error){message.textContent=error.message;}
+  };
+  dialog.append(form);fillMeals();date.focus();
 }
 
 function renderFoodMeals(card, dateKey, entry) {
@@ -5605,6 +5799,10 @@ function renderFoodMeals(card, dateKey, entry) {
 function renderFoodMeal(card, dateKey, meal) {
   const section = document.createElement("section");
   section.className = "food-meal food-meal-editor is-active";
+  section.dataset.mealId = meal.id;
+  section.id = `food-meal-panel-${card.id}-${meal.id}`;
+  section.setAttribute("role", "tabpanel");
+  section.setAttribute("aria-labelledby", `food-meal-tab-${card.id}-${meal.id}`);
   const totals = getFoodMealTotals(card, meal);
   const header = document.createElement("div");
   header.className = "food-meal-header";
@@ -5621,7 +5819,7 @@ function renderFoodMeal(card, dateKey, meal) {
     currentMeal.name = normalizeLabel(name.value) || "Meal";
     saveFoodCard(card, dateKey);
   });
-  name.addEventListener("change", () => renderCardsOnly({ force: true }));
+  name.addEventListener("change", () => queueDeferredBoardRender({ reason: "food-name" }));
   const datalist = document.createElement("datalist");
   datalist.id = listId;
   FOOD_MEAL_NAME_PRESETS.forEach((label) => {
@@ -5629,32 +5827,7 @@ function renderFoodMeal(card, dateKey, meal) {
     option.value = label;
     datalist.append(option);
   });
-  const quickNames = document.createElement("div");
-  quickNames.className = "food-meal-name-presets";
-  FOOD_MEAL_NAME_PRESETS.forEach((label) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    button.title = `Rename to ${label}`;
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const currentMeal = getFoodMealById(card, dateKey, meal.id);
-      if (!currentMeal) return;
-      currentMeal.name = label;
-      saveFoodCard(card, dateKey, { rerender: true });
-    });
-    quickNames.append(button);
-  });
-  const summary = document.createElement("div");
-  summary.className = "food-meal-summary";
-  FOOD_NUTRIENT_KEYS.forEach((key) => {
-    const item = document.createElement("span");
-    const unit = key === "calories" ? "kcal" : "g";
-    item.dataset.nutrient = key;
-    item.innerHTML = `<strong>${escapeHtml(FOOD_NUTRIENT_META[key].label)}</strong><small>${formatFoodNumber(totals[key], key)} ${unit}</small>`;
-    summary.append(item);
-  });
+  const summary = renderFoodMealSummary(totals);
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "food-meal-remove";
@@ -5665,14 +5838,13 @@ function renderFoodMeal(card, dateKey, meal) {
     event.stopPropagation();
     removeFoodMeal(card, dateKey, meal.id);
   });
-  header.append(name, remove, datalist, quickNames, summary);
+  header.append(name, remove, datalist, summary);
 
   const mealDetails = document.createElement("details");
   mealDetails.className = "food-meal-details";
   mealDetails.open = card.foodMealOpen !== false || !meal.items.length;
-  mealDetails.addEventListener("toggle", () => {
-    if ((card.foodMealOpen !== false || !meal.items.length) === mealDetails.open) return;
-    card.foodMealOpen = mealDetails.open;
+  bindHealthDisclosure(mealDetails, () => resolveLiveCard(card).foodMealOpen !== false || !meal.items.length, (open) => {
+    resolveLiveCard(card).foodMealOpen = open;
     saveState({ quiet: true, touch: false });
   });
   const mealSummary = document.createElement("summary");
@@ -5684,13 +5856,13 @@ function renderFoodMeal(card, dateKey, meal) {
   if (!meal.items.length) {
     const empty = document.createElement("p");
     empty.className = "food-empty";
-    empty.textContent = "Tap a food above to start this meal.";
+    empty.textContent = "No foods logged.";
     items.append(empty);
   } else {
     meal.items.forEach((item) => items.append(renderFoodItem(card, dateKey, meal, item)));
   }
   mealDetails.append(mealSummary, items);
-  section.append(header, mealDetails);
+  section.append(header, renderFoodChoices(card, dateKey, meal), mealDetails);
   return section;
 }
 
@@ -5699,6 +5871,7 @@ function renderFoodItem(card, dateKey, meal, item) {
   const totals = calculateFoodItem(card, item);
   const row = document.createElement("div");
   row.className = "food-item-row";
+  row.dataset.itemId = item.id;
   row.addEventListener("click", (event) => event.stopPropagation());
 
   const top = document.createElement("div");
@@ -5741,7 +5914,7 @@ function renderFoodItem(card, dateKey, meal, item) {
     currentItem.amount = Math.max(0, normalizeOptionalNumber(amount.value) || 0);
     saveFoodCard(card, dateKey);
   });
-  amount.addEventListener("change", () => renderCardsOnly({ force: true }));
+  amount.addEventListener("change", () => queueDeferredBoardRender({ reason: "food-amount" }));
   amountField.append(amount);
 
   const unitField = document.createElement("label");
@@ -5775,9 +5948,8 @@ function renderFoodLibraryEditor(card) {
   const details = document.createElement("details");
   details.className = "food-library-panel";
   details.open = Boolean(card.foodLibraryOpen);
-  details.addEventListener("toggle", () => {
-    if (Boolean(card.foodLibraryOpen) === details.open) return;
-    card.foodLibraryOpen = details.open;
+  bindHealthDisclosure(details, () => Boolean(resolveLiveCard(card).foodLibraryOpen), (open) => {
+    resolveLiveCard(card).foodLibraryOpen = open;
     saveState({ quiet: true, touch: false });
   });
   const summary = document.createElement("summary");
@@ -5785,8 +5957,8 @@ function renderFoodLibraryEditor(card) {
   const guide = document.createElement("div");
   guide.className = "food-library-guide";
   guide.innerHTML = `
-    <strong>All nutrition values below are per serving.</strong>
-    <span>Use Serving label for the button/dropdown name, and g per serving so gram entries can scale accurately.</span>
+    <strong>Nutrition values are per serving.</strong>
+    <span>Logged meals keep their original values when this library changes.</span>
   `;
   const list = document.createElement("div");
   list.className = "food-library-list";
@@ -5796,8 +5968,10 @@ function renderFoodLibraryEditor(card) {
   add.className = "food-library-add";
   add.innerHTML = `${ICONS.plus}<span>Add custom food</span>`;
   add.addEventListener("click", () => {
+    const foodId = createId();
+    card.activeFoodLibraryId = foodId;
     card.foodLibrary.push(normalizeFoodDefinition({
-      id: createId(),
+      id: foodId,
       name: "New food",
       servingUnit: "100g",
       servingGrams: 100,
@@ -5811,16 +5985,23 @@ function renderFoodLibraryEditor(card) {
     saveState();
     renderCardsOnly({ force: true });
   });
-  const note = document.createElement("p");
-  note.className = "food-source-note";
-  note.textContent = "Nutrition values are per serving. Serving label is what appears in the meal unit dropdown; grams per serving lets gram entries calculate correctly. Example: rice is 130 kcal per 100g, egg is 78 kcal per egg.";
-  details.append(summary, guide, list, add, note);
+  details.append(summary, guide, list, add);
   return details;
 }
 
 function renderFoodLibraryRow(card, food) {
-  const row = document.createElement("div");
+  const row = document.createElement("details");
   row.className = "food-library-row";
+  row.dataset.foodId = food.id;
+  row.open = card.activeFoodLibraryId === food.id;
+  const summary = document.createElement("summary");
+  summary.innerHTML = `<strong>${escapeHtml(food.name)}</strong><span>${formatFoodNumber(food.calories, "calories")} kcal / ${escapeHtml(food.servingUnit)}</span>`;
+  bindHealthDisclosure(row, () => resolveLiveCard(card).activeFoodLibraryId === food.id, (open) => {
+    const live = resolveLiveCard(card);
+    live.activeFoodLibraryId = open ? food.id : "";
+    if (open) row.parentElement?.querySelectorAll(".food-library-row").forEach((other) => { if (other !== row) other.open = false; });
+    saveState({ quiet: true, touch: false });
+  });
   const remove = document.createElement("button");
   remove.type = "button";
   remove.innerHTML = ICONS["trash-2"];
@@ -5860,7 +6041,7 @@ function renderFoodLibraryRow(card, food) {
 
   const source = document.createElement("small");
   source.textContent = food.source || "Custom";
-  row.append(top, serving, macros, source);
+  row.append(summary, top, serving, macros, source);
   return row;
 }
 
@@ -5875,7 +6056,7 @@ function createFoodTextField(label, value, onInput) {
   input.value = value || "";
   input.title = label;
   input.addEventListener("input", () => onInput(normalizeLabel(input.value)));
-  input.addEventListener("change", () => renderCardsOnly({ force: true }));
+  input.addEventListener("change", () => queueDeferredBoardRender({ reason: "food-library" }));
   field.append(span, input);
   return field;
 }
@@ -5911,6 +6092,54 @@ function updateFoodDefinition(card, foodId, updates) {
     id: foodId
   });
   saveState({ quiet: true });
+  refreshFoodView(card, card.activeFoodDate);
+}
+
+function renderFoodMealSummary(totals) {
+  const summary = document.createElement("div");
+  summary.className = "food-meal-summary";
+  FOOD_NUTRIENT_KEYS.forEach((key) => {
+    const item = document.createElement("span");
+    item.dataset.nutrient = key;
+    item.innerHTML = `<strong>${escapeHtml(FOOD_NUTRIENT_META[key].label)}</strong><small>${formatFoodNumber(totals[key], key)} ${key === "calories" ? "kcal" : "g"}</small>`;
+    summary.append(item);
+  });
+  return summary;
+}
+
+function refreshFoodView(card, dateKey) {
+  const root = [...(elements.boardGrid?.querySelectorAll(".task-card") || [])].find(node => node.dataset.id === card.id);
+  if (!root || root.querySelector(".food-nav input")?.value !== dateKey) return;
+  const entry = getFoodEntry(card, dateKey);
+  const target = card.foodTargets[getFoodMonthKey(dateKey)] || DEFAULT_FOOD_TARGETS;
+  // Update readouts, never the fields being typed into or the next click target.
+  root.querySelector(".food-summary-panel")?.replaceWith(renderFoodTotalSummary(card, getFoodEntryTotals(card, entry), target, dateKey));
+  entry.meals.forEach(meal => {
+    const tab = document.getElementById(`food-meal-tab-${card.id}-${meal.id}`);
+    if (tab) {
+      tab.querySelector("span").textContent = meal.name;
+      tab.querySelector("small").textContent = `${formatFoodNumber(getFoodMealTotals(card, meal).calories, "calories")} kcal · ${meal.items.length} item${meal.items.length === 1 ? "" : "s"}`;
+    }
+    const editor = root.querySelector(".food-meal");
+    if (editor?.dataset.mealId !== meal.id) return;
+    editor.querySelector(".food-meal-summary")?.replaceWith(renderFoodMealSummary(getFoodMealTotals(card, meal)));
+    const destination = editor.querySelector(".food-add-subhead > span");
+    if (destination) destination.textContent = meal.name;
+    meal.items.forEach(item => {
+      const row = [...editor.querySelectorAll(".food-item-row")].find(node => node.dataset.itemId === item.id);
+      const readout = row?.querySelector(".food-item-macros");
+      if (readout) {
+        const totals = calculateFoodItem(card, item);
+        readout.textContent = FOOD_NUTRIENT_KEYS.map(key => `${key === "calories" ? "" : FOOD_NUTRIENT_META[key].label + " "}${formatFoodNumber(totals[key], key)} ${FOOD_NUTRIENT_META[key].unit}`).join(" · ");
+      }
+    });
+  });
+  root.querySelectorAll(".food-library-row").forEach(row => {
+    const food = card.foodLibrary.find(item => item.id === row.dataset.foodId);
+    if (!food) return;
+    row.querySelector("summary > strong").textContent = food.name;
+    row.querySelector("summary > span").textContent = `${formatFoodNumber(food.calories, "calories")} kcal / ${food.servingUnit}`;
+  });
 }
 
 function getNextFoodMealName(entry, preferredName = "") {
@@ -5971,6 +6200,7 @@ function saveFoodCard(card, dateKey, options = {}) {
   card.foodEntries[normalizedDate] = normalizeFoodEntry(entry);
   saveState({ quiet: true });
   if (options.rerender) renderCardsOnly({ force: true });
+  else refreshFoodView(card, normalizedDate);
 }
 
 function getFoodStatusLabel(totals, target) {
@@ -10193,7 +10423,80 @@ function isAutomaticCountdown(card) {
 }
 
 function shouldTickCountdownEverySecond(card) {
-  return isAutomaticCountdown(card) && Boolean(card.showTimerSeconds) && getRemaining(card) > 0;
+  return isAutomaticCountdown(card) && Boolean(card.showTimerSeconds) &&
+    (getRemaining({...card}) > 0 || timerDisplayFrames.get(card.id)?.remaining > 0);
+}
+
+function paintCardClock(node, card, remaining) {
+  const setText = (selector, value) => {
+    const target = node.querySelector(selector);
+    if (target && target.textContent !== value) target.textContent = value;
+  };
+  node.classList.toggle("is-running", Boolean(card.runningSince));
+  node.classList.toggle("is-expired", hasCountdown(card) && remaining <= 0);
+  node.querySelector(".timer-display")?.classList.toggle("is-auto", isAutomaticCountdown(card));
+  setText(".timer-display strong", formatRemaining(card, remaining));
+  setText(".timer-caption", getTimerCaption(card, remaining));
+  const toggle = node.querySelector(".timer-toggle");
+  const title = isAutomaticCountdown(card) ? "Automatic countdown" : card.runningSince ? "Pause timer" : "Start timer";
+  const action = card.runningSince ? "pause" : "play";
+  if (toggle && (toggle.title !== title || toggle.dataset.clockAction !== action)) {
+    toggle.dataset.clockAction = action;
+    toggle.title = title;
+    toggle.setAttribute("aria-label", title);
+    toggle.innerHTML = `${ICONS[action]}<span>${card.runningSince ? "Pause" : "Start"}</span>`;
+  }
+}
+
+function getTimerDisplayFrames() {
+  const frames = new Map(), duplicates = new Set();
+  for (const card of state.cards) {
+    if (frames.has(card.id)) duplicates.add(card.id);
+    // Presentation reads must not rewrite the daily countdown's saved fields.
+    const clock = hasCountdown(card) ? {...card} : null;
+    frames.set(card.id, clock ? {card: clock, remaining: getRemaining(clock), progress: clock.type === "event" ? getProgress(clock) : null} : null);
+  }
+  for (const id of duplicates) frames.delete(id);
+  return new Map([...frames].filter(([, frame]) => frame));
+}
+
+function rememberTimerDisplays() {
+  timerDisplayBoardId = state.activeBoardId;
+  timerDisplayFrames = getTimerDisplayFrames();
+}
+
+function refreshTimerDisplays() {
+  const settled = settleExpiredTimers();
+  if (timerDisplayBoardId !== state.activeBoardId) {
+    renderCardsOnly({reason: "tick"});
+    return;
+  }
+  const frames = getTimerDisplayFrames();
+  let transition = settled, progressChanged = false;
+  for (const [id, frame] of frames) {
+    const previous = timerDisplayFrames.get(id);
+    if (previous && (previous.remaining > 0) !== (frame.remaining > 0)) transition = true;
+    if (previous?.progress && frame.progress?.percent !== previous.progress.percent) progressChanged = true;
+  }
+  for (const node of elements.boardGrid.querySelectorAll(".task-card[data-clock-board]")) {
+    if (node.dataset.clockBoard !== state.activeBoardId) continue;
+    const frame = frames.get(node.dataset.id);
+    if (!frame) continue;
+    paintCardClock(node, frame.card, frame.remaining);
+    if (frame.card.type === "event") {
+      const progress = frame.progress, label = `${progress.percent}%`;
+      const percent = node.querySelector(".card-percent");
+      if (percent && percent.textContent !== label) {
+        percent.textContent = label;
+        node.querySelector(".progress-track span").style.width = label;
+        node.querySelector(".card-progress p").textContent = `${label} · ${progress.label}`;
+      }
+    }
+  }
+  timerDisplayFrames = frames;
+  // Completion changes filters and ordering; ordinary ticks must not rebuild editors.
+  if (transition) renderCardsOnly({reason: "tick"});
+  else if (progressChanged) renderStats(state.cards.filter(card => !card.calendarOnly));
 }
 
 function isManualTimer(card) {
@@ -10255,22 +10558,42 @@ function normalizeTimer(card) {
 }
 
 function settleExpiredTimers() {
-  let changed = false;
-  state.cards.forEach((card) => {
-    if (card.type === "routine") return;
-    if (!hasCountdown(card)) return;
-    if (!card.runningSince) return;
-    const remaining = getRemaining(card);
-    if (remaining > 0) return;
-    card.remaining = 0;
-    card.runningSince = null;
-    if (card.type === "single") {
-      card.done = true;
+  const boardId=state.activeBoardId,now=Date.now(),changes=[],counts=new Map();
+  for(const card of state.cards)counts.set(card.id,(counts.get(card.id) || 0)+1);
+  const keys=['remaining','runningSince','done','taskCompletion','taskCompletionEvents'];
+  const fields=card=>Object.fromEntries(keys.filter(key=>Object.hasOwn(card,key)).map(key=>[key,LifeStateMerge.copy(card[key])]));
+  const assign=(card,values)=>{for(const key of keys)delete card[key];Object.assign(card,LifeStateMerge.copy(values));};
+  let failure='';
+  for(const card of state.cards){
+    if(card.type==='routine' || card.archivedAt || !card.runningSince || !card.id || counts.get(card.id)!==1)continue;
+    if((state.syncConflicts || []).some(conflict=>{const path=conflict.segments || [];return path[0]==='boards' && path[1]===boardId && path[2]==='cards' && path[3]===card.id;}))continue;
+    const clock={...card};
+    if(!hasCountdown(clock) || !isManualTimer(clock) || getRemaining(clock)>0)continue;
+    try{
+      const next=card.type==='single'?LifeTaskRepository.expireTimer(clock,now):{...clock,remaining:0,runningSince:null};
+      if(next)changes.push({id:card.id,type:card.type,before:fields(card),after:fields(next)});
+    }catch(error){failure=error.message;}
+  }
+  if(!changes.length){if(failure)setSaveStatus(failure,'error');return false;}
+  for(const change of changes)assign(state.cards.find(card=>card.id===change.id),change.after);
+  if(!saveState()){
+    for(const change of changes)assign(state.cards.find(card=>card.id===change.id),change.before);
+    syncActiveBoard({touchBoard:false});
+    return false;
+  }
+  if(failure)setSaveStatus(failure,'error');
+  showUndoToast({message:'Timer finished. Saved on device.',onUndo:()=>{
+    const targets=changes.map(change=>state.cards.filter(card=>card.id===change.id));
+    const compared=(state.syncConflicts || []).some(conflict=>{const path=conflict.segments || [];return path[0]==='boards' && path[1]===boardId && path[2]==='cards' && changes.some(change=>change.id===path[3]);});
+    if(state.activeBoardId!==boardId || compared || targets.some((cards,i)=>cards.length!==1 || cards[0].archivedAt || cards[0].type!==changes[i].type || !LifeStateMerge.equal(fields(cards[0]),changes[i].after))){clearUndoToast();setSaveStatus('This timer changed or moved. Undo was not applied.','error');return;}
+    // Keep the expired timer stopped, otherwise rendering would immediately complete it again.
+    changes.forEach((change,i)=>assign(targets[i][0],{...change.before,remaining:0,runningSince:null}));
+    if(!saveState()){
+      changes.forEach((change,i)=>assign(targets[i][0],change.after));syncActiveBoard({touchBoard:false});
     }
-    changed = true;
-  });
-
-  if (changed) saveState();
+    clearUndoToast();renderCardsOnly({force:true});
+  }});
+  return true;
 }
 
 function resetDailyRepeatingCards() {
@@ -10568,7 +10891,7 @@ function nextOrder() {
   return state.cards.length ? Math.max(...state.cards.map((card) => card.order || 0)) + 1 : 1;
 }
 
-function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], coachingPrograms, money, createdAt = Date.now(), updatedAt = createdAt }) {
+function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], coachingPrograms, money, appearance, createdAt = Date.now(), updatedAt = createdAt }) {
   const normalizedCards = cards.map(normalizeCard).map((card, index) => ({
     ...card,
     order: Number(card.order) > 0 ? Number(card.order) : index + 1
@@ -10585,6 +10908,7 @@ function createBoardRecord({ id = createId(), name, visibility = "private", layo
     archivedCards: normalizedArchivedCards,
     ...(coachingPrograms !== undefined ? {coachingPrograms: LifeStateMerge.copy(coachingPrograms)} : {}),
     ...(money !== undefined ? {money: LifeStateMerge.copy(money)} : {}),
+    ...(appearance !== undefined ? {appearance: LifeAppearance.normalize(appearance)} : {}),
     createdAt,
     updatedAt: normalizeTimestamp(updatedAt) || normalizeTimestamp(createdAt) || Date.now()
   };
@@ -10618,6 +10942,7 @@ function ensureBoards(nextState) {
         visibility: nextState.board?.visibility || "private",
         layout: nextState.board?.layout || "smart",
         columnCount: nextState.board?.columnCount || 3,
+        appearance: nextState.board?.appearance,
         cards: Array.isArray(nextState.cards) ? nextState.cards : [],
         archivedCards: Array.isArray(nextState.archivedCards) ? nextState.archivedCards : []
       })
@@ -10644,7 +10969,8 @@ function applyBoardToState(nextState, boardId) {
     visibility: board.visibility,
     layout: board.layout,
     columnCount: normalizeBoardColumnCount(board.columnCount),
-    savedLayout: Array.isArray(board.savedLayout) ? board.savedLayout : []
+    savedLayout: Array.isArray(board.savedLayout) ? board.savedLayout : [],
+    ...(board.appearance !== undefined ? {appearance: LifeAppearance.normalize(board.appearance)} : {})
   };
   nextState.cards = board.cards.map(normalizeCard);
   nextState.archivedCards = Array.isArray(board.archivedCards) ? board.archivedCards.map(normalizeArchivedCard) : [];
@@ -10659,6 +10985,7 @@ function syncActiveBoard(options = {}) {
         visibility: state.board.visibility,
         layout: state.board.layout,
         columnCount: state.board.columnCount,
+        appearance: state.board.appearance,
         cards: state.cards,
         archivedCards: getArchivedCards()
       })
@@ -10677,6 +11004,7 @@ function syncActiveBoard(options = {}) {
     visibility: state.board.visibility,
     layout: state.board.layout,
     columnCount: normalizeBoardColumnCount(state.board.columnCount),
+    ...(state.board.appearance !== undefined ? {appearance: LifeAppearance.normalize(state.board.appearance)} : {}),
     savedLayout: Array.isArray(state.board.savedLayout) ? state.board.savedLayout : [],
     cards: state.cards.map(normalizeCard),
     archivedCards: getArchivedCards().map(normalizeArchivedCard),
@@ -12404,51 +12732,117 @@ function downloadTextFile(filename, content, mimeType) {
 async function exportBoardBackup() {
   if (corruptLocalStateDetected) {openRecovery(); return;}
   const snapshot = getExportSnapshot();
+  const pending = LifeDeviceStore.inspectPending();
   let recoveryArchiveError='';
   try{if(typeof recoveryVault!=='undefined' && recoveryVault)await recoveryVault.refresh();}catch(error){recoveryArchiveError=error.message;}
+  try{await LifeDeviceStore.readCheckpoint();}catch(error){recoveryArchiveError+=(recoveryArchiveError?' ':'')+error.message;}
   const backup = {
     app: "Life OS",
     format: "life-os-full-backup-v2",
     exportedAt: new Date().toISOString(),
-    exportedFrom: window.location.href,
+    exportedFrom: getReadableExportSource(),
     includesAuthSession: false,
     counts: getBackupDataCounts(snapshot),
     state: snapshot,
     localRecovery: {
       recoveryArchiveError,
+      verifiedDeviceCheckpoint:LifeDeviceStore.checkpointSnapshot(),
       originalRecoveryCache: localStorage.getItem(CLOUD_RECOVERY_KEY),
       diaryEntryBackups: readDiaryBackups(),
       cloudRecoveryPoints: readLocalJsonValue(CLOUD_RECOVERY_KEY, []),
       cloudSyncHistory: readLocalJsonValue(CLOUD_BASE_KEY, null),
-      pendingDeviceWrites: (()=>{try{return LifeDeviceStore.pending().map(item=>item.entry);}catch{return [];}})(),
+      pendingDeviceWrites: pending.entries.map(item=>item.entry),
+      unreadablePendingDeviceWrites: pending.failures,
+      pendingDeviceWritesUnavailable: pending.unavailable,
       preUpgradeCopy: readLocalJsonValue(PRE_UPGRADE_KEY, null)
     }
   };
   downloadTextFile(`life-os-restore-backup-${getTodayKey()}.json`, JSON.stringify(backup, null, 2), "application/json;charset=utf-8");
-  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = recoveryArchiveError?"Current backup ready - recovery archive unavailable":"Backup ready";
+  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = pending.unavailable?"Backup downloaded - pending copies could not be checked":pending.failures.length?"Backup downloaded - some pending copies need recovery":recoveryArchiveError?"Current backup ready - recovery archive unavailable":"Backup ready";
 }
 
 async function exportReadableDataArchive() {
   if (corruptLocalStateDetected) {openRecovery(); return;}
   const snapshot = getExportSnapshot();
-  const html = buildReadableDataArchive(snapshot);
+  let checkpointError=false;
+  try{await LifeDeviceStore.readCheckpoint();}catch{checkpointError=true;}
+  const pending = collectReadableDeviceCopies(snapshot, LifeDeviceStore.inspectPending(),LifeDeviceStore.checkpointSnapshot());
+  if(checkpointError)pending.incomplete=true;
+  const html = buildReadableDataArchive(snapshot, pending);
   downloadTextFile(`life-os-readable-archive-${getTodayKey()}.html`, html, "text/html;charset=utf-8");
-  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = "Archive ready";
+  if (elements.dataSafetyStatus) elements.dataSafetyStatus.textContent = pending.incomplete?"Archive downloaded - some device copies need recovery":pending.packetCount || pending.checkpointCount?"Archive downloaded - device versions included separately":"Archive ready - not a cloud save receipt";
 }
 
-function buildReadableDataArchive(snapshot) {
+function getReadableExportSource() {
+  // OAuth codes and session fragments must never enter a shareable archive.
+  return window.location.protocol==='file:'?window.location.pathname:window.location.origin+window.location.pathname;
+}
+
+function collectReadableDeviceCopies(snapshot, inspection,checkpoint) {
+  const copies=[],seen=new Map(),writers=new Map();
+  let incomplete=Boolean(inspection.unavailable || inspection.failures.length);
+  for(const board of snapshot.boards || [])seen.set(JSON.stringify(board),null);
+  inspection.entries.forEach(({entry},packetIndex)=>{
+    const writer=typeof entry.writerId==='string'?entry.writerId:null;
+    if(writer && !writers.has(writer))writers.set(writer,writers.size+1);
+    for(const kind of ['base','state']){
+      const boards=entry[kind]?.boards;
+      if(!Array.isArray(boards)){incomplete=true;continue;}
+      for(const board of boards){
+        if(!board || typeof board!=='object' || Array.isArray(board)){incomplete=true;continue;}
+        const key=JSON.stringify(board);
+        if(!seen.has(key)){
+          const copy={board,sources:[]};seen.set(key,copy);copies.push(copy);
+        }
+        const copy=seen.get(key);
+        if(copy)copy.sources.push({packet:packetIndex+1,writer:writer?writers.get(writer):null,sequence:Number.isSafeInteger(entry.sequence)?entry.sequence:null,kind,savedAt:entry.savedAt});
+      }
+    }
+  });
+  let checkpointCount=0;
+  for(const board of checkpoint?.boards || []){
+    const key=JSON.stringify(board);
+    if(!seen.has(key)){const copy={board,sources:[]};seen.set(key,copy);copies.push(copy);}
+    const copy=seen.get(key);
+    if(copy){copy.sources.push({kind:'checkpoint'});checkpointCount=1;}
+  }
+  // Keep every distinct board version, not a clock-based guess at the winner.
+  // Identical versions are shown once; IDs remain part of their identity.
+  return {copies,packetCount:inspection.entries.length,checkpointCount,unreadableCount:inspection.failures.length,unavailable:inspection.unavailable,incomplete};
+}
+
+function renderReadableDeviceCopies(pending) {
+  if(!pending || (!pending.packetCount && !pending.checkpointCount && !pending.incomplete))return '';
+  const versions=pending.copies.map((copy,index)=>{
+      let content;
+      try{content=renderReadableBoard(JSON.parse(JSON.stringify(copy.board)),index);}catch{pending.incomplete=true;content='<p class="export-warning">This board version could not be rendered. Download the JSON restore backup as well to retain its original packet. Do not clear browser data.</p>';}
+      const sources=copy.sources.map(source=>source.kind==='checkpoint'?'Verified device checkpoint (not a cloud save receipt)':[source.kind==='state'?'Pending snapshot':'Earlier baseline',`packet ${source.packet}`,source.writer?`device writer ${source.writer}`:'legacy writer not recorded',source.sequence!==null?`sequence ${source.sequence}`:'',normalizeTimestamp(source.savedAt)?`Packet staged ${formatRecordDateTime(source.savedAt)}`:'Staging time not recorded'].filter(Boolean).join(' · '));
+      return `<details class="pending-version"><summary>Version ${index+1}: ${escapeHtml(copy.board.name || 'Unnamed board')}</summary><p class="text">Board ID: ${escapeHtml(copy.board.id || 'not recorded')}</p><ul>${sources.map(source=>`<li>${escapeHtml(source)}</li>`).join('')}</ul>${content}</details>`;
+    }).join('');
+  return `<section id="pending-device-versions" class="pending-copies" aria-label="Pending device versions">
+    <h2>${pending.packetCount?'Pending device versions':'Verified device checkpoint'}</h2>
+    <p>These versions are separate from the current view above. Pending copies are not confirmed shared-device saves; a verified checkpoint is labelled separately. None is a cloud save receipt. No records were merged or replaced to make this download. Summary counts above exclude these versions.</p>
+    <p>${pending.packetCount?escapeHtml(pending.packetCount)+' readable pending packets · ':''}${escapeHtml(pending.copies.length)} additional board versions. Identical board versions appear once. Earlier baselines are retained for comparison, not presented as your latest writing.</p>
+    ${pending.incomplete?'<p class="export-warning" role="alert">Incomplete recovery coverage: some pending copies could not be read. Keep the original browser open and download the JSON restore backup as well. Do not clear browser data.</p>':''}
+    ${versions}
+  </section>`;
+}
+
+function buildReadableDataArchive(snapshot, pending) {
   const boards = Array.isArray(snapshot.boards) ? snapshot.boards : [];
   const counts = getBackupDataCounts(snapshot);
   const generatedAt = formatRecordDateTime(Date.now());
   const boardSections = boards.length
     ? boards.map((board, index) => renderReadableBoard(board, index)).join("")
     : `<section class="empty"><h2>No boards found</h2><p>No board data was saved in this browser at export time.</p></section>`;
+  const pendingSections=renderReadableDeviceCopies(pending);
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'" />
   <title>Life OS readable archive - ${escapeHtml(getTodayKey())}</title>
   <style>
     :root { color-scheme: light; --ink:#17211d; --muted:#65716b; --line:#e6e8e4; --soft:#f5f6f2; --accent:#2f7d44; }
@@ -12457,7 +12851,23 @@ function buildReadableDataArchive(snapshot) {
     main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 32px 0 60px; }
     header.export-head { padding: 28px; border: 1px solid var(--line); border-radius: 18px; background: #fff; box-shadow: 0 18px 45px rgba(30, 40, 34, .08); }
     h1, h2, h3, h4, p { margin: 0; }
-    h1 { font-size: clamp(2rem, 4vw, 3.4rem); line-height: 1; letter-spacing: 0; }
+    h1 { font-size: 2rem; line-height: 1.15; letter-spacing: 0; }
+    h1, h2, h3, h4, p, li, summary { overflow-wrap: anywhere; }
+    .pending-copies { margin-top: 32px; padding-top: 20px; border-top: 2px solid #b6781c; }
+    .pending-copies > p { margin-top: 10px; }
+    .pending-version { margin-top: 16px; padding: 16px 0; border-top: 1px solid var(--line); }
+    .pending-version > summary { min-height: 44px; cursor: pointer; font-weight: 750; }
+    .export-warning { padding: 12px; border-left: 3px solid #b6781c; background: #fff4db; color: #61400e; }
+    .money-export { max-width: 100%; margin-top: 16px; }
+    .money-export:focus-visible { outline: 2px solid #237a8c; outline-offset: 2px; }
+    .money-export table, .money-export tbody { display: block; width: 100%; margin: 12px 0; font-size: .85rem; }
+    .money-export thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .money-export tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+    .money-export td { display: block; min-width: 0; padding: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .money-export td::before { content: attr(data-label); display: block; color: var(--muted); font-size: .75rem; font-weight: 700; }
+    .money-export td:first-child, .money-export td[data-label="Notes"], .money-export td[data-label="Previous record"] { grid-column: 1 / -1; }
+    .money-export td:first-child { font-weight: 750; }
+    .money-export td:empty { display: none; }
     .subtitle { margin-top: 10px; color: var(--muted); font-weight: 650; }
     .counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-top: 22px; }
     .count { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--soft); }
@@ -12467,19 +12877,20 @@ function buildReadableDataArchive(snapshot) {
     .board-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; padding: 0 2px 10px; border-bottom: 1px solid var(--line); }
     .board-head h2 { font-size: 1.55rem; line-height: 1.1; }
     .board-head p { color: var(--muted); font-weight: 760; }
-    .card-group { display: grid; gap: 14px; margin-top: 18px; }
+    .board-head > *, .card-top > *, .entry-head > * { min-width: 0; max-width: 100%; }
+    .card-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 18px; }
     .card-group h3 { color: var(--muted); font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; }
     article.card { padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 12px 28px rgba(30, 40, 34, .05); break-inside: avoid; }
     .card-top { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
-    .card-title { display: grid; gap: 6px; }
+    .card-title { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
     .card-title h4 { font-size: 1.16rem; line-height: 1.15; }
     .meta { display: flex; flex-wrap: wrap; gap: 6px; }
     .tag { display: inline-flex; align-items: center; min-height: 24px; padding: 4px 9px; border-radius: 999px; background: var(--soft); color: #33413a; font-size: .72rem; font-weight: 850; }
     .archived { color: #8a523f; background: #f8ede8; }
-    .content { display: grid; gap: 14px; margin-top: 16px; }
-    .block { display: grid; gap: 7px; }
+    .content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 16px; }
+    .block { display: grid; grid-template-columns: minmax(0, 1fr); gap: 7px; }
     .block h5 { margin: 0; color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .055em; }
-    .text { white-space: pre-wrap; color: #26332d; font-weight: 600; }
+    .text { white-space: pre-wrap; overflow-wrap: anywhere; color: #26332d; font-weight: 600; }
     .entry { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcf9; }
     .entry + .entry { margin-top: 9px; }
     .entry-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
@@ -12499,6 +12910,7 @@ function buildReadableDataArchive(snapshot) {
     .kv strong { display: block; margin-top: 3px; overflow-wrap: anywhere; }
     .empty { margin-top: 20px; padding: 18px; border: 1px dashed var(--line); border-radius: 14px; color: var(--muted); background: #fff; }
     a { color: #237a8c; font-weight: 800; overflow-wrap: anywhere; }
+    @media (max-width: 600px) { header.export-head { padding: 16px; } .board-head, .card-top, .entry-head { flex-direction: column; align-items: flex-start; } .money-export tr { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media print { body { background:#fff; } main { width: 100%; padding: 0; } header.export-head, article.card { box-shadow: none; } }
   </style>
 </head>
@@ -12506,7 +12918,8 @@ function buildReadableDataArchive(snapshot) {
   <main>
     <header class="export-head">
       <h1>Life OS readable archive</h1>
-      <p class="subtitle">Exported ${escapeHtml(generatedAt)} from ${escapeHtml(window.location.href)}. This file is for reading your saved information. Keep the JSON restore backup separately for app recovery.</p>
+      <p class="subtitle">Exported ${escapeHtml(generatedAt)} from ${escapeHtml(getReadableExportSource())}. Current in-memory information is included, even if saving has not finished. This download is not proof of cloud sync. Keep the JSON restore backup separately for app recovery.</p>
+      ${pendingSections?`<p class="export-warning">${pending.incomplete?'Some device versions need recovery.':'Pending device versions are included separately.'} <a href="#pending-device-versions">Review device versions</a> before treating this archive as a final copy.</p>`:''}
       <div class="counts">
         ${renderReadableCount("Boards", counts.boards)}
         ${renderReadableCount("Active cards", counts.activeCards)}
@@ -12520,6 +12933,7 @@ function buildReadableDataArchive(snapshot) {
     </header>
     ${boardSections}
     ${renderReadableDiaryBackups(readDiaryBackups())}
+    ${pendingSections}
   </main>
 </body>
 </html>`;
@@ -12533,19 +12947,20 @@ function renderReadableBoard(board, index) {
   const activeCards = Array.isArray(board.cards) ? board.cards : [];
   const archivedCards = Array.isArray(board.archivedCards) ? board.archivedCards : [];
   const visibility = normalizeLabel(board.visibility || "private");
+  const money=moneyReadable(board);
   return `<section class="board">
     <div class="board-head">
       <div>
         <h2>${escapeHtml(board.name || `Board ${index + 1}`)}</h2>
         <p>${escapeHtml(visibility)} board · ${activeCards.length} active · ${archivedCards.length} archived</p>
       </div>
-      <p>Updated ${escapeHtml(formatRecordDate(getBoardUpdatedAt(board)))}</p>
+      <p>Updated ${escapeHtml(getBoardUpdatedAt(board)?formatRecordDate(getBoardUpdatedAt(board)):'date not recorded')}</p>
     </div>
     ${renderReadableCardGroup("Active cards", activeCards, "active")}
     ${renderReadableCardGroup("Archived cards", archivedCards, "archived")}
     ${coachingProgramsForBoard(board).map(program => coachingReport(program)).join("")}
     ${dailyReadableRecords(board)}
-    ${moneyReadable(board)}
+    ${money?`<div class="money-export" role="region" aria-label="Money records" tabindex="0">${money}</div>`:''}
   </section>`;
 }
 
@@ -12609,6 +13024,12 @@ function getReadableProgress(card) {
 
 function renderReadableCardContent(card) {
   const blocks = [];
+  for(const [key,label] of [['plannerDraftText','Unsubmitted planner draft'],['dailyDraftText','Unsubmitted to-do draft'],['checklistDraftText','Unsubmitted project draft']]){
+    if(card[key])blocks.push(renderReadableTextBlock(label,card[key]));
+  }
+  for(const [date,text] of Object.entries(card.sideNoteDrafts || {})){
+    if(text)blocks.push(renderReadableTextBlock('Unsubmitted note draft - '+formatReadableDateKey(date),text));
+  }
   if (card.description && card.type !== "quote") blocks.push(renderReadableTextBlock("Description", card.description));
   if (card.targetAt) blocks.push(renderReadableKeyValues("Timing", [["Date", formatRecordDateTime(card.targetAt)]]));
   if (card.plannedDate) blocks.push(renderReadableKeyValues("Plan date", [["Date", formatReadableDateKey(card.plannedDate)]]));
@@ -12635,8 +13056,8 @@ function renderReadableCardContent(card) {
 }
 
 function renderReadableTextBlock(label, value) {
-  const text = String(value || "").trim();
-  if (!text) return "";
+  const text = String(value || "");
+  if (!text.trim()) return "";
   return `<section class="block"><h5>${escapeHtml(label)}</h5><div class="text">${escapeHtml(text)}</div></section>`;
 }
 
@@ -12768,7 +13189,8 @@ function renderReadableQuote(card) {
 
 function renderReadableVideo(card) {
   if (!card.videoUrl) return "";
-  return `<section class="block"><h5>Video link</h5><p><a href="${escapeAttribute(card.videoUrl)}">${escapeHtml(card.videoUrl)}</a></p></section>`;
+  const safeUrl=normalizeVideoUrl(card.videoUrl);
+  return `<section class="block"><h5>Video link</h5><p>${safeUrl?`<a href="${escapeAttribute(safeUrl)}" rel="noreferrer">${escapeHtml(card.videoUrl)}</a>`:escapeHtml(card.videoUrl)}</p></section>`;
 }
 
 function renderReadableBrief(card) {
@@ -12949,6 +13371,7 @@ function loadCloudSession() {
 
 function saveCloudSession(session) {
   if (PREVIEW_MODE) return;
+  if(!session || session.user?.id!==cloudSession?.user?.id){cloudSyncRetry.reset();unverifiedCloudWrite=null;}
   const previousCloudStamp =
     cloudSession?.user?.id && session?.user?.id && cloudSession.user.id === session.user.id
       ? cloudSession.cloud_updated_at
@@ -13507,6 +13930,7 @@ async function cloudAuthRequest(path, body, options = {}) {
     if (!response.ok) {
       const error = new Error(await getCloudResponseError(response, "Supabase auth failed."));
       error.status = response.status;
+      error.retryAfterMs=LifeCloudTransport.retryAfter(response.headers.get('Retry-After'));
       throw error;
     }
     return await response.json();
@@ -13531,7 +13955,9 @@ async function ensureCloudSession() {
   if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   if (!cloudSession?.access_token) throw new Error("Sign in to cloud sync first.");
   const stored=loadCloudSession();
-  if(stored?.access_token && stored.user?.id===cloudSession.user?.id)cloudSession=stored;
+  if(!LifeAuthRenewal.hasIdentity(stored) || stored.user.id!==cloudSession.user?.id)throw new Error('The cloud account changed or signed out. Your local records are kept.');
+  assertCloudSignInOwner(stored.user);
+  cloudSession=stored;
   const expires = Number(cloudSession.expires_at || 0);
   if (Date.now() < expires && (!cloudSession.refresh_token || Date.now() < expires - 60000)) {
     return cloudSession;
@@ -13540,7 +13966,7 @@ async function ensureCloudSession() {
   const owner = cloudSession.user?.id;
   return navigator.locks.request(LifeStorageScope.key('life-os-auth-refresh-v1'), async () => {
     const current = loadCloudSession();
-    if (!current?.access_token || current.user?.id !== owner) throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
+    if (!LifeAuthRenewal.hasIdentity(current) || current.user.id !== owner) throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
     assertCloudSignInOwner(current.user);
     cloudSession = current;
     if (Date.now() < Number(current.expires_at || 0) - 60000) return current;
@@ -13548,26 +13974,42 @@ async function ensureCloudSession() {
       if (Date.now() < Number(current.expires_at || 0)) return current;
       throw new Error('Cloud session expired. This older sign-in has no renewal token; sign in once to restore automatic renewal.');
     }
+    cloudRenewalReceipts ||= LifeAuthRenewal.create({name:LifeStorageScope.key('life-os-auth-renewal-v1')});
+    const claim=await cloudRenewalReceipts.claim(current.refresh_token);
+    const observed=loadCloudSession();
+    if(!LifeAuthRenewal.hasIdentity(observed) || observed.user.id!==owner)throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
+    assertCloudSignInOwner(observed.user);
+    if(observed.access_token!==current.access_token || observed.refresh_token!==current.refresh_token){
+      if(Date.now()<Number(observed.expires_at || 0)){cloudSession=observed;return observed;}
+      throw new Error('Cloud sign-in changed during renewal. Your local records are kept; retry using the current session.');
+    }
+    if(claim.applied){
+      const error=new Error('Another tab renewed your sign-in. Waiting for this tab to see the updated session. Your sign-in and local records are kept.');
+      error.retryable=true;throw error;
+    }
     let session;
     try {
       const result = await cloudAuthRequest('/auth/v1/token?grant_type=refresh_token', {refresh_token:current.refresh_token}, {timeoutMs:15000});
       session = normalizeCloudSession(result);
     } catch (error) {
       const latest = loadCloudSession();
-      if (latest?.user?.id === owner && latest.access_token !== current.access_token && Date.now() < Number(latest.expires_at || 0)) {cloudSession = latest; return latest;}
+      if (LifeAuthRenewal.hasIdentity(latest) && latest.user.id === owner && latest.access_token !== current.access_token && Date.now() < Number(latest.expires_at || 0)) {assertCloudSignInOwner(latest.user);cloudSession = latest; return latest;}
       if (error.status === 429 || error.status >= 500 || error instanceof TypeError || error.name === 'AbortError' || error instanceof SyntaxError) {
-        throw new Error('Cloud connection is temporarily unavailable. Your sign-in and local records are kept; renewal will retry automatically.');
+        const failure=new Error('Cloud connection is temporarily unavailable. Your sign-in and local records are kept; renewal will retry automatically.');
+        failure.retryable=true;failure.retryAfterMs=error.retryAfterMs || 0;throw failure;
       }
       throw error;
     }
     const latest = loadCloudSession();
-    if (!latest || latest.user?.id !== owner) throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
+    if (!LifeAuthRenewal.hasIdentity(latest) || latest.user.id !== owner) throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
+    assertCloudSignInOwner(latest.user);
     if (latest.access_token !== current.access_token || latest.refresh_token !== current.refresh_token) {
       if (Date.now() < Number(latest.expires_at || 0)) {cloudSession = latest; return latest;}
       throw new Error('Cloud sign-in changed during renewal. Your local records are kept; retry using the current session.');
     }
-    if (!session || session.user.id !== owner || !session.refresh_token) throw new Error('Cloud session expired. Sign in again; your local records are kept.');
+    if (!LifeAuthRenewal.hasIdentity(session) || session.user.id !== owner || !session.refresh_token) throw new Error('Cloud session expired. Sign in again; your local records are kept.');
     saveCloudSession(session);
+    await cloudRenewalReceipts.complete(claim);
     return session;
   });
 }
@@ -13589,13 +14031,10 @@ async function maintainCloudSession() {
 
 async function fetchCloudStateRow(session) {
   if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
-  const response = await fetch(`${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&select=state,updated_at&limit=1`, {
+  const rows = await LifeCloudTransport.json(`${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&select=state,updated_at&limit=1`, {
     headers: getCloudHeaders(session)
-  });
-  if (!response.ok) {
-    throw new Error(await getCloudResponseError(response, "Cloud check failed."));
-  }
-  const rows = await response.json();
+  },{message:'Cloud check failed.',readError:getCloudResponseError});
+  if(!Array.isArray(rows))throw new Error('Cloud response could not be validated. No data was replaced.');
   return rows[0] || null;
 }
 
@@ -13636,8 +14075,17 @@ async function getCloudSavePlan(session, options = {}) {
   const row = await fetchCloudStateRow(session);
   if (!row) return {allowed:true, expectedUpdatedAt:""};
   if (!isValidBackup(row.state)) throw new Error("Cloud data is invalid. No data was replaced.");
+  const restoreGuard=readRestoreGuard();
+  if(unverifiedCloudWrite && (restoreGuard.unavailable || unverifiedCloudWrite.restoreId!==(restoreGuard.id || '')))unverifiedCloudWrite=null;
+  // Only an exact readback can acknowledge this tab's uncertain upload. Keep
+  // later local writing intact and merge it against the verified intermediate.
+  const ownWriteVerified=unverifiedCloudWrite?.ownerId===session.user.id && unverifiedCloudWrite.updatedAt===row.updated_at && LifeCloudCopies.equal(unverifiedCloudWrite.state,row.state);
+  if(ownWriteVerified){
+    if(!rememberCloudBase(row.state,session.user.id))throw new Error('The previous upload was verified, but its sync history could not be saved. Your device writing is kept; download it before retrying.');
+    setKnownCloudUpdatedAt(row.updated_at);unverifiedCloudWrite=null;
+  }
   if (doesCloudStateMatchLocal(row.state)) {
-    if (!rememberCloudBase(row.state,session.user.id)) throw new Error('Cloud is current, but the sync history could not be saved on this device. Download your information before freeing browser storage.');
+    if (!ownWriteVerified && !rememberCloudBase(row.state,session.user.id)) throw new Error('Cloud is current, but the sync history could not be saved on this device. Download your information before freeing browser storage.');
     setKnownCloudUpdatedAt(row.updated_at);
     return {allowed:true,noop:true,expectedUpdatedAt:row.updated_at};
   }
@@ -13681,20 +14129,26 @@ async function writeCloudState(session, payload, savePlan) {
     ? SUPABASE_CONFIG.url + "/rest/v1/user_states?owner_id=eq." + session.user.id + "&updated_at=eq." + encodeURIComponent(expected) + "&select=updated_at"
     : SUPABASE_CONFIG.url + "/rest/v1/user_states?select=updated_at";
   const nextStamp = new Date(Math.max(Date.now(), (new Date(expected).getTime() || 0) + 1)).toISOString();
-  const response = await fetch(url, {
+  unverifiedCloudWrite={ownerId:session.user.id,state:LifeStateMerge.copy(payload.state),updatedAt:nextStamp,restoreId:readRestoreGuard().id || ''};
+  const rows = await LifeCloudTransport.json(url, {
     method: expected ? "PATCH" : "POST",
     headers: {...getCloudHeaders(session), "Content-Type": "application/json", Prefer: "return=representation"},
     body: JSON.stringify(expected ? {state: payload.state, updated_at: nextStamp} : {...payload, updated_at: nextStamp})
-  });
-  if (!response.ok) throw new Error(await getCloudResponseError(response, "Cloud save failed."));
-  const rows = await response.json();
-  if (!Array.isArray(rows) || !rows[0]?.updated_at) throw new Error("The cloud changed during saving. Your local edit is kept. Retry sync.");
+  },{message:'Cloud save failed.',readError:getCloudResponseError,timeoutMs:60000});
+  if (!Array.isArray(rows) || !rows[0]?.updated_at) {
+    const error=new Error('The cloud changed during saving. Your local edit is kept. Retry sync.');error.retryable=true;throw error;
+  }
   return rows[0].updated_at;
 }
 
 async function pushCloudState(options = {}) {
   if (PREVIEW_MODE || ((!cloudSaveEnabled || isRestoreSyncPaused()) && !options.manual) || corruptLocalStateDetected) return;
+  if(options.retryOwnerId && options.retryOwnerId!==cloudSession?.user?.id)return;
+  if(options.manual)cloudSyncRetry.reset();
+  if(navigator.onLine===false){pauseCloudRetry();return;}
   if (cloudPushInFlight) {cloudPushAgain = true; return;}
+  cloudSyncRetry.cancel();
+  const retryOwnerId=cloudSession?.user?.id;
   cloudPushInFlight = true;
   try {
     await LifeDeviceStore.cloudLocked(async () => {
@@ -13710,6 +14164,7 @@ async function pushCloudState(options = {}) {
       const plan = await getCloudSavePlan(session, options);
       if (!plan.allowed) {setSaveStatus("Changes need review", "error"); return;}
       if (plan.noop) {
+        cloudSyncRetry.reset();
         if (options.manual && !clearRestoreSyncPause()) throw new Error('Cloud is current, but the restore safety setting could not be updated. Automatic sync remains paused.');
         cloudSaveEnabled = !isRestoreSyncPaused();
         cloudConflictPending = false;
@@ -13729,7 +14184,9 @@ async function pushCloudState(options = {}) {
       const verifiedRow = await fetchCloudStateRow(verifiedSession);
       if (!verifiedRow || verifiedRow.updated_at !== cloudUpdatedAt || !LifeCloudCopies.equal(verifiedRow.state, snapshot)) {cloudConflictPending = true; throw new Error('Cloud readback did not match this save. Your device records remain available; retry to compare the current cloud copy.');}
       if (!rememberCloudBase(snapshot, session.user.id)) {cloudConflictPending = true; throw new Error('Cloud readback matched, but the sync history could not be saved on this device. Automatic sync is paused; download your information before freeing browser storage.');}
+      unverifiedCloudWrite=null;
       setKnownCloudUpdatedAt(cloudUpdatedAt);
+      cloudSyncRetry.reset();
       if (options.manual && !clearRestoreSyncPause()) throw new Error('The cloud save succeeded, but the restore safety setting could not be updated. Automatic sync remains paused.');
       cloudSaveEnabled = !isRestoreSyncPaused();
       cloudConflictPending = false;
@@ -13740,11 +14197,15 @@ async function pushCloudState(options = {}) {
       if (changedDuringSave) cloudPushAgain = true;
     });
   } catch (error) {
+    cloudPushAgain=false;
     setSaveStatus(lastLocalSaveOk ? "Saved on device - sync paused" : "Not saved - export now", "error");
-    renderCloudStatus(normalizeCloudError(error.message || "Cloud save failed."));
+    const retrying=cloudSyncRetry.schedule(error,retryOwnerId);
+    if(navigator.onLine===false)pauseCloudRetry();
+    else if(retrying)setSaveStatus('Saved on device - retrying cloud','local');
+    renderCloudStatus(normalizeCloudError(error.message || "Cloud save failed.")+(retrying?' Automatic retry is scheduled; the cloud save is not confirmed.':error.retryable && canRetryCloudSave(retryOwnerId)?' Automatic retries stopped. Use Save cloud to try again; your device records are kept.':''));
   } finally {
     cloudPushInFlight = false;
-    if (cloudPushAgain) {cloudPushAgain = false; window.clearTimeout(cloudSaveTimer); cloudSaveTimer = window.setTimeout(() => pushCloudState({silent: true}), CLOUD_SAVE_DEBOUNCE_MS);}
+    if (cloudPushAgain) {cloudPushAgain = false; queueCloudSave({silent:true});}
   }
 }
 
@@ -13770,9 +14231,23 @@ async function pullCloudState(options = {}) {
 function queueCloudSave(options = {}) {
   if (!cloudSaveEnabled || isRestoreSyncPaused() || !cloudSession?.access_token || corruptLocalStateDetected || cloudConflictPending) return;
   window.clearTimeout(cloudSaveTimer);
+  if(navigator.onLine===false){pauseCloudRetry();return;}
+  if(cloudSyncRetry.status().scheduled)return;
   if (!options.silent) setSaveStatus(lastLocalSaveOk ? "Saved on device, syncing" : "Saving to cloud", "saving");
   if (options.immediate) {pushCloudState({silent: options.silent}); return;}
   cloudSaveTimer = window.setTimeout(() => pushCloudState({silent: options.silent}), CLOUD_SAVE_DEBOUNCE_MS);
+}
+
+function canRetryCloudSave(ownerId) {
+  return Boolean(!PREVIEW_MODE && navigator.onLine!==false && cloudSaveEnabled && lastLocalSaveOk && !cloudSessionReauthRequired && !corruptLocalStateDetected && !cloudConflictPending && !state.syncConflicts?.length && !isRestoreSyncPaused() && ownerId && cloudSession?.user?.id===ownerId && cloudSession?.access_token && (!state.cloudOwnerId || state.cloudOwnerId===ownerId));
+}
+function resumeCloudSync() {
+  cloudSyncRetry.reset();
+  if(cloudSaveEnabled)queueCloudSave({immediate:true,silent:true});
+}
+function pauseCloudRetry() {
+  cloudSyncRetry.cancel();window.clearTimeout(cloudSaveTimer);
+  setSaveStatus(lastLocalSaveOk?'Offline - saved on device':'Offline - export your draft',lastLocalSaveOk?'local':'error');
 }
 
 async function importBoardBackup(file) {
@@ -13821,6 +14296,7 @@ function persistLocalDraftState() {
 }
 
 function deviceSaveFailureReason() {
+  if(lastDeviceSaveError?.name==='DeviceCommitPendingError')return 'Waiting for another tab\'s prerequisite save.';
   if(lastDeviceSaveError?.name==='QuotaExceededError')return 'Browser storage is full.';
   if(lastDeviceSaveError?.name==='SecurityError')return 'Browser storage access is blocked.';
   return 'Device saving needs attention.';

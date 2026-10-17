@@ -53,9 +53,10 @@ async function seed(page) {
         await workspace(p,mode);
         if(mode==='tasks')await p.getByRole('button',{name:'All tasks',exact:true}).click();
         await p.waitForFunction(mode=>state.ui.workspaceMode===mode,mode);
+        await p.evaluate(()=>new Promise(requestAnimationFrame));
         if(width<=980) {
-          const active=await p.locator('.mobile-daily-nav[aria-pressed=true]').evaluateAll(nodes=>nodes.map(e=>e.id));
-          assert.deepEqual(active,[{board:'mobileBoardButton',priorities:'mobileProgressButton',calendar:'mobileTasksButton',tasks:'mobileTasksButton',today:'mobileTodayButton'}[mode]]);
+          const active=await p.locator('.mobile-daily-nav[aria-pressed=true]:visible').evaluateAll(nodes=>nodes.map(e=>e.id));
+          assert.deepEqual(active,[{board:'mobileBoardButton',priorities:'mobileMoreButton',calendar:'mobileTasksButton',tasks:'mobileTasksButton',today:'mobileTodayButton'}[mode]]);
         }
         await p.evaluate(()=>document.fonts.ready);
         assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),mode+' page overflow at '+width);
@@ -113,7 +114,7 @@ async function seed(page) {
       assert.deepEqual(counts,[3,3,3,3,3],'Three stable rendered columns at '+width);
     }
     await p.setViewportSize({width:390,height:844});
-    for(const id of ['mobileTodayButton','mobileTasksButton','mobileBoardButton','mobileProgressButton','mobileMoreButton']) {
+    for(const id of ['mobileTodayButton','mobileTasksButton','mobileBoardButton','mobileMoreButton']) {
       const box=await p.locator('#'+id).boundingBox();assert.ok(box.width>=44&&box.height>=44,id);
     }
     await p.getByRole('button',{name:'Task options: Make time for a walk',exact:true}).click();

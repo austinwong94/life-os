@@ -2,10 +2,12 @@ const LIFE_OS_BUILD = '2026.10.15-storage-recovery';
 const dailySessions = new Map();
 let deviceSavedAt = 0;
 let publishedReleaseCheckAt=0,publishedReleaseCheckInFlight=false;
+let publishedUpdateInFlight=false;
 
 function loadedReleaseId() {
+  const bundle=[...document.scripts].find(script=>new URL(script.src || location.href).pathname.endsWith('/index-startup.js'));
   const script=[...document.scripts].find(script=>new URL(script.src || location.href).pathname.endsWith('/daily-workspace.js'));
-  const id=script?new URL(script.src).searchParams.get('v'):'';
+  const id=bundle || script?new URL((bundle || script).src).searchParams.get('v'):'';
   return /^[a-f0-9]{16}$/.test(id || '')?id:'';
 }
 function canApplyPublishedUpdate() {
@@ -13,14 +15,33 @@ function canApplyPublishedUpdate() {
   catch{return false;}
 }
 async function applyPublishedUpdate() {
-  await flushDeviceWrites();
-  if(!canApplyPublishedUpdate()){
-    const message=document.getElementById('releaseUpdateMessage');
-    if(message)message.textContent='Finish or save your open draft before updating. Your writing has not been changed.';
-    return false;
+  if(publishedUpdateInFlight)return false;
+  publishedUpdateInFlight=true;
+  const button=document.getElementById('releaseUpdateButton'),message=document.getElementById('releaseUpdateMessage');
+  if(button){button.disabled=true;button.setAttribute('aria-busy','true');}
+  if(message)message.textContent='Checking device save before updating...';
+  let reloading=false;
+  try{
+    let confirmed=false;
+    try{confirmed=await flushDeviceWrites();}catch{/* An update must never bypass a failed save. */}
+    if(confirmed!==true){
+      if(message)message.textContent='Device save is not confirmed. Keep this tab open and retry saving, or download your information before updating. Your writing has not been changed.';
+      return false;
+    }
+    if(!canApplyPublishedUpdate()){
+      if(message)message.textContent='Finish or save your open draft before updating. Your writing has not been changed.';
+      return false;
+    }
+    // Conflicts are stored records, not permission to discard either version.
+    const url=new URL(location.href);url.searchParams.set('startup',String(Date.now()));
+    if(/^[a-f0-9]{16}$/.test(button?.dataset.release || ''))url.searchParams.set('v',button.dataset.release);
+    window.location.replace(url.href);reloading=true;return true;
+  }finally{
+    if(!reloading){
+      publishedUpdateInFlight=false;
+      if(button){button.disabled=false;button.removeAttribute('aria-busy');}
+    }
   }
-  // Conflicts are stored records, not permission to discard either version.
-  window.location.reload();return true;
 }
 async function checkPublishedRelease(currentId=loadedReleaseId()) {
   if(!/^[a-f0-9]{16}$/.test(currentId || '') || publishedReleaseCheckInFlight || Date.now()-publishedReleaseCheckAt<30000)return;
@@ -34,7 +55,8 @@ async function checkPublishedRelease(currentId=loadedReleaseId()) {
     if(document.getElementById('releaseUpdateNotice'))return;
     const notice=planningNode('section','release-update-notice');notice.id='releaseUpdateNotice';notice.setAttribute('aria-label','Website update');
     const message=planningNode('p','','A newer version of Life OS is available.');message.id='releaseUpdateMessage';message.setAttribute('role','status');
-    notice.append(message,planningButton('Update now',applyPublishedUpdate,'rotate-ccw'));
+    const update=planningButton('Update now',applyPublishedUpdate,'rotate-ccw');update.id='releaseUpdateButton';update.dataset.release=release.id;
+    notice.append(message,update);
     document.querySelector('.workspace-navigation').after(notice);
   }catch{/* Offline checks must never interrupt recording or saving. */}
   finally{clearTimeout(timeout);publishedReleaseCheckInFlight=false;}
@@ -54,8 +76,12 @@ function dailySession() {
   }
   return dailySessions.get(key);
 }
-function saveDailyDraft() {
-  try { sessionStorage.setItem(LifeStorageScope.key('life-os-daily:'+state.activeBoardId), JSON.stringify(dailySession())); return true; }
+function saveDailyDraft(boardId=state.activeBoardId) {
+  try {
+    const session=boardId===state.activeBoardId?dailySession():dailySessions.get(boardId);
+    if(!session)throw new Error('The original board draft is unavailable.');
+    sessionStorage.setItem(LifeStorageScope.key('life-os-daily:'+boardId), JSON.stringify(session));return true;
+  }
   catch { setSaveStatus('Draft only in memory - storage unavailable', 'error'); return false; }
 }
 function dailyRecords(board) {
@@ -100,13 +126,18 @@ function dailyDialog(title) {
   const previous=document.activeElement,dialog=planningNode('dialog','daily-dialog');dialog.id='dailyDialog';
   const heading=planningNode('h2','',title);heading.id='dailyDialogTitle';dialog.setAttribute('aria-labelledby',heading.id);
   const head=planningNode('header','daily-section-head');head.append(heading,planningIcon('Close',()=>dialog.close(),'x'));dialog.append(head);
-  document.body.append(dialog);dialog.addEventListener('close',()=>{dialog.remove();if(previous?.isConnected && !document.querySelector('dialog[open]'))previous.focus({preventScroll:true});},{once:true});dialog.showModal();return dialog;
+  document.body.append(dialog);dialog.addEventListener('close',()=>{
+    // A delayed close must not steal focus from a newly opened editor.
+    const restoreFocus=document.activeElement===document.body || dialog.contains(document.activeElement);
+    dialog.remove();
+    if(restoreFocus && previous?.isConnected && !document.querySelector('dialog[open]'))previous.focus({preventScroll:true});
+  },{once:true});dialog.showModal();return dialog;
 }
 function openDailyMore() {
   const dialog=dailyDialog('More'),list=planningNode('div','daily-menu');
   for(const [label,icon,action] of [
     ['Capture','plus',openDailyCapture],['My board','layout-grid',()=>setWorkspaceMode('board')],['Priorities','check',()=>setWorkspaceMode('priorities')],
-    ['Money','bar-chart',()=>setWorkspaceMode('money')],['Weekly review','bar-chart',openDailyReview],['Archive','archive',openRecordsModal],['Reports','bar-chart',openReportsModal],
+    ['Records','pencil',()=>setWorkspaceMode('records')],['Money','bar-chart',()=>setWorkspaceMode('money')],['Weekly review','bar-chart',openDailyReview],['Archive','archive',openRecordsModal],['Reports','bar-chart',openReportsModal],
     ['Settings','settings',openSettingsModal],['Saving & version','check',openSaveDetails]
   ])list.append(planningButton(label,()=>{dialog.close();action();},icon));dialog.append(list);
 }
@@ -138,7 +169,8 @@ function renderDailyNavigation() {
   document.getElementById('mobileTasksButton')?.setAttribute('aria-pressed',String(['tasks','calendar'].includes(state.ui.workspaceMode)));
   document.getElementById('mobileBoardButton')?.setAttribute('aria-pressed',String(state.ui.workspaceMode==='board'));
   document.getElementById('mobileProgressButton')?.setAttribute('aria-pressed',String(state.ui.workspaceMode==='priorities'));
-  document.getElementById('mobileMoreButton')?.setAttribute('aria-pressed','false');
+  const more=document.getElementById('mobileMoreButton');
+  if(more){const active=['records','money','priorities','properties'].includes(state.ui.workspaceMode);more.setAttribute('aria-pressed',String(active));more.dataset.current=String(active);}
   document.getElementById('mobileCalendarButton')?.setAttribute('aria-pressed','false');
 }
 function openSaveDetails() {
@@ -146,9 +178,9 @@ function openSaveDetails() {
   const render=()=>{
     details.replaceChildren();const add=(label,text)=>details.append(planningNode('dt','',label),planningNode('dd','',text));
     add('Build',LIFE_OS_BUILD);add('Environment',PREVIEW_MODE?'Separate preview records - cloud disabled':location.hostname==='127.0.0.1'||location.hostname==='localhost'?'Local development':'This website');
-    add('Device',corruptLocalStateDetected?'Recovery required':lastLocalSaveOk?'Saved on this device':'Saving failed - export your writing');
-    add('Last device write',deviceSavedAt?formatRecordDateTime(deviceSavedAt):'No write recorded in this tab yet');
     let pending;try{pending=LifeDeviceStore.pending().length;}catch{}
+    add('Device',corruptLocalStateDetected?'Recovery required':pending===undefined?'Device copies could not be checked':pending>0?'Pending copies kept - shared save not confirmed':lastLocalSaveOk?'Saved on this device':'Saving failed - export your writing');
+    add('Last device write',deviceSavedAt?formatRecordDateTime(deviceSavedAt):'No write recorded in this tab yet');
     add('Pending device copies',pending===undefined?'Unable to read':String(pending));
     try{
       const storage=LifeDeviceStore.diagnostics(),mb=bytes=>(bytes/1048576).toFixed(2)+' MB';
@@ -174,12 +206,27 @@ function openSaveDetails() {
     add('Changes needing review',String(state.syncConflicts?.length || 0));
   };render();const timer=setInterval(render,1500);dialog.addEventListener('close',()=>clearInterval(timer),{once:true});
   const actions=planningNode('div','daily-actions');
+  const feedback=planningNode('p','daily-message');feedback.setAttribute('role','status');
+  const retry=planningButton('Retry device save',async()=>{
+    retry.disabled=true;feedback.textContent='Checking pending device copies...';
+    const staged=lastLocalSaveOk || saveState({touch:false,skipCloud:true});
+    const saved=staged && await flushDeviceWrites();
+    if(saved){
+      lastDeviceSaveError=null;
+      setSaveStatus(cloudConflictPending?'Changes need review':isRestoreSyncPaused()?'Saved on device - cloud paused':navigator.onLine?'Saved on device':'Offline - saved on device',cloudConflictPending?'error':'local');
+      renderCloudStatus('Device save confirmed. This action is not a verified cloud save receipt.');
+      if(cloudSaveEnabled && !PREVIEW_MODE && !cloudConflictPending && !isRestoreSyncPaused())queueCloudSave({silent:true});
+    }
+    let retained=false;try{retained=LifeDeviceStore.pending().length>0;}catch{}
+    feedback.textContent=saved?'Device save confirmed.':retained?'Device save is not confirmed. Pending copies are kept; keep this tab open.':'Not saved on this device. Keep this tab open and download your information or open Recovery.';
+    render();retry.disabled=false;
+  },'check');actions.append(retry);
   actions.append(planningButton('Download my information',exportReadableDataArchive,'download'),planningButton('Recovery',()=>{dialog.close();openRecovery();},'archive'),planningButton('Cloud settings',()=>{dialog.close();openSettingsModal();},'settings'));
   if(PREVIEW_MODE){
     const link=planningNode('a','planning-button','Open saved workspace'),url=new URL(location.href);
     url.searchParams.delete('preview');url.hash='';link.href=url.href;actions.append(link);
   }
-  dialog.append(actions);
+  dialog.append(feedback,actions);
 }
 function openDailyCapture() {
   const session=dailySession(),draft=session.capture ||= {kind:'task',text:'',date:getTodayKey(),area:''};
@@ -217,13 +264,15 @@ function openDailyCapture() {
 }
 function renderDailyHome() {
   const root=elements.boardGrid,session=dailySession(),day=getTodayKey();
-  const head=planningNode('header','daily-head'),copy=planningNode('div');copy.append(planningNode('h2','','Today, at your pace'),planningNode('p','',formatPlannerDate(day)));
+  const head=planningNode('header','daily-head'),copy=planningNode('div');copy.append(planningNode('h2','','Today'));
   const actions=planningNode('div','daily-actions');
   const light=planningButton('Lighter day',()=>{session.light=!session.light;saveDailyDraft();renderCardsOnly({force:true});});light.setAttribute('aria-pressed',String(session.light));
   actions.append(light,planningIcon('Customize Today',openDailyPreferences,'settings'),planningButton('Capture',openDailyCapture,'plus'));
   head.append(copy,actions);root.append(head);
-  const columns=planningNode('div','daily-columns');root.append(columns);
+  const layout=planningNode('div','daily-layout');root.append(layout);
+  const columns=planningNode('div','daily-columns');layout.append(columns);
   const context=planningNode('div','daily-context');
+  renderMomentumToday(context,session.light);
   const all=getWorkspaceTaskItems(),focusIds=dailyFocusKeys(day,all);
   const focus=dailySection('My next step',planningButton('Choose',openDailyFocus,'pencil'));
   const selected=focusIds.map(key=>all.find(t=>dailyFocusKey(t)===key)).filter(Boolean),visible=session.light?selected.slice(0,1):selected;
@@ -234,9 +283,13 @@ function renderDailyHome() {
     const label=planningNode('span','',`${completed} of ${visible.length} next steps complete`);
     const meter=planningNode('progress');meter.max=visible.length;meter.value=completed;meter.setAttribute('aria-label','Chosen next steps complete');
     progress.append(label,meter);focus.append(progress);
-  }else focus.querySelector('.planning-button').classList.add('is-primary');
+  }else {
+    focus.querySelector('.planning-button').classList.add('is-primary');
+    const empty=planningNode('div','momentum-focus-empty');empty.append(planningNode('strong','','One thing is enough to begin.'));
+    focus.append(empty);
+  }
   for(const item of visible){
-    const step=planningNode('div','daily-focus-step');step.append(renderWorkspaceTaskItem({...item,workspaceTask:true,undated:!item.dateKey,scheduledDate:item.dateKey,dateKey:day}));focus.append(step);
+    const step=planningNode('div','daily-focus-step');step.dataset.focusKey=dailyFocusKey(item);step.append(renderWorkspaceTaskItem({...item,workspaceTask:true,undated:!item.dateKey,scheduledDate:item.dateKey,dateKey:day}));focus.append(step);
     if(item.done)continue;
     const plan=latestDailyRecord('focus',day)?.plans?.[dailyFocusKey(item)] || {},tools=planningNode('div','daily-step-tools');
     tools.append(planningNode('span','daily-muted',plan.nextAction || item.nextAction || ''),planningButton('Start',()=>openDailyStart(item,plan),'play'),planningIcon('Next-step options: '+item.title,()=>openDailyStepOptions(item),'more-vertical'));step.append(tools);
@@ -246,7 +299,7 @@ function renderDailyHome() {
   const plans=latestDailyRecord('focus',day)?.plans || {},budget=latestDailyRecord('focus',day)?.budgetMinutes;
   const minutes=visible.reduce((sum,t)=>sum+(Number(plans[dailyFocusKey(t)]?.minutes || t.estimatedMinutes)||0),0);
   if(minutes)focus.append(planningNode('small','daily-capacity',`${minutes} minutes estimated${budget?' / '+budget+' available':''}${budget && minutes>budget?' · Consider a lighter plan':''}`));
-  if(!visible.length)focus.append(planningNode('p','daily-muted','Choose one thing for today. Your other tasks are still on your board.'));
+  const suggestions=planningNode('div','daily-suggestion-slot');focus.append(suggestions);renderDailySuggestions(suggestions,all,focusIds,session.light);
   const overview=planningNode('div','daily-actions daily-focus-footer');
   overview.append(planningButton('All tasks ('+all.length+')',()=>{planningSession().view='all';planningSession().area='*';planningSession().search='';savePlanningSession();setWorkspaceMode('tasks');}),
     planningButton('My board',()=>setWorkspaceMode('board')));focus.append(overview);columns.append(focus);
@@ -269,13 +322,21 @@ function renderDailyHome() {
   const week=dailyWeekStart(day),completed=dailyCompletedTasks(week,day);
   const done=planningNode('details','daily-completed');done.append(planningNode('summary','','Completed this week ('+completed.length+')'),planningNode('small','daily-muted',formatPlannerOriginDate(week)+' - '+formatPlannerOriginDate(day)));
   completed.sort((a,b)=>b.completedOn.localeCompare(a.completedOn)).forEach(t=>done.append(planningNode('p','',formatPlannerOriginDate(t.completedOn)+' · '+t.title)));
-  const grid=planningNode('div','today-cards daily-journals');
+  const grid=planningNode('div','today-cards daily-journals'),journalActions=planningNode('div','daily-journal-actions');
   for(const type of ['diary','sidenote']){
     if(session.sections[type]===false)continue;
     const cards=state.cards.filter(c=>c.type===type),card=cards.find(c=>c.id===session.cardChoices?.[type]) || cards[0];
-    if(card)grid.append(renderCard(card));
-    else grid.append(planningButton(type==='diary'?'Add a diary':'Add quick notes',()=>{openCardComposer();setFormType(type);renderConditionalFields();},'plus'));
-  }root.append(grid,context,done);
+    if(card){
+      const article=renderCard(card),title=article.querySelector('.card-main h3'),menu=article.querySelector('.card-menu-shell');
+      for(const [name,value] of [['accent','--action'],['soft','--action-soft'],['ink','--ink'],['muted','--muted']])article.style.setProperty('--card-'+name,'var('+value+')');
+      const heading=planningNode('header','daily-journal-head');heading.append(title,menu);article.prepend(heading);
+      article.querySelector('.card-topline').hidden=true;article.classList.add('daily-journal-source');grid.append(article);
+    }
+    else journalActions.append(planningButton(type==='diary'?'Add a diary':'Add quick notes',()=>{openCardComposer();setFormType(type);renderConditionalFields();},'plus'));
+  }
+  grid.classList.toggle('has-single-journal',grid.querySelectorAll('.task-card').length===1);
+  if(journalActions.childElementCount)grid.append(journalActions);
+  layout.append(grid,context);root.append(done);
 }
 function openDailyPreferences() {
   const dialog=dailyDialog('Customize Today'),session=dailySession();
@@ -289,12 +350,22 @@ function openDailyPreferences() {
   }
 }
 function openDailyFocus() {
-  const dialog=dailyDialog('Choose up to three next steps'),day=getTodayKey(),items=getWorkspaceTaskItems().filter(item=>item.sourceKind!=='card' || item.editable),session=dailySession();
-  session.focusDrafts ||= {};const previous=session.focusDrafts[day] || latestDailyRecord('focus',day),selected=new Set((previous?.taskKeys || dailyFocusKeys(day,items)).filter(key=>items.some(t=>dailyFocusKey(t)===key))),plans=LifeStateMerge.copy(previous?.plans || {});
-  const keepDraft=()=>{session.focusDrafts[day]={taskKeys:[...selected],plans,budgetMinutes:budget.value};saveDailyDraft();};
+  const dialog=dailyDialog('Choose up to three next steps'),day=getTodayKey(),boardId=state.activeBoardId,items=getWorkspaceTaskItems().filter(item=>item.sourceKind!=='card' || item.editable),session=dailySession();
+  const baseline=LifeStateMerge.copy(latestDailyRecord('focus',day) || null);
+  dialog.addEventListener('close',()=>{
+    if(boardId!==state.activeBoardId || day!==getTodayKey() || state.ui.workspaceMode!=='today')return;
+    const slot=elements.boardGrid.querySelector('.daily-suggestion-slot');
+    if(slot){const current=getWorkspaceTaskItems();slot.replaceChildren();renderDailySuggestions(slot,current,dailyFocusKeys(day,current),dailySession().light);}
+  },{once:true});
+  session.focusDrafts ||= {};const previous=session.focusDrafts[day] || baseline,selected=new Set((previous?.taskKeys || dailyFocusKeys(day,items)).filter(key=>items.some(t=>dailyFocusKey(t)===key))),plans=LifeStateMerge.copy(previous?.plans || {});
+  const keepDraft=()=>{session.focusDrafts[day]={taskKeys:[...selected],plans,budgetMinutes:budget.value,baseFocusId:baseline?.id || null};saveDailyDraft(boardId);};
   const budget=planningInput('number',previous?.budgetMinutes || '',()=>keepDraft());budget.min=1;budget.max=1440;budget.step=1;
   dialog.append(planningField('Available minutes (optional)',budget));
   const message=planningNode('p','daily-message');message.setAttribute('role','status');
+  if(session.focusDrafts[day] && session.focusDrafts[day].baseFocusId!==(baseline?.id || null)){
+    const current=dailyFocusKeys(day,items).map(key=>items.find(item=>dailyFocusKey(item)===key)?.title || 'Task no longer available');
+    dialog.append(planningNode('p','daily-focus-comparison','Your retained draft is shown below. Current saved choices: '+(current.join('; ') || 'None')+'.'));
+  }
   const search=planningInput('search','',()=>{});search.placeholder='Find a task';search.setAttribute('aria-label','Find a next step');dialog.append(search);
   const list=planningNode('div','daily-focus-options');dialog.append(list);
   items.filter(t=>!t.done || selected.has(dailyFocusKey(t))).forEach(t=>{
@@ -309,10 +380,51 @@ function openDailyFocus() {
     wrapper.append(row,more);list.append(wrapper);
   });search.oninput=()=>list.querySelectorAll('.daily-choice').forEach(row=>row.hidden=!row.dataset.search.includes(search.value.toLocaleLowerCase()));
   dialog.append(message,planningButton('Keep next steps',()=>{
+    if(boardId!==state.activeBoardId || day!==getTodayKey()){message.textContent='The board or day changed. Your draft is kept on its original board; reopen Choose there.';return;}
+    if(!LifeStateMerge.equal(latestDailyRecord('focus',day) || null,baseline)){message.textContent='Your next steps changed in another tab. Your draft is kept; reopen Choose to review the latest plan.';return;}
+    const live=getWorkspaceTaskItems();
+    if([...selected].some(key=>live.filter(item=>dailyFocusKey(item)===key && (item.sourceKind!=='card' || item.editable)).length!==1)){message.textContent='A selected task moved or is no longer available. Your draft is kept; reopen Choose to review it.';return;}
     const validMinutes=value=>value==='' || Number.isInteger(Number(value)) && Number(value)>0 && Number(value)<=1440;
     if(!validMinutes(budget.value) || [...selected].some(key=>!validMinutes(plans[key].minutes))){message.textContent='Use whole minutes between 1 and 1440.';return;}
     if(saveDailyRecord({kind:'focus',date:day,taskKeys:[...selected],plans:Object.fromEntries([...selected].map(key=>[key,plans[key]])),budgetMinutes:budget.value?Number(budget.value):null},message)){delete session.focusDrafts[day];saveDailyDraft();dialog.close();renderCardsOnly({force:true});}
   },'check'));
+}
+function dailySuggestionProjection(item) {
+  return {key:dailyFocusKey(item),title:item.title,dateKey:item.dateKey || '',deadline:item.deadline || '',priority:item.priority || 'normal',status:item.status || 'todo',done:Boolean(item.done),
+    editable:item.sourceKind!=='card' || item.editable,coachingProgramId:item.coachingProgramId || '',
+    blocked:dailyTaskCompletionPending(item.card.id,item.sourceKind==='card'?item.ref.itemId:item.taskId,item.sourceKind) || [...state.cards,...getArchivedCards()].filter(card=>card.id===item.card.id).length!==1,
+    area:[item.area,item.group,item.card.category].find(value=>typeof value==='string' && value.trim()) || 'Unsorted'};
+}
+function chooseDailySuggestion(boardId,day,expected,message) {
+  if(boardId!==state.activeBoardId || day!==getTodayKey()){message.textContent='The board or day changed. Reopen Today before choosing.';return false;}
+  const session=dailySession(),all=getWorkspaceTaskItems(),keys=dailyFocusKeys(day,all),current=all.filter(item=>dailyFocusKey(item)===expected.key);
+  if(session.focusDrafts?.[day]){message.textContent='Your next-step draft is kept. Use Choose to finish it first.';return false;}
+  if(keys.includes(expected.key)){message.textContent='Already in your next steps.';return false;}
+  if(keys.length>=3){message.textContent='Three next steps are already chosen. Use Choose to change your plan.';return false;}
+  if(current.length!==1 || !LifeStateMerge.equal(dailySuggestionProjection(current[0]),expected) || !LifeMomentum.suggest([expected],{today:day}).length){message.textContent='This task changed. Reopen Today to choose its current version.';return false;}
+  const previous=latestDailyRecord('focus',day),plans=LifeStateMerge.copy(previous?.plans || {}),item=current[0];
+  plans[expected.key]={nextAction:item.nextAction || '',minutes:item.estimatedMinutes || '',startTime:item.startTime || ''};
+  if(!saveDailyRecord({kind:'focus',date:day,taskKeys:[...keys,expected.key],plans,budgetMinutes:previous?.budgetMinutes || null},message))return false;
+  renderCardsOnly({force:true});
+  [...elements.boardGrid.querySelectorAll('.daily-focus-step')].find(step=>step.dataset.focusKey===expected.key)?.querySelector('.daily-step-tools button')?.focus({preventScroll:true});return true;
+}
+function renderDailySuggestions(root,all,selected,light) {
+  if(selected.length>=3 || light && selected.length)return;
+  const day=getTodayKey(),boardId=state.activeBoardId;
+  if(dailySession().focusDrafts?.[day]){root.append(planningButton('Resume next-step draft',openDailyFocus,'pencil'));return;}
+  const projected=all.map(dailySuggestionProjection),suggestions=LifeMomentum.suggest(projected,{today:day,selected,limit:light?1:3-selected.length});
+  if(!suggestions.length)return;
+  const section=planningNode(selected.length?'details':'section','daily-suggestions');
+  section.append(planningNode(selected.length?'summary':'h4','',selected.length?'Choose another step':'A place to start'));
+  const list=planningNode('ul','daily-suggestion-list'),message=planningNode('p','daily-message');message.setAttribute('role','status');
+  for(const suggestion of suggestions){
+    const row=planningNode('li'),copy=planningNode('span','daily-suggestion-copy');copy.append(planningNode('strong','',suggestion.title),planningNode('small','',suggestion.area+' · '+suggestion.reason));
+    const expected=projected.find(item=>item.key===suggestion.key),button=planningButton('',()=>chooseDailySuggestion(boardId,day,expected,message));
+    button.className='daily-suggestion-choice';button.setAttribute('aria-label','Choose for today: '+suggestion.title);
+    const icon=planningNode('span','daily-suggestion-add');icon.dataset.icon='plus';icon.setAttribute('aria-hidden','true');
+    button.replaceChildren(copy,icon);row.append(button);list.append(row);
+  }
+  section.append(list,message);root.append(section);
 }
 function dailyUpcoming(start,end='9999-12-31') {
   const activities=calendarActivities().filter(({activity:a})=>a.allDay?a.endDate>=start && a.startDate<=end:LifePlanning.localInput(a.endAt || a.startAt).slice(0,10)>=start && LifePlanning.localInput(a.startAt).slice(0,10)<=end)
@@ -414,23 +526,30 @@ function dailyFollowThrough(start,end) {
     return {date:day,total:keys.length,done:keys.filter(key=>completed.some(t=>dailyFocusKey(t)===key)).length,revised:!LifeStateMerge.equal(keys,versions.at(-1).taskKeys)};});
 }
 function renderProgressHome() {
-  const root=planningNode('section','progress-home'),today=getTodayKey(),week=dailyWeekStart(today),actions=dailyFollowThrough(week,today),tasks=dailyCompletedTasks(week,today);
-  root.append(planningNode('h2','','Progress'),planningNode('p','daily-muted',formatPlannerOriginDate(week)+' - '+formatPlannerOriginDate(today)));
-  const measures=planningNode('div','progress-measures');
-  for(const [label,value] of [['Original chosen actions',actions.length?actions.reduce((n,r)=>n+r.done,0)+' / '+actions.reduce((n,r)=>n+r.total,0)+' completed':'Not recorded'],['Dated task completions',String(tasks.length)],['Days with a chosen plan',String(actions.length)]]){
-    const metric=planningNode('div','progress-measure');metric.append(planningNode('small','',label),planningNode('strong','',value));measures.append(metric);
-  }root.append(measures);
-  if(actions.some(a=>a.revised))root.append(planningNode('small','daily-muted','Revised plans retain their original choices in these totals.'));
-  const tools=planningNode('div','daily-actions');tools.append(planningButton('Weekly review',openDailyReview,'pencil'),planningButton('Reports',openReportsModal,'bar-chart'));root.append(tools);
+  const root=planningNode('section','progress-home'),today=getTodayKey();
+  const view=dailySession().progressView==='goals'?'goals':'overview';
+  const nav=planningNode('nav','progress-section-nav');nav.setAttribute('aria-label','Progress sections');
+  for(const [key,label] of [['overview','Overview'],['goals','Goals & check-ins']]){
+    const button=planningButton(label,()=>showProgressSection(key));button.setAttribute('aria-pressed',String(view===key));button.setAttribute('aria-controls',key==='overview'?'progressOverview':'progressGoals');nav.append(button);
+  }
+  root.append(nav);
+  const overview=planningNode('div','progress-overview');overview.id='progressOverview';overview.hidden=view!=='overview';root.append(overview);
+  renderMomentumProgress(overview);
   for(const program of currentCoachingPrograms()){
     const routine=LifeCoaching.metrics(program).some(m=>m.kind==='weekly');if(!routine)continue;
-    const section=dailySection('Sustainable routine · '+program.title),weeks=LifeCoaching.latestWeeks(program,today),recent=Array.from({length:4},(_,i)=>LifePlanning.shift(LifeCoaching.weekStart(program,[today,program.endDate].sort()[0]),-7*i)).filter(day=>day>=program.startDate).reverse();
+    const section=planningNode('details','momentum-routine-history'),weeks=LifeCoaching.latestWeeks(program,today),recent=Array.from({length:4},(_,i)=>LifePlanning.shift(LifeCoaching.weekStart(program,[today,program.endDate].sort()[0]),-7*i)).filter(day=>day>=program.startDate).reverse();
+    section.append(planningNode('summary','','Routine history · '+program.title));
     const list=planningNode('div','progress-routine-weeks');
     for(const date of recent){const record=weeks.find(w=>w.date===date),row=planningNode('div','progress-routine-week');row.append(planningNode('strong','',formatPlannerOriginDate(date)),planningNode('small','',record?'Recorded':'Not recorded'));
       for(const [key,label] of [['exercise','Exercise'],['rest','Rest'],['personal','Personal time'],['reflection','Reflection']])row.append(planningNode('span',record?.[key]?'routine-recorded':'routine-unreported',(record?record[key]?'✓ ':'○ ':'— ')+label));list.append(row);
-    }section.append(list);root.append(section);
+    }section.append(list);overview.append(section);
   }
   elements.boardGrid.append(root);
+}
+function showProgressSection(view) {
+  if(!['overview','goals'].includes(view))return;
+  if(isProtectedTextEditActive())document.activeElement?.blur();
+  dailySession().progressView=view;saveDailyDraft();renderCardsOnly({force:true});
 }
 function appendDailyReviewFacts(root,start,end) {
   const {tasks,changes,upcoming}=dailyReviewFacts(start,end);
@@ -440,27 +559,42 @@ function appendDailyReviewFacts(root,start,end) {
   section('Next seven days',upcoming.map(item=>item.title+' · '+item.detail));
   section('Chosen actions',dailyFollowThrough(start,end).sort((a,b)=>a.date.localeCompare(b.date)).map(row=>row.date+' · '+row.done+' / '+row.total+' original choices completed'+(row.revised?' · Plan revised':'')));
 }
-function openDailyReview() {
-  const dialog=dailyDialog('Weekly review'),session=dailySession();
-  const week=session.reviewWeek || dailyWeekStart(getTodayKey());session.reviewWeek=week;
-  const end=[LifePlanning.shift(week,6),getTodayKey()].sort()[0];
+function openDailyReview(requestedWeek) {
+  const dialog=dailyDialog('Weekly review'),session=dailySession(),boardId=state.activeBoardId,today=getTodayKey();dialog.classList.add('daily-review-dialog');
+  const candidate=typeof requestedWeek==='string'?requestedWeek:session.reviewWeek;
+  const week=LifePlanner.validDate(candidate) && candidate<=today?dailyWeekStart(candidate):dailyWeekStart(today);session.reviewWeek=week;
+  const end=[LifePlanning.shift(week,6),today].sort()[0],message=planningNode('p','daily-message');message.setAttribute('role','status');
+  const sameBoard=()=>{if(boardId===state.activeBoardId)return true;message.textContent='The board changed. Your draft is kept on its original board; reopen the review there.';return false;};
   const nav=planningNode('div','daily-actions');
-  const change=amount=>{session.reviewWeek=LifePlanning.shift(week,amount);saveDailyDraft();dialog.close();openDailyReview();};
-  const next=planningIcon('Next week',()=>change(7),'chevron-right');next.disabled=LifePlanning.shift(week,7)>getTodayKey();
+  const change=amount=>{if(!sameBoard())return;session.reviewWeek=LifePlanning.shift(week,amount);saveDailyDraft(boardId);dialog.close();openDailyReview(session.reviewWeek);};
+  const next=planningIcon('Next week',()=>change(7),'chevron-right');next.disabled=LifePlanning.shift(week,7)>today;
   nav.append(planningIcon('Previous week',()=>change(-7),'chevron-left'),planningNode('strong','','Calendar week · '+week+' - '+end),next);dialog.append(nav);
-  appendDailyReviewFacts(dialog,week,end);
+  const facts=momentumWeek(week),overview=planningNode('dl','daily-review-overview');
+  for(const [label,value] of [['Tasks completed',facts.total],['Days with a chosen plan',facts.plannedDays],['Days with writing',facts.writingDays]]){
+    const item=planningNode('div');item.append(planningNode('dt','',label),planningNode('dd','',String(value)));overview.append(item);
+  }dialog.append(overview);
   const previous=latestDailyRecord('review',week),drafts=session.reviews ||= {},draft=drafts[week] ||= {mattered:previous?.mattered || '',easier:previous?.easier || ''};
-  const form=planningNode('form','daily-form'),message=planningNode('p','daily-message');message.setAttribute('role','status');
+  const form=planningNode('form','daily-form');
   for(const [key,label] of [['mattered','What mattered?'],['easier','What would make next week easier?']]){
-    const input=planningNode('textarea');input.rows=3;input.value=draft[key];input.oninput=()=>{draft[key]=input.value;draft.changed=true;drafts[week]=draft;message.textContent=saveDailyDraft()?'Draft kept in this tab':'Draft only in memory - storage unavailable';};form.append(planningField(label,input));
+    const input=planningNode('textarea');input.rows=3;input.value=draft[key];input.oninput=()=>{draft[key]=input.value;draft.changed=true;drafts[week]=draft;message.textContent=saveDailyDraft(boardId)?'Draft kept in this tab':'Draft only in memory - storage unavailable';};form.append(planningField(label,input));
   }
-  const save=planningButton('Keep reflection',null,'check');save.type='submit';form.append(message,save);
-  form.onsubmit=event=>{event.preventDefault();if(!draft.mattered.trim()&&!draft.easier.trim()){message.textContent='Write a thought to keep.';return;}
-    if(saveDailyRecord({kind:'review',date:week,mattered:draft.mattered,easier:draft.easier},message)){delete drafts[week];saveDailyDraft();message.textContent='Saved on this device. Earlier reflections are kept.';}};
-  dialog.append(form);
-  const history=planningNode('details','daily-review-history');history.append(planningNode('summary','','Saved reflections'));
-  dailyRecords().filter(e=>e.kind==='review' && e.date===week).sort((a,b)=>b.recordedAt-a.recordedAt).forEach(e=>{history.append(planningNode('small','',formatRecordDateTime(e.recordedAt)),planningNode('p','',e.mattered),planningNode('p','',e.easier));});dialog.append(history);
+  const save=planningButton('Keep reflection',null,'check');save.type='submit';form.append(message,save);dialog.append(form);
+  const evidence=planningNode('details','daily-review-evidence');evidence.append(planningNode('summary','','Review task and priority details'));appendDailyReviewFacts(evidence,week,end);dialog.append(evidence);
+  const history=planningNode('details','daily-review-history');
+  const renderHistory=()=>{
+    const records=dailyRecords().filter(e=>e.kind==='review' && e.date===week).sort((a,b)=>b.recordedAt-a.recordedAt);
+    history.replaceChildren(planningNode('summary','','Saved reflections ('+records.length+')'));
+    records.forEach(e=>history.append(planningNode('small','',formatRecordDateTime(e.recordedAt)),planningNode('p','',e.mattered),planningNode('p','',e.easier)));
+  };renderHistory();dialog.append(history);
+  form.onsubmit=event=>{
+    event.preventDefault();if(!sameBoard())return;
+    if(!draft.mattered.trim()&&!draft.easier.trim()){message.textContent='Write a thought to keep.';return;}
+    const latest=latestDailyRecord('review',week);
+    if(latest?.mattered===draft.mattered && latest?.easier===draft.easier){message.textContent='This reflection is already saved on this device.';return;}
+    if(saveDailyRecord({kind:'review',date:week,mattered:draft.mattered,easier:draft.easier},message)){delete drafts[week];saveDailyDraft(boardId);message.textContent='Saved on this device. Earlier reflections are kept.';renderHistory();}
+  };
   dialog.append(planningButton('Download weekly summary',()=>{
+    if(!sameBoard())return;
     const report=createReportDocument('Weekly review',state.board.name+' · '+week+' - '+end);appendDailyReviewFacts(report,week,end);
     const saved=latestDailyRecord('review',week);if(saved){report.append(planningNode('h3','','What mattered?'),planningNode('p','',saved.mattered),planningNode('h3','','What would make next week easier?'),planningNode('p','',saved.easier));}
     downloadTextFile('life-os-week-'+week+'.html','<!doctype html><meta charset="utf-8"><title>Life OS weekly review</title><style>body{max-width:800px;margin:32px auto;padding:16px;font:16px/1.6 system-ui}p{white-space:pre-wrap;overflow-wrap:anywhere}button{display:none}section{margin:24px 0}</style>'+report.outerHTML,'text/html;charset=utf-8');

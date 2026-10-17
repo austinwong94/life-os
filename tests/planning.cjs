@@ -16,7 +16,8 @@ const results=[];
   console.log(JSON.stringify(results.at(-1)));await context.close();
  }
  const tasks=p=>workspace(p,'tasks');
- const add=async(p,title,area='Culturely',date)=>{await p.getByLabel('New task',{exact:true}).fill(title);await p.locator('.task-capture').getByLabel('Area',{exact:true}).selectOption(area);if(date==='')await p.getByRole('button',{name:'Clear planned day',exact:true}).click();else if(date!==undefined)await p.getByLabel('Planned day (optional)',{exact:true}).fill(date);await p.getByLabel('New task',{exact:true}).press('Enter');};
+ const captureOptions=async p=>{if(await p.locator('.task-capture-details').getAttribute('open')===null)await p.locator('.task-capture-details > summary').click();};
+ const add=async(p,title,area='Culturely',date)=>{await p.getByLabel('New task',{exact:true}).fill(title);await captureOptions(p);await p.locator('.task-capture').getByLabel('Area',{exact:true}).selectOption(area);if(date==='')await p.getByRole('button',{name:'Clear planned day',exact:true}).click();else if(date!==undefined)await p.getByLabel('Planned day (optional)',{exact:true}).fill(date);await p.getByLabel('New task',{exact:true}).press('Enter');};
  const edit=async(p,title)=>{await p.getByRole('button',{name:'Task options: '+title,exact:true}).click();await p.getByRole('button',{name:'Edit planner task: '+title,exact:true}).click();};
  await run('categorized task entry, metadata edit, undated capture, search and reload retain original records',async p=>{
   await tasks(p);await add(p,'Prepare Culturely launch');await edit(p,'Prepare Culturely launch');
@@ -142,7 +143,7 @@ const results=[];
     assert.ok(await p.locator('.planning-workspace input,.planning-workspace select,.planning-workspace textarea').evaluateAll(nodes=>nodes.every(e=>e.getBoundingClientRect().right<=innerWidth+1)));
     await p.screenshot({path:out+'/'+mode+'-'+width+'.png',fullPage:true});
     if(mode==='tasks'){
-     if(width===320)assert.ok(await p.getByLabel('Planned day (optional)',{exact:true}).evaluate(e=>e.getBoundingClientRect().width>=200));
+     await captureOptions(p);if(width===320)assert.ok(await p.getByLabel('Planned day (optional)',{exact:true}).evaluate(e=>e.getBoundingClientRect().width>=200));
      await edit(p,'Review the Sunrise Villa bookings and prepare the next guest arrival checklist');
      assert.ok(await p.locator('.planner-linked-edit-form').evaluate(e=>e.getBoundingClientRect().width>=240&&e.scrollWidth<=e.clientWidth+1));
      await p.getByLabel('Task notes',{exact:true}).fill('A complete thought across\nmultiple lines');
@@ -178,7 +179,7 @@ const results=[];
     return {top:first.top,rowHeight:first.height,count:rows.length,overlaps,overflow:document.documentElement.scrollWidth-innerWidth,innerOverflow:workspace.scrollWidth-workspace.clientWidth,
      font:parseFloat(getComputedStyle(list.querySelector('.planner-linked-copy')).fontSize),
      menuHeight:list.querySelector('.planner-task-menu-toggle').getBoundingClientRect().height,
-     captureHeights:[...document.querySelectorAll('.task-capture input,.task-capture select,.task-capture-submit')].map(e=>e.getBoundingClientRect().height),
+     captureHeights:[...document.querySelectorAll('.task-capture input,.task-capture select,.task-capture-submit')].filter(e=>e.getClientRects().length).map(e=>e.getBoundingClientRect().height),
      captureMessage:document.querySelector('.task-capture .planning-message')?.textContent || '',
      headerHeights:Object.fromEntries(['.workspace-header','.workspace-navigation','.plan-view-switch','.task-heading','.task-toolbar','.task-capture','.task-results-heading'].map(selector=>[selector,document.querySelector(selector)?.getBoundingClientRect().height || 0]))};
    });measurements.push({width,...m});

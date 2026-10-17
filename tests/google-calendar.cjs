@@ -33,7 +33,11 @@ fs.mkdirSync(out,{recursive:true});
       await p.evaluate(async()=>{
         const card=makeCard({type:'planner',title:'Test planner'});card.id='google-source';LifePlanner.add(card,getTodayKey(),'Sample walk','google-task');
         state.cards=[card];state.archivedCards=[];saveState({skipCloud:true});await flushDeviceWrites();
-        cloudSession={user:{id:'test-user'},access_token:'synthetic-only',expires_at:Date.now()+3600000};
+        const session={user:{id:'test-user'},access_token:'synthetic-only',expires_at:Date.now()+3600000};
+        // Live controls must use a retained sign-in, not bypass the guard that
+        // rejects credentials removed by another tab. Preview never saves it.
+        if(PREVIEW_MODE)cloudSession=session;else saveCloudSession(session);
+        cloudSaveEnabled=false;cloudSessionMaintenancePending=true;
       });
       await workspace(p,'calendar');await action(p,calls);assert.deepEqual(errors,[]);results.push({name,pass:true});
     }catch(e){results.push({name,pass:false,error:e.stack});await p.screenshot({path:out+'/failure-'+results.length+'.png',fullPage:true});}

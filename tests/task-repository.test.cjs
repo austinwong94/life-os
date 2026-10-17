@@ -83,3 +83,62 @@ test('malformed history cannot cause a partial rename or erase original values',
   target.taskCompletionEvents=[null,'Original array value'];repo.complete(target,true,'2026-10-10',Date.parse('2026-10-11T04:00:00Z'));
   repo.complete(target,false,'2026-10-11',Date.parse('2026-10-11T05:00:00Z'));assert.deepEqual(target.taskCompletionEvents.slice(0,2),[null,'Original array value']);
 });
+const timerFixture=()=>({id:'timed',type:'single',title:'A step',done:false,timerMode:'hours',remaining:120,runningSince:new Date('2026-10-15T23:59:00').getTime(),unknown:{kept:true}});
+test('timer expiry records the actual finish date and time, separately from when it is noticed',()=>{
+  const card=timerFixture(),before=structuredClone(card),at=card.runningSince+120000,now=at+86400000;
+  assert.equal(repo.expireTimer(card,at-1),null);
+  const next=repo.expireTimer(card,now);
+  assert.deepEqual(card,before);assert.equal(next.done,true);assert.equal(next.remaining,0);assert.equal(next.runningSince,null);
+  assert.equal(next.taskCompletion.on,'2026-10-16');assert.equal(next.taskCompletion.at,at);assert.equal(next.taskCompletion.recordedAt,now);
+  assert.equal(next.taskCompletionEvents.length,1);assert.equal(next.taskCompletionEvents[0].at,at);assert.equal(next.taskCompletionEvents[0].recordedAt,now);
+  assert.deepEqual(next.unknown,card.unknown);assert.equal(repo.expireTimer(next,now+1),null);
+});
+test('repeated expiry comparisons retain a stable event identity without touching the original',()=>{
+  const card=timerFixture(),now=card.runningSince+120000;
+  assert.equal(repo.expireTimer(card,now).taskCompletionEvents[0].id,repo.expireTimer(card,now+1000).taskCompletionEvents[0].id);
+  assert.equal(card.taskCompletionEvents,undefined);
+});
+test('expiry does not invent history for already completed legacy tasks or change their dated history',()=>{
+  for(const withHistory of [false,true]){
+    const card=timerFixture();if(withHistory)repo.complete(card,true,'2026-10-14',new Date('2026-10-14T12:00:00').getTime());else card.done=true;
+    const next=repo.expireTimer(card,card.runningSince+120000);
+    assert.deepEqual(next.taskCompletion,card.taskCompletion);assert.deepEqual(next.taskCompletionEvents,card.taskCompletionEvents);assert.equal(next.done,true);
+  }
+});
+test('malformed timer completion history is refused without a partial mutation',()=>{
+  const card=timerFixture();card.taskCompletionEvents='Imported original';const before=structuredClone(card);
+  assert.throws(()=>repo.expireTimer(card,card.runningSince+120000),/history needs review/);assert.deepEqual(card,before);
+  for(const previous of ['Original imported completion',null,{done:true,on:'2026-10-14',at:123,recordedAt:123},{done:false,on:'2026-10-14',at:0,recordedAt:123},{done:false,on:'',at:0,recordedAt:NaN}]){
+    const target=timerFixture();target.taskCompletion=previous;const original=structuredClone(target);
+    assert.throws(()=>repo.expireTimer(target,target.runningSince+120000),/history needs review/);assert.deepEqual(target,original);
+  }
+});
+test('expiry ignores unsupported cards, invalid timestamps, archived records and internal stores',()=>{
+  const card=timerFixture(),now=card.runningSince+120000;
+  for(const patch of [{id:''},{type:'routine'},{type:'event'},{timerMode:'date'},{archivedAt:123},{dailyWorkspaceStore:true},{coachingStore:true},{plannerSourceOnly:true},{remaining:NaN},{remaining:-1},{runningSince:'123'},{runningSince:0}])assert.equal(repo.expireTimer({...card,...patch},now),null);
+  assert.equal(repo.expireTimer(card,NaN),null);
+  assert.equal(repo.expireTimer(card,1e20),null);
+});
+test('a newly expired task preserves earlier completion and reopen events',()=>{
+  const card=timerFixture(),now=card.runningSince+120000;
+  repo.complete(card,true,'2026-10-14',now-86400000);repo.complete(card,false,'2026-10-15',now-1);
+  const next=repo.expireTimer(card,now);assert.equal(next.taskCompletionEvents.length,3);assert.deepEqual(next.taskCompletionEvents.slice(0,2),card.taskCompletionEvents);assert.equal(next.taskCompletionEvents[2].done,true);
+});
+test('an explicit reopen after expiry takes precedence when the timer is noticed late',()=>{
+  const card=timerFixture(),at=card.runningSince+120000;
+  repo.complete(card,false,'2026-10-16',at+1000);const before=structuredClone(card),next=repo.expireTimer(card,at+2000);
+  assert.equal(next.done,false);assert.equal(next.runningSince,null);assert.equal(next.remaining,0);assert.deepEqual(next.taskCompletion,before.taskCompletion);assert.deepEqual(next.taskCompletionEvents,before.taskCompletionEvents);assert.deepEqual(card,before);
+});
+test('expiry on different boards with matching card IDs merges without crossing their histories',()=>{
+  const M=require('../state-merge.js'),card=timerFixture(),now=card.runningSince+120000;
+  const base={boards:[{id:'one',cards:[card]},{id:'two',cards:[structuredClone(card)]}]},left=structuredClone(base),right=structuredClone(base);
+  left.boards[0].cards[0]=repo.expireTimer(left.boards[0].cards[0],now);
+  right.boards[1].cards[0]=repo.expireTimer(right.boards[1].cards[0],now+1000);
+  const merged=M.merge(base,left,right);assert.deepEqual(merged.conflicts,[]);
+  for(const board of merged.boards){assert.equal(board.cards[0].done,true);assert.equal(board.cards[0].taskCompletionEvents.length,1);}
+  assert.equal(merged.boards[0].cards[0].taskCompletion.recordedAt,now);assert.equal(merged.boards[1].cards[0].taskCompletion.recordedAt,now+1000);
+});
+test('a daylight-saving repeated hour retains the exact expiry instant, not its first clock-time occurrence',()=>{
+  const {execFileSync}=require('node:child_process');
+  execFileSync(process.execPath,['-e',`const assert=require('node:assert/strict'),repo=require('./task-repository.js');const at=Date.parse('2026-11-01T06:30:00Z'),c={id:'dst',type:'single',timerMode:'hours',remaining:60,runningSince:at-60000,done:false};const next=repo.expireTimer(c,at+1000);assert.equal(next.taskCompletion.on,'2026-11-01');assert.equal(next.taskCompletion.at,at);assert.equal(next.taskCompletionEvents[0].at,at);`],{cwd:require('node:path').resolve(__dirname,'..'),env:{...process.env,TZ:'America/New_York'}});
+});
