@@ -2,6 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),{Script}=require('node:vm');
 const {hardenPropertyCalendarLinks}=require('./property-calendar-links.cjs');
 const {enhancePropertyCalendarDay}=require('./property-calendar-day.cjs');
+const {enhancePropertyPeriod}=require('./property-period.cjs');
 const source=path.resolve(process.argv[2] || path.join(__dirname,'../../../2026-04-28/sunrise-villa-dashboard'));
 const root=path.resolve(__dirname,'..');
 function replace(text,from,to){if(!text.includes(from))throw new Error('Property source changed: '+from.slice(0,65));return text.replace(from,to);}
@@ -94,6 +95,7 @@ const aiNotice=document.createElement('p');aiNotice.className='property-ai-notic
 window.addEventListener('beforeunload',event=>{if(cloudDirty || documentHasUnsavedChanges || localStorage.pending()){event.preventDefault();event.returnValue='';}});
 } catch(error) { window.PropertyHost.failed(error); }
 })();\n`;
+runtime=enhancePropertyPeriod(runtime);
 new Script(runtime,{filename:'property-runtime.js'});
 let html=fs.readFileSync(path.join(source,'index.html'),'utf8');
 html=html.replaceAll('https://nigzeyamrzrozftbujmm.supabase.co','https://shrmhjulhfuodtrsqhpu.supabase.co').replaceAll('wss://nigzeyamrzrozftbujmm.supabase.co','wss://shrmhjulhfuodtrsqhpu.supabase.co');
