@@ -58,6 +58,19 @@ fs.mkdirSync(out,{recursive:true});
     await p.screenshot({path:out+'/compact-desktop.png',fullPage:false});
     await p.setViewportSize({width:390,height:844});await p.waitForTimeout(220);await p.screenshot({path:out+'/compact-phone.png',fullPage:true});
   });
+  await run('multiline workout and session notes retain indentation through typing, part switches, reload and readable exports',async p=>{
+    await p.setViewportSize({width:390,height:844});
+    const notes='  First sample thought.\n\tSecond sample line.\n',session='  A complete session note.\nAnother line, kept exactly.\n';
+    await p.locator('.fitness-active .fitness-notes-panel > summary').click();await p.getByLabel('Chest notes',{exact:true}).fill(notes);
+    await p.getByRole('button',{name:'Running',exact:true}).click();await p.locator('.fitness-active .fitness-notes-panel > summary').click();await p.getByLabel('Running notes',{exact:true}).fill(notes);
+    await p.locator('.fitness-metrics > summary').click();await p.locator('.fitness-metrics .fitness-notes-panel > summary').click();await p.getByLabel('Session notes',{exact:true}).fill(session);await p.locator('.fitness-metrics > summary').click();
+    await p.getByRole('button',{name:'Chest',exact:true}).click();assert.equal(await p.getByLabel('Chest notes',{exact:true}).inputValue(),notes);assert.equal(await p.locator('.fitness-metrics').getAttribute('open'),null);
+    await p.evaluate(()=>flushDeviceWrites());await p.reload();assert.equal(await p.getByLabel('Chest notes',{exact:true}).inputValue(),notes);
+    await p.getByRole('button',{name:'Running',exact:true}).click();assert.equal(await p.getByLabel('Running notes',{exact:true}).inputValue(),notes);
+    await p.locator('.fitness-metrics > summary').click();assert.equal(await p.getByLabel('Session notes',{exact:true}).inputValue(),session);
+    const html=await p.evaluate(()=>buildReadableDataArchive(getStateForStorage()));assert.ok(html.includes(notes));assert.ok(html.includes(session));
+    for(const width of [320,390,1080]){await p.setViewportSize({width,height:844});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await p.getByLabel('Session notes',{exact:true}).scrollIntoViewIfNeeded();assert.ok(await p.getByLabel('Session notes',{exact:true}).evaluate(e=>e.value.includes('\n') && e.getBoundingClientRect().right<=innerWidth));await p.screenshot({path:out+'/multiline-notes-'+width+'.png'});}
+  });
   await run('multi-digit workout edits retain focus, metric disclosure and historical records through navigation and reload',async p=>{
     await p.setViewportSize({width:390,height:844});const metrics=p.locator('.fitness-metrics');await metrics.locator(':scope > summary').click();
     const weight=p.getByLabel('Weight (kg)',{exact:true});await weight.fill('');await weight.pressSequentially('71.25',{delay:60});assert.equal(await weight.inputValue(),'71.25');

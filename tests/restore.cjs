@@ -234,6 +234,52 @@ const results = [];
     assert.equal(await p.evaluate(()=>corruptLocalStateDetected),false);
     assert.deepEqual(records(await p.evaluate(()=>getStateForStorage().boards)),records(backup.state.boards));
   });
+  await run('a fresh browser restores an exported full workspace across engines without losing extended records or importing sessions',async p=>{
+    const instant=new Date('2026-10-18T04:00:00Z');await p.clock.setFixedTime(instant);
+    const program=require('./coaching-fixture.cjs')();
+    await p.evaluate(async program=>{
+      const day='2026-10-18',notes='  Sample first line.\n\tSample second line.\n',extra={originalSource:'Synthetic recovery drill',nested:[1,false,null]};
+      const cards=['diary','sidenote','planner','fitness','food','quote','checklist'].map(type=>({...makeCard({type,title:'Recovery sample '+type}),id:'shared-'+type,customData:extra}));
+      const diary=cards.find(c=>c.type==='diary');diary.diaryEntries[day]={thoughts:notes,sentence:'A complete sample day',updatedAt:1,customData:extra};
+      cards.find(c=>c.type==='sidenote').sideNoteEntries[day]={notes:[{id:'note',text:notes,createdAt:1,updatedAt:2,customData:extra}],updatedAt:2,customData:extra};
+      const planner=cards.find(c=>c.type==='planner');LifePlanner.add(planner,'2026-10-16','A sample late completion','completed',1);LifePlanner.complete(planner,'completed',day,Date.now());LifePlanner.add(planner,day,'A sample archived task','archived',1);LifePlanner.change(planner,'archived',{archivedAt:Date.now(),customData:extra});
+      const fitness=cards.find(c=>c.type==='fitness');fitness.fitnessEntries[day]={notes,customData:extra,updatedAt:2,metrics:{weightKg:70.25,heightCm:175,customData:extra},parts:{customActivity:{original:true},running:{active:true,distanceKm:5,durationMinutes:30,notes,customData:extra},chest:{active:true,notes,customData:extra,exercises:[{id:'press',name:'Press',sets:3,reps:'12',weightKg:12.5,notes,customData:extra}]}}};
+      const food=cards.find(c=>c.type==='food');food.foodLibrary[0].customData=extra;food.foodTargets['2026-10']={calories:2100,protein:150,carbs:250,fat:65,fiber:30,customData:extra};food.foodEntries[day]={updatedAt:2,customData:extra,meals:[{id:'lunch',name:'Sample lunch',customData:extra,items:[{...createFoodItemSnapshot(food.foodLibrary[0]),id:'logged-food',foodId:food.foodLibrary[0].id,amount:125,unit:'g',customData:extra}]}]};
+      cards.find(c=>c.type==='quote').description=notes;cards.find(c=>c.type==='checklist').items=[{id:'project-item',text:'Sample project item',done:true,customData:extra}];
+      const archived=[{...makeCard({type:'diary',title:'Archived sample diary'}),id:'archived-writing',archivedAt:1,diaryEntries:{'2026-09-01':{thoughts:notes,updatedAt:1,customData:extra}}}];
+      program.entries.push({id:'reflection',kind:'reflection',priorityId:'life',krId:'routine',date:day,note:notes,recordedAt:1,customData:extra});
+      archived.push({...makeCard({type:'planner',title:'Sample priority history'}),id:'priorities-history',plannerSourceOnly:true,coachingStore:true,archivedAt:1,coachingPrograms:[program]});
+      archived.push({...makeCard({type:'single',title:'Sample daily history'}),id:'daily-history',plannerSourceOnly:true,dailyWorkspaceStore:true,archivedAt:1,workspaceRecords:[{id:'review',kind:'review',date:'2026-10-12',recordedAt:1,mattered:notes,easier:'A smaller plan',customData:extra}]});
+      const first=createBoardRecord({id:'recovery-one',name:'Recovery sample A',cards,archivedCards:archived});
+      first.customData=extra;first.money=LifeMoney.empty();first.money.accounts=[{id:'bank',name:'Sample bank',owner:'personal',type:'cash',openingDate:'2026-10-01',openingCents:100000,reservedCents:10000,customData:extra}];
+      first.money.entries=[{id:'purchase',kind:'expense',status:'settled',title:'Sample purchase',amountCents:1234,accountId:'bank',date:day,dueDate:day,category:'Personal Spending',note:notes,repeat:'none',customData:extra},{id:'monthly',kind:'expense',status:'planned',title:'Sample monthly bill',amountCents:5000,accountId:'bank',date:day,dueDate:day,category:'Housing',note:notes,repeat:'monthly',customData:extra}];LifeMoney.validate(first.money);
+      const second=createBoardRecord({id:'recovery-two',name:'Recovery sample B',cards:[{...makeCard({type:'diary',title:'Independent sample diary'}),id:'shared-diary',diaryEntries:{[day]:{thoughts:'Independent board writing',updatedAt:1}}}],archivedCards:[]});second.customData={keep:'Independent metadata'};
+      state.boards=[first,second];state.activeBoardId=first.id;applyBoardToState(state,first.id);saveState({skipCloud:true});await flushDeviceWrites();
+      const older=getStateForStorage();older.boards[0].cards.find(c=>c.type==='diary').diaryEntries[day].thoughts='Older recovery version - do not replay';saveCloudRecoveryPoint('sample-older-version',older);
+      localStorage.setItem(CLOUD_SESSION_KEY,JSON.stringify({access_token:'SYNTHETIC-SECRET-NOT-FOR-EXPORT',refresh_token:'SYNTHETIC-REFRESH-NOT-FOR-EXPORT'}));
+    },program);
+    const waiting=p.waitForEvent('download');await p.evaluate(()=>exportBoardBackup());const download=await waiting,file=OUT+'/fresh-browser-backup.json';await download.saveAs(file);const bytes=fs.readFileSync(file),backup=JSON.parse(bytes),hash=require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+    assert.equal(backup.includesAuthSession,false);assert.ok(!bytes.includes('SYNTHETIC-SECRET'));assert.ok(!bytes.includes('SYNTHETIC-REFRESH'));
+    const expected=backup.state.boards,first=expected[0],fitness=first.cards.find(c=>c.type==='fitness').fitnessEntries['2026-10-18'];
+    assert.equal(first.customData?.originalSource,'Synthetic recovery drill','The complete export must retain board metadata');assert.equal(fitness.notes,'  Sample first line.\n\tSample second line.\n');assert.equal(fitness.parts.chest.exercises[0].customData?.originalSource,'Synthetic recovery drill');
+    assert.equal(first.cards.find(c=>c.type==='food').foodEntries['2026-10-18'].meals[0].items[0].customData.originalSource,'Synthetic recovery drill');assert.equal(first.cards.find(c=>c.type==='sidenote').sideNoteEntries['2026-10-18'].notes[0].text,fitness.notes);
+    await p.context().close();
+    const targetEngine=process.env.TEST_BROWSER==='webkit'?'chromium':'webkit',targetBrowser=await engines[targetEngine].launch({headless:true});let targetPage;
+    try{
+      const target=await targetBrowser.newContext({viewport:{width:390,height:844},timezoneId:'Asia/Kuala_Lumpur'}),errors=[],alerts=[];
+      await target.route('https://**/*',r=>r.fulfill({status:503,body:'No cloud or private accounts in recovery drill'}));
+      const page=targetPage=await target.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('dialog',async d=>{alerts.push(d.message());await d.accept();});await page.clock.setFixedTime(instant);await page.goto(URL);
+      await page.evaluate(()=>flushDeviceWrites());assert.equal(await page.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY)),null);const before=await page.evaluate(()=>getStateForStorage().boards);
+      await page.locator('#importDataFile').setInputFiles(file);await page.getByRole('dialog',{name:'Review backup restore'}).waitFor();await page.waitForFunction(()=>!document.querySelector('.restore-consent input').disabled);
+      assert.equal(await page.getByRole('button',{name:'Restore on this device',exact:true}).isDisabled(),true);assert.match(await page.locator('.restore-recovery-note').innerText(),/not automatically merged/);
+      await confirm(page);await page.getByRole('dialog',{name:'Review backup restore'}).waitFor({state:'detached'});await page.reload();
+      assert.deepEqual(await page.evaluate(()=>getStateForStorage().boards),expected);assert.equal(await page.evaluate(()=>isRestoreSyncPaused()),true);assert.equal(await page.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY)),null);
+      assert.ok(await page.evaluate(before=>readLocalJsonValue(CLOUD_RECOVERY_KEY,[]).some(row=>LifeStateMerge.equal(row.state?.boards,before)),before));
+      await page.evaluate(()=>openSettingsModal());assert.match(await page.locator('#dataSafetySummary').textContent(),/Diary pages/);await page.screenshot({path:OUT+'/fresh-browser-recovery-'+targetEngine+'.png'});
+      const secondDownload=page.waitForEvent('download');await page.evaluate(()=>exportBoardBackup());const exported=JSON.parse(fs.readFileSync(await (await secondDownload).path(),'utf8'));assert.deepEqual(exported.state.boards,expected);assert.equal(exported.includesAuthSession,false);
+      assert.equal(require('node:crypto').createHash('sha256').update(fs.readFileSync(file)).digest('hex'),hash);assert.deepEqual(errors,[]);assert.deepEqual(alerts,[]);await target.close();
+    }catch(error){await targetPage?.screenshot({path:OUT+'/fresh-browser-failure-'+targetEngine+'.png'}).catch(()=>{});throw error;}finally{await targetBrowser.close();}
+  });
   await run('normalizing an imported food card does not read or change the current card with the same ID', async p => {
     const result=await p.evaluate(async()=>{
       const live=makeCard({type:'food',title:'Current food card'});state.cards.push(live);saveState();await flushDeviceWrites();

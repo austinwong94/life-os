@@ -4563,14 +4563,15 @@ function normalizeFitnessCard(card) {
 
 function normalizeFitnessEntry(entry = {}) {
   const parts = entry.parts && typeof entry.parts === "object" ? entry.parts : {};
-  const normalizedParts = {};
+  const normalizedParts = { ...parts };
   FITNESS_PARTS.forEach((meta) => {
     normalizedParts[meta.key] = normalizeFitnessPart(meta, parts[meta.key] || {});
   });
   return {
+    ...entry,
     parts: normalizedParts,
     metrics: normalizeFitnessMetrics(entry.metrics || {}),
-    notes: normalizeLabel(entry.notes || ""),
+    notes: String(entry.notes || ""),
     updatedAt: normalizeTimestamp(entry.updatedAt) || 0
   };
 }
@@ -4579,39 +4580,42 @@ function normalizeFitnessPart(meta, part = {}) {
   const active = Boolean(part.active);
   if (meta.type === "cardio") {
     return {
+      ...part,
       active,
       distanceKm: normalizeOptionalNumber(part.distanceKm),
       durationMinutes: normalizeOptionalNumber(part.durationMinutes),
       intensity: normalizeFitnessIntensity(part.intensity),
-      notes: normalizeLabel(part.notes || "")
+      notes: String(part.notes || "")
     };
   }
   if (meta.type === "strength") {
     const exercises = Array.isArray(part.exercises) ? part.exercises.map(normalizeFitnessExercise).filter((item) => item.name) : [];
-    return { active, exercises, notes: normalizeLabel(part.notes || "") };
+    return { ...part, active, exercises, notes: String(part.notes || "") };
   }
   return {
+    ...part,
     active,
     durationMinutes: normalizeOptionalNumber(part.durationMinutes),
     area: normalizeLabel(part.area || meta.label),
-    notes: normalizeLabel(part.notes || "")
+    notes: String(part.notes || "")
   };
 }
 
 function normalizeFitnessExercise(exercise = {}) {
   return {
+    ...exercise,
     id: exercise.id || createId(),
     name: normalizeLabel(exercise.name || "Exercise"),
     sets: normalizeOptionalNumber(exercise.sets),
     reps: normalizeLabel(exercise.reps || ""),
     weightKg: normalizeOptionalNumber(exercise.weightKg),
     rpe: normalizeOptionalNumber(exercise.rpe),
-    notes: normalizeLabel(exercise.notes || "")
+    notes: String(exercise.notes || "")
   };
 }
 
 function normalizeFitnessMetrics(metrics = {}) {
-  const next = {};
+  const next = { ...metrics };
   FITNESS_METRIC_FIELDS.forEach((field) => {
     next[field.key] = normalizeOptionalNumber(metrics[field.key]);
   });
@@ -5243,6 +5247,7 @@ function normalizeFoodLibrary(library = []) {
 function normalizeFoodDefinition(food = {}) {
   const id = normalizeLabel(food.id || "").replace(/[^a-zA-Z0-9_-]/g, "") || createId();
   return {
+    ...food,
     id,
     name: normalizeLabel(food.name || "Food"),
     servingUnit: normalizeLabel(food.servingUnit || "100g") || "100g",
@@ -5262,6 +5267,7 @@ function normalizeFoodNutrients(source = {}) {
 function normalizeFoodTarget(target = {}) {
   return {
     ...DEFAULT_FOOD_TARGETS,
+    ...target,
     ...FOOD_NUTRIENT_KEYS.reduce((next, key) => {
       const value = normalizeOptionalNumber(target[key]);
       next[key] = value === "" ? DEFAULT_FOOD_TARGETS[key] : Math.max(0, value);
@@ -5275,6 +5281,7 @@ function normalizeFoodEntry(entry = {}) {
     ? entry.meals.map(normalizeFoodMeal)
     : getDefaultFoodMeals();
   return {
+    ...entry,
     meals,
     updatedAt: normalizeTimestamp(entry.updatedAt) || 0
   };
@@ -5282,6 +5289,7 @@ function normalizeFoodEntry(entry = {}) {
 
 function normalizeFoodMeal(meal = {}, index = 0) {
   return {
+    ...meal,
     id: meal.id || createId(),
     name: normalizeLabel(meal.name || `Meal ${index + 1}`),
     items: Array.isArray(meal.items) ? meal.items.map(normalizeFoodItem).filter(Boolean) : []
@@ -5291,6 +5299,7 @@ function normalizeFoodMeal(meal = {}, index = 0) {
 function normalizeFoodItem(item = {}) {
   const amount = normalizeOptionalNumber(item.amount);
   return {
+    ...item,
     id: item.id || createId(),
     foodId: normalizeLabel(item.foodId || item.food || ""),
     amount: amount === "" ? 1 : Math.max(0, amount),
@@ -7672,8 +7681,9 @@ function normalizeSideNoteEntry(entry = {}) {
   const rawNotes = Array.isArray(entry.notes) ? entry.notes : entry.note || entry.text ? [{ text: entry.note || entry.text, createdAt: entry.createdAt, updatedAt: entry.updatedAt }] : [];
   const notes = rawNotes
     .map(normalizeSideNoteItem)
-    .filter((note) => note.text);
+    .filter((note) => note.text.trim());
   return {
+    ...entry,
     notes,
     updatedAt: normalizeTimestamp(entry.updatedAt) || notes.reduce((max, note) => Math.max(max, normalizeTimestamp(note.updatedAt)), 0)
   };
@@ -7682,8 +7692,9 @@ function normalizeSideNoteEntry(entry = {}) {
 function normalizeSideNoteItem(item = {}) {
   const createdAt = normalizeTimestamp(item.createdAt) || Date.now();
   return {
+    ...item,
     id: item.id || createId(),
-    text: String(item.text || item.note || "").trim(),
+    text: String(item.text || item.note || ""),
     createdAt,
     updatedAt: normalizeTimestamp(item.updatedAt) || createdAt
   };
@@ -10909,13 +10920,14 @@ function nextOrder() {
   return state.cards.length ? Math.max(...state.cards.map((card) => card.order || 0)) + 1 : 1;
 }
 
-function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], coachingPrograms, money, appearance, createdAt = Date.now(), updatedAt = createdAt }) {
+function createBoardRecord({ id = createId(), name, visibility = "private", layout = "smart", columnCount = 3, savedLayout = [], cards = [], archivedCards = [], coachingPrograms, money, appearance, createdAt = Date.now(), updatedAt = createdAt, ...preserved }) {
   const normalizedCards = cards.map(normalizeCard).map((card, index) => ({
     ...card,
     order: Number(card.order) > 0 ? Number(card.order) : index + 1
   }));
   const normalizedArchivedCards = archivedCards.map(normalizeArchivedCard);
   return {
+    ...preserved,
     id,
     name: normalizeLabel(name || "New board"),
     visibility: VISIBILITY_META[visibility] ? visibility : "private",
