@@ -61,7 +61,9 @@ function renderQuickBoardPicker() {
   });
   const trigger=document.getElementById('boardSwitcherButton');
   if (!trigger) return;
-  document.getElementById('boardSwitcherName').textContent=state.board.name;
+  const name=document.getElementById('boardSwitcherName');
+  // WebKit cancels a press if a background save replaces its text target.
+  if(name.textContent!==state.board.name)name.textContent=state.board.name;
   trigger.setAttribute('aria-label','Switch board, current: '+state.board.name);
   const menu=document.getElementById('boardSwitcherMenu');
   if (!menu) return;
