@@ -85,9 +85,10 @@ function initializeQuickBoardPicker() {
   const trigger=document.getElementById('boardSwitcherButton');
   const menu=document.createElement('div');menu.id='boardSwitcherMenu';menu.className='board-switcher-menu';menu.hidden=true;
   menu.setAttribute('role','menu');menu.setAttribute('aria-label','Boards');document.body.append(menu);renderQuickBoardPicker();
-  let query='',typedAt=0;
+  let query='',typedAt=0,scrollAtOpen=null,viewportAtOpen=null;
+  const scrollPosition=node=>node===document?[window.scrollX,window.scrollY]:[node.scrollLeft,node.scrollTop];
   const options=()=>[...menu.querySelectorAll('[role=menuitemradio],[role=menuitem]')];
-  const close=(restoreFocus=false)=>{menu.hidden=true;trigger.setAttribute('aria-expanded','false');query='';if(restoreFocus)trigger.focus({preventScroll:true});};
+  const close=(restoreFocus=false)=>{menu.hidden=true;trigger.setAttribute('aria-expanded','false');query='';scrollAtOpen=null;viewportAtOpen=null;if(restoreFocus)trigger.focus({preventScroll:true});};
   const open=(last=false)=>{
     renderQuickBoardPicker();const rect=trigger.getBoundingClientRect(),margin=12;
     const width=Math.min(Math.max(rect.width,280),360,window.innerWidth-margin*2);
@@ -100,6 +101,8 @@ function initializeQuickBoardPicker() {
     menu.hidden=false;trigger.setAttribute('aria-expanded','true');
     (last?options().at(-1):menu.querySelector('[aria-checked=true]') || options()[0])?.focus({preventScroll:true});
     document.activeElement?.scrollIntoView({block:'nearest'});
+    scrollAtOpen=new Map([document,document.documentElement,document.body,elements.workspace].filter(Boolean).map(node=>[node,scrollPosition(node)]));
+    viewportAtOpen=[window.innerWidth,window.innerHeight];
   };
   trigger.onclick=()=>menu.hidden?open():close();
   trigger.addEventListener('keydown',event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();open(event.key==='ArrowUp');}});
@@ -125,8 +128,16 @@ function initializeQuickBoardPicker() {
   });
   document.addEventListener('click',event=>{if(!menu.hidden && !menu.contains(event.target) && !trigger.contains(event.target))close();});
   document.addEventListener('focusin',event=>{if(!menu.hidden && !menu.contains(event.target) && !trigger.contains(event.target))close();});
-  window.addEventListener('resize',()=>close());
-  document.addEventListener('scroll',event=>{if(!menu.hidden && !menu.contains(event.target))close();},{capture:true,passive:true});
+  window.addEventListener('resize',()=>{
+    if(viewportAtOpen && (window.innerWidth!==viewportAtOpen[0] || window.innerHeight!==viewportAtOpen[1]))close();
+  });
+  document.addEventListener('scroll',event=>{
+    if(menu.hidden || menu.contains(event.target))return;
+    // Layout can queue a scroll notification before the menu opens.
+    const previous=scrollAtOpen?.get(event.target),current=previous && scrollPosition(event.target);
+    if(previous && current.every((value,index)=>value===previous[index]))return;
+    close();
+  },{capture:true,passive:true});
 }
 
 function resolveLiveCard(card) {

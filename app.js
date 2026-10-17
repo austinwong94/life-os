@@ -1161,6 +1161,7 @@ let draftTouched = false;
 let selectedTemplateId = boardTemplates[0]?.id || "";
 let selectedScheduleDays = [0, 2, 4];
 let boardResizeFrame = null;
+let scrollRestoreFrame = null;
 const activeBoardPointers = new Set();
 let pendingUndoAction = null;
 let undoToastTimer = null;
@@ -3252,8 +3253,20 @@ function captureScrollPosition() {
 }
 
 function restoreScrollPosition(snapshot) {
+  if (scrollRestoreFrame !== null) {
+    cancelAnimationFrame(scrollRestoreFrame);
+    scrollRestoreFrame = null;
+  }
   if (!snapshot) return;
-  requestAnimationFrame(() => {
+  const scheduled = captureScrollPosition();
+  const boardId = state.activeBoardId;
+  const mode = state.ui.workspaceMode;
+  scrollRestoreFrame = requestAnimationFrame(() => {
+    scrollRestoreFrame = null;
+    // A delayed redraw must not override newer scrolling or move a pressed control.
+    if (state.activeBoardId !== boardId || state.ui.workspaceMode !== mode || activeBoardPointers.size) return;
+    const current = captureScrollPosition();
+    if (current.windowY !== scheduled.windowY || current.workspaceTop !== scheduled.workspaceTop) return;
     if (elements.workspace) {
       elements.workspace.scrollTop = snapshot.workspaceTop;
     }

@@ -8,6 +8,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
 (async()=>{
  const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
  async function run(name,fn){
+  if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
   const context=await browser.newContext({viewport:{width:1206,height:866},timezoneId:'Asia/Kuala_Lumpur'});
   await context.route('https://**/*',route=>route.fulfill({status:503,body:'No external requests in tests'}));
   const page=await context.newPage(),errors=[];page.setDefaultTimeout(6000);page.on('pageerror',error=>errors.push(error.stack));
@@ -108,6 +109,16 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   assert.equal(await page.locator('.diary-thoughts').inputValue(),text);
   assert.equal(await page.locator('.diary-feeling-selection').innerText(),'Meh');
   assert.equal(await page.evaluate(()=>getActiveDiaryDate(state.cards.find(c=>c.type==='diary'))),savedDate);
+ });
+ await run('Board picker ignores settled scroll notifications but closes on newly changed scrolling',async page=>{
+  await page.evaluate(async()=>{await flushDeviceWrites();const spacer=document.createElement('div');spacer.style.height='2000px';elements.workspace.append(spacer);await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});
+  const menu=page.locator('#boardSwitcherMenu');await page.locator('#boardSwitcherButton').click();await menu.waitFor({state:'visible'});
+  await page.evaluate(()=>document.dispatchEvent(new Event('scroll')));assert.equal(await menu.isVisible(),true,'A queued document scroll must not dismiss a newly opened menu');
+  await page.evaluate(()=>elements.workspace.dispatchEvent(new Event('scroll')));assert.equal(await menu.isVisible(),true,'A queued workspace scroll must not dismiss a newly opened menu');
+  await page.evaluate(()=>window.dispatchEvent(new Event('resize')));assert.equal(await menu.isVisible(),true,'A queued resize must not dismiss a menu opened at the current size');
+  await page.evaluate(()=>{const before=elements.workspace.scrollTop;elements.workspace.scrollTop=before+40;if(elements.workspace.scrollTop===before)throw new Error('Synthetic fixture must allow scrolling');});
+  await menu.waitFor({state:'hidden'});assert.equal(await page.locator('#boardSwitcherButton').getAttribute('aria-expanded'),'false');
+  await page.locator('#boardSwitcherButton').click();await menu.waitFor({state:'visible'});await page.setViewportSize({width:1080,height:844});await menu.waitFor({state:'hidden'});
  });
  await run('Board menu supports keyboard, long names, scrolling and independent board selection',async(page,context)=>{
   await page.evaluate(async()=>{
