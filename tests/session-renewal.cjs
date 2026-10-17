@@ -6,12 +6,17 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
  const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true}),results=[];
  async function run(name,fn){
   if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
+  const repetitions=Math.min(20,Math.max(1,Number(process.env.TEST_REPETITIONS) || 1));
+  for(let repetition=0;repetition<repetitions;repetition++){
   const context=await browser.newContext({viewport:{width:390,height:844}}),errors=[],requests=[];
   await context.route('https://**/*',r=>r.fulfill({status:503,body:'Synthetic sessions only; no real cloud access'}));
   await context.addInitScript(()=>window.addEventListener('storage',event=>{if(window.holdSessionEvents && event.key===window.sessionFixtureKey)event.stopImmediatePropagation();},true));
   context.on('page',p=>{p.setDefaultTimeout(12000);p.on('pageerror',error=>errors.push(error.message));});
   context.on('request',req=>{if(req.url().startsWith('https:'))requests.push({path:new URL(req.url()).pathname,method:req.method()});});
   const p=await context.newPage();
+  // Install before application timers exist; late installation can briefly
+  // expose the clock's zero epoch to an already-running maintenance interval.
+  await p.clock.install({time:new Date('2026-10-17T08:00:00+08:00')});
   try{
    await p.goto(url.href);
    await p.evaluate(async owner=>{
@@ -21,13 +26,14 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
     saveCloudSession({user:{id:owner},access_token:'synthetic-original-access',refresh_token:'synthetic-original-refresh',expires_at:Date.now()+3600000});
     cloudSaveEnabled=false;cloudSessionMaintenancePending=true;window.sessionFixtureKey=CLOUD_SESSION_KEY;window.holdSessionEvents=true;
    },owner);
-   const q=await context.newPage();await q.goto(url.href);await q.evaluate(()=>{cloudSaveEnabled=false;cloudSessionMaintenancePending=true;});
+   const q=await context.newPage();await q.clock.install({time:new Date('2026-10-17T08:00:00+08:00')});await q.goto(url.href);await q.evaluate(()=>{cloudSaveEnabled=false;cloudSessionMaintenancePending=true;});
    const before=await p.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage())));requests.length=0;
    await fn(p,q,context,requests);
    assert.equal(await p.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage()))),before);assert.deepEqual(errors,[]);
    results.push({name,pass:true});
   }catch(error){results.push({name,pass:false,error:error.stack,errors});}
   console.log(JSON.stringify(results.at(-1)));await context.close();
+  }
  }
  const ensure=p=>p.evaluate(()=>ensureCloudSession().then(s=>s.access_token));
  const expire=p=>p.evaluate(()=>saveCloudSession({...cloudSession,expires_at:1}));
@@ -60,7 +66,11 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
  });
  await run('session fast-path retains malformed original storage and refuses cached credentials',async(p,q,context,requests)=>{
   for(const raw of ['{"unfinished":','null','[]','{"access_token":"synthetic-incomplete"}',JSON.stringify({access_token:{malformed:true},user:{id:owner},expires_at:Date.now()+3600000}),JSON.stringify({access_token:'synthetic-access',refresh_token:{malformed:true},user:{id:owner},expires_at:Date.now()+3600000})]){
-   await q.evaluate(raw=>localStorage.setItem(CLOUD_SESSION_KEY,raw),raw);await assert.rejects(ensure(p),/changed|signed out/);
+   await q.evaluate(raw=>localStorage.setItem(CLOUD_SESSION_KEY,raw),raw);
+   // WebKit propagates its cross-page storage cache asynchronously. Wait for
+   // the write itself, while the application storage listener remains blocked.
+   await p.waitForFunction(raw=>localStorage.getItem(CLOUD_SESSION_KEY)===raw,raw);
+   await assert.rejects(ensure(p),/changed|signed out/);
    assert.equal(await q.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY)),raw);
   }
   assert.equal(requests.length,0);
@@ -127,7 +137,7 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
   await assert.rejects(ensure(p),/coordination is unavailable/);assert.equal(calls(),0);assert.equal(await p.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY)),original);
  });
  await run('a stalled receipt open reaches its deadline, releases the auth lock and remains retryable',async(p,q,context)=>{
-  const calls=await backend(context);await expire(p);await p.clock.install();
+  const calls=await backend(context);await expire(p);
   await p.evaluate(()=>{
    window.originalReceiptOpen=indexedDB.open;window.heldReceiptOpen=false;window.receiptOutcome=null;
    indexedDB.open=function(name,...args){if(name===LifeStorageScope.key('life-os-auth-renewal-v1')){heldReceiptOpen=true;return {};}return originalReceiptOpen.call(this,name,...args);};

@@ -104,7 +104,7 @@ All nine target `property-*` function endpoints require a gateway JWT. Empty ano
 
 The user chose **AI disabled**. Five AI endpoints are explicit 403 stubs that do not read the upload body, call providers or use AI secrets; UI controls and the client invocation adapter also refuse them. No guest, receipt, tax or financial data was sent to Anthropic. Unused booking-email/digest callbacks remain disabled. Fresh callback secrets were generated inside target Vault; values were not exposed or copied from the source.
 
-Nightly workspace snapshots and cleanup of only this migration's old scheduler logs are active. Business history is not purged. Hourly iCal remains inactive: its private gateway authorization and deliberate integration activation are still required. Do not switch it on simply because the function exists.
+Nightly workspace snapshots and cleanup of only this migration's old scheduler logs are active. Business history is not purged. Hourly iCal remains inactive pending signed-in acceptance and deliberate cutover. Its gateway Authorization now uses the existing public anon JWT from Vault, separately from its private cron secret; JWT verification remains on. A server-originated probe authenticated successfully and returned the expected 409 `migration_not_activated`, with no feed fetch or business write. `supabase/property-calendar-scheduler.sql` records the inactive configuration without embedding either key. An exact pre-publication checkpoint of the current property version is retained in server history.
 
 Version-guarded owner updates retained prior data atomically, and stale writes affected zero rows, in a rolled-back SQL probe. Another authenticated identity saw zero records, including browser backups. Anonymous access and client history deletion/secret access are denied. Security hardening set an existing trigger function's search path and removed client execution from a trigger-only event function without changing its dependencies.
 
@@ -115,6 +115,16 @@ Private backup directory: `/Users/austinwong/Documents/Codex/life-os-private-mig
 Removed 17 redundant, regenerable temporary code-candidate directories from this migration's test runs, reclaiming 86,331,037 bytes. Results/screenshots, final candidates, original backups and user browser storage were retained. New private field-check runs delete only their own generated temporary code package after completion.
 
 ## Safe Cutover Checklist
+
+### Publication Gate And Paid-Plan Restriction
+
+The release is proposed in [Properties publication PR #1](https://github.com/austinwong94/life-os/pull/1). Its public artifact remains `b454664705239f65`. The ordinary terminal Git credential cannot push this repository; the authorized GitHub connector created a tree matching the local Git tree exactly. No force push or private-record upload was used.
+
+The full GitHub regression gate found a fixed stylesheet-count assumption and two WebKit fixture timing failures. The stylesheet test now checks the exact ordered source manifest and complete CSS bytes. Session tests wait for cross-page storage visibility while keeping application storage events blocked, and install simulated clocks before app timers exist. All original refusal, zero-network and full-record assertions remain. Local acceptance passed 22 startup cases, 36 complete session cases and 20 repeated WebKit edge cases; the full CI run must still pass before publication. No production runtime code was changed to accommodate these fixtures.
+
+The user confirmed no bookings, payments or documents changed after the attached backup. Final source comparison found the same 35 rows; hourly calendar refresh had regenerated 23 IDs/timestamps, but all 23 underlying availability records matched Life OS exactly. Other source payloads remained unchanged. Local immutable-release regression also passed all 57 cloud-sync cases, 18 task/calendar cases and eight health/recovery cases.
+
+Both projects belong to the same **Pro** organization. Current Supabase documentation and the source dashboard's disabled Pause button confirm that pausing is available only on Free projects. Do not downgrade the shared organization or delete the source to stop its compute. Separate approval was requested for a private Free `Sunrise Villa Archive` organization and transfer of only the old source, followed by pause after live acceptance. No organization was created or transferred, and no project was paused. Free-plan backup/recovery coverage differs; protected Life OS originals and private backups must remain independently retained.
 
 1. Capture the original Sunrise browser's unsynced records without clearing storage, refreshing unfinished editors or overwriting its current copy. Compare them with all preserved cloud copies.
 2. Review conflicts and the older-only booking identity. Keep both versions when intent is unclear; record decisions without rewriting imported originals.
