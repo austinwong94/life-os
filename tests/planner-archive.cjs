@@ -30,6 +30,7 @@ async function absent(page) {
   async function run(name,fn){
     if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
+    if(name==='Routine countdown drift in simultaneous tabs creates no false conflicts or lost checkmarks')await context.clock.setFixedTime(new Date('2026-10-18T12:00:00+08:00'));
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'External services blocked in synthetic tests'}));
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(9000);page.on('pageerror',e=>errors.push(e.stack));
     // Exercise archive persistence, not the localhost source-reload watcher.
@@ -212,11 +213,14 @@ async function absent(page) {
     const day=await page.evaluate(()=>getTodayKey());
     for(const p of [page,other])assert.equal(await p.evaluate(async()=>{const saved=await flushDeviceWrites();LifeDeviceStore.configure(()=>false);return saved;}),true);
     assert.equal(await page.evaluate(()=>LifeDeviceStore.pending().length),0);
-    await page.clock.setFixedTime(new Date(day+'T12:01:00+08:00'));
+    const firstAt=Date.parse(day+'T12:01:00+08:00'),secondAt=Date.parse(day+'T12:02:00+08:00');
+    await context.clock.setFixedTime(new Date(firstAt));
+    assert.deepEqual(await page.evaluate(()=>[Date.now(),new Date().getTime()]),[firstAt,firstAt]);
     assert.equal(await page.evaluate(()=>{const c=state.cards.find(c=>c.id==='clock-routine');c.items[0].done=true;syncRoutineTodayHistory(c);return saveState({skipCloud:true});}),true);
-    await other.clock.setFixedTime(new Date(day+'T12:02:00+08:00'));
+    await context.clock.setFixedTime(new Date(secondAt));
+    assert.deepEqual(await other.evaluate(()=>[Date.now(),new Date().getTime()]),[secondAt,secondAt]);
     assert.equal(await other.evaluate(()=>saveState({skipCloud:true})),true);
-    const clocks=await page.evaluate(()=>LifeDeviceStore.pending().map(({entry})=>entry.state.boards[0].cards.find(c=>c.id==='clock-routine').remaining));assert.ok(new Set(clocks).size>1);
+    const clocks=await page.evaluate(()=>LifeDeviceStore.pending().map(({entry})=>entry.state.boards[0].cards.find(c=>c.id==='clock-routine').remaining));assert.ok(new Set(clocks).size>1,JSON.stringify(clocks));
     assert.ok(clocks.includes(43140)&&clocks.includes(43080),JSON.stringify(clocks));
     await flush(page);await page.reload();const conflicts=await page.evaluate(()=>state.syncConflicts);assert.equal(conflicts.length,0,JSON.stringify(conflicts));
     assert.equal(await page.evaluate(()=>state.cards.find(c=>c.id==='clock-routine').items[0].done),true);
