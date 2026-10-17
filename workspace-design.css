@@ -302,8 +302,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .food-reuse-dialog h2, .exercise-reuse-dialog h2 { font-size: 18px; font-weight: 600; line-height: 1.35; }
 .food-reuse-dialog > .daily-muted, .exercise-reuse-dialog > .daily-muted { font-size: 13px; line-height: 1.5; }
 .food-reuse-dialog .daily-form, .exercise-reuse-dialog .daily-form { margin-top: 16px; grid-template-columns: minmax(0,1fr); }
+.food-reuse-dialog .daily-form > .planning-field, .exercise-reuse-dialog .daily-form > .planning-field { display: grid; grid-template-columns: minmax(0,1fr); min-width: 0; }
 .food-reuse-dialog .daily-form > label, .food-reuse-dialog select, .exercise-reuse-dialog select { min-width: 0; max-width: 100%; }
-.food-reuse-dialog select, .exercise-reuse-dialog select { width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.food-reuse-dialog select, .exercise-reuse-dialog select { display: block; box-sizing: border-box; width: 100%; min-inline-size: 0; max-inline-size: 100%; overflow: hidden; text-overflow: ellipsis; }
 .fitness-exercise-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .fitness-exercise-actions .planning-button { font-size: 13px; font-weight: 500; }
 .exercise-reuse-preview { margin: 0; border: 0; padding: 0; min-width: 0; }
