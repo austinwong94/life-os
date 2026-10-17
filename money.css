@@ -112,6 +112,12 @@
 .money-form select:focus-visible { outline-offset: -3px; }
 .money-form textarea { resize: vertical; min-height: 90px; }
 .money-form .money-message, .money-form .money-actions { grid-column: 1 / -1; }
+.money-reconcile-summary { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px 16px; margin: 0; padding-block: 14px; border-block: 1px solid var(--money-line,#dce2df); font-size: 13px; }
+.money-reconcile-summary dt { color: var(--money-muted,#64706c); }
+.money-reconcile-summary dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.money-reconcile-summary dd:last-child { font-weight: 600; }
+.money-reconcile-confirm { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 13px; }
+.money-reconcile-confirm input { flex: 0 0 18px; width: 18px; height: 18px; min-height: 18px; margin: 0; accent-color: var(--money-accent,#167064); }
 .money-form .money-actions { position: sticky; bottom: -1px; background: #fff; padding: 12px 0 0; justify-content: flex-end; border-top: 1px solid #dce2df; }
 .money-form .money-actions button[type=submit] { background: #222c2a; color: #fff; border-color: #222c2a; }
 .money-history { margin-top: 16px; }

@@ -212,14 +212,44 @@ function openMoneyLoanOptions(entry) {
   for(const version of entry.history || []){const block=moneyVersion(version.record);block.prepend(planningNode('p','',formatRecordDateTime(version.at)));history.append(block);}dialog.append(history);
 }
 function openMoneyReconcile(account) {
-  const boardId=state.activeBoardId,expected=LifeMoney.copy(account),openingLedger=moneyLedger(),openingBalance=LifeMoney.balance(openingLedger,account.id,getTodayKey());
-  const credit=LifeMoney.isCredit(account);
-  moneyDialogForm('Check balance','check-'+account.id,{actual:((credit?-openingBalance:openingBalance)/100).toFixed(2),note:''},({form,field})=>{field(credit?'Total outstanding debt shown by bank (RM)':'Balance shown by your bank / wallet (RM)','actual');field('Reason for difference (optional)','note','textarea');form.append(planningNode('p','money-message','A difference creates a dated balance adjustment. It is not counted as income or spending.'));},async(draft)=>{
+  const boardId=state.activeBoardId,today=getTodayKey(),expected=LifeMoney.copy(account),openingLedger=moneyLedger(),openingBalance=LifeMoney.balance(openingLedger,account.id,today);
+  const credit=LifeMoney.isCredit(account),approvalError='Confirm this balance adjustment before saving.';let approvedBalance=null,consent;
+  moneyDialogForm('Check balance','check-'+account.id,{actual:((credit?-openingBalance:openingBalance)/100).toFixed(2),note:''},({form,field,draft})=>{
+    form.append(planningNode('p','money-message',account.name+' · '+formatReadableDateKey(today)));
+    const amount=field(credit?'Total outstanding debt shown by bank (RM)':'Balance shown by your bank / wallet (RM)','actual');amount.input.inputMode='text';
+    field('Reason for difference (optional)','note','textarea');
+    const comparison=planningNode('dl','money-reconcile-summary');comparison.id='money-reconcile-preview';comparison.setAttribute('aria-label','Balance comparison');
+    const values=[credit?'Recorded card debt':'Recorded balance',credit?'Bank card debt':'Bank balance',credit?'Debt change':'Adjustment'].map(label=>{const value=planningNode('dd');comparison.append(planningNode('dt','',label),value);return value;});
+    values[0].textContent=moneyFormat(credit?-openingBalance:openingBalance);
+    const invalid=planningNode('p','money-message');invalid.id='money-reconcile-input-status';amount.input.setAttribute('aria-describedby',comparison.id+' '+invalid.id);
+    consent=planningNode('input');consent.type='checkbox';consent.setAttribute('aria-label','Apply this balance adjustment');
+    const approval=planningNode('label','money-reconcile-confirm');approval.append(consent,planningNode('span','','Apply this balance adjustment'));
+    const update=()=>{
+      try{
+        const preview=LifeMoney.reconciliation(openingLedger,account.id,draft.actual,today);
+        for(const [index,value] of [preview.recordedCents,preview.actualCents,preview.differenceCents].entries())values[index].textContent=(index===2 && value>0?'+':'')+moneyFormat(value);
+        if(approvedBalance!==preview.checkedBalanceCents){approvedBalance=null;consent.checked=false;}
+        approval.hidden=preview.adjustmentCents===0;invalid.textContent='';invalid.hidden=true;amount.input.removeAttribute('aria-invalid');
+      }catch(error){values[1].textContent=values[2].textContent='-';invalid.textContent=error.message;invalid.hidden=false;approval.hidden=true;approvedBalance=null;consent.checked=false;amount.input.setAttribute('aria-invalid','true');}
+    };
+    consent.onchange=()=>{
+      approvedBalance=consent.checked?LifeMoney.reconciliation(openingLedger,account.id,draft.actual,today).checkedBalanceCents:null;
+      const error=form.querySelector('[role=status]');if(error.textContent===approvalError)error.textContent='';
+    };
+    form.addEventListener('input',event=>{if(event.target===amount.input)update();});
+    form.append(comparison,invalid,approval,planningNode('p','money-message','Balance adjustments are not income or spending.'));update();
+  },async(draft)=>{
+    if(today!==getTodayKey())throw new Error('The day changed. Reopen Check balance before saving.');
+    const captured={actual:draft.actual,note:draft.note},preview=LifeMoney.reconciliation(openingLedger,account.id,captured.actual,today);
+    const confirm=()=>{if(preview.adjustmentCents!==0 && approvedBalance!==preview.checkedBalanceCents){consent.focus();throw new Error(approvalError);}};confirm();
     const adjustmentId='check_'+(await LifeStateMerge.fingerprint({accountId:account.id,previousCheck:account.reconciliationId || 'opening'})).slice(0,32);
     commitMoney(boardId,current=>{
+      if(today!==getTodayKey())throw new Error('The day changed. Reopen Check balance before saving.');
+      if(draft.actual!==captured.actual || draft.note!==captured.note)throw new Error('This form changed while saving. Review it and save again.');
+      confirm();
       if(!LifeMoney.equal(current,openingLedger))throw new Error('Money records changed while you checked the balance. Reopen Check balance.');
-      const actual=LifeMoney.cents(draft.actual,{signed:credit})*(credit?-1:1),delta=actual-openingBalance,now=Date.now();let next=current;
-      next=LifeMoney.change(next,'entries',{id:adjustmentId,kind:'adjustment',title:'Balance check · '+account.name,amountCents:delta,accountId:account.id,status:'settled',date:getTodayKey(),dueDate:getTodayKey(),repeat:'none',category:'Adjustment',note:draft.note,checkedBalanceCents:actual},undefined,now);
+      const now=Date.now();let next=current;
+      next=LifeMoney.change(next,'entries',{id:adjustmentId,kind:'adjustment',title:'Balance check · '+account.name,amountCents:preview.adjustmentCents,accountId:account.id,status:'settled',date:today,dueDate:today,repeat:'none',category:'Adjustment',note:captured.note,checkedBalanceCents:preview.checkedBalanceCents},undefined,now);
       return LifeMoney.change(next,'accounts',{...expected,reconciledAt:now,reconciliationId:adjustmentId},expected,now);
     });
   });
