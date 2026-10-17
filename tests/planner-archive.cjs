@@ -28,6 +28,7 @@ async function absent(page) {
 (async()=>{
   const browser=await engines[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name,fn){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'External services blocked in synthetic tests'}));
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(9000);page.on('pageerror',e=>errors.push(e.stack));
@@ -208,11 +209,15 @@ async function absent(page) {
       const c=makeCard({type:'routine',title:'Synthetic routine',items:['Rest']});c.id='clock-routine';state.cards.push(c);syncRoutineTodayHistory(c);saveState({skipCloud:true});await flushDeviceWrites();render();
     });
     const other=await context.newPage();await other.goto(URL+'?preview=1&liveReload=0');
-    for(const p of [page,other])await p.evaluate(()=>LifeDeviceStore.configure(()=>false));
-    for(const [p,offset] of [[page,60000],[other,120000]])await p.evaluate(offset=>{const NativeDate=Date,fixed=new NativeDate(getTodayKey()+'T12:00:00+08:00').getTime()+offset;globalThis.Date=class extends NativeDate{constructor(...args){super(...(args.length?args:[fixed]));}static now(){return fixed;}};},offset);
-    await page.evaluate(()=>{const c=state.cards.find(c=>c.id==='clock-routine');c.items[0].done=true;syncRoutineTodayHistory(c);saveState({skipCloud:true});});
-    await other.evaluate(()=>saveState({skipCloud:true}));
+    const day=await page.evaluate(()=>getTodayKey());
+    for(const p of [page,other])assert.equal(await p.evaluate(async()=>{const saved=await flushDeviceWrites();LifeDeviceStore.configure(()=>false);return saved;}),true);
+    assert.equal(await page.evaluate(()=>LifeDeviceStore.pending().length),0);
+    await page.clock.setFixedTime(new Date(day+'T12:01:00+08:00'));
+    assert.equal(await page.evaluate(()=>{const c=state.cards.find(c=>c.id==='clock-routine');c.items[0].done=true;syncRoutineTodayHistory(c);return saveState({skipCloud:true});}),true);
+    await other.clock.setFixedTime(new Date(day+'T12:02:00+08:00'));
+    assert.equal(await other.evaluate(()=>saveState({skipCloud:true})),true);
     const clocks=await page.evaluate(()=>LifeDeviceStore.pending().map(({entry})=>entry.state.boards[0].cards.find(c=>c.id==='clock-routine').remaining));assert.ok(new Set(clocks).size>1);
+    assert.ok(clocks.includes(43140)&&clocks.includes(43080),JSON.stringify(clocks));
     await flush(page);await page.reload();const conflicts=await page.evaluate(()=>state.syncConflicts);assert.equal(conflicts.length,0,JSON.stringify(conflicts));
     assert.equal(await page.evaluate(()=>state.cards.find(c=>c.id==='clock-routine').items[0].done),true);
   });
