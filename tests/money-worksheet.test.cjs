@@ -34,3 +34,15 @@ test('worksheet ignores stale considering metadata on recurring obligations, inc
   const l=ledger();l.entries=[entry('monthly',{repeat:'monthly',purchaseIntent:'considering'}),entry('payout',{kind:'income',status:'released',purchaseIntent:'considering'}),entry('repayment',{kind:'transfer',toAccountId:'card',purchaseIntent:'considering'})];
   const s=M.worksheet(l,month,today,'personal');assert.equal(s.rows.length,3);assert.equal(s.totals.confirmed,1234);assert.equal(s.totals.considering,0);assert.equal(s.totals.expected,1234);assert.equal(s.totals.transfer,1234);assert.equal(s.categories[0].confirmed,1234);assert.deepEqual(s.rows.find(row=>row.entry.scheduleId==='monthly').bucket,'confirmed');
 });
+test('worksheet text search filters exact totals and categories together without changing records',()=>{
+  const l=ledger();l.entries=[entry('paid',{title:'Birthday cake',status:'settled',amountCents:10}),entry('due',{title:'CAKE order',amountCents:20}),entry('wish',{note:'Try a cake class\nNext month',purchaseIntent:'considering',category:'Entertainment',amountCents:30}),entry('income',{title:'Cake refund',kind:'income',amountCents:40}),entry('other',{status:'settled',amountCents:900}),entry('villa',{title:'Cake',accountId:'villa',amountCents:500})];
+  const before=M.copy(l),s=M.worksheet(l,month,today,'personal','','all',' cAkE ');
+  assert.equal(s.rows.length,4);assert.deepEqual(s.totals,{paid:10,received:0,confirmed:20,considering:30,expected:40,transfer:0,adjustment:0});assert.equal(s.categories.find(c=>c.name==='Entertainment').considering,30);assert.equal(s.categories.find(c=>c.name==='Personal Spending').paid,10);assert.deepEqual(l,before);
+  assert.equal(M.worksheet(l,month,today,'personal','Entertainment','considering','cake').rows.length,1);assert.equal(M.worksheet(l,month,today,'all','','all','cake').rows.length,5);assert.equal(M.worksheet(l,month,today,'personal','','all','nothing').totals.paid,0);
+});
+test('worksheet treats search as literal Unicode text and supports reversible date ordering without changing totals',()=>{
+  const l=ledger();l.entries=[entry('late',{title:'Travel [.* \u65c5\u884c',dueDate:'2026-10-22'}),entry('early',{title:'Travel [.* \u65c5\u884c',dueDate:'2026-10-02'}),entry('same',{title:'Travel [.* \u65c5\u884c',dueDate:'2026-10-02'})];
+  const before=M.copy(l),oldest=M.worksheet(l,month,today,'personal','','all',' [.* '),newest=M.worksheet(l,month,today,'personal','','all','[.*','newest');
+  assert.deepEqual(oldest.rows.map(r=>r.entry.id),['early','same','late']);assert.deepEqual(newest.rows.map(r=>r.entry.id),['late','early','same']);assert.deepEqual(oldest.totals,newest.totals);assert.deepEqual(oldest.categories,newest.categories);assert.equal(M.worksheet(l,month,today,'personal','','all','\u65c5\u884c').rows.length,3);assert.deepEqual(l,before);
+  assert.throws(()=>M.worksheet(l,month,today,'personal','','all',{}));assert.throws(()=>M.worksheet(l,month,today,'personal','','all','','invalid'));
+});
