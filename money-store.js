@@ -130,6 +130,14 @@
     const account=ledger.accounts.find(item=>item.id===accountId);if(!account || account.openingDate>today)return null;
     return checkedSum([isCredit(account)?-account.openingCents:account.openingCents,...ledger.entries.filter(e=>!e.voidedAt && e.status==='settled' && e.repeat==='none' && e.date<=today).map(e=>e.accountId===accountId?(e.kind==='expense' || e.kind==='transfer'?-e.amountCents:e.amountCents):e.kind==='transfer' && e.toAccountId===accountId?e.amountCents:0)]);
   }
+  function reconciliation(input,accountId,actual,today) {
+    const ledger=validate(input),account=ledger.accounts.find(a=>a.id===accountId);
+    if(!account || !validDate(today) || account.openingDate>today)throw new Error('Choose an available account and a date on or after its opening balance.');
+    const credit=isCredit(account),recorded=balance(ledger,accountId,today),actualCents=cents(actual,{signed:true}) || 0;
+    const checkedBalanceCents=(credit?-actualCents:actualCents) || 0,adjustmentCents=checkedSum([checkedBalanceCents,-recorded]) || 0;
+    if(Math.abs(adjustmentCents)>100000000000)throw new Error('The balance difference is outside the supported adjustment range.');
+    return {credit,recordedCents:(credit?-recorded:recorded) || 0,actualCents,differenceCents:(credit?-adjustmentCents:adjustmentCents) || 0,adjustmentCents,checkedBalanceCents};
+  }
   function signedEffect(entry,accounts) {
     const from=accounts.has(entry.accountId),to=entry.kind==='transfer' && accounts.has(entry.toAccountId);
     const amount=entry.remainingCents ?? entry.amountCents;
@@ -294,6 +302,6 @@
     }
     return change(input,'entries',{...copy(entry),amountCents,date,status:'settled'},entry,now);
   }
-  const api={empty,cents,validate,summary,balance,upcoming,change,settle,purchases,monthly,worksheet,worksheetLabels,worksheetStatus,worksheetCsv,csv,cardPlans,payBill,billRemaining,coveringBill,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
+  const api={empty,cents,validate,summary,balance,reconciliation,upcoming,change,settle,purchases,monthly,worksheet,worksheetLabels,worksheetStatus,worksheetCsv,csv,cardPlans,payBill,billRemaining,coveringBill,isCredit,validDate,owners,collections,budgetId,occurrenceId,monthDate,loanDetail,loans,loanTotals,saveLoan,copy,equal};root.LifeMoney=api;
   if(typeof module!=='undefined' && module.exports)module.exports=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
