@@ -26,6 +26,33 @@ input,select,textarea,button{font-family:inherit;max-width:100%;box-sizing:borde
 button,input:not([type="checkbox"]):not([type="radio"]),select{min-height:36px}
 input[type="checkbox"],input[type="radio"]{min-height:0;width:16px;height:16px}
 #appShell .wa-toggle{position:relative}
+#calendarView .date-number{position:relative;gap:0}
+#calendarView .property-day-button{display:grid;place-items:center;width:100%;min-width:24px;min-height:44px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--ink);font-size:12.5px;font-weight:600;line-height:1;cursor:pointer}
+#calendarView .property-day-button:hover{background:#e8f3ed}
+#calendarView .property-day-button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+#calendarView .property-day-number{display:grid;place-items:center;width:22px;height:22px}
+#calendarView .day-cell.today .property-day-number{background:var(--accent);color:#fff;border-radius:50%}
+#calendarView .day-cell.outside .property-day-number{color:var(--faint)}
+#calendarView .date-number .status-pill{position:absolute;top:0;right:0;pointer-events:none;height:14px;padding:0 3px;font-size:9px}
+#calendarView .property-day-more{min-height:24px;border:0;text-align:left;cursor:pointer}
+.property-day-dialog{box-sizing:border-box;width:min(560px,calc(100% - 24px));max-width:calc(100% - 24px);max-height:calc(100dvh - 32px);padding:0;border:1px solid #dce5df;border-radius:8px;background:#fff;color:#192c27;overflow:auto;overscroll-behavior:contain}
+.property-day-dialog::backdrop{background:rgb(18 30 25 / 35%)}
+.property-day-dialog>header{position:sticky;top:0;z-index:1;display:flex;align-items:start;justify-content:space-between;gap:12px;padding:18px;background:#fff;border-bottom:1px solid #e5ebe7}
+.property-day-dialog>header>div{min-width:0}
+.property-day-dialog h2{margin:0;font:600 17px/1.4 system-ui,sans-serif;letter-spacing:0;overflow-wrap:anywhere}
+.property-day-dialog h2:focus{outline:none}
+.property-day-villa{margin:4px 0 0;color:#64726b;font-size:13px}
+.property-day-dialog>header>button{flex:none;min-width:44px;min-height:44px}
+.property-day-body{padding:0 18px 18px}
+.property-day-body section{padding-top:18px}
+.property-day-body h3{margin:0 0 8px;font:600 13px/1.4 system-ui,sans-serif;letter-spacing:0}
+.property-day-body ul{padding:0;margin:0;list-style:none}
+.property-day-body li+li{border-top:1px solid #e5ebe7}
+.property-day-body .property-day-row{box-sizing:border-box;display:flex;flex-direction:column;align-items:stretch;gap:4px;width:100%;min-width:0;min-height:44px;padding:12px 0;border:0;border-radius:0;background:transparent;color:inherit;text-align:left;text-decoration:none;overflow-wrap:anywhere;white-space:normal;font:14px/1.5 system-ui,sans-serif;letter-spacing:0}
+.property-day-row strong{font-weight:600;overflow-wrap:anywhere}
+.property-day-row span,.property-day-empty{font-size:13px;color:#64726b}
+.property-day-body :is(a,button):hover{background:#f3f7f5}
+.property-day-body :is(a,button):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 #appShell .topbar #pageTitle{font:600 20px/1.3 system-ui,sans-serif;letter-spacing:0}
 table{font-size:13px}
 @media(max-width:700px){button,input:not([type="checkbox"]):not([type="radio"]),select{min-height:44px}h1{font-size:20px}.app-shell{max-width:100%}body{overflow-x:hidden}}
