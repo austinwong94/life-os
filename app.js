@@ -3111,7 +3111,7 @@ function getQuickCaptureFallbackItems(type) {
 function canKeepMoneyWorkbook(options = {}) {
   const workbook=window.LifeMoneyWorkbookUI?.active();
   return !options.force && state.ui.workspaceMode==='money' && workbook?.host.isConnected &&
-    workbook.boardId===state.activeBoardId && workbook.base.today===getTodayKey() && workbook.sameView() &&
+    workbook.boardId===state.activeBoardId && workbook.base.today===getTodayKey() && workbook.sameView() && !moneyConflict(workbook.boardId) &&
     LifeMoney.equal(state.boards.find(board=>board.id===state.activeBoardId)?.money || LifeMoney.empty(),workbook.base.ledger);
 }
 
