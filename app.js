@@ -3108,7 +3108,16 @@ function getQuickCaptureFallbackItems(type) {
   return ["Choose top priority", "Finish the next action", "Review before sleep"];
 }
 
+function canKeepMoneyWorkbook(options = {}) {
+  const workbook=window.LifeMoneyWorkbookUI?.active();
+  return !options.force && state.ui.workspaceMode==='money' && workbook?.host.isConnected &&
+    workbook.boardId===state.activeBoardId && workbook.base.today===getTodayKey() && workbook.sameView() &&
+    LifeMoney.equal(state.boards.find(board=>board.id===state.activeBoardId)?.money || LifeMoney.empty(),workbook.base.ledger);
+}
+
 function renderCardsOnly(options = {}) {
+  // Unrelated background saves must not recreate an unchanged worksheet.
+  if(canKeepMoneyWorkbook(options))return;
   if (shouldDeferBoardRender(options)) {
     queueDeferredBoardRender(options);
     return;
@@ -3251,6 +3260,10 @@ function scheduleDeferredBoardRender(delay = 500) {
       return;
     }
     if (!pendingBoardRenderOptions) return;
+    if(canKeepMoneyWorkbook({...pendingBoardRenderOptions,force:false})){
+      pendingBoardRenderOptions=null;
+      return;
+    }
     const nextOptions = { ...(pendingBoardRenderOptions || {}), force: true };
     pendingBoardRenderOptions = null;
     renderCardsOnly(nextOptions);

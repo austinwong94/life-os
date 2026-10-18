@@ -17,6 +17,8 @@
     const panel=planningNode('section','money-workbook'),toolbar=planningNode('div','money-workbook-toolbar'),status=planningNode('p','money-message money-workbook-status'),host=planningNode('div','money-workbook-grid');
     status.setAttribute('role','status');host.setAttribute('role','region');host.setAttribute('aria-label','Money spreadsheet');host.tabIndex=0;
     const record={boardId,key,base,host,ids,sheet:null,skipDraft:false,dirty:Boolean(retained),zoom:session.sheetZoom || 100,rows:Math.max(retained?.rowCount || 100,data.length+30)};active=record;
+    const viewFields=['view','owner','month','sheetWorkbook','sheetInline','sheetBucket','purchaseCategory','sheetQuery','sheetOrder','horizon'];
+    record.sameView=()=>{const current=moneySession(boardId);return viewFields.every(field=>current[field]===session[field]);};
     const save=planningButton('Save sheet',null,'check'),add=planningButton('Add 100 rows',null,'plus');save.disabled=!record.dirty;
     const cellName=planningNode('input'),value=planningNode('textarea'),bar=planningNode('div','money-workbook-cellbar'),footer=planningNode('div','money-workbook-footer'),sum=planningNode('output');
     cellName.readOnly=true;cellName.value='A2';cellName.setAttribute('aria-label','Selected cells');value.setAttribute('aria-label','Cell value');
@@ -49,6 +51,14 @@
     toolbar.append(undo,redo,add,options,zoom,save);bar.append(cellName,value);footer.append(planningNode('span','',session.month+' · '+moneyOwners[session.owner]+' · A–Z'),sum);
     panel.append(toolbar,bar,status,host,footer);parent.append(panel);
     host.addEventListener('input',()=>record.remember());
+    host.addEventListener('keydown',event=>{
+      const editor=record.sheet?.edition;
+      if(!editor || !['Enter','Tab'].includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.isComposing)return;
+      const [, ,x,y]=editor;event.preventDefault();event.stopPropagation();finish();
+      const direction=event.shiftKey?-1:1;
+      record.sheet.updateSelectionFromCoords(event.key==='Tab'?Math.max(0,Math.min(LifeMoneyWorkbook.columnCount-1,Number(x)+direction)):Number(x),event.key==='Enter'?Math.max(0,Math.min(record.sheet.options.data.length-1,Number(y)+direction)):Number(y));
+      host.focus({preventScroll:true});record.remember();
+    },true);
     // CE falls back to legacy `which` even when `buttons` is explicitly zero.
     // Focus/zoom scrolling can otherwise turn a released click into a range drag.
     for(const type of ['mouseover','mousemove'])host.addEventListener(type,event=>{if(event.buttons===0 && jspreadsheet.current===record.sheet)jspreadsheet.isMouseAction=false;},true);
