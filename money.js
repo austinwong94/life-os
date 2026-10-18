@@ -15,7 +15,7 @@ function moneySession(boardId=state.activeBoardId) {
     const value=saved?.sheetDefaults?.[owner];if(typeof value?.accountId==='string' && typeof value?.category==='string' && value.category.trim())sheetDefaults[owner]={accountId:value.accountId,category:value.category};
   }
   return {
-    sheetKeepDetails:saved?.sheetKeepDetails===true,sheetDefaults,
+    sheetKeepDetails:saved?.sheetKeepDetails===true,sheetDefaults,sheetInline:saved?.sheetInline===true,sheetWorkbook:saved?.sheetWorkbook===true,sheetZoom:Number.isInteger(saved?.sheetZoom) && saved.sheetZoom>=50 && saved.sheetZoom<=150?saved.sheetZoom:100,
     sheetQuery:typeof saved?.sheetQuery==='string'?saved.sheetQuery:'',sheetQueryDraft:typeof saved?.sheetQueryDraft==='string'?saved.sheetQueryDraft:typeof saved?.sheetQuery==='string'?saved.sheetQuery:'',sheetOrder:saved?.sheetOrder==='newest'?'newest':'oldest',
     owner:['personal','villa','all'].includes(saved?.owner)?saved.owner:'personal',view:['overview','table','transactions','upcoming','loans','credit','spending','accounts','budgets'].includes(saved?.view)?saved.view:'overview',sectionViews:Object.fromEntries(moneySections.map(section=>[section.id,section.views.includes(saved?.sectionViews?.[section.id])?saved.sectionViews[section.id]:section.views[0]])),horizon:['month','30','90'].includes(saved?.horizon)?saved.horizon:'month',month:/^\d{4}-(0[1-9]|1[0-2])$/.test(saved?.month)?saved.month:getTodayKey().slice(0,7),purchaseCategory:typeof saved?.purchaseCategory==='string'?saved.purchaseCategory:'',sheetBucket:['paid','received','confirmed','considering','expected','transfer','adjustment'].includes(saved?.sheetBucket)?saved.sheetBucket:'all',sheetEdit:typeof saved?.sheetEdit==='string'?saved.sheetEdit:'',drafts:saved?.drafts && typeof saved.drafts==='object'?saved.drafts:{}};
 }
@@ -484,20 +484,20 @@ function moneySheetDrafts(root,ledger,session) {
         if(!current.drafts[key] || !latest || latest.voidedAt || !moneySheetEditable(latest))throw new Error('This row changed. Reopen the draft list.');
         // Follow the saved row, not the draft date; the existing stale-record guard still applies.
         current.month=(latest.status==='settled'?latest.date:latest.dueDate).slice(0,7);current.owner=moneyLedger(boardId).accounts.find(a=>a.id===latest.accountId).owner;
-        current.purchaseCategory='';current.sheetBucket='all';current.sheetQuery='';current.sheetQueryDraft='';current.sheetEdit=latest.id;saveMoneySession(current,boardId);renderCardsOnly({force:true});document.querySelector('.money-sheet-edit-row input')?.focus();
+        current.purchaseCategory='';current.sheetBucket='all';current.sheetQuery='';current.sheetQueryDraft='';current.sheetEdit=latest.id;current.sheetWorkbook=false;current.sheetInline=false;saveMoneySession(current,boardId);renderCardsOnly({force:true});document.querySelector('.money-sheet-edit-row input')?.focus();
       }catch(e){report(e);}
     },'pencil');resume.setAttribute('aria-label','Resume draft: '+title);actions.append(resume);}
     const discard=planningIcon('Discard draft: '+title,async()=>{try{await discardMoneySheetDraft(boardId,key,LifeMoney.copy(draft),{close:true});}catch(e){report(e);}},'trash-2');actions.append(discard);row.append(copy,actions);list.append(row);
   }
   panel.append(list,error);root.append(panel);
 }
-function moneySheetEditor(root,ledger,session,entry) {
+function moneySheetEditor(root,ledger,session,entry,{inline=false}={}) {
   const boardId=state.activeBoardId,key='sheet-'+(entry?.id || 'new'),saved=session.drafts[key];
   const date=getTodayKey().startsWith(session.month)?getTodayKey():session.month+'-01';
   const preference=!entry && session.sheetKeepDetails?session.sheetDefaults[session.owner]:null;
   const retained=preference && ledger.accounts.some(a=>a.id===preference.accountId && (session.owner==='all' || a.owner===session.owner))?preference:null;
   const draft=saved || {id:entry?.id || createId(),expected:entry?LifeMoney.copy(entry):null,title:entry?.title || '',amount:entry?(entry.amountCents/100).toFixed(2):'',accountId:entry?.accountId || retained?.accountId || ledger.accounts.find(a=>session.owner==='all' || a.owner===session.owner)?.id || '',date:entry?(entry.status==='settled'?entry.date:entry.dueDate):date,category:entry?.category || session.purchaseCategory || retained?.category || (session.owner==='villa'?'Sunrise Villa':'Personal Spending'),stage:entry?(entry.kind==='income'?(entry.status==='settled'?'received':'expected'):entry.status==='settled'?'paid':entry.purchaseIntent==='considering'?'considering':'confirmed'):date>getTodayKey()?'confirmed':'paid',note:entry?.note || ''};
-  const form=planningNode('form','money-sheet-editor');form.setAttribute('aria-label',entry?'Edit table row: '+entry.title:'New money row');
+  const form=planningNode('form','money-sheet-editor'+(inline?' money-sheet-inline':''));form.setAttribute('aria-label',entry?'Edit table row: '+entry.title:'New money row');
   const error=planningNode('p','money-message');error.setAttribute('role','status');
   let discard;
   const draftState=planningNode('small','money-sheet-draft-state',saved?'Unsaved · this tab':'');
@@ -507,7 +507,7 @@ function moneySheetEditor(root,ledger,session,entry) {
     for(let parent=event.target.parentElement;parent && parent!==form;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
     error.textContent=event.target.validationMessage;requestAnimationFrame(()=>{if(form.isConnected)event.target.focus();});
   },true);
-  let fieldRoot=form;
+  let fieldRoot=form;const fields={};
   const field=(label,property,type='text',options)=>{
     const input=options?moneySelect(options,draft[property],value=>{draft[property]=value;remember();}):planningInput(type,draft[property],value=>{draft[property]=value;remember();});
     if(property==='amount')input.inputMode='decimal';
@@ -515,7 +515,7 @@ function moneySheetEditor(root,ledger,session,entry) {
     if(input.tagName==='SELECT'){
       const frame=planningNode('span','money-sheet-select');input.replaceWith(frame);frame.append(input);
     }
-    fieldRoot.append(wrapper);return input;
+    fields[property]=wrapper;fieldRoot.append(wrapper);return input;
   };
   field('Item','title').required=true;field('Amount (RM)','amount').required=true;
   const stages=entry?entry.status==='settled'?[draft.stage]:entry.kind==='income'?['expected']:['confirmed','considering']:['paid','confirmed','considering','received','expected'];
@@ -540,11 +540,17 @@ function moneySheetEditor(root,ledger,session,entry) {
   const updateDetails=()=>{detailsCopy.textContent=[draft.category,ledger.accounts.find(a=>a.id===draft.accountId)?.name,draft.date].filter(Boolean).join(' · ');};form.addEventListener('input',updateDetails);form.addEventListener('change',updateDetails);updateDetails();
   const notes=planningNode('details','money-sheet-notes');notes.append(planningNode('summary','','Notes'));
   const note=planningNode('textarea');note.value=draft.note;note.setAttribute('aria-label','Row notes');note.oninput=()=>{draft.note=note.value;remember();};notes.append(note);detailFields.append(notes);form.append(error);
-  const actions=planningNode('div','money-actions'),save=planningButton(entry?'Save row':'Add row',null,entry?'check':'plus');save.type='submit';
+  const actions=planningNode('div','money-actions'),save=inline?planningIcon(entry?'Save row':'Add row',null,entry?'check':'plus'):planningButton(entry?'Save row':'Add row',null,entry?'check':'plus');save.type='submit';
   const discardDraft=async()=>{try{await discardMoneySheetDraft(boardId,key,LifeMoney.copy(draft));}catch(e){error.textContent=e.message;if(!error.isConnected)setSaveStatus(e.message,'error');}};
-  discard=entry?planningButton('Use latest saved row',discardDraft,'rotate-ccw'):planningIcon('Discard new row draft',discardDraft,'trash-2');discard.disabled=!saved;actions.append(discard);
-  if(entry)actions.append(planningButton('Close row',()=>{const current=moneySession();current.sheetEdit='';saveMoneySession(current);renderCardsOnly({force:true});},'x'));
+  discard=entry?(inline?planningIcon('Use latest saved row',discardDraft,'rotate-ccw'):planningButton('Use latest saved row',discardDraft,'rotate-ccw')):planningIcon('Discard new row draft',discardDraft,'trash-2');discard.disabled=!saved;actions.append(discard);
+  if(entry && !inline)actions.append(planningButton('Close row',()=>{const current=moneySession();current.sheetEdit='';saveMoneySession(current);renderCardsOnly({force:true});},'x'));
+  if(entry && inline)actions.append(planningIcon('Options: '+entry.title,()=>openMoneyOptions(entry),'more-vertical'));
   actions.prepend(draftState);actions.append(save);form.append(actions);root.append(form);
+  if(inline){
+    for(const property of ['title','amount','stage','category','accountId','date'])form.append(fields[property]);
+    form.append(actions,details,error);detailsCopy.hidden=true;
+    if(entry){save.disabled=!saved;form.addEventListener('input',()=>{save.disabled=false;});form.addEventListener('change',()=>{save.disabled=false;});}
+  }
   form.onsubmit=event=>{
     event.preventDefault();save.disabled=true;remember();
     try {
@@ -570,7 +576,7 @@ function moneySheetEditor(root,ledger,session,entry) {
         return LifeMoney.change(value,'entries',next,expected);
       });}
       catch(e){const restore=moneySession(boardId);Object.assign(restore,previousView);restore.drafts[key]=draft;if(entry)restore.sheetEdit=entry.id;saveMoneySession(restore,boardId);throw e;}
-      const added=document.querySelector('.money-sheet-editor[aria-label="New money row"] input');added?.focus({preventScroll:true});
+      const added=inline && entry?document.querySelector('.money-sheet tr[data-entry-id="'+CSS.escape(entry.id)+'"] input'):document.querySelector('.money-sheet-editor[aria-label="New money row"] input');added?.focus({preventScroll:true});
     }catch(e){error.textContent=e.message;save.disabled=false;}
   };
 }
@@ -602,19 +608,29 @@ function renderMoneySheet(root,ledger,session,change,summary,end) {
   const filterFields=planningNode('div','money-controls');filterFields.append(planningField('Table category',moneySelect([['','All categories'],...moneyCategoryOptions()],session.purchaseCategory,value=>change('purchaseCategory',value))),planningField('Table status',moneySelect([['all','All statuses'],...Object.entries(moneySheetLabels)],session.sheetBucket,value=>change('sheetBucket',value))));extra.append(filterFields);extra.open=Boolean(session.purchaseCategory || session.sheetBucket!=='all');
   const month=planningInput('month',session.month,()=>{});month.onblur=()=>{if(month.value!==session.month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month.value))change('month',month.value);};
   filters.append(planningField('Table month',month),extra);root.append(filters);
+  if(!session.sheetWorkbook){const edit=planningNode('input');edit.type='checkbox';edit.checked=session.sheetInline;edit.onchange=()=>change('sheetInline',edit.checked);const editLabel=planningNode('label','money-sheet-mode');editLabel.append(edit,planningNode('span','','Edit cells'));filters.append(editLabel);}
   const balances=planningNode('div','money-stats money-sheet-balances');balances.setAttribute('aria-label','Account balances');
   balances.append(moneyStat('Current cash',summary.actualCents,'All categories · bank / cash only'),moneyStat('After commitments',summary.availableCents,'Through '+end+' · after reserves and unscheduled card debt',summary.availableCents<0),moneyStat('Projected cash',summary.projectedCents,'Through '+end+' · includes expected income',summary.projectedCents<0));
-  if(!moneyConflict()){const panel=planningNode('details','money-sheet-balance-panel');panel.append(planningNode('summary','','Current cash · '+moneyFormat(summary.actualCents)),planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))),balances);root.append(panel);}
+  let balancePanel;
+  if(!moneyConflict()){balancePanel=planningNode('details','money-sheet-balance-panel');balancePanel.append(planningNode('summary','','Current cash · '+moneyFormat(summary.actualCents)),planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))),balances);if(!session.sheetInline)root.append(balancePanel);}
   let sheet;try{sheet=LifeMoney.worksheet(ledger,session.month,getTodayKey(),session.owner,session.purchaseCategory,session.sheetBucket,session.sheetQuery,session.sheetOrder);}catch(e){root.append(planningNode('p','money-alert',e.message));return;}
-  if(!moneyConflict())moneySheetEditor(root,ledger,session);
-  moneySheetSearch(root,session,ledger);
-  const scroll=planningNode('div','money-sheet-scroll'),table=planningNode('table','money-sheet');table.setAttribute('aria-label','Monthly money table');
-  table.append(planningNode('caption','',session.month+' · '+moneyOwners[session.owner]+' · '+sheet.rows.length+' rows'+(session.sheetQuery?' · Search: '+session.sheetQuery:'')));
+  if(session.sheetWorkbook && !moneyConflict()){
+    LifeMoneyWorkbookUI.render(root,ledger,session);
+    const totals=planningNode('dl','money-sheet-totals');totals.setAttribute('aria-label','Saved monthly totals');for(const key of ['paid','confirmed','considering','received','expected']){const group=planningNode('div');group.append(planningNode('dt','',key==='paid'?'Spent':moneySheetLabels[key]),planningNode('dd','',moneyFormat(sheet.totals[key])));totals.append(group);}root.append(totals);if(balancePanel)root.append(balancePanel);return;
+  }
+  if(!moneyConflict() && !session.sheetInline)moneySheetEditor(root,ledger,session);
+  if(session.sheetInline){const search=planningNode('details','money-sheet-search-panel');search.append(planningNode('summary','','Search and sort'));search.open=Boolean(session.sheetQuery || session.sheetQueryDraft || session.sheetOrder==='newest');moneySheetSearch(search,session,ledger);root.append(search);}else moneySheetSearch(root,session,ledger);
+  const scroll=planningNode('div','money-sheet-scroll'),table=planningNode('table','money-sheet'+(session.sheetInline?' money-sheet-editable':''));table.setAttribute('aria-label','Monthly money table');
+  if(session.sheetInline){scroll.classList.add('is-editable');scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label','Editable money spreadsheet');}
+  table.append(planningNode('caption','',(session.sheetInline?'Spending spreadsheet · ':'')+session.month+' · '+moneyOwners[session.owner]+' · '+sheet.rows.length+' rows'+(session.sheetQuery?' · Search: '+session.sheetQuery:'')));
   const labels=['Item','Amount (RM)','Status','Category','Account','Paid / due date','Actions'],head=planningNode('thead'),header=planningNode('tr');
   for(const label of labels){const cell=planningNode('th','',label);cell.scope='col';header.append(cell);}head.append(header);table.append(head);
   const body=planningNode('tbody');table.append(body);
   for(const row of sheet.rows){
     const entry=row.entry,account=ledger.accounts.find(a=>a.id===entry.accountId),destination=ledger.accounts.find(a=>a.id===entry.toAccountId),tr=planningNode('tr');tr.dataset.entryId=entry.id;
+    if(session.sheetInline && moneySheetEditable(entry) && !moneyConflict()){
+      tr.classList.add('money-sheet-inline-row');const cell=planningNode('td');cell.colSpan=7;moneySheetEditor(cell,ledger,session,entry,{inline:true});tr.append(cell);body.append(tr);continue;
+    }
     const status=LifeMoney.worksheetStatus(row,account);
     for(const [index,value] of [entry.title,moneyFormat(row.amountCents),status,entry.category,account.name+(LifeMoney.isCredit(account)?' · Credit':'')+(destination?' → '+destination.name:''),row.date].entries()){
       const cell=planningNode('td',index===1?'money-sheet-amount':'',value);cell.dataset.label=labels[index];if(index===2)cell.dataset.status=row.bucket;tr.append(cell);
@@ -627,8 +643,11 @@ function renderMoneySheet(root,ledger,session,change,summary,end) {
     tr.append(cell);body.append(tr);
     if(session.sheetEdit===entry.id && moneySheetEditable(entry) && !moneyConflict()){const editRow=planningNode('tr','money-sheet-edit-row'),editCell=planningNode('td');editCell.colSpan=7;moneySheetEditor(editCell,ledger,session,entry);editRow.append(editCell);body.append(editRow);}
   }
+  if(session.sheetInline && !moneyConflict()){
+    const row=planningNode('tr','money-sheet-inline-row money-sheet-new-row'),cell=planningNode('td');cell.colSpan=7;moneySheetEditor(cell,ledger,session,undefined,{inline:true});row.append(cell);body.append(row);
+  }
   scroll.append(table);root.append(scroll);
-  if(!sheet.rows.length)root.append(planningNode('p','money-empty','No matching records for this month.'));
+  if(!sheet.rows.length && !session.sheetInline)root.append(planningNode('p','money-empty','No matching records for this month.'));
   if(!moneyConflict()){
     const totals=planningNode('dl','money-sheet-totals');totals.setAttribute('aria-label','Filtered monthly totals');
     for(const key of ['paid','confirmed','considering','received','expected']){const group=planningNode('div');group.append(planningNode('dt','',key==='paid'?'Spent':moneySheetLabels[key]),planningNode('dd','',moneyFormat(sheet.totals[key])));totals.append(group);}root.append(totals);
@@ -636,6 +655,7 @@ function renderMoneySheet(root,ledger,session,change,summary,end) {
     const categoryTable=planningNode('table'),categoryHead=planningNode('thead'),categoryHeader=planningNode('tr');for(const label of ['Category','Spent','Confirmed','Considering']){const th=planningNode('th','',label);th.scope='col';categoryHeader.append(th);}categoryHead.append(categoryHeader);categoryTable.append(categoryHead);
     const categoryBody=planningNode('tbody');for(const group of sheet.categories){const row=planningNode('tr');for(const value of [group.name,moneyFormat(group.paid),moneyFormat(group.confirmed),moneyFormat(group.considering)])row.append(planningNode('td','',value));categoryBody.append(row);}categoryTable.append(categoryBody);categories.append(categoryTable);root.append(categories);
   }
+  if(session.sheetInline && balancePanel)root.append(balancePanel);
 }
 function renderMoneyWorkspace() {
   const root=planningNode('section','money-workspace');root.setAttribute('aria-label','Money');elements.boardGrid.append(root);
@@ -646,11 +666,16 @@ function renderMoneyWorkspace() {
   const pages=[['overview','Overview'],['table','Table'],['upcoming','Due & expected'],['transactions','Entries'],['credit','Credit cards'],['loans','Loans'],['spending','Purchases'],['accounts','Accounts'],['budgets','Budgets']];
   const section=moneySections.find(s=>s.views.includes(session.view));
   const header=planningNode('header','money-heading'),heading=planningNode('div');heading.append(planningNode('h2','','Money'),planningNode('p','money-subtitle',session.view==='spending'?'Purchases · all dates':state.board.name+' · '+formatReadableDateKey(today)));
-  const primary=session.view==='credit'?planningButton('Add card bill',()=>openMoneyCardBill(),'plus'):session.view==='loans'?planningButton('Add loan',()=>openMoneyLoan(),'plus'):session.view==='spending'?planningButton('Plan spending',()=>openMoneySpending(),'plus'):planningButton('Add entry',()=>openMoneyEntry(),'plus');primary.classList.add('money-primary');
-  const headerActions=planningNode('div','money-heading-actions');headerActions.append(planningIcon('Download money records',exportMoneyCsv,'download'),primary);header.append(heading,headerActions);root.append(header);
+  const primary=session.view==='table' && session.sheetWorkbook?planningButton('Save sheet',()=>document.querySelector('.money-workbook-toolbar button[aria-label="Save sheet"]')?.click(),'check'):session.view==='table' && session.sheetInline?planningButton('Add row',()=>{const input=document.querySelector('.money-sheet-new-row input');input?.scrollIntoView({block:'nearest',inline:'nearest'});input?.focus({preventScroll:true});},'plus'):session.view==='credit'?planningButton('Add card bill',()=>openMoneyCardBill(),'plus'):session.view==='loans'?planningButton('Add loan',()=>openMoneyLoan(),'plus'):session.view==='spending'?planningButton('Plan spending',()=>openMoneySpending(),'plus'):planningButton('Add entry',()=>openMoneyEntry(),'plus');primary.classList.add('money-primary');
+  const headerActions=planningNode('div','money-heading-actions');primary.hidden=session.view==='table' && session.sheetWorkbook;headerActions.append(planningIcon('Download money records',exportMoneyCsv,'download'),primary);header.append(heading,headerActions);root.append(header);
   const views=planningNode('nav','money-section-tabs');views.setAttribute('aria-label','Money sections');
   for(const item of moneySections){const button=planningButton(item.label,()=>change('view',session.sectionViews[item.id]));button.setAttribute('aria-pressed',String(item.id===section.id));views.append(button);}root.append(views);
-  const controls=planningNode('div','money-controls'),pagePicker=planningField('Money page',moneySelect(pages.filter(([key])=>section.views.includes(key)),session.view,value=>change('view',value)));pagePicker.classList.add('money-page-picker');pagePicker.hidden=section.views.length<2;controls.append(pagePicker,planningField('Money view',moneySelect(Object.entries(moneyOwners),session.owner,value=>change('owner',value))));
+  const controls=planningNode('div','money-controls'),pagePicker=planningField('Money page',moneySelect(pages.filter(([key])=>section.views.includes(key)),session.view,value=>change('view',value)));pagePicker.classList.add('money-page-picker');pagePicker.hidden=section.views.length<2;
+  if(section.id==='spending'){
+    const worksheet=planningButton('Spreadsheet',()=>{const current=moneySession();current.view='table';current.sectionViews.spending='table';current.sheetWorkbook=true;saveMoneySession(current);renderCardsOnly({force:true});},'layout-grid');worksheet.classList.add('money-worksheet-button');worksheet.setAttribute('aria-pressed',String(session.view==='table' && session.sheetWorkbook));controls.append(worksheet);
+    const rows=planningButton('Rows',()=>{const current=moneySession();current.view='table';current.sectionViews.spending='table';current.sheetWorkbook=false;current.sheetInline=false;saveMoneySession(current);renderCardsOnly({force:true});},'list');rows.classList.add('money-worksheet-button');rows.setAttribute('aria-pressed',String(session.view==='table' && !session.sheetWorkbook));controls.append(rows);
+  }
+  controls.append(pagePicker,planningField('Money view',moneySelect(Object.entries(moneyOwners),session.owner,value=>change('owner',value))));
   if(session.view==='spending')controls.append(planningField('Purchase category',moneySelect([['','All categories'],...moneyCategoryOptions()],session.purchaseCategory,value=>change('purchaseCategory',value))));
   if(['overview','upcoming'].includes(session.view))controls.append(planningField('Forecast through',moneySelect([['month','End of this month'],['30','Next 30 days'],['90','Next 90 days']],session.horizon,value=>change('horizon',value))));
   if(session.view==='accounts')controls.append(planningButton('Add summary card',addMoneySummaryCard,'layout-grid'));
