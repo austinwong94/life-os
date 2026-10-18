@@ -252,7 +252,7 @@
 .money-sheet-editable caption { display: block; padding: 12px; }
 .money-sheet.money-sheet-editable thead { display: block; position: sticky; top: 0; z-index: 1; width: auto; height: auto; overflow: visible; clip-path: none; background: var(--surface,#fff); }
 .money-sheet-editable thead > tr, .money-sheet-editable tbody > tr:not(.money-sheet-inline-row) { display: grid; grid-template-columns: var(--sheet-columns); gap: 0; padding: 0; }
-.money-sheet-editable th { width: auto !important; padding: 12px 8px; text-align: left !important; background: color-mix(in srgb,var(--money-accent) 7%,var(--surface,#fff)); }
+.money-sheet-editable th { width: auto !important; min-height: 44px; padding: 12px 8px; text-align: left !important; background: color-mix(in srgb,var(--money-accent) 7%,var(--surface,#fff)); }
 .money-sheet-editable tbody > tr:not(.money-sheet-inline-row) > td { padding: 8px; border-right: 1px solid var(--money-line); }
 .money-sheet-editable tbody > tr:not(.money-sheet-inline-row) > td:last-child { grid-column: auto; }
 .money-sheet-editable tbody > tr:not(.money-sheet-inline-row) > td::before { display: none; }

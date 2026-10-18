@@ -278,6 +278,8 @@ const expense=async(p,title,amount)=>{await p.getByRole('button',{name:'Add entr
     await p.evaluate(()=>flushDeviceWrites());await p.reload();await p.locator('.money-sheet-inline').first().waitFor();assert.equal(await p.getByRole('form',{name:'Edit table row: Newer saved name',exact:true}).getByLabel('Item',{exact:true}).inputValue(),'Stale replacement');
   });
   await run('spreadsheet fits phone portrait and wide screens with keyboard entry and specialized records protected',async p=>{
+    // Reproduce compact Linux font metrics on platforms with taller default fonts.
+    await p.addStyleTag({content:'.money-sheet-editable th { line-height: 14px; }'});
     await account(p,'Personal account with a descriptive name');await p.evaluate(()=>{const a=moneyLedger().accounts[0];commitMoney(state.activeBoardId,l=>LifeMoney.change(l,'entries',{id:'spreadsheet-monthly',title:'Monthly internet',kind:'expense',status:'planned',repeat:'monthly',amountCents:9990,accountId:a.id,date:'2026-10-01',dueDate:'2026-10-15',category:'Others',note:'Keep original schedule',extension:{keep:true}},undefined));});await openSpreadsheet(p);await newSheetRow(p,'A complete purchase description with many words','10.10');
     assert.equal(await p.getByRole('form',{name:'Edit table row: Monthly internet',exact:true}).count(),0);assert(await p.getByRole('button',{name:'Options: Monthly internet',exact:true}).isVisible());
     for(const width of [320,390,768,1005,1080,1440]){
