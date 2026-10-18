@@ -35,16 +35,23 @@ const clone=x=>JSON.parse(JSON.stringify(x));
    cloudSaveEnabled=false;cloudMergeBase={ownerId:user,state:JSON.parse(JSON.stringify(base))};localMergeBase=JSON.parse(JSON.stringify(state));cloudConflictPending=false;
    render();saveState({skipCloud:true,touch:false});
   },{base,stamp,user});await page.evaluate(()=>flushDeviceWrites());}
- async function setup(context,{planner=false,health=false}={}){
+ async function setup(context,{planner=false,health=false,money=false}={}){
   const a=await fresh(await context());
-  const base=await a.evaluate(async({planner,health})=>{
+  const base=await a.evaluate(async({planner,health,money})=>{
    state.boards.push(createBoardRecord({id:'work',name:'Work',cards:[makeCard({type:'diary',title:'Work diary'})]}));
    if(planner){const source=makeCard({type:'planner',title:'Planner sync review',category:'Personal'});source.id='sync-review-source';LifePlanner.add(source,'2026-09-01','Call the clinic','sync-review-task',1000);LifePlanner.project(source);state.cards.push(source);}
    if(health){const card=makeCard({type:'food',title:'Food sync review',category:'Health'});card.id='sync-food';card.activeFoodDate='2026-09-08';
      const rice=card.foodLibrary.find(food=>food.id==='rice-white-cooked');
      card.foodEntries={'2026-09-08':normalizeFoodEntry({meals:[{id:'meal',name:'Lunch',items:[{id:'food-entry',foodId:rice.id,...createFoodItemSnapshot(rice),amount:100,unit:'g'}]}]})};state.cards.push(card);}
+   if(money){
+    const today=getTodayKey(),month=today.slice(0,7),board=state.boards.find(b=>b.id===state.activeBoardId);
+    board.money={...LifeMoney.empty(),accounts:[{id:'sync-bank',name:'Synthetic bank',owner:'personal',type:'cash',openingCents:100000,openingDate:month+'-01',reservedCents:0}],entries:[
+     {id:'sync-cake',title:'Cake',kind:'expense',status:'settled',repeat:'none',amountCents:1000,accountId:'sync-bank',date:today,dueDate:today,category:'Personal Spending',note:'Original complete note\nSecond line',extension:{keep:true}},
+     {id:'sync-gift',title:'Gift',kind:'expense',status:'planned',repeat:'none',amountCents:2000,accountId:'sync-bank',date:today,dueDate:today,category:'Personal Spending',note:'Keep this separate',purchaseIntent:'considering'}
+    ],budgets:[]};
+   }
    saveState();await flushDeviceWrites();return getStateForStorage();
-  },{planner,health});
+  },{planner,health,money});
   const backend={state:clone(base),updated_at:'2026-09-08T00:00:00.000Z',writes:0};
   const b=await fresh(await context());
   for(const p of [a,b]){
@@ -838,6 +845,82 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   await a.evaluate(async()=>{const source=getPlannerSourceCards().find(c=>c.id==='sync-review-source');LifePlanner.change(source,'sync-review-task',{title:'Renamed after the initial save'});LifePlanner.project(source);saveState({skipCloud:true});await flushDeviceWrites();await pushCloudState({manual:true});});
   assert.equal(backend.writes,1);assert.equal(await a.evaluate(()=>state.syncConflicts.length),0);
   assert.equal(backend.state.boards[0].cards.find(c=>c.id==='sync-review-source').plannerTasks[0].title,'Renamed after the initial save');assert.match(await a.locator('#cloudNote').innerText(),/readback verified/);
+ });
+ async function moneySheet(p,phone=false){
+  if(phone)await p.setViewportSize({width:390,height:844});
+  await p.evaluate(()=>{const session=moneySession();session.month=getTodayKey().slice(0,7);session.owner='all';session.view='table';session.sheetWorkbook=true;saveMoneySession(session);setWorkspaceMode('money');});
+  await p.locator('.money-workbook-grid td[data-x="0"][data-y="1"]').waitFor();
+  if(phone)await p.getByLabel('Sheet zoom level',{exact:true}).selectOption('50');
+ }
+ async function moneyDraftCell(p,x,y,value){
+  const cell=p.locator('.money-workbook-grid td[data-x="'+x+'"][data-y="'+y+'"]');
+  await cell.scrollIntoViewIfNeeded();await cell.dblclick();const input=cell.locator('input,textarea');await input.fill(value);await input.press('Enter');
+ }
+ async function moneyCell(p,id,x,value){
+  const y=await p.evaluate(id=>LifeMoneyWorkbookUI.active().base.rows.findIndex(row=>row.entry.id===id)+1,id);assert(y>0);await moneyDraftCell(p,x,y,value);
+ }
+ async function saveMoneySheet(p){await p.getByRole('button',{name:'Save sheet',exact:true}).click();assert.equal(await p.evaluate(()=>flushDeviceWrites()),true);}
+ const cloudMoney=(f)=>f.backend.state.boards.find(b=>b.id===f.base.activeBoardId).money;
+ async function moneyOf(p){return p.evaluate(()=>moneyLedger());}
+ function moneyOriginals(f){return f.base.boards.map(board=>({id:board.id,cards:board.cards,archivedCards:board.archivedCards}));}
+ function assertMoneyOriginals(f){assert.deepEqual(f.backend.state.boards.map(board=>({id:board.id,cards:board.cards,archivedCards:board.archivedCards})),moneyOriginals(f));}
+ await run('money workbook laptop and phone round trip keeps IDs, full notes, detail cells and exact totals without duplicate saves',async context=>{
+  const f=await setup(context,{money:true}),{a,b,backend}=f;
+  await moneySheet(a);await moneyCell(a,'sync-cake',1,'12.34');await moneyCell(a,'sync-cake',6,'Laptop complete note\n第二行');await moneyCell(a,'sync-cake',25,'Receipt detail stays with the entry');await saveMoneySheet(a);
+  await a.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,1);await a.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,1);
+  await b.evaluate(()=>pushCloudState({manual:true}));await moneySheet(b,true);assert.deepEqual(await moneyOf(b),cloudMoney(f));
+  await moneyCell(b,'sync-gift',0,'Gift renamed on phone');await moneyCell(b,'sync-gift',1,'20.10');await saveMoneySheet(b);await b.evaluate(()=>pushCloudState({manual:true}));
+  await a.evaluate(()=>pushCloudState({manual:true}));assert.deepEqual(await moneyOf(a),cloudMoney(f));
+  const saved=clone(cloudMoney(f));assert.equal(saved.entries.length,2);assert.equal(new Set(saved.entries.map(e=>e.id)).size,2);
+  const cake=saved.entries.find(e=>e.id==='sync-cake'),gift=saved.entries.find(e=>e.id==='sync-gift');assert.equal(cake.amountCents,1234);assert.equal(cake.note,'Laptop complete note\n第二行');assert.equal(cake.sheetCells.Z,'Receipt detail stays with the entry');assert.deepEqual(cake.extension,{keep:true});assert.equal(gift.amountCents,2010);assert.equal(gift.title,'Gift renamed on phone');
+  for(const p of [a,b]){await p.evaluate(()=>{cloudSaveEnabled=false;clearTimeout(cloudSaveTimer);});await p.reload();await p.waitForFunction(()=>typeof moneyLedger==='function');assert.deepEqual(await moneyOf(p),saved);const totals=await p.evaluate(()=>LifeMoney.worksheet(moneyLedger(),getTodayKey().slice(0,7),getTodayKey(),'all').totals);assert.equal(totals.paid,1234);assert.equal(totals.considering,2010);const balance=await p.evaluate(()=>LifeMoney.summary(moneyLedger(),getTodayKey(),getTodayKey(),'all').actualCents);assert.equal(balance,98766);}
+  assertMoneyOriginals(f);
+ });
+ await run('money workbook independent concurrent device edits merge without duplicating rows or reverting either amount',async context=>{
+  const f=await setup(context,{money:true}),{a,b}=f;await moneySheet(a);await moneySheet(b,true);
+  await moneyCell(a,'sync-cake',1,'15.55');await saveMoneySheet(a);await moneyCell(b,'sync-gift',1,'20.10');await saveMoneySheet(b);
+  await a.evaluate(()=>pushCloudState({manual:true}));await b.evaluate(()=>pushCloudState({manual:true}));await a.evaluate(()=>pushCloudState({manual:true}));
+  const saved=clone(cloudMoney(f));assert.equal(saved.entries.length,2);assert.equal(saved.entries.find(e=>e.id==='sync-cake').amountCents,1555);assert.equal(saved.entries.find(e=>e.id==='sync-gift').amountCents,2010);
+  for(const p of [a,b]){assert.deepEqual(await moneyOf(p),saved);assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);}assertMoneyOriginals(f);
+ });
+ await run('money workbook competing laptop and phone edits preserve both complete versions and block stale cloud overwrite',async context=>{
+  const f=await setup(context,{money:true}),{a,b,backend}=f;await moneySheet(a);await moneySheet(b,true);
+  await moneyCell(a,'sync-cake',1,'15.55');await saveMoneySheet(a);await a.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,1);
+  await moneyCell(b,'sync-cake',6,'New phone note\nKeep every character');await saveMoneySheet(b);await b.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,1);
+  const conflict=await b.evaluate(()=>state.syncConflicts.find(c=>c.kind==='money-record'));assert(conflict);assert.equal(conflict.local.note,'New phone note\nKeep every character');assert.equal(conflict.local.amountCents,1000);assert.equal(conflict.remote.amountCents,1555);assert.equal(conflict.remote.note,'Original complete note\nSecond line');assert.equal(cloudMoney(f).entries.find(e=>e.id==='sync-cake').amountCents,1555);
+  await b.reload();await b.waitForFunction(()=>state.syncConflicts.some(c=>c.kind==='money-record'));const retained=await b.evaluate(()=>state.syncConflicts.find(c=>c.kind==='money-record'));assert.deepEqual(retained.local,conflict.local);assert.deepEqual(retained.remote,conflict.remote);assertMoneyOriginals(f);
+ });
+ await run('money workbook lost cloud acknowledgement retries the same record without duplicate transactions or history',async context=>{
+  const f=await setup(context,{money:true}),{a,b,backend}=f;let dropped=false;
+  await a.route('https://**supabase.co/rest/v1/user_states**',async route=>{
+   const request=route.request();if(request.method()!=='PATCH' || dropped)return route.fallback();
+   assert.equal(new globalThis.URL(request.url()).searchParams.get('updated_at'),'eq.'+backend.updated_at);const data=request.postDataJSON();backend.state=clone(data.state);backend.updated_at=data.updated_at;backend.writes++;dropped=true;await route.abort('failed');
+  });
+  await moneySheet(a);await moneyDraftCell(a,0,3,'Synthetic retry purchase');await moneyDraftCell(a,1,3,'12.34');await moneyDraftCell(a,6,3,'Complete new entry\nSecond line');await saveMoneySheet(a);
+  const local=await moneyOf(a),created=local.entries.find(e=>e.title==='Synthetic retry purchase');assert(created);assert.equal(created.amountCents,1234);
+  await a.evaluate(()=>pushCloudState({manual:true}));assert.equal(dropped,true);assert.equal(backend.writes,1);const saved=clone(cloudMoney(f));
+  await a.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,1);assert.deepEqual(await moneyOf(a),saved);assert.equal(saved.entries.length,3);assert.equal(saved.entries.filter(e=>e.id===created.id).length,1);assert.deepEqual(saved.entries.find(e=>e.id===created.id),created);
+  for(const original of f.base.boards.find(board=>board.id===f.base.activeBoardId).money.entries)assert.deepEqual(saved.entries.find(e=>e.id===original.id),original);
+  await b.evaluate(()=>pushCloudState({manual:true}));assert.deepEqual(await moneyOf(b),saved);assertMoneyOriginals(f);
+ });
+ await run('money workbook observed cross-tab edit followed by a return edit does not create a false cloud conflict with an older baseline',async context=>{
+  const f=await setup(context,{money:true}),{a,base,backend}=f,q=await fresh(a.context());
+  await q.route('https://**supabase.co/rest/v1/user_states**',async route=>{
+   const req=route.request(),url=new globalThis.URL(req.url());
+   if(req.method()==='GET')return route.fulfill({json:[{state:clone(backend.state),updated_at:backend.updated_at}]});
+   if(req.method()==='PATCH'){
+    if(url.searchParams.get('updated_at')!=='eq.'+backend.updated_at)return route.fulfill({json:[]});
+    const data=req.postDataJSON();backend.state=clone(data.state);backend.updated_at=data.updated_at;backend.writes++;return route.fulfill({json:[{updated_at:backend.updated_at}]});
+   }
+   return route.fulfill({status:400,body:'Unexpected method'});
+  });
+  await connect(q,base,backend.updated_at);await moneySheet(a);await moneySheet(q,true);
+  await moneyCell(q,'sync-cake',1,'15.55');await moneyCell(q,'sync-cake',6,'Observed phone note\nEvery character');await saveMoneySheet(q);await q.evaluate(()=>pushCloudState({manual:true}));assert.equal(backend.writes,1);
+  await a.waitForFunction(()=>moneyLedger().entries.find(e=>e.id==='sync-cake').amountCents===1555);
+  assert.equal(await a.evaluate(()=>cloudMergeBase.state.boards.find(b=>b.id===state.activeBoardId).money.entries.find(e=>e.id==='sync-cake').amountCents),1000,'retain the deliberately older cloud baseline');
+  await moneyCell(a,'sync-cake',1,'12.34');await moneyCell(a,'sync-cake',6,'Observed phone note\nEvery character\nDesktop continuation');await saveMoneySheet(a);await a.evaluate(()=>pushCloudState({manual:true}));
+  assert.equal(backend.writes,2);assert.equal(await a.evaluate(()=>state.syncConflicts.length),0);await q.waitForFunction(()=>moneyLedger().entries.find(e=>e.id==='sync-cake').amountCents===1234);assert.equal(await q.evaluate(()=>state.syncConflicts.length),0);
+  const saved=cloudMoney(f),cake=saved.entries.find(e=>e.id==='sync-cake');assert.equal(saved.entries.length,2);assert.equal(cake.history.length,2);assert.equal(cake.note,'Observed phone note\nEvery character\nDesktop continuation');assert.deepEqual(cake.history.map(h=>h.record.amountCents),[1000,1555]);assertMoneyOriginals(f);
  });
  fs.writeFileSync(output+'/sync-results.json',JSON.stringify(results,null,2));await browser.close();if(results.some(x=>!x.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});

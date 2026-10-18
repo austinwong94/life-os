@@ -105,6 +105,21 @@ test('stale changes are refused without mutation; full previous versions are kep
   const l=ledger(),before=M.copy(l);const added=M.change(l,'entries',entry('food'),undefined,1);assert.deepEqual(l,before);
   const original=added.entries[0],changed=M.change(added,'entries',{...original,title:'Lunch'},original,2);assert.equal(changed.entries[0].history[0].record.title,'food');assert.throws(()=>M.change(changed,'entries',{...original,title:'Dinner'},original));
 });
+test('sequential financial edits from an observed version merge against an older tab baseline without using clock order',()=>{
+  const l=ledger();l.entries=[entry('sequential',{amountCents:1000,note:'Original complete note',extra:{keep:true}})];
+  const original=l.entries[0],phone=M.change(l,'entries',{...original,amountCents:1555,note:'Phone note\nSecond line',sheetCells:{Z:'Full detail'}},original,2000),observed=phone.entries[0];
+  const desktop=M.change(phone,'entries',{...observed,amountCents:1234,note:observed.note+'\nDesktop continuation'},observed,1000);
+  const base={boards:[{id:'home',money:l}]},a={boards:[{id:'home',money:desktop}]},b={boards:[{id:'home',money:phone}]};
+  for(const [local,remote] of [[a,b],[b,a]]){const r=merge.merge(base,local,remote);assert.equal(r.conflicts.length,0);assert.deepEqual(r.boards[0].money,desktop);assert.equal(r.boards[0].money.entries.length,1);assert.equal(r.boards[0].money.entries[0].history.length,2);}
+});
+test('financial ancestry requires the complete earlier record and exact history prefix; incomplete history never hides a conflict',()=>{
+  const l=ledger();l.entries=[entry('ancestry')];const original=l.entries[0],phone=M.change(l,'entries',{...original,note:'Phone original'},original,2000),observed=phone.entries[0],desktop=M.change(phone,'entries',{...observed,amountCents:1555},observed,3000),base={boards:[{id:'home',money:l}]};
+  for(const mutate of [e=>e.history[1].record.note='Different earlier text',e=>e.history[0].record.amountCents++,e=>e.history.shift(),e=>e.history=null,e=>e.history[1].record.unknown='Not in the observed record']){const next=M.copy(desktop);mutate(next.entries[0]);const r=merge.merge(base,{boards:[{id:'home',money:next}]},{boards:[{id:'home',money:phone}]});assert.equal(r.conflicts.length,1);assert.equal(r.conflicts[0].kind,'money-record');assert.deepEqual(r.conflicts[0].local,next.entries[0]);assert.deepEqual(r.conflicts[0].remote,observed);}
+});
+test('parallel financial edits after a common observed version still preserve both complete choices',()=>{
+  const l=ledger();l.entries=[entry('parallel')];const original=l.entries[0],phone=M.change(l,'entries',{...original,note:'Shared observed note'},original,2000),observed=phone.entries[0],a=M.change(phone,'entries',{...observed,amountCents:1555},observed,3000),b=M.change(phone,'entries',{...observed,status:'cancelled'},observed,4000);
+  const r=merge.merge({boards:[{id:'home',money:l}]},{boards:[{id:'home',money:a}]},{boards:[{id:'home',money:b}]});assert.equal(r.conflicts.length,1);assert.deepEqual(r.conflicts[0].local,a.entries[0]);assert.deepEqual(r.conflicts[0].remote,b.entries[0]);
+});
 test('two-board and independent-entry changes merge without mixing the same record',()=>{
   const base={boards:[{id:'one',money:ledger()},{id:'two',money:ledger()}]},a=M.copy(base),b=M.copy(base);
   a.boards[0].money=M.change(a.boards[0].money,'entries',entry('lunch'),undefined,1);b.boards[1].money=M.change(b.boards[1].money,'entries',entry('dinner'),undefined,1);

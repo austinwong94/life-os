@@ -14,6 +14,16 @@
     return left===right || left!==undefined && right!==undefined && equalJson(JSON.parse(left),JSON.parse(right));
   }
   const object = value => value && typeof value === "object" && !Array.isArray(value);
+  function financialDescendant(later,earlier) {
+    if(!object(later) || !object(earlier) || later.id!==earlier.id || !Array.isArray(later.history))return false;
+    const prefix=earlier.history===undefined?[]:earlier.history;
+    if(!Array.isArray(prefix) || later.history.length<=prefix.length || !prefix.every((entry,index)=>equal(entry,later.history[index])))return false;
+    if(!later.history.every(entry=>object(entry) && Number.isSafeInteger(entry.at) && entry.at>=0 && object(entry.record) && entry.record.id===later.id && !Object.hasOwn(entry.record,'history')))return false;
+    // Another tab may have observed this exact record before the shared cloud
+    // baseline advanced. Only a complete, retained ancestor proves succession.
+    const previous=Object.fromEntries(Object.entries(earlier).filter(([key])=>key!=='history'));
+    return equal(later.history[prefix.length].record,previous);
+  }
   const keyed = value => Array.isArray(value) && value.every(item => object(item) && typeof item.id === "string") && new Set(value.map(item => item.id)).size === value.length;
   const unsafeKeys = new Set(["__proto__", "prototype", "constructor"]);
   const dailyClockKeys=['targetAt','duration','remaining','runningSince'];
@@ -92,6 +102,8 @@
       // A card's summary view is presentation, not account ownership.
       if(field==='moneyOwner' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]))return copy(l);
       if(path.length===5 && path[0]==='boards' && path[2]==='money' && ['accounts','entries','budgets'].includes(path[3]) && object(l) && object(r)) {
+        if(financialDescendant(l,r))return copy(l);
+        if(financialDescendant(r,l))return copy(r);
         conflicts.push({kind:'money-record',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});
         return copy(l);
       }
