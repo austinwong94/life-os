@@ -5,6 +5,9 @@ const {enhancePropertyCalendarDay}=require('./property-calendar-day.cjs');
 const {enhancePropertyPeriod}=require('./property-period.cjs');
 const source=path.resolve(process.argv[2] || path.join(__dirname,'../../../2026-04-28/sunrise-villa-dashboard'));
 const root=path.resolve(__dirname,'..');
+if (fs.existsSync(path.join(root,'property-runtime.js')) && fs.readFileSync(path.join(root,'property-runtime.js'),'utf8').includes('LifePropertyCalendarStatus')) {
+  throw new Error('Retired-source import would remove calendar monitoring. Maintain the current Life OS Properties source directly.');
+}
 function replace(text,from,to){if(!text.includes(from))throw new Error('Property source changed: '+from.slice(0,65));return text.replace(from,to);}
 const files=['backup-crypto.js','workflow-core.js','cloud-copies.js','app.js','workspace.js','recovery.js','expense-review.js','backup-ui.js'];
 let app=fs.readFileSync(path.join(source,'app.js'),'utf8');

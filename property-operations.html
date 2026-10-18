@@ -344,6 +344,16 @@
           <span class="health-pill secondary version-pill">Version 2026.09.21</span>
         </section>
 
+        <section id="propertyCalendarSync" class="property-calendar-sync" aria-label="Automatic calendar sync" aria-live="polite" aria-atomic="true" data-status="unknown">
+          <div class="property-calendar-sync-copy">
+            <strong data-calendar-state>Checking automatic calendar sync</strong>
+            <time>Last successful refresh: checking</time>
+            <span data-calendar-detail>Automatic calendar refresh: hourly</span>
+            <p data-calendar-warning role="alert" hidden></p>
+          </div>
+          <button type="button" class="ghost-button compact">Check status</button>
+        </section>
+
         <div class="sync-notice" id="syncNotice" role="alert" hidden>
           <p data-sync-message></p>
           <div class="heading-actions">
@@ -1907,6 +1917,7 @@
     <script src="property-client.js"></script>
     <script src="property-cache.js"></script>
     <script src="property-calendar-day.js"></script>
+    <script src="property-calendar-status.js"></script>
       <script src="property-runtime.js"></script>
   </body>
 </html>

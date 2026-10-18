@@ -45,17 +45,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const base = Deno.env.get("SUPABASE_URL") ?? "";
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const H = { apikey: key, authorization: `Bearer ${key}`, "content-type": "application/json" };
+  let runId = "", statusSaved = true;
+  async function telemetry(name: string, body: Record<string, unknown>): Promise<unknown> {
+    try {
+      const response = await fetch(base + '/rest/v1/rpc/' + name, {method:'POST',headers:H,body:JSON.stringify(body),signal:AbortSignal.timeout(5000)});
+      if (!response.ok) throw new Error('status_unavailable');
+      return await response.json();
+    } catch { statusSaved = false; return null; }
+  }
+  const started = await telemetry('property_calendar_sync_begin', {p_owner:propertyOwner});
+  if (typeof started === 'string' && /^[a-f0-9-]{36}$/.test(started)) runId = started;
+  else statusSaved = false;
+  async function finish(status: string, blocks: number | null = null, error: string | null = null) {
+    if (!runId) return;
+    if (await telemetry('property_calendar_sync_finish', {p_owner:propertyOwner,p_run:runId,p_status:status,p_blocks:blocks,p_error:error}) !== true) statusSaved=false;
+  }
 
+  try {
   // Read every user's blob (1 user in practice) — READ ONLY.
   const rowsRes = await fetch(`${base}/rest/v1/property_workspaces?select=user_id,data&data_type=eq.full_app_backup&record_key=eq.sunrise-villa-main&user_id=eq.${propertyOwner}`, { headers: H });
-  if (!rowsRes.ok) return json({ error: "db_read_failed", status: rowsRes.status }, 502);
+  if (!rowsRes.ok) { await finish('error',null,'workspace_unavailable'); return json({ error: "db_read_failed", status: rowsRes.status }, 502); }
   const rows = await rowsRes.json() as Array<{ user_id: string; data: Record<string, unknown> }>;
+  if (rows.length !== 1 || rows[0].user_id !== propertyOwner) { await finish('error',null,'workspace_unavailable'); return json({error:'workspace_unavailable'},502); }
 
   const report: Record<string, unknown>[] = [];
   for (const row of rows) {
     const ical = ((row.data as { appSettings?: { ical?: { sources?: Array<{ villa?: string; url?: string }> } } })?.appSettings?.ical) || {};
     const sources = Array.isArray(ical.sources) ? ical.sources : [];
-    if (!sources.length) { report.push({ user: row.user_id, skipped: "no sources" }); continue; }
+    if (!sources.length) { await finish('not_configured'); report.push({ user: row.user_id, skipped: "no sources" }); continue; }
 
     const blocks: Array<{ user_id: string; villa: string; uid: string; start_date: string; end_date: string; reservation_url: string }> = [];
     let fetchError = "";
@@ -77,9 +94,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Every configured feed must succeed before replacing the last good snapshot.
     if (!fetchError) {
       const saved=await fetch(base+'/rest/v1/rpc/property_replace_ical_blocks',{method:'POST',headers:H,body:JSON.stringify({p_user:row.user_id,p_blocks:blocks})});
-      if(!saved.ok){report.push({user:row.user_id,error:'atomic_refresh_failed'});continue;}
+      if(!saved.ok){await finish('error',null,'save_failed');report.push({user:row.user_id,error:'atomic_refresh_failed'});continue;}
+      await finish('success',blocks.length);
+    } else {
+      await finish('error',null,'feed_unavailable');
     }
     report.push({ user: row.user_id, blocks: blocks.length, fetchError: fetchError || undefined });
   }
-  return json({ ok: true, report });
+  const failed=report.some(row=>row.error || row.fetchError);
+  return json({ ok: !failed, report, statusRecorded: statusSaved }, failed ? 502 : 200);
+  } catch {
+    await finish('error',null,'unexpected_failure');
+    return json({error:'calendar_sync_failed',statusRecorded:statusSaved},502);
+  }
 });

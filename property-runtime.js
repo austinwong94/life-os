@@ -3956,6 +3956,7 @@ async function applyCloudSession(session) {
   const nextUser = session?.user || null;
   if (nextUser?.id === cloudUser?.id) return;
   authGeneration += 1;
+  propertyCalendarStatus?.clear();
   clearCloudCopyReview();
   cloudReady = false;
   cloudConflict = false;
@@ -3985,6 +3986,7 @@ async function applyCloudSession(session) {
     // Scheduled import remains opt-in until migration acceptance.
     loadBookingCandidates();
     mergeServerIcalBlocks();
+    void propertyCalendarStatus?.refresh();
   }
 }
 
@@ -4084,7 +4086,7 @@ function renderDataHealth(statusMode = cloudStatusMode) {
     els.dataHealthStatus.dataset.status = statusMode || (cloudUser ? "connected" : "offline");
   }
   if (els.dataHealthLastSync) {
-    els.dataHealthLastSync.textContent = `Last synced: ${shortDateTimeLabel(cloudKnownUpdatedAt || appSettings.lastCloudSyncAt)}`;
+    els.dataHealthLastSync.textContent = `Records saved: ${shortDateTimeLabel(cloudKnownUpdatedAt || appSettings.lastCloudSyncAt)}`;
   }
   if (els.dataHealthRecords) {
     els.dataHealthRecords.textContent = `${bookings.length} booking${bookings.length === 1 ? "" : "s"}`;
@@ -10651,12 +10653,31 @@ initThemePicker();
 initSidebar();
 initLoginUi();
 renderAll();
+const propertyCalendarStatus = window.LifePropertyCalendarStatus.create({
+  document,
+  identity: () => cloudUser?.id,
+  active: () => Boolean(cloudReady && cloudUser && !window.frameElement?.hidden && !window.frameElement?.inert),
+  read: async owner => {
+    const session = await window.PropertyHost.session();
+    if (session.user.id !== owner) throw new Error('Account changed');
+    const response = await fetch(window.PropertyHost.url + '/rest/v1/property_calendar_sync_status?select=owner_id,status,last_attempt_at,last_finished_at,last_success_at,block_count&owner_id=eq.' + encodeURIComponent(owner), {
+      headers: {apikey: window.PropertyHost.key, Authorization: 'Bearer ' + session.access_token},
+      signal: AbortSignal.timeout(12000), cache: 'no-store'
+    });
+    if (!response.ok) throw new Error('Status unavailable');
+    return response.json();
+  }
+});
 initCloudStorage();
+window.setInterval(() => {
+  if (document.visibilityState === 'visible') void propertyCalendarStatus?.refresh();
+}, 60000);
 
 // Coming back to the tab re-pulls what the servers refreshed while it was
 // hidden (hourly iCal blocks, new booking candidates) — no manual sync tap.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && supabaseClient && cloudUser) {
+    void propertyCalendarStatus?.refresh();
     mergeServerIcalBlocks();
     loadBookingCandidates();
   }
