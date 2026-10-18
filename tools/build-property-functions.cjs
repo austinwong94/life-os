@@ -3,6 +3,9 @@ const fs=require('node:fs'),path=require('node:path');
 const {hardenPropertyCalendar}=require('./property-calendar-hardening.cjs');
 const input=process.argv[2];if(!input)throw new Error('Provide the protected function-source backup path.');
 const data=JSON.parse(fs.readFileSync(input,'utf8')),root=path.resolve(__dirname,'../supabase/functions');
+if (fs.readFileSync(path.join(root,'property-ical-cron-sync/index.ts'),'utf8').includes('property_calendar_sync_begin')) {
+  throw new Error('Retired-source import would remove calendar monitoring. Maintain the current Life OS functions directly.');
+}
 const callbacks=['ical-cron-sync','ota-email-ingest','daily-digest'];
 const disabledAI=new Set(['guest-reply-draft','receipt-scan','tax-review','tax-doc-analyze','earnings-import']);
 // All deployed endpoints require JWTs. Unused external callbacks stay disabled;

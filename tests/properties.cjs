@@ -36,6 +36,17 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     assert.equal(await frame.locator('#appShell').isVisible(),true);assert(calls.some(s=>s.includes('/property_workspaces')));assert(!calls.some(s=>s.includes('nigzeyamrzrozftbujmm') || s.includes('/user_states')));
     assert.equal(await page.evaluate(()=>localStorage.length),0);assert.equal(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export().bookings[0].customHistory.retained),'Original future field');
   });
+  await run('automatic calendar status shows success, retained failure, overdue and unavailable states without saving',async({page,context,getRow,writes})=>{
+    let mode='success';const last='2026-10-16T23:07:02Z',original=JSON.stringify(getRow().data);
+    await context.route('https://**/rest/v1/property_calendar_sync_status?**',route=>mode==='unavailable'?route.fulfill({status:503,body:'private internal details'}):route.fulfill({json:[{owner_id:owner,status:mode==='error'?'error':'success',last_attempt_at:last,last_success_at:mode==='overdue'?'2026-10-16T00:07:02Z':last,block_count:0}]}));
+    const frame=await open(page),status=frame.getByRole('region',{name:'Automatic calendar sync',exact:true});
+    await status.getByText('Calendar up to date',{exact:true}).waitFor();assert.match(await status.innerText(),/0 availability blocks/);const timestamp=await status.locator('time').getAttribute('datetime');assert.equal(timestamp,last.replace('Z','.000Z'));
+    mode='error';await status.getByRole('button',{name:'Check status',exact:true}).click();await status.getByText('Calendar sync failed',{exact:true}).waitFor();assert.equal(await status.locator('time').getAttribute('datetime'),timestamp);
+    mode='unavailable';await status.getByRole('button',{name:'Check status',exact:true}).click();await status.getByText('Calendar status unavailable',{exact:true}).waitFor();assert.equal(await status.locator('time').getAttribute('datetime'),timestamp);assert.doesNotMatch(await status.innerText(),/private internal/);
+    mode='overdue';await status.getByRole('button',{name:'Check status',exact:true}).click();await status.getByText('Calendar refresh overdue',{exact:true}).waitFor();
+    for(const width of [1440,1080,390,320]){await page.setViewportSize({width,height:1000});const size=await status.evaluate(n=>({left:n.getBoundingClientRect().left,right:n.getBoundingClientRect().right,width:n.ownerDocument.documentElement.clientWidth,scroll:n.scrollWidth,client:n.clientWidth}));assert(size.left>=0 && size.right<=size.width+1 && size.scroll<=size.client+1,JSON.stringify(size));await page.screenshot({path:path.join(out,'calendar-status-'+width+'.png'),fullPage:true});}
+    assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
   await run('booking edits save, preserve unknown fields and reload from the separate repository',async({page,getRow,writes})=>{
     const frame=await open(page);await edit(frame,'Updated synthetic guest');
     await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);assert(writes()>0);assert.equal(getRow().data.bookings[0].guest,'Updated synthetic guest');assert.deepEqual(getRow().data.futureRoot,base.futureRoot);

@@ -107,6 +107,34 @@ test('manual import refuses malformed calendars and never writes bookings or per
     if(path.endsWith('/auth/v1/user'))return Response.json({id:owner});if(path.endsWith('/property_workspaces'))return Response.json([{id:'owned'}]);return new Response('<html>Unavailable</html>');};
   const response=await run(new Request('https://synthetic.invalid/function',{method:'POST',headers:{authorization:'Bearer synthetic-user'},body:JSON.stringify({sources:[{villa:'Sunrise',url:'https://airbnb.com/feed'}]})}));const result=await response.json();assert.equal(result.results[0].ok,false);assert.equal(result.results[0].error,'invalid_calendar');assert(calls.every(call=>call.method==='GET'));assert(!calls.some(call=>call.url.includes('/user_states')));
 });
+test('automatic calendar telemetry records a successful empty refresh without touching business records',async()=>{
+  const run=await handler('ical-cron-sync'),calls=[],runId='22222222-2222-4222-8222-222222222222';
+  global.fetch=async(url,init)=>{
+    const path=new URL(url).pathname;calls.push({path,body:init?.body && JSON.parse(init.body)});
+    if(path.endsWith('/property_callback_secret'))return Response.json('synthetic-secret');
+    if(path.endsWith('/property_migration_control'))return Response.json([{owner_id:owner}]);
+    if(path.endsWith('/property_calendar_sync_begin'))return Response.json(runId);
+    if(path.endsWith('/property_calendar_sync_finish'))return Response.json(true);
+    if(path.endsWith('/property_workspaces'))return Response.json([{user_id:owner,data:{appSettings:{ical:{sources:[{url:'https://airbnb.com/feed'}]}}}}]);
+    if(path.endsWith('/property_replace_ical_blocks'))return Response.json(0);
+    return new Response(calendar(''));
+  };
+  const response=await run(new Request('https://synthetic.invalid/function',{method:'POST',headers:{'x-cron-secret':'synthetic-secret'}}));assert.equal(response.status,200);assert.equal((await response.json()).statusRecorded,true);
+  assert.deepEqual(calls.find(c=>c.path.endsWith('/property_calendar_sync_finish')).body,{p_owner:owner,p_run:runId,p_status:'success',p_blocks:0,p_error:null});assert(!calls.some(c=>c.path.includes('user_states')));
+});
+test('automatic failure writes only a safe failure code and preserves the last good availability',async()=>{
+  const run=await handler('ical-cron-sync'),calls=[];
+  global.fetch=async(url,init)=>{
+    const path=new URL(url).pathname;calls.push({path,body:init?.body && JSON.parse(init.body)});
+    if(path.endsWith('/property_callback_secret'))return Response.json('synthetic-secret');
+    if(path.endsWith('/property_migration_control'))return Response.json([{owner_id:owner}]);
+    if(path.endsWith('/property_calendar_sync_begin'))return Response.json('22222222-2222-4222-8222-222222222222');
+    if(path.endsWith('/property_calendar_sync_finish'))return Response.json(true);
+    if(path.endsWith('/property_workspaces'))return Response.json([{user_id:owner,data:{appSettings:{ical:{sources:[{url:'https://airbnb.com/feed?token=private'}]}}}}]);
+    return new Response('<html>provider down</html>');
+  };
+  const response=await run(new Request('https://synthetic.invalid/function',{method:'POST',headers:{'x-cron-secret':'synthetic-secret'}}));assert.equal(response.status,502);const completion=calls.find(c=>c.path.endsWith('/property_calendar_sync_finish')).body;assert.equal(completion.p_status,'error');assert.equal(completion.p_error,'feed_unavailable');assert.doesNotMatch(JSON.stringify(completion),/token|provider|html/);assert(!calls.some(c=>c.path.endsWith('/property_replace_ical_blocks')));
+});
 test('migration regeneration retains the bounded fetch/parser boundary and refuses unknown source layouts',()=>{
   const {hardenPropertyCalendar}=require('../tools/property-calendar-hardening.cjs');
   for(const slug of ['ical-import','ical-cron-sync']){const source=fs.readFileSync('supabase/functions/property-'+slug+'/index.ts','utf8');assert.equal(hardenPropertyCalendar(source,slug),source);assert.doesNotMatch(source,/res\.text\(|response\.text\(/);assert.match(source,/parsePropertyIcs\(body/);}

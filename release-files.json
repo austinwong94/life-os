@@ -53,6 +53,7 @@
   "property-host.js",
   "property-cache.js",
   "property-calendar-day.js",
+  "property-calendar-status.js",
   "property-runtime.js",
   "property-client.js",
   "property-styles.css",
