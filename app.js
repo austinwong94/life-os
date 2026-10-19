@@ -13505,13 +13505,14 @@ function renderCloudStatus(message) {
   }
   if (message) {cloudStatusMessage = message; cloudGithubAuthorizeUrl = '';}
   const isSignedIn = Boolean(cloudSession?.access_token);
-  const needsSignIn=cloudSessionReauthRequired || /Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '');
+  const needsSignIn=cloudSessionReauthRequired || /Cloud session expired|Sign-in failed:/.test(cloudStatusMessage || '');
   const connected=isSignedIn && !needsSignIn;
+  const renewalPending=connected && Date.now()>=Number(cloudSession.expires_at || 0);
   signInFields.hidden=connected;
   help.textContent=connected
-    ? `Connected as ${cloudSession.user?.email || 'your Life OS account'}. ${isRestoreSyncPaused() || cloudConflictPending || !cloudSaveEnabled?'Automatic sync is paused.':!navigator.onLine?'Automatic sync will resume when online.':'Automatic sync is on.'}`
+    ? renewalPending?'Your Life OS sign-in is saved. Restoring its connection; cloud saving is not confirmed yet.':`Connected as ${cloudSession.user?.email || 'your Life OS account'}. ${isRestoreSyncPaused() || cloudConflictPending || !cloudSaveEnabled?'Automatic sync is paused.':!navigator.onLine?'Automatic sync will resume when online.':'Automatic sync is on.'}`
     : isSignedIn?'Sign in to Life OS again to reconnect. Your device records are unchanged.':'Sign in to Life OS to connect your existing cloud records.';
-  elements.cloudStatus.textContent = isSignedIn && needsSignIn ? "Sign-in needed" : isRestoreSyncPaused() ? "Paused" : connected && cloudConflictPending ? "Review needed" : connected ? "Connected" : "Local";
+  elements.cloudStatus.textContent = isSignedIn && needsSignIn ? "Sign-in needed" : isRestoreSyncPaused() ? "Paused" : renewalPending ? "Reconnecting" : connected && cloudConflictPending ? "Review needed" : connected ? "Connected" : "Local";
   elements.cloudEmail.value = cloudSession?.user?.email || elements.cloudEmail.value || "";
   elements.cloudPullButton.disabled = !isSignedIn;
   elements.cloudPushButton.disabled = !isSignedIn;
@@ -14058,7 +14059,20 @@ async function ensureCloudSession() {
       throw new Error('Cloud sign-in changed during renewal. Your local records are kept; retry using the current session.');
     }
     if (!LifeAuthRenewal.hasIdentity(session) || session.user.id !== owner || !session.refresh_token) throw new Error('Cloud session expired. Sign in again; your local records are kept.');
-    saveCloudSession(session);
+    try{saveCloudSession(session);}
+    catch(error){
+      // Keep the returned token pair in this call while verified duplicate
+      // recovery copies move out of the small localStorage cache.
+      if(!/Sign-in could not be saved/.test(error.message) || !recoveryVault)throw error;
+      await recoveryVault.compact({releaseCache:true});
+      const afterRecovery=loadCloudSession();
+      if(!LifeAuthRenewal.hasIdentity(afterRecovery) || afterRecovery.user.id!==owner)throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
+      if(afterRecovery.access_token!==current.access_token || afterRecovery.refresh_token!==current.refresh_token){
+        if(Date.now()<Number(afterRecovery.expires_at || 0)){assertCloudSignInOwner(afterRecovery.user);cloudSession=afterRecovery;return afterRecovery;}
+        throw new Error('Cloud sign-in changed during renewal. Your local records are kept; retry using the current session.');
+      }
+      saveCloudSession(session);
+    }
     await cloudRenewalReceipts.complete(claim);
     return session;
   });

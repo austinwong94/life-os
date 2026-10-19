@@ -1,5 +1,15 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const R=require('../auth-renewal.js');
+test('Properties distinguishes saved-session storage and network failures from a real sign-in requirement',()=>{
+ for(const error of [{name:'AuthRenewalStorageError'},{message:'Sign-in could not be saved on this browser.'}]){const result=R.describeFailure(error,{signedIn:true});assert.equal(result.kind,'storage');assert.equal(result.retry,false);assert.doesNotMatch(result.message,/Sign in to Life OS in Settings/);}
+ assert.equal(R.describeFailure({name:'AuthRenewalReceiptError'},{signedIn:true}).kind,'recovery');
+ assert.deepEqual(R.describeFailure({retryable:true,message:'Private URL https://secret.invalid/?token=private'},{signedIn:true}).kind,'connection');
+ assert.doesNotMatch(R.describeFailure({retryable:true,message:'Private URL https://secret.invalid/?token=private'},{signedIn:true}).message,/secret|private/);
+ assert.equal(R.describeFailure({message:'Cloud session expired or was revoked.'},{signedIn:true}).kind,'signin');
+ assert.equal(R.describeFailure(new Error('Unavailable'),{signedIn:false}).kind,'signin');
+ assert.equal(R.describeFailure(new Error('The cloud account changed or signed out.'),{signedIn:true}).kind,'account');
+ assert.equal(R.describeFailure(new Error('Unexpected internal failure'),{signedIn:true}).kind,'connection');
+});
 test('credential shape checks reject malformed storage while retaining legacy access-only sessions',()=>{
  assert.equal(R.hasIdentity({access_token:'synthetic-access',user:{id:'owner'}}),true);
  assert.equal(R.hasIdentity({access_token:'synthetic-access',refresh_token:'synthetic-refresh',user:{id:'owner'}}),true);
