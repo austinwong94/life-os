@@ -24,7 +24,7 @@ async function seed(page,{conflict=true,archived=false,remotePatch={}}={}) {
     const view=makeCard({type:'planlist',title:'My planner',category:'Personal'});
     state.boards=[createBoardRecord({id:'review-board',name:'Personal',cards:archived?[view]:[source,view],archivedCards:archived?[{...source,archivedAt:2000}]:[]}),
       createBoardRecord({id:'untouched',name:'Other board',cards:[makeCard({type:'quote',title:'Keep this note',description:'Original thoughts\nSecond line'})]})];
-    applyBoardToState(state,'review-board');saveState({skipCloud:true});await flushDeviceWrites();
+    switchBoard('review-board');await flushDeviceWrites();
     const base=getStateForStorage(),key=archived?'archivedCards':'cards';
     if(conflict) {
       LifePlanner.complete(getPlannerSourceCards()[0],'review-task','2026-09-07',new Date('2026-09-08T12:30:00').getTime());
@@ -106,12 +106,13 @@ async function choose(page,label) {
   });
   await run('Review in one tab retains another board edit and stale conflict IDs cannot return',async(page,context)=>{
     await seed(page);const second=await context.newPage();await second.goto(URL+'?preview=1');
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem(LifeStorageScope.key('life-os-active-board'))),'review-board');
     const old=await second.evaluate(()=>LifeStateMerge.copy(state.syncConflicts));
     await second.evaluate(async()=>{switchBoard('untouched');state.cards[0].description='New writing on another board';saveState({skipCloud:true});await flushDeviceWrites();});
     await choose(page,'Other tab version');await page.getByText(/Task version saved/).waitFor();
     await second.evaluate(async old=>{state.syncConflicts=old;saveState({skipCloud:true});await flushDeviceWrites();},old);
     assert.equal(await second.evaluate(()=>state.syncConflicts.length),0);assert.equal(await second.evaluate(()=>state.cards[0].description),'New writing on another board');
-    await page.reload();assert.equal((await task(page)).dateKey,'2026-09-15');
+    await page.reload();assert.equal(await page.evaluate(()=>state.activeBoardId),'review-board');assert.equal((await task(page)).dateKey,'2026-09-15');
   });
   await run('Actual queued writes from two tabs produce one whole-task conflict, never mixed completion and schedule',async(page,context)=>{
     await seed(page,{conflict:false});const second=await context.newPage();await second.goto(URL+'?preview=1');
