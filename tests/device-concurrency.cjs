@@ -5,6 +5,7 @@ const results=[];
 (async()=>{
   const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name,fn,init){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1080,height:1100},timezoneId:'Asia/Kuala_Lumpur'}),errors=[];
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'Synthetic device records only; external services blocked'}));
     if(init)await context.addInitScript(init);
@@ -24,6 +25,34 @@ const results=[];
   const saved=p=>p.evaluate(()=>JSON.parse(localStorage.getItem(STORAGE_KEY)));
   const text=(snapshot,id)=>snapshot.boards.find(b=>b.id===id).cards[0].diaryEntries['2026-10-16']?.thoughts;
   async function write(p,words){return p.evaluate(async words=>{updateDiaryEntry(state.cards[0],'2026-10-16',{thoughts:words});return flushDeviceWrites();},words);}
+  await run('unchanged idle saves do not accumulate full packets when device commits are blocked',async p=>{
+    const result=await p.evaluate(async()=>{
+      saveState({quiet:true,touch:false});await flushDeviceWrites();LifeDeviceStore.configure(()=>false);
+      const raw=localStorage.getItem(STORAGE_KEY),before=LifeDeviceStore.diagnostics();
+      for(let i=0;i<300;i++)saveState({quiet:true,touch:false});
+      return {before,after:LifeDeviceStore.diagnostics(),pending:LifeDeviceStore.pending().length,unchanged:localStorage.getItem(STORAGE_KEY)===raw};
+    });
+    assert.equal(result.pending,0);assert.equal(result.unchanged,true);assert.equal(result.after.pendingBytes,result.before.pendingBytes);assert.equal(result.after.totalBytes,result.before.totalBytes);
+  });
+  await run('idle saves retain one blocked real diary edit without adding redundant packets or acknowledging it',async p=>{
+    const result=await p.evaluate(async()=>{
+      saveState({quiet:true,touch:false});await flushDeviceWrites();LifeDeviceStore.configure(()=>false);
+      updateDiaryEntry(state.cards[0],'2026-10-16',{thoughts:'Latest complete blocked writing\nEvery character'});
+      const original=LifeDeviceStore.pending().map(row=>({key:row.key,raw:row.raw}));
+      for(let i=0;i<300;i++)saveState({quiet:true,touch:false});
+      return {original,after:LifeDeviceStore.pending().map(row=>({key:row.key,raw:row.raw})),text:state.cards[0].diaryEntries['2026-10-16'].thoughts};
+    });
+    assert.equal(result.original.length,1);assert.equal(result.after.length,1);assert(JSON.stringify(result.after)===JSON.stringify(result.original),'The complete original packet must remain byte-identical');assert.equal(result.text,'Latest complete blocked writing\nEvery character');
+  });
+  await run('quiet saving still stages actual unstaged information instead of treating it as an idle no-op',async p=>{
+    const result=await p.evaluate(async()=>{
+      saveState({quiet:true,touch:false});await flushDeviceWrites();LifeDeviceStore.configure(()=>false);
+      state.cards[0].diaryEntries['2026-10-16']={thoughts:'Quiet save with genuinely new writing\nSecond line',unknownOriginal:{retained:true}};
+      const staged=saveState({quiet:true,touch:false}),pending=LifeDeviceStore.pending().length;LifeDeviceStore.configure(commitDeviceWrites);
+      const saved=await flushDeviceWrites();return {staged,pending,saved,stored:JSON.parse(localStorage.getItem(STORAGE_KEY))};
+    });
+    assert.equal(result.staged,true);assert.equal(result.pending,1);assert.equal(result.saved,true);assert.equal(text(result.stored,'one'),'Quiet save with genuinely new writing\nSecond line');assert.equal(result.stored.boards[0].cards[0].diaryEntries['2026-10-16'].unknownOriginal.retained,true);
+  });
   await run('retry drains verified queued writes before restaging an unstaged full draft when the queue blocks staging',async p=>{
     const words='Every character of my unstaged draft\nSecond line, not its first character';
     const result=await p.evaluate(async words=>{

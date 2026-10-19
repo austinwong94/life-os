@@ -29,16 +29,17 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   await c.route('https://**supabase.co/**',r=>r.fulfill({status:503,body:'No production access'}));
   const p=await c.newPage();p.on('dialog',d=>d.accept());await p.goto(APP_URL);return p;
  }
- async function connect(page,base,stamp){await page.evaluate(({base,stamp,user})=>{
-   state=rehydrateState(base);cloudSession={user:{id:user},access_token:'synthetic-test-token',expires_at:Date.now()+3600000,cloud_updated_at:stamp};
+ async function connect(page,base,stamp,token='synthetic-test-token'){await page.evaluate(({base,stamp,user,token})=>{
+   state=rehydrateState(base);cloudSession={user:{id:user},access_token:token,expires_at:Date.now()+3600000,cloud_updated_at:stamp};
    saveCloudSession(cloudSession);
    cloudSaveEnabled=false;cloudMergeBase={ownerId:user,state:JSON.parse(JSON.stringify(base))};localMergeBase=JSON.parse(JSON.stringify(state));cloudConflictPending=false;
    render();saveState({skipCloud:true,touch:false});
-  },{base,stamp,user});await page.evaluate(()=>flushDeviceWrites());}
- async function setup(context,{planner=false,health=false,money=false}={}){
+  },{base,stamp,user,token});await page.evaluate(()=>flushDeviceWrites());}
+ async function setup(context,{planner=false,health=false,money=false,multipleBoards=false}={}){
   const a=await fresh(await context());
-  const base=await a.evaluate(async({planner,health,money})=>{
+  const base=await a.evaluate(async({planner,health,money,multipleBoards})=>{
    state.boards.push(createBoardRecord({id:'work',name:'Work',cards:[makeCard({type:'diary',title:'Work diary'})]}));
+   if(multipleBoards)state.boards.push(createBoardRecord({id:'wellbeing',name:'Wellbeing',cards:[makeCard({type:'diary',title:'Wellbeing diary'})]}));
    if(planner){const source=makeCard({type:'planner',title:'Planner sync review',category:'Personal'});source.id='sync-review-source';LifePlanner.add(source,'2026-09-01','Call the clinic','sync-review-task',1000);LifePlanner.project(source);state.cards.push(source);}
    if(health){const card=makeCard({type:'food',title:'Food sync review',category:'Health'});card.id='sync-food';card.activeFoodDate='2026-09-08';
      const rice=card.foodLibrary.find(food=>food.id==='rice-white-cooked');
@@ -51,10 +52,10 @@ const clone=x=>JSON.parse(JSON.stringify(x));
     ],budgets:[]};
    }
    saveState();await flushDeviceWrites();return getStateForStorage();
-  },{planner,health,money});
+  },{planner,health,money,multipleBoards});
   const backend={state:clone(base),updated_at:'2026-09-08T00:00:00.000Z',writes:0};
   const b=await fresh(await context());
-  for(const p of [a,b]){
+  async function attach(p,token='synthetic-test-token'){
    await p.route('https://**supabase.co/rest/v1/user_states**',async route=>{
     const req=route.request(),url=new globalThis.URL(req.url());
     if(req.method()==='GET'){await route.fulfill({json:[{state:clone(backend.state),updated_at:backend.updated_at}]});return;}
@@ -65,10 +66,33 @@ const clone=x=>JSON.parse(JSON.stringify(x));
     }
     await route.fulfill({status:400,body:'Unexpected method'});
    });
-   await connect(p,base,backend.updated_at);
+   await connect(p,base,backend.updated_at,token);
   }
-  return {a,b,base,backend};
+  for(const p of [a,b])await attach(p);
+  return {a,b,base,backend,attach};
  }
+ await run('three different-board laptop tabs and an independent phone copy automatically converge without duplicate tasks or lost writing',async context=>{
+  const {a,b,base,backend,attach}=await setup(context,{planner:true,multipleBoards:true}),q=await fresh(a.context()),r=await fresh(a.context());
+  await attach(q);await attach(r);await b.setViewportSize({width:390,height:844});await connect(b,base,backend.updated_at,'synthetic-independent-phone-token');
+  await q.evaluate(()=>switchBoard('work'));await r.evaluate(()=>switchBoard('wellbeing'));
+  const personal=base.activeBoardId,day='2026-10-19',words=['Full personal diary\nSecond line \u4e2d\u6587','Full work diary\nEvery character','Full wellbeing diary\nNo lost writing'];
+  for(const p of [a,q,r,b])await p.evaluate(()=>{cloudSaveEnabled=true;});
+  for(const [p,content] of [[a,words[0]],[q,words[1]],[r,words[2]]])await p.evaluate(({day,content})=>{updateDiaryEntry(state.cards.find(c=>c.type==='diary'),day,{thoughts:content});}, {day,content});
+  await b.evaluate(()=>{archivePlannerTask(getPlannerSourceItems().find(item=>item.taskId==='sync-review-task'));});
+  await Promise.all([a,q,r,b].map(p=>p.evaluate(()=>{queueCloudSave({immediate:true,silent:true});})));
+  for(const p of [a,q,r,b])await p.waitForFunction(()=>!cloudPushInFlight && !cloudSyncRetry.status().scheduled && /^Cloud (saved and readback verified|copy verified current)/.test(cloudStatusMessage),null,{timeout:25000});
+  const expected=new Map([[personal,words[0]],['work',words[1]],['wellbeing',words[2]]]);
+  for(const [id,text] of expected)assert.equal(backend.state.boards.find(board=>board.id===id).cards.find(c=>c.type==='diary').diaryEntries[day].thoughts,text);
+  const source=backend.state.boards.find(board=>board.id===personal).cards.find(c=>c.id==='sync-review-source');assert.equal(source.plannerTasks.length,1);assert(source.plannerTasks[0].archivedAt);assert.equal(source.plannerTasks[0].id,'sync-review-task');
+  for(const p of [a,q,r,b])await p.evaluate(()=>window.dispatchEvent(new Event('online')));
+  for(const p of [a,q,r,b]){
+   await p.waitForFunction(()=>!cloudPushInFlight && /^Cloud (saved and readback verified|copy verified current)/.test(cloudStatusMessage));
+   const snapshot=await p.evaluate(()=>({state:getStateForStorage(),pending:LifeDeviceStore.pending().length,conflicts:state.syncConflicts.length,token:loadCloudSession().access_token}));
+   assert.equal(snapshot.pending,0);assert.equal(snapshot.conflicts,0);for(const [id,text] of expected)assert.equal(snapshot.state.boards.find(board=>board.id===id).cards.find(c=>c.type==='diary').diaryEntries[day].thoughts,text);
+   assert.equal(snapshot.token,p===b?'synthetic-independent-phone-token':'synthetic-test-token');
+  }
+  assert.equal(await q.evaluate(()=>state.activeBoardId),'work');assert.equal(await r.evaluate(()=>state.activeBoardId),'wellbeing');
+ });
  async function vaultPage(context){
   const c=await context();await c.route('https://**',r=>r.abort());
   await c.route(URL+'vault-fixture',r=>r.fulfill({contentType:'text/html',body:'<!doctype html><script src="recovery-vault.js"></script>'}));
@@ -379,9 +403,9 @@ const clone=x=>JSON.parse(JSON.stringify(x));
    const old={access_token:'synthetic-cached',refresh_token:'synthetic-cached-refresh',expires_at:Date.now()+3600000,user:{id:user}};saveCloudSession(old);
    const next={...old,access_token:'synthetic-current',refresh_token:'synthetic-current-refresh'};localStorage.setItem(CLOUD_SESSION_KEY,JSON.stringify(next));
    setKnownCloudUpdatedAt('2026-10-14T00:00:00.000Z');
-   return {token:loadCloudSession().access_token,refresh:loadCloudSession().refresh_token,stamp:loadCloudSession().cloud_updated_at};
+   return {token:loadCloudSession().access_token,refresh:loadCloudSession().refresh_token,stamp:getKnownCloudUpdatedAt(),credentials:localStorage.getItem(CLOUD_SESSION_KEY),expected:JSON.stringify(next)};
   },user);
-  assert.equal(result.token,'synthetic-current');assert.equal(result.refresh,'synthetic-current-refresh');assert.equal(result.stamp,'2026-10-14T00:00:00.000Z');
+  assert.equal(result.token,'synthetic-current');assert.equal(result.refresh,'synthetic-current-refresh');assert.equal(result.stamp,'2026-10-14T00:00:00.000Z');assert.equal(result.credentials,result.expected);
  });
  await run('renewal refuses a wrong owner without changing the stored session or private records',async context=>{
   const p=await fresh(await context());

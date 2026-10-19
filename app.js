@@ -43,6 +43,7 @@ const SUPABASE_CONFIG = window.PROGRESS_BOARD_SUPABASE || {
   redirectUrl: "https://austinwong94.github.io/life-os/"
 };
 const CLOUD_SESSION_KEY = LifeStorageScope.key("life-os-cloud-session");
+const CLOUD_SAVE_RECEIPT_KEY = LifeStorageScope.key("life-os-cloud-save-receipt-v1");
 const CLOUD_RECOVERY_KEY = LifeStorageScope.key("life-os-cloud-recovery");
 const CLOUD_BASE_KEY = LifeStorageScope.key("life-os-cloud-base-v2");
 const CLOUD_TABLE_MISSING_MESSAGE = "Cloud storage is unavailable. Check that the selected Supabase project exposes the user_states table and allows your account to access its own row. Your local data has not been deleted.";
@@ -13448,11 +13449,12 @@ function persistCloudSession() {
   if (PREVIEW_MODE || !cloudSession) return;
   const stored = loadCloudSession();
   if (!stored || stored.user?.id !== cloudSession.user?.id) return;
-  // A save receipt must not put cached credentials back over a rotated token.
-  const stamp = cloudSession.cloud_updated_at;
-  cloudSession = {...stored};
-  if (stamp && (!stored.cloud_updated_at || normalizeTimestamp(stamp) >= normalizeTimestamp(stored.cloud_updated_at))) cloudSession.cloud_updated_at = stamp;
-  writeLocalJson(CLOUD_SESSION_KEY, cloudSession, {silent: true});
+  // Save receipts must never republish credentials from a stale storage view.
+  const stamp = getKnownCloudUpdatedAt();
+  if (!stamp) return;
+  const receipt={format:'life-os-cloud-save-receipt-v1',ownerId:cloudSession.user.id,updatedAt:stamp};
+  if (LifeStateMerge.equal(readLocalJsonValue(CLOUD_SAVE_RECEIPT_KEY,null),receipt)) return;
+  writeLocalJson(CLOUD_SAVE_RECEIPT_KEY,receipt,{silent:true});
 }
 
 function setKnownCloudUpdatedAt(updatedAt) {
@@ -13462,7 +13464,13 @@ function setKnownCloudUpdatedAt(updatedAt) {
 }
 
 function getKnownCloudUpdatedAt() {
-  return cloudSession?.cloud_updated_at || "";
+  const ownerId=cloudSession?.user?.id;
+  if (!ownerId) return "";
+  const receipt=readLocalJsonValue(CLOUD_SAVE_RECEIPT_KEY,null);
+  const stamps=[cloudSession.cloud_updated_at];
+  if(receipt?.format==='life-os-cloud-save-receipt-v1' && receipt.ownerId===ownerId)stamps.push(receipt.updatedAt);
+  return stamps.filter(value=>typeof value==='string' && Number.isFinite(Date.parse(value)))
+    .sort((a,b)=>Date.parse(b)-Date.parse(a))[0] || "";
 }
 
 function saveCloudRecoveryPoint(reason, snapshot = state) {
@@ -14334,6 +14342,12 @@ function saveState(options = {}) {
   if (touched) touchState();
   syncActiveBoard({touchBoard: touched, updatedAt: state.updatedAt});
   const snapshot = getStateForStorage();
+  // Idle and page-hide checks still drain pending edits, but unchanged copies
+  // must not fill the journal when a prerequisite or storage write is blocked.
+  if (options.quiet && !touched && lastLocalSaveOk && LifeStateMerge.equal(localMergeBase,snapshot)) {
+    flushDeviceWrites();
+    return true;
+  }
   try {
     LifeDeviceStore.stage(localMergeBase, snapshot);
     lastDeviceSaveError = null;

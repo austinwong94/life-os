@@ -36,6 +36,18 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
   }
  }
  const ensure=p=>p.evaluate(()=>ensureCloudSession().then(s=>s.access_token));
+ await run('a cloud-save timestamp from a stale tab never republishes old sign-in credentials',async p=>{
+  const result=await p.evaluate(()=>{
+   const original=Storage.prototype.getItem,set=Storage.prototype.setItem,oldRaw=original.call(localStorage,CLOUD_SESSION_KEY);
+   const next={...JSON.parse(oldRaw),access_token:'synthetic-current-access',refresh_token:'synthetic-current-refresh'},nextRaw=JSON.stringify(next);set.call(localStorage,CLOUD_SESSION_KEY,nextRaw);let credentialWrites=0;
+   Storage.prototype.getItem=function(key){return this===localStorage && key===CLOUD_SESSION_KEY?oldRaw:original.call(this,key);};
+   Storage.prototype.setItem=function(key,...args){if(this===localStorage && key===CLOUD_SESSION_KEY)credentialWrites++;return set.call(this,key,...args);};
+   try{setKnownCloudUpdatedAt('2026-10-17T00:05:00.000Z');return {credentialWrites,raw:original.call(localStorage,CLOUD_SESSION_KEY),expected:nextRaw,stamp:getKnownCloudUpdatedAt()};}
+   finally{Storage.prototype.getItem=original;Storage.prototype.setItem=set;}
+  });
+  assert.equal(result.credentialWrites,0);assert.equal(result.raw,result.expected);assert.equal(result.stamp,'2026-10-17T00:05:00.000Z');
+  await p.reload();assert.equal(await p.evaluate(()=>getKnownCloudUpdatedAt()),'2026-10-17T00:05:00.000Z');assert.equal(await ensure(p),'synthetic-current-access');
+ });
  const expire=p=>p.evaluate(()=>saveCloudSession({...cloudSession,expires_at:1}));
  async function backend(context,handler){
   let calls=0;
@@ -205,6 +217,29 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
    recoveryVault={compact:async()=>{localStorage.removeItem(CLOUD_SESSION_KEY);}};
   });
   await assert.rejects(ensure(p),/changed or signed out/);assert.equal(calls(),1);assert.equal(await p.evaluate(()=>loadCloudSession()),null);assert.equal((await receiptRows(p)).values[0].status,'pending');
+ });
+ await run('three laptop tabs renew once while an independent phone keeps its separate same-owner session',async(p,q,context)=>{
+  const calls=await backend(context),r=await context.newPage();await r.clock.install({time:new Date('2026-10-17T08:00:00+08:00')});await r.goto(url.href);
+  await r.evaluate(()=>{cloudSaveEnabled=false;cloudSessionMaintenancePending=true;});
+  const phoneContext=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});let phoneCalls=0;
+  try{
+   await phoneContext.route('https://**/*',route=>route.fulfill({status:503,body:'Independent synthetic phone; real services blocked'}));
+   await phoneContext.route('https://**supabase.co/auth/v1/token?grant_type=refresh_token',route=>{
+    phoneCalls++;assert.equal(route.request().postDataJSON().refresh_token,'synthetic-phone-refresh');return route.fulfill({json:{access_token:'synthetic-phone-renewed',refresh_token:'synthetic-phone-next',expires_in:3600,user:{id:owner}}});
+   });
+   const phone=await phoneContext.newPage();await phone.clock.install({time:new Date('2026-10-17T08:00:00+08:00')});await phone.goto(url.href);
+   const records=await p.evaluate(()=>getStateForStorage());
+   await phone.evaluate(async({records,owner})=>{
+    state=rehydrateState(records);applyBoardToState(state,'two');saveState({skipCloud:true});await flushDeviceWrites();
+    saveCloudSession({user:{id:owner},access_token:'synthetic-phone-expired',refresh_token:'synthetic-phone-refresh',expires_at:1});cloudSaveEnabled=false;cloudSessionMaintenancePending=true;
+   },{records,owner});
+   await expire(p);for(const page of [q,r])await page.waitForFunction(()=>JSON.parse(localStorage.getItem(CLOUD_SESSION_KEY)).expires_at===1);
+   const tokens=await Promise.all([ensure(p),ensure(q),ensure(r),ensure(phone)]);
+   assert.deepEqual(tokens,['synthetic-renewed-access','synthetic-renewed-access','synthetic-renewed-access','synthetic-phone-renewed']);assert.equal(calls(),1);assert.equal(phoneCalls,1);
+   await phone.reload();assert.equal(await ensure(phone),'synthetic-phone-renewed');assert.equal(phoneCalls,1);assert.equal(await ensure(p),'synthetic-renewed-access');assert.equal(calls(),1);
+   assert.equal(await phone.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY).includes('synthetic-original-refresh')),false);
+   assert.equal(await p.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY).includes('synthetic-phone')),false);
+  }finally{await phoneContext.close();}
  });
  await run('preview cannot renew a real session or open a renewal receipt database',async(p,q,context,requests)=>{
   const preview=new URL(url);preview.searchParams.set('preview','1');await q.goto(preview.href);
