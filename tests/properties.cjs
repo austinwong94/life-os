@@ -163,6 +163,31 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
   await run('one editing tab prevents mixed browser caches without affecting other Life OS storage',async({page})=>{
     await open(page);const result=await page.evaluate(async owner=>{try{await document.querySelector('iframe').contentWindow.LifePropertyCache.open(owner);return 'unexpected';}catch(e){return e.code;}},owner);assert.equal(result,'property_editor_busy');assert.equal(await page.evaluate(()=>localStorage.length),0);
   });
+  await run('a second Properties tab can take over a clean editor without another login or main-page reload',async({page,context,getRow})=>{
+    const frame=await open(page);await page.waitForFunction(()=>!document.querySelector('iframe').contentWindow.PropertyOperations.pending());
+    const original=JSON.stringify(getRow().data),other=await context.newPage();await other.goto(url+'harness.html');
+    const waiting=other.frameLocator('#propertyOperationsFrame');await waiting.getByRole('heading',{name:'Properties is open in another tab',exact:true}).waitFor();
+    assert.equal(await waiting.locator('#cloudAuthPanel').isVisible(),false);assert.doesNotMatch(await waiting.locator('body').innerText(),/Offline|Sign in to sync/);
+    let mainLoads=0;other.on('framenavigated',f=>{if(f===other.mainFrame())mainLoads++;});
+    await waiting.getByRole('button',{name:'Use Properties in this tab',exact:true}).click();await waiting.locator('#appShell:not([hidden])').waitFor();
+    await frame.getByRole('heading',{name:'Properties paused in this tab',exact:true}).waitFor();assert.equal(mainLoads,0);assert.equal(JSON.stringify(getRow().data),original);
+    // The shell can appear before its initial cloud read/cache drain finishes.
+    // A reverse handoff requires the same saved/ready condition as a user sees.
+    await waiting.locator('#dataHealthStatus').filter({hasText:'All changes saved'}).waitFor();
+    await other.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations?.pending()===false);
+    await frame.getByRole('button',{name:'Use Properties in this tab',exact:true}).click();await frame.locator('#appShell:not([hidden])').waitFor();await waiting.getByRole('heading',{name:'Properties paused in this tab',exact:true}).waitFor();
+    for(const width of [1440,390,320]){await other.setViewportSize({width,height:844});assert(await other.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await other.screenshot({path:path.join(out,'property-handoff-'+width+'.png'),fullPage:true});}
+  });
+  await run('Properties handoff refuses an unfinished booking form and keeps every character',async({page,context,getRow})=>{
+    const frame=await open(page);await booking(frame);await frame.locator('[data-booking-section="overview"]').click();await frame.getByRole('button',{name:'Edit booking',exact:true}).click();await frame.locator('#guestInput').fill('Keep every character of this unfinished form');
+    const original=JSON.stringify(getRow().data),other=await context.newPage();await other.goto(url+'harness.html');const waiting=other.frameLocator('#propertyOperationsFrame');
+    await waiting.getByRole('button',{name:'Use Properties in this tab',exact:true}).click();await waiting.getByRole('status').filter({hasText:'open form or changes still saving'}).waitFor();
+    assert.equal(await frame.locator('#guestInput').inputValue(),'Keep every character of this unfinished form');assert.equal(JSON.stringify(getRow().data),original);assert.equal(await waiting.locator('#appShell').isVisible(),false);
+  });
+  await run('a waiting Properties tab retries after an older editor closes without reloading its main workspace',async({page,context})=>{
+    await open(page);const other=await context.newPage();await other.goto(url+'harness.html');const waiting=other.frameLocator('#propertyOperationsFrame');await waiting.getByRole('button',{name:'Use Properties in this tab',exact:true}).waitFor();
+    await page.close();let mainLoads=0;other.on('framenavigated',f=>{if(f===other.mainFrame())mainLoads++;});await waiting.getByRole('button',{name:'Use Properties in this tab',exact:true}).click();await waiting.locator('#appShell:not([hidden])').waitFor();assert.equal(mainLoads,0);
+  });
   await run('failed cache reads release the editing lock so a recovered browser can retry',async({page})=>{
     await page.goto(url+'property-operations.html');const result=await page.evaluate(async owner=>{
       const original=IDBObjectStore.prototype.openCursor;let fail=true;

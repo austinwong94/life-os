@@ -15,6 +15,22 @@
     const error=new Error('Waiting for this tab to see the verified device save. Pending writing and the verified checkpoint are kept.');
     error.name='DeviceCommitPendingError';return error;
   }
+  function compareReceipts(current,previous){
+    if(!current || !previous || !Array.isArray(current.boards) || !Array.isArray(previous.boards))throw new Error('Both complete device copies are required. Nothing was replaced.');
+    heads(current);heads(previous);
+    const differences=[];
+    function compare(a,b,path){
+      if(a===b)return;
+      if(!a || !b || typeof a!=='object' || typeof b!=='object' || Array.isArray(a)!==Array.isArray(b)){differences.push(path || 'workspace');return;}
+      const keys=new Set([...Object.keys(a),...Object.keys(b)]);
+      for(const key of keys){if(!path && key==='deviceWriteHeads')continue;const next=path?path+'.'+key:key;
+        if(!Object.hasOwn(a,key) || !Object.hasOwn(b,key))differences.push(next);else compare(a[key],b[key],next);
+      }
+    }
+    compare(current,previous,'');
+    const missing=Object.entries(heads(previous)).filter(([key,n])=>Number(heads(current)[key] || 0)<n).length;
+    return {missing,differences,repairable:missing>0 && differences.length===0};
+  }
   function create({database=root.indexedDB,name}){
     let connection=null,opening=null,verified=null;
     const request=req=>new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error || new Error('Device checkpoint request failed.'));});
@@ -86,6 +102,6 @@
     }
     return {check,confirm,read,snapshot:()=>verified?copy(verified):null};
   }
-  const api={create,covers,heads};
+  const api={create,covers,heads,compareReceipts};
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeDeviceCheckpoint=api;
 })(globalThis);

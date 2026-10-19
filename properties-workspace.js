@@ -16,7 +16,7 @@
   function watchFrame(){
     clearTimeout(frameTimer);
     frameTimer=setTimeout(()=>{
-      if(!frame || frame.contentWindow?.PropertyOperations || loadCloudSession()?.user?.id!==owner)return;
+      if(!frame || frame.contentWindow?.PropertyOperations || frame.contentWindow?.PropertyStartupState || loadCloudSession()?.user?.id!==owner)return;
       root.dataset.connection='loading-error';retry.hidden=false;retryLabel('Retry loading');
       status.textContent='Your Life OS account is connected, but the Properties page did not finish loading. Retry loading. Your existing records and other tabs are kept.';
     },20000);
@@ -67,7 +67,10 @@
     // The bridge sends access credentials only; the iframe is still same-origin.
     return {access_token:current.access_token,expires_at:current.expires_at,user:{id:current.user.id,email:current.user.email}};
   }
-  window.LifePropertiesHost=Object.freeze({get url(){return SUPABASE_CONFIG.url;},get key(){return SUPABASE_CONFIG.anonKey;},accepts,session,account(child){if(accepts(child))openSettingsModal();}});
+  window.LifePropertiesHost=Object.freeze({get url(){return SUPABASE_CONFIG.url;},get key(){return SUPABASE_CONFIG.anonKey;},accepts,session,account(child){if(accepts(child))openSettingsModal();},state(child,kind){
+    if(!accepts(child) || loadCloudSession()?.user?.id!==owner)return;
+    if(['busy','standby'].includes(kind)){clearTimeout(frameTimer);root.dataset.connection=kind;retry.hidden=true;status.textContent='Your Life OS account is connected. Properties can safely switch editing between tabs below.';}
+  }});
   async function open(){
     if(opening)return;cancelRetry();opening=true;retry.disabled=true;reconnect.hidden=true;repair.hidden=true;
     status.textContent='Checking your existing Life OS connection...';

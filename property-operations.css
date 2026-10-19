@@ -88,3 +88,6 @@ table{font-size:13px}
 .property-calendar-sync button { flex:0 0 auto; min-height:44px; font-size:12px; }
 @media(max-width:480px) { .property-calendar-sync { flex-wrap:wrap; } .property-calendar-sync button { margin-left:auto; } }
 @media print { .property-calendar-sync { display:none!important; } }
+#propertyStartupError{box-sizing:border-box;max-width:640px;margin:32px auto;padding:24px;font:14px/1.6 system-ui,sans-serif;color:#22352d;overflow-wrap:anywhere}
+#propertyStartupError h2{font:600 20px/1.3 system-ui,sans-serif;margin:0 0 12px}
+#propertyStartupError button{min-height:44px;padding:10px 16px;border:1px solid #c4d2ca;border-radius:6px;background:#fff;color:#18563e;font:600 14px system-ui,sans-serif;cursor:pointer}

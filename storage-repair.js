@@ -2,6 +2,8 @@
   'use strict';
   const key=LifeStorageScope.key('life-os-cloud-recovery'),activeKey=LifeStorageScope.key('progress-board-v1');
   const status=document.getElementById('status'),details=document.getElementById('details'),repair=document.getElementById('repairButton');
+  const receipt=document.getElementById('receiptButton'),checkpoint=LifeDeviceCheckpoint.create({name:LifeStorageScope.key('life-os-device-checkpoint-v1')});
+  let inspected=null;
   const vault=LifeRecoveryVault.create({name:LifeStorageScope.key('life-os-recovery-vault-v1'),key,locked:action=>{
     if(!navigator.locks?.request)throw new Error('Safe multi-tab coordination is unavailable. Nothing was removed.');
     return navigator.locks.request(LifeStorageScope.key('life-os-device-snapshot-v2'),action);
@@ -20,6 +22,40 @@
     try{const result=await vault.compact({releaseCache:true});show({...result,activeChanged:localStorage.getItem(activeKey)!==before});status.textContent=result.changed?'Another tab wrote a recovery copy during verification. Its copy was kept. Run the check again.':'Recovery archive verified. Active records were not replaced. Your original tab can retry device and cloud saving now.';}
     catch(error){status.textContent='Recovery could not complete. Original copies were kept. '+error.message;show();}
     finally{repair.disabled=false;}
+  };
+  document.getElementById('checkButton').onclick=async()=>{
+    receipt.hidden=true;inspected=null;
+    try{
+      const raw=localStorage.getItem(activeKey),previous=await checkpoint.read(),current=JSON.parse(raw);
+      const comparison=LifeDeviceCheckpoint.compareReceipts(current,previous);
+      const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent='Checkpoint comparison';dd.textContent=comparison.missing+' missing save receipts; '+comparison.differences.length+' differing fields';show();details.append(dt,dd);
+      if(comparison.differences.length){const label=document.createElement('dt'),paths=document.createElement('dd');label.textContent='Differing field paths (no private values)';paths.textContent=comparison.differences.slice(0,16).join(', ');details.append(label,paths);}
+      if(comparison.repairable){inspected={raw,previous};receipt.hidden=false;status.textContent='Every stored value matches the verified checkpoint except save receipts. Repair can preserve both complete copies, then restore only the missing receipts. It will not replace diary, notes, tasks, settings or cloud records.';}
+      else status.textContent=comparison.missing?'The stored copy differs from the verified checkpoint. Automatic receipt repair is refused. Both versions and pending writing remain untouched; a record-by-record recovery is required.':'The stored copy covers the checkpoint. No receipt repair is needed. Pending writing remains untouched.';
+    }catch(error){status.textContent='Could not compare complete copies. Nothing was changed. '+error.message;}
+  };
+  receipt.onclick=async()=>{
+    if(!inspected)return;receipt.disabled=true;
+    try{await navigator.locks.request(LifeStorageScope.key('life-os-device-snapshot-v2'),async()=>{
+      const raw=localStorage.getItem(activeKey),previous=await checkpoint.read();
+      if(raw!==inspected.raw || JSON.stringify(previous)!==JSON.stringify(inspected.previous))throw new Error('A copy changed since inspection. Check again.');
+      const current=JSON.parse(raw);if(!LifeDeviceCheckpoint.compareReceipts(current,previous).repairable)throw new Error('The copies do not match.');
+      // Preserve complete originals outside the constrained localStorage cache.
+      const db=await new Promise((resolve,reject)=>{const r=indexedDB.open(LifeStorageScope.key('life-os-device-checkpoint-v1'),1);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+      const record={format:'life-os-receipt-repair-originals-v1',raw,checkpoint:previous},key='receipt-repair:'+crypto.randomUUID();
+      try{
+        await new Promise((resolve,reject)=>{const tx=db.transaction('checkpoints','readwrite',{durability:'strict'});tx.objectStore('checkpoints').add(record,key);tx.oncomplete=resolve;tx.onabort=tx.onerror=()=>reject(tx.error);});
+        const retained=await new Promise((resolve,reject)=>{const tx=db.transaction('checkpoints'),r=tx.objectStore('checkpoints').get(key);let value;r.onsuccess=()=>{value=r.result;};tx.oncomplete=()=>resolve(value);tx.onabort=tx.onerror=()=>reject(tx.error);});
+        if(JSON.stringify(retained)!==JSON.stringify(record))throw new Error('Original copy readback did not match.');
+      }finally{db.close();}
+      if(localStorage.getItem(activeKey)!==raw)throw new Error('Stored records changed during preservation. Check again.');
+      const deviceWriteHeads={...current.deviceWriteHeads};for(const [writer,n] of Object.entries(previous.deviceWriteHeads || {}))deviceWriteHeads[writer]=Math.max(Number(deviceWriteHeads[writer]) || 0,n);
+      const next={...current,deviceWriteHeads},nextRaw=JSON.stringify(next);localStorage.setItem(activeKey,nextRaw);
+      if(localStorage.getItem(activeKey)!==nextRaw)throw new Error('Receipt write could not be verified. Both complete originals remain preserved.');
+      await checkpoint.confirm(()=>JSON.parse(localStorage.getItem(activeKey)));
+      receipt.hidden=true;inspected=null;status.textContent='Missing save receipts repaired. All information values are unchanged and both original copies are preserved. Keep your original tab open and retry device saving. This is not a cloud-save receipt.';show();
+    });}catch(error){status.textContent='Receipt repair did not complete. Original copies and pending writing were kept. '+error.message;}
+    finally{receipt.disabled=false;}
   };
   document.getElementById('backupButton').onclick=async()=>{
     let archiveError='';try{await vault.refresh();}catch(error){archiveError=error.message;}
