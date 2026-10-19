@@ -39,7 +39,7 @@ const results=[];
         return [diary,planner,{...makeCard({type:'sidenote',title:'My notes',category:'Personal'}),id:id+'-notes'}];
       };
       state.boards=['one','two','three'].map(id=>createBoardRecord({id,name:id,cards:cards(id),archivedCards:[]}));
-      applyBoardToState(state,'one');saveState({skipCloud:true});await flushDeviceWrites();render();
+      switchBoard('one');await flushDeviceWrites();
     });
   }
   async function oldPage(context,board='two'){
@@ -115,6 +115,7 @@ const results=[];
   });
   await run('the pinned release and new source preserve 180 interleaved diary edits across three independent boards',async(p,context)=>{
     const pages=[p,await oldPage(context,'two'),await oldPage(context,'three')];
+    for(let i=0;i<pages.length;i++)assert.equal(await pages[i].evaluate(()=>sessionStorage.getItem(LifeStorageScope.key('life-os-active-board'))),['one','two','three'][i]);
     for(let round=0;round<6;round++){
       await Promise.all(pages.map((page,i)=>page.evaluate(async({round,i})=>{
         for(let n=0;n<10;n++){
