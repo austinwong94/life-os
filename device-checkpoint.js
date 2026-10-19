@@ -18,10 +18,23 @@
   function compareReceipts(current,previous){
     if(!current || !previous || !Array.isArray(current.boards) || !Array.isArray(previous.boards))throw new Error('Both complete device copies are required. Nothing was replaced.');
     heads(current);heads(previous);
-    const differences=[];
+    const differences=[],metadataDifferences=[];
+    const modes=new Set(['board','today','tasks','calendar','priorities','money','records','properties']);
+    const nonnegative=n=>typeof n==='number' && Number.isFinite(n) && n>=0;
+    function metadata(path){
+      if(path==='updatedAt')return nonnegative(current.updatedAt) && nonnegative(previous.updatedAt);
+      if(path==='ui.workspaceMode')return modes.has(current.ui?.workspaceMode) && modes.has(previous.ui?.workspaceMode);
+      const match=path.match(/^(?:boards\.(\d+)\.)?(cards|archivedCards)\.(\d+)\.(duration|remaining)$/);
+      if(!match)return false;
+      const card=s=>{const parent=match[1]===undefined?s:s.boards?.[Number(match[1])];return parent?.[match[2]]?.[Number(match[3])];};
+      const a=card(current),b=card(previous);
+      return a?.timerMode==='daily' && b?.timerMode==='daily' && typeof a.id==='string' && a.id===b.id && a.type===b.type &&
+        typeof a.targetAt==='string' && a.targetAt===b.targetAt && Number.isFinite(Date.parse(a.targetAt)) && nonnegative(a[match[4]]) && nonnegative(b[match[4]]);
+    }
+    const difference=path=>(metadata(path)?metadataDifferences:differences).push(path || 'workspace');
     function compare(a,b,path){
       if(a===b)return;
-      if(!a || !b || typeof a!=='object' || typeof b!=='object' || Array.isArray(a)!==Array.isArray(b)){differences.push(path || 'workspace');return;}
+      if(!a || !b || typeof a!=='object' || typeof b!=='object' || Array.isArray(a)!==Array.isArray(b)){difference(path);return;}
       const keys=new Set([...Object.keys(a),...Object.keys(b)]);
       for(const key of keys){if(!path && key==='deviceWriteHeads')continue;const next=path?path+'.'+key:key;
         if(!Object.hasOwn(a,key) || !Object.hasOwn(b,key))differences.push(next);else compare(a[key],b[key],next);
@@ -29,9 +42,9 @@
     }
     compare(current,previous,'');
     const missing=Object.entries(heads(previous)).filter(([key,n])=>Number(heads(current)[key] || 0)<n).length;
-    return {missing,differences,repairable:missing>0 && differences.length===0};
+    return {missing,differences,metadataDifferences,repairable:missing>0 && differences.length===0};
   }
-  function create({database=root.indexedDB,name}){
+  function create({database=root.indexedDB,name,storage,key}){
     let connection=null,opening=null,verified=null;
     const request=req=>new Promise((resolve,reject)=>{req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error || new Error('Device checkpoint request failed.'));});
     const completed=tx=>new Promise((resolve,reject)=>{tx.oncomplete=()=>resolve();tx.onabort=tx.onerror=()=>reject(tx.error || new Error('Device checkpoint was not committed. Pending copies were kept.'));});
@@ -82,6 +95,27 @@
       if(previous && !(recover && !current) && (!current || !covers(current,previous)))throw pending();
       return previous;
     }
+    async function repair({expectedRaw,expectedPrevious}={}){
+      if(!storage || !key)throw new Error('Receipt recovery storage was not configured.');
+      const raw=storage.getItem(key),previous=await read();
+      if(expectedRaw!==undefined && raw!==expectedRaw || expectedPrevious!==undefined && JSON.stringify(previous)!==JSON.stringify(expectedPrevious))throw new Error('A copy changed since inspection. Check again.');
+      const current=JSON.parse(raw);if(!compareReceipts(current,previous).repairable)throw pending();
+      const db=await open(),original={format:'life-os-receipt-repair-originals-v1',raw,checkpoint:previous},archiveKey='receipt-repair:'+root.crypto.randomUUID();
+      const tx=db.transaction('checkpoints','readwrite',{durability:'strict'}),done=completed(tx);
+      try{tx.objectStore('checkpoints').add(original,archiveKey);}catch(error){try{tx.abort();}catch{}await done.catch(()=>{});throw error;}
+      await bounded(done,tx);
+      const verify=db.transaction('checkpoints'),verifiedDone=completed(verify);
+      const [retained]=await bounded(Promise.all([request(verify.objectStore('checkpoints').get(archiveKey)),verifiedDone]),verify);
+      if(JSON.stringify(retained)!==JSON.stringify(original))throw new Error('Original copy readback did not match. Nothing was replaced.');
+      const latest=await read();
+      if(JSON.stringify(latest)!==JSON.stringify(previous) || storage.getItem(key)!==raw)throw new Error('A copy changed during preservation. Check again.');
+      const receipts=new Map(Object.entries(heads(current)));
+      for(const [writer,n] of Object.entries(heads(previous)))receipts.set(writer,Math.max(Number(receipts.get(writer)) || 0,n));
+      const deviceWriteHeads=Object.fromEntries(receipts);
+      const nextRaw=JSON.stringify({...current,deviceWriteHeads});storage.setItem(key,nextRaw);
+      if(storage.getItem(key)!==nextRaw)throw new Error('Receipt write could not be verified. Both originals are preserved.');
+      await confirm(()=>JSON.parse(storage.getItem(key)));
+    }
     async function confirm(readSnapshot){
       const snapshot=readSnapshot();
       if(!snapshot)return;
@@ -100,7 +134,7 @@
       const check=await read();
       if(JSON.stringify(check)!==raw)throw new Error('Device checkpoint readback did not match. Pending copies were kept.');
     }
-    return {check,confirm,read,snapshot:()=>verified?copy(verified):null};
+    return {check,confirm,read,repair,snapshot:()=>verified?copy(verified):null};
   }
   const api={create,covers,heads,compareReceipts};
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeDeviceCheckpoint=api;

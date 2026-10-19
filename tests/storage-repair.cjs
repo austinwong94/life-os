@@ -26,6 +26,22 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-storage-repair',artif
   await run('changed diary information cannot borrow checkpoint receipts or overwrite either copy',async page=>{
     await page.evaluate(()=>{const current=JSON.parse(localStorage.getItem('progress-board-v1'));current.boards[0].cards[0].thoughts='New full writing';localStorage.setItem('progress-board-v1',JSON.stringify(current));});const before=await page.evaluate(()=>localStorage.getItem('progress-board-v1'));await page.getByRole('button',{name:'Check blocked device saves'}).click();await page.getByRole('status').filter({hasText:'Automatic receipt repair is refused'}).waitFor();assert.equal(await page.getByRole('button',{name:'Repair matching save receipts'}).isVisible(),false);assert.equal(await page.evaluate(()=>localStorage.getItem('progress-board-v1')),before);assert.doesNotMatch(await page.locator('#details').innerText(),/New full writing|Complete original diary/);
   });
+  await run('the six observed timestamp/view/archived-countdown differences retain all values while only receipts advance',async page=>{
+    const before=await page.evaluate(async()=>{
+      const current=JSON.parse(localStorage.getItem('progress-board-v1')),daily={id:'daily-archive',type:'project',timerMode:'daily',targetAt:'2026-10-19T15:00:00Z',duration:100,remaining:80};
+      current.updatedAt=100;current.ui={workspaceMode:'properties'};current.archivedCards=[structuredClone(daily)];current.boards[0].archivedCards=[structuredClone(daily)];
+      const previous=structuredClone(current);previous.deviceWriteHeads.writer=7;previous.updatedAt=90;previous.ui.workspaceMode='board';for(const card of [previous.archivedCards[0],previous.boards[0].archivedCards[0]]){card.duration=110;card.remaining=90;}
+      const db=await new Promise(resolve=>{const r=indexedDB.open('life-os-device-checkpoint-v1');r.onsuccess=()=>resolve(r.result);});await new Promise((resolve,reject)=>{const tx=db.transaction('checkpoints','readwrite');tx.objectStore('checkpoints').put({format:'life-os-device-checkpoint-v1',raw:JSON.stringify(previous)},'current');tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});db.close();
+      const raw=JSON.stringify(current);localStorage.setItem('progress-board-v1',raw);return raw;
+    });
+    await page.getByRole('button',{name:'Check blocked device saves'}).click();await page.getByText('1 missing save receipts; 0 information differences; 6 view/countdown metadata differences',{exact:true}).waitFor();await page.getByRole('button',{name:'Repair matching save receipts'}).click();await page.getByRole('status').filter({hasText:'Missing save receipts repaired'}).waitFor();
+    const after=await page.evaluate(()=>JSON.parse(localStorage.getItem('progress-board-v1'))),expected=JSON.parse(before);expected.deviceWriteHeads.writer=7;assert.deepEqual(after,expected);assert.equal(after.boards[0].cards[0].thoughts,'Complete original diary\nEvery character retained');assert.equal(await page.evaluate(()=>localStorage.getItem('life-os-pending-v3:untouched')),'opaque original pending packet');
+  });
+  await run('a checkpoint changed during preservation refuses repair and keeps the newer checkpoint',async page=>{
+    await page.getByRole('button',{name:'Check blocked device saves'}).click();await page.getByRole('button',{name:'Repair matching save receipts'}).waitFor();const before=await page.evaluate(()=>localStorage.getItem('progress-board-v1'));
+    await page.evaluate(()=>{const add=IDBObjectStore.prototype.add;IDBObjectStore.prototype.add=function(record,...args){const request=add.call(this,record,...args);if(record?.format==='life-os-receipt-repair-originals-v1'){const latest=structuredClone(record.checkpoint);latest.boards[0].cards[0].thoughts='Newer checkpoint writing';this.put({format:'life-os-device-checkpoint-v1',raw:JSON.stringify(latest)},'current');}return request;};});
+    await page.getByRole('button',{name:'Repair matching save receipts'}).click();await page.getByRole('status').filter({hasText:'A copy changed during preservation'}).waitFor();assert.equal(await page.evaluate(()=>localStorage.getItem('progress-board-v1')),before);
+  });
   for(const mode of ['archive','quota','changed'])await run(mode+' failure refuses receipt repair without deleting originals or pending data',async page=>{
     await page.getByRole('button',{name:'Check blocked device saves'}).click();await page.getByRole('button',{name:'Repair matching save receipts'}).waitFor();
     await page.evaluate(mode=>{
