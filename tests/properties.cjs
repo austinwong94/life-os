@@ -171,6 +171,10 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     let mainLoads=0;other.on('framenavigated',f=>{if(f===other.mainFrame())mainLoads++;});
     await waiting.getByRole('button',{name:'Use Properties in this tab',exact:true}).click();await waiting.locator('#appShell:not([hidden])').waitFor();
     await frame.getByRole('heading',{name:'Properties paused in this tab',exact:true}).waitFor();assert.equal(mainLoads,0);assert.equal(JSON.stringify(getRow().data),original);
+    // The shell can appear before its initial cloud read/cache drain finishes.
+    // A reverse handoff requires the same saved/ready condition as a user sees.
+    await waiting.locator('#dataHealthStatus').filter({hasText:'All changes saved'}).waitFor();
+    await other.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations?.pending()===false);
     await frame.getByRole('button',{name:'Use Properties in this tab',exact:true}).click();await frame.locator('#appShell:not([hidden])').waitFor();await waiting.getByRole('heading',{name:'Properties paused in this tab',exact:true}).waitFor();
     for(const width of [1440,390,320]){await other.setViewportSize({width,height:844});assert(await other.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await other.screenshot({path:path.join(out,'property-handoff-'+width+'.png'),fullPage:true});}
   });
