@@ -3,7 +3,7 @@
   if(window.LifeStartupBlocked)return;
   const button=planningButton('Properties',()=>setWorkspaceMode('properties'),'calendar');button.id='propertiesModeButton';
   document.querySelector('.workspace-modes').append(button);
-  let frame=null,owner=null,opening=false,history=null,retryTimer=null,retryAttempt=0,wasVisible=false;
+  let frame=null,owner=null,opening=false,history=null,retryTimer=null,retryAttempt=0,wasVisible=false,frameTimer=null;
   const root=planningNode('section','properties-workspace');root.hidden=true;root.setAttribute('aria-label','Properties');elements.boardGrid.after(root);
   const heading=planningNode('header','properties-heading'),title=planningNode('div');title.append(planningNode('h1','','Properties'),planningNode('p','','Sunrise Villa & Windmill Villa'));
   const status=planningNode('p','properties-status','Sign in to Life OS to open your property records.');status.setAttribute('role','status');
@@ -13,6 +13,14 @@
   function retryLabel(label){retry.querySelector('span').textContent=label;retry.setAttribute('aria-label',label);}
   const actions=planningNode('div','properties-actions');actions.append(archive,repair,reconnect,retry);heading.append(title,actions);root.append(heading,status);
   function cancelRetry(){clearTimeout(retryTimer);retryTimer=null;}
+  function watchFrame(){
+    clearTimeout(frameTimer);
+    frameTimer=setTimeout(()=>{
+      if(!frame || frame.contentWindow?.PropertyOperations || loadCloudSession()?.user?.id!==owner)return;
+      root.dataset.connection='loading-error';retry.hidden=false;retryLabel('Retry loading');
+      status.textContent='Your Life OS account is connected, but the Properties page did not finish loading. Retry loading. Your existing records and other tabs are kept.';
+    },20000);
+  }
   function clearHistory(){
     const previous=history;if(!previous)return;history=null;previous.abort.abort();
     if(previous.dialog.open)previous.dialog.close();previous.dialog.replaceChildren();
@@ -68,15 +76,22 @@
       const current=await ensureCloudSession();
       if(loadCloudSession()?.user?.id!==current.user.id)throw new Error('Account changed');
       if(state.ui.workspaceMode!=='properties')return;
-      retryAttempt=0;root.dataset.connection='connected';
+      retryAttempt=0;
       if(frame){
         if(current.user.id!==owner)throw new Error('Account changed');
+        // A never-loaded document cannot contain an editor or an unfinished
+        // form. Never reload a mounted operations document to retry access.
+        if(root.dataset.connection==='loading-error' && frame.contentDocument?.URL==='about:blank'){
+          const url=new URL(frame.src);url.searchParams.set('startup',String(Date.now()));frame.src=url.href;watchFrame();
+        }
+        root.dataset.connection='connected';
         frame.hidden=false;frame.inert=false;retry.hidden=true;retryLabel('Open properties');
         status.textContent='Bookings and documents use your Life OS cloud account. Original copies are available in Migration history.';return;
       }
       owner=current.user.id;
-      frame=document.createElement('iframe');frame.id='propertyOperationsFrame';frame.title='Property bookings, calendar, payments and documents';frame.src='property-operations.html'+location.search;frame.referrerPolicy='no-referrer';
-      status.textContent='Bookings and documents use your Life OS cloud account. Original copies are available in Migration history.';root.append(frame);retry.hidden=true;
+      root.dataset.connection='connected';
+      frame=document.createElement('iframe');frame.id='propertyOperationsFrame';frame.title='Property bookings, calendar, payments and documents';frame.loading='eager';frame.src='property-operations.html'+location.search;frame.referrerPolicy='no-referrer';
+      status.textContent='Bookings and documents use your Life OS cloud account. Original copies are available in Migration history.';root.append(frame);retry.hidden=true;watchFrame();
     }catch(error){
       if(!frame)owner=null;
       const failure=LifeAuthRenewal.describeFailure(error,{signedIn:Boolean(loadCloudSession()?.access_token)});

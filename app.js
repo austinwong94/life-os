@@ -13505,7 +13505,8 @@ function renderCloudStatus(message) {
   }
   if (message) {cloudStatusMessage = message; cloudGithubAuthorizeUrl = '';}
   const isSignedIn = Boolean(cloudSession?.access_token);
-  const needsSignIn=cloudSessionReauthRequired || /Cloud session expired|Sign-in failed:/.test(cloudStatusMessage || '');
+  const accessOnlyExpired=isSignedIn && !cloudSession.refresh_token && Date.now()>=Number(cloudSession.expires_at || 0);
+  const needsSignIn=cloudSessionReauthRequired || accessOnlyExpired || /Cloud session expired|Sign-in failed:/.test(cloudStatusMessage || '');
   const connected=isSignedIn && !needsSignIn;
   const renewalPending=connected && Date.now()>=Number(cloudSession.expires_at || 0);
   signInFields.hidden=connected;

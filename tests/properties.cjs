@@ -213,6 +213,16 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     },owner);
     await page.locator('#propertiesModeButton').click();await page.locator('.properties-workspace[data-connection="signin"]').waitFor();assert.equal(await page.getByRole('button',{name:'Reconnect Life OS',exact:true}).isVisible(),true);assert.equal(await page.locator('#propertyOperationsFrame').count(),0);
   });
+  await run('a stalled blank Properties document offers a safe eager-load retry without reloading the Life OS workspace',async({page,context})=>{
+    let blocked,started=false;const held=new Promise(resolve=>{blocked=resolve;});
+    await context.route('**/property-operations.html**',async route=>{if(!new URL(route.request().url()).searchParams.has('startup')){started=true;await held;return route.abort().catch(()=>{});}return route.continue();});
+    await page.goto(url+'?liveReload=0');await page.evaluate(owner=>{state.cloudOwnerId=owner;cloudSaveEnabled=false;saveCloudSession({user:{id:owner},access_token:'synthetic-access',expires_at:Date.now()+3600000});},owner);
+    const before=await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage())));
+    await page.locator('#propertiesModeButton').click();await page.locator('#propertyOperationsFrame').waitFor();assert.equal(await page.locator('#propertyOperationsFrame').getAttribute('loading'),'eager');
+    while(!started)await new Promise(resolve=>setTimeout(resolve,10));await page.clock.runFor(20100);await page.getByRole('button',{name:'Retry loading',exact:true}).waitFor();
+    const retrying=page.getByRole('button',{name:'Retry loading',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#propertyOperationsFrame').src.includes('startup='));blocked();await retrying;
+    await page.frameLocator('#propertyOperationsFrame').locator('#appShell:not([hidden])').waitFor();assert.equal(await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage()))),before);
+  });
   await run('migration history verifies and downloads cloud originals and the newer browser backup',async({page,context})=>{
     const payload=JSON.stringify({data:base,updated_at:'2026-10-16T00:00:00Z'}),browserPayload=JSON.stringify({...base,ownerId:owner,exportedAt:'2026-10-17T00:00:00Z'}),digest=s=>createHash('sha256').update(s).digest('hex');
     await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[{resource:'public.app_data',source_key:'synthetic-original',sha256:digest(payload)}]}}]}));
