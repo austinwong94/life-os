@@ -188,6 +188,24 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
   await assert.rejects(ensure(p),/coordination is unavailable/);assert.equal(await p.evaluate(()=>loadCloudSession().access_token),'synthetic-renewed-access');assert.equal((await receiptRows(p)).values[0].status,'pending');
   assert.equal(await ensure(p),'synthetic-renewed-access');assert.equal(calls(),1);
  });
+ await run('credential publication retries the same returned pair after verified recovery compaction without another token exchange',async(p,q,context)=>{
+  const calls=await backend(context);await expire(p);
+  await p.evaluate(()=>{
+   window.originalCredentialWrite=Storage.prototype.setItem;window.rejectCredentialWrite=true;window.recoveryCompactions=0;
+   Storage.prototype.setItem=function(key,value){if(this===localStorage && key===CLOUD_SESSION_KEY && rejectCredentialWrite)throw new DOMException('Synthetic credential quota','QuotaExceededError');return originalCredentialWrite.call(this,key,value);};
+   recoveryVault={compact:async options=>{if(!options.releaseCache)throw new Error('Full duplicates must be preserved before releasing the cache');recoveryCompactions++;rejectCredentialWrite=false;}};
+  });
+  assert.equal(await ensure(p),'synthetic-renewed-access');assert.equal(calls(),1);assert.equal(await p.evaluate(()=>recoveryCompactions),1);assert.equal((await receiptRows(p)).values[0].status,'applied');
+ });
+ await run('a sign-out during recovery compaction cannot republish the returned token pair',async(p,q,context)=>{
+  const calls=await backend(context);await expire(p);
+  await p.evaluate(()=>{
+   window.originalCredentialWrite=Storage.prototype.setItem;
+   Storage.prototype.setItem=function(key,value){if(this===localStorage && key===CLOUD_SESSION_KEY)throw new DOMException('Synthetic credential quota','QuotaExceededError');return originalCredentialWrite.call(this,key,value);};
+   recoveryVault={compact:async()=>{localStorage.removeItem(CLOUD_SESSION_KEY);}};
+  });
+  await assert.rejects(ensure(p),/changed or signed out/);assert.equal(calls(),1);assert.equal(await p.evaluate(()=>loadCloudSession()),null);assert.equal((await receiptRows(p)).values[0].status,'pending');
+ });
  await run('preview cannot renew a real session or open a renewal receipt database',async(p,q,context,requests)=>{
   const preview=new URL(url);preview.searchParams.set('preview','1');await q.goto(preview.href);
   await q.evaluate(()=>{

@@ -184,6 +184,35 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     await page.goto(url+'?liveReload=0');await page.evaluate(owner=>{state.cloudOwnerId=owner;cloudSaveEnabled=false;saveCloudSession({user:{id:owner,email:'synthetic@example.invalid'},access_token:'synthetic-access',expires_at:Date.now()+3600000});},owner);
     await page.locator('#propertiesModeButton').click();await page.locator('#propertyOperationsFrame').waitFor();await page.frameLocator('#propertyOperationsFrame').locator('#appShell:not([hidden])').waitFor();
   }
+  await run('Properties reports storage failure without demanding another login and recovers when the shared session updates',async({page,writes})=>{
+    await page.goto(url+'?liveReload=0');await page.evaluate(owner=>{
+      state.cloudOwnerId=owner;cloudSaveEnabled=false;saveCloudSession({user:{id:owner},access_token:'synthetic-access',expires_at:Date.now()+3600000});
+      window.originalEnsureProperties=ensureCloudSession;ensureCloudSession=async()=>{const error=new Error('Private internal details');error.name='AuthRenewalStorageError';throw error;};
+    },owner);
+    const before=await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage())));
+    await page.locator('#propertiesModeButton').click();await page.locator('.properties-workspace[data-connection="storage"]').waitFor();
+    assert.equal(await page.getByRole('button',{name:'Reconnect Life OS',exact:true}).isVisible(),false);assert.equal(await page.getByRole('button',{name:'Recover save space',exact:true}).isVisible(),true);
+    assert.doesNotMatch(await page.locator('.properties-status').innerText(),/Private internal|Sign in to Life OS in Settings/);
+    await page.evaluate(()=>{ensureCloudSession=originalEnsureProperties;window.dispatchEvent(new StorageEvent('storage',{key:CLOUD_SESSION_KEY}));});
+    await page.frameLocator('#propertyOperationsFrame').locator('#appShell:not([hidden])').waitFor();assert.equal(await page.locator('.properties-workspace').getAttribute('data-connection'),'connected');
+    assert.equal(await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage()))),before);assert.equal(writes(),0);
+  });
+  await run('Properties retries a temporary shared-session failure without a separate login',async({page,writes})=>{
+    await page.goto(url+'?liveReload=0');await page.evaluate(owner=>{
+      state.cloudOwnerId=owner;cloudSaveEnabled=false;saveCloudSession({user:{id:owner},access_token:'synthetic-access',expires_at:Date.now()+3600000});
+      window.originalEnsureProperties=ensureCloudSession;window.propertySessionAttempts=0;
+      ensureCloudSession=async()=>{if(++propertySessionAttempts===1){const error=new Error('Private token details');error.retryable=true;throw error;}return originalEnsureProperties();};
+    },owner);
+    await page.locator('#propertiesModeButton').click();await page.locator('.properties-workspace[data-connection="connection"]').waitFor();assert.equal(await page.getByRole('button',{name:'Reconnect Life OS',exact:true}).isVisible(),false);
+    await page.clock.runFor(5100);await page.frameLocator('#propertyOperationsFrame').locator('#appShell:not([hidden])').waitFor();assert.equal(writes(),0);
+  });
+  await run('Properties only offers account reconnection when the existing session really expired',async({page})=>{
+    await page.goto(url+'?liveReload=0');await page.evaluate(owner=>{
+      state.cloudOwnerId=owner;cloudSaveEnabled=false;saveCloudSession({user:{id:owner},access_token:'synthetic-access',expires_at:Date.now()+3600000});
+      ensureCloudSession=async()=>{throw new Error('Cloud session expired or was revoked.');};
+    },owner);
+    await page.locator('#propertiesModeButton').click();await page.locator('.properties-workspace[data-connection="signin"]').waitFor();assert.equal(await page.getByRole('button',{name:'Reconnect Life OS',exact:true}).isVisible(),true);assert.equal(await page.locator('#propertyOperationsFrame').count(),0);
+  });
   await run('migration history verifies and downloads cloud originals and the newer browser backup',async({page,context})=>{
     const payload=JSON.stringify({data:base,updated_at:'2026-10-16T00:00:00Z'}),browserPayload=JSON.stringify({...base,ownerId:owner,exportedAt:'2026-10-17T00:00:00Z'}),digest=s=>createHash('sha256').update(s).digest('hex');
     await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[{resource:'public.app_data',source_key:'synthetic-original',sha256:digest(payload)}]}}]}));

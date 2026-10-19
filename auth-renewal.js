@@ -4,6 +4,15 @@
   function hasIdentity(value){
     return Boolean(value && !Array.isArray(value) && typeof value.access_token==='string' && value.access_token && typeof value.user?.id==='string' && value.user.id && (value.refresh_token==null || typeof value.refresh_token==='string'));
   }
+  function describeFailure(error,{signedIn=false}={}){
+    const message=String(error?.message || '');
+    if(error?.name==='AuthRenewalStorageError' || /Sign-in could not be saved|storage is full|QuotaExceeded/i.test(message))return {kind:'storage',retry:false,message:'Your Life OS sign-in is saved, but browser storage is blocking session renewal. Preserve recovery copies and free save space, then retry. Do not clear browser data.'};
+    if(error?.name==='AuthRenewalReceiptError')return {kind:'recovery',retry:false,message:'Your Life OS sign-in renewal needs recovery. Existing credentials and records were kept. No separate Properties login is required.'};
+    if(/account changed|signed out during|not the owner/.test(message))return {kind:'account',retry:false,message:'The Life OS account changed. Properties is locked to protect the original account\'s records. Reconnect that account; unfinished forms are kept.'};
+    if(error?.retryable || error?.name==='AbortError' || error instanceof TypeError || /temporarily unavailable|timed out/.test(message))return {kind:'connection',retry:true,message:'Your saved Life OS connection is temporarily unavailable. Retrying does not require a separate Properties login. Your records are kept.'};
+    if(!signedIn || /Cloud session expired|session expired or was revoked|Invalid Refresh Token|refresh_token_not_found|refresh_token_already_used/.test(message))return {kind:'signin',retry:false,message:'Your Life OS session needs reconnection. Sign in to your existing Life OS account once; Properties uses that same login. Your records are kept.'};
+    return {kind:'connection',retry:false,message:'Your Life OS sign-in is saved, but Properties could not verify the connection. Retry connection. Your records are kept.'};
+  }
   async function digest(token){
     if(typeof token!=='string' || !token)throw new Error('A renewal token is required.');
     const bytes=await root.crypto.subtle.digest('SHA-256',new TextEncoder().encode(token));
@@ -73,6 +82,6 @@
     }
     return {claim,complete};
   }
-  const api={create,digest,validate,hasIdentity};
+  const api={create,digest,validate,hasIdentity,describeFailure};
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeAuthRenewal=api;
 })(globalThis);
