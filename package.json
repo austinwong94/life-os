@@ -52,7 +52,8 @@
     "test:capture-queue": "node tests/capture-queue.cjs",
     "test:board-reconcile": "node tests/board-reconcile.cjs",
     "test:session-renewal": "node tests/session-renewal.cjs",
-    "test:properties": "node tests/properties.cjs"
+    "test:properties": "node tests/properties.cjs",
+    "test:storage-repair": "node tests/storage-repair.cjs"
   },
   "devDependencies": {"playwright": "1.62.1"},
   "engines": {"node": ">=22"}

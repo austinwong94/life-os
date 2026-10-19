@@ -16,12 +16,15 @@
     <div class="actions">
       <button type="button" id="backupButton">Download device recovery backup</button>
       <button type="button" id="repairButton">Preserve copies and free save space</button>
+      <button type="button" id="checkButton">Check blocked device saves</button>
+      <button type="button" id="receiptButton" hidden>Repair matching save receipts</button>
     </div>
     <p id="status" role="status" aria-live="polite">Your original recovery copies remain untouched until their complete archive is verified.</p>
     <p><a href="./">Return to Life OS</a></p>
   </main>
   <script src="storage-scope.js"></script>
   <script src="recovery-vault.js"></script>
+  <script src="device-checkpoint.js"></script>
   <script src="storage-repair.js"></script>
 </body>
 </html>

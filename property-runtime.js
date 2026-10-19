@@ -2,6 +2,9 @@
 'use strict';
 try {
 const propertySession=await window.PropertyHost.session();
+if(new URL(location.href).searchParams.get('standby')==='1'){
+  window.PropertyHost.standby('Properties moved to another tab. All saved records remain available. You can switch back here when the other tab has no unfinished changes.','standby');return;
+}
 const localStorage=await LifePropertyCache.open(propertySession.user.id);
 let propertyOriginalFields={};
 const VillaBackup = (() => {
@@ -10684,6 +10687,23 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.PropertyOperations={save:saveCloudSnapshot,export:allAppData,pending:()=>cloudDirty || documentHasUnsavedChanges || localStorage.pending(),flush:()=>localStorage.flush()};
+// A clean editor can hand off its lifetime cache lock, never an unfinished form.
+if(typeof BroadcastChannel==='function'){
+  const handoff=new BroadcastChannel('life-os-properties-handoff:'+propertySession.user.id);let releasing=false;
+  const busy=()=>!cloudReady || !cloudUser || window.PropertyOperations.pending() || Boolean(document.querySelector('dialog[open]')) || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+  handoff.onmessage=async event=>{
+    if(event.data?.type!=='request' || typeof event.data.request!=='string' || releasing)return;
+    const request=event.data.request;
+    try{
+      const current=await window.PropertyHost.session();
+      if(current.user.id!==propertySession.user.id || busy()){handoff.postMessage({type:'kept',request});return;}
+      releasing=true;await localStorage.flush();
+      if(busy()){releasing=false;handoff.postMessage({type:'kept',request});return;}
+      document.getElementById('appShell').inert=true;await localStorage.close();handoff.postMessage({type:'released',request});handoff.close();
+      const url=new URL(location.href);url.searchParams.set('standby','1');location.replace(url.href);
+    }catch{releasing=false;handoff.postMessage({type:'kept',request});}
+  };
+}
 for(const [selector,label,cls] of [['.focus-panel','Payment summary','property-payment-summary']]){
   const section=document.querySelector(selector);if(section){const details=document.createElement('details'),summary=document.createElement('summary');details.className=cls;summary.textContent=label;section.before(details);details.append(summary,section);}
 }

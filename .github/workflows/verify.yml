@@ -58,6 +58,15 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm test
+      - name: Check conservative device receipt recovery in Chromium
+        run: npm run test:storage-repair
+        env:
+          TEST_OUTPUT: test-results/storage-repair-chromium
+      - name: Check conservative device receipt recovery in WebKit
+        run: npm run test:storage-repair
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/storage-repair-webkit
       - name: Measure isolated small-history save and reload in Chromium
         run: npm run test:performance
         env:
