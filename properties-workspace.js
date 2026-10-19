@@ -121,7 +121,14 @@
   window.addEventListener('online',()=>{if(!root.hidden){retryAttempt=0;void open();}});
   // Same-tab sign-out does not emit a storage event. Lock the mounted view even
   // while it is hidden and preserve its pending draft rather than clearing it.
-  window.setInterval(()=>{if((frame && loadCloudSession()?.user?.id!==owner) || (history && loadCloudSession()?.user?.id!==history.owner))window.renderPropertiesWorkspace();},1000);
+  window.setInterval(()=>{
+    const currentOwner=loadCloudSession()?.user?.id;
+    if((frame && currentOwner!==owner) || (history && currentOwner!==history.owner))window.renderPropertiesWorkspace();
+    else if(frame && currentOwner===owner && root.dataset.connection==='loading-error' && frame.contentWindow?.PropertyOperations){
+      clearTimeout(frameTimer);root.dataset.connection='connected';retry.hidden=true;
+      status.textContent='Bookings and documents use your Life OS cloud account. Original copies are available in Migration history.';
+    }
+  },1000);
   window.addEventListener('beforeunload',event=>{if(frame?.contentWindow?.PropertyOperations?.pending()){event.preventDefault();event.returnValue='';}});
   window.renderPropertiesWorkspace();
 })();

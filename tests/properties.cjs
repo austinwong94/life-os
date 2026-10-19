@@ -248,6 +248,19 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     const retrying=page.getByRole('button',{name:'Retry loading',exact:true}).click();await page.waitForFunction(()=>document.querySelector('#propertyOperationsFrame').src.includes('startup='));blocked();await retrying;
     await page.frameLocator('#propertyOperationsFrame').locator('#appShell:not([hidden])').waitFor();assert.equal(await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage()))),before);
   });
+  await run('a late successful Properties startup clears its warning automatically without reloading either document',async({page,context,writes})=>{
+    let release,started=false;const held=new Promise(resolve=>{release=resolve;});
+    await context.route('**/property-operations.html**',async route=>{started=true;await held;return route.continue();});
+    await page.goto(url+'?liveReload=0');await page.evaluate(owner=>{state.cloudOwnerId=owner;cloudSaveEnabled=false;saveCloudSession({user:{id:owner},access_token:'synthetic-access',expires_at:Date.now()+3600000});},owner);
+    const before=await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage())));let mainLoads=0,childLoads=0;
+    page.on('framenavigated',f=>{if(f===page.mainFrame())mainLoads++;else if(f.url().includes('property-operations.html'))childLoads++;});
+    await page.locator('#propertiesModeButton').click();while(!started)await new Promise(resolve=>setTimeout(resolve,10));
+    await page.clock.runFor(20100);await page.getByRole('button',{name:'Retry loading',exact:true}).waitFor();release();
+    await page.waitForFunction(()=>document.querySelector('#propertyOperationsFrame').contentWindow.PropertyOperations);await page.clock.runFor(1100);
+    assert.equal(await page.locator('.properties-workspace').getAttribute('data-connection'),'connected');assert.equal(await page.getByRole('button',{name:'Retry loading',exact:true}).isVisible(),false);
+    assert.doesNotMatch(await page.locator('.properties-status').innerText(),/did not finish|Sign in/);assert.equal(mainLoads,0);assert.equal(childLoads,1);
+    assert.equal(await page.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage()))),before);assert.equal(writes(),0);
+  });
   await run('migration history verifies and downloads cloud originals and the newer browser backup',async({page,context})=>{
     const payload=JSON.stringify({data:base,updated_at:'2026-10-16T00:00:00Z'}),browserPayload=JSON.stringify({...base,ownerId:owner,exportedAt:'2026-10-17T00:00:00Z'}),digest=s=>createHash('sha256').update(s).digest('hex');
     await context.route('https://**/rest/v1/property_transfer_batches?**',r=>r.fulfill({json:[{batch_id:'synthetic-batch',manifest:{records:[{resource:'public.app_data',source_key:'synthetic-original',sha256:digest(payload)}]}}]}));
