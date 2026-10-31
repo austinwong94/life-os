@@ -1558,19 +1558,26 @@
                   <input id="taxExpenseSearch" type="search" placeholder="Supplier, notes, receipt no." />
                 </label>
               </div>
-              <div class="table-scroll">
-                <table class="compact-table">
+              <div class="expense-list-controls">
+                <p id="expenseResultStatus" role="status"></p>
+                <div class="property-booking-layout" role="group" aria-label="Expense layout">
+                  <button type="button" data-expense-layout="list">List</button>
+                  <button type="button" data-expense-layout="table">Table</button>
+                </div>
+              </div>
+              <div class="table-scroll" id="expenseResults">
+                <table class="compact-table" role="table" aria-label="Expense records">
                   <thead>
                     <tr>
-                      <th>Date</th>
-                      <th>Business</th>
-                      <th>Property</th>
-                      <th>Category</th>
-                      <th>Supplier</th>
-                      <th>Receipt</th>
-                      <th>Review</th>
-                      <th>Amount</th>
-                      <th></th>
+                      <th scope="col">Date</th>
+                      <th scope="col">Business</th>
+                      <th scope="col">Property</th>
+                      <th scope="col">Category</th>
+                      <th scope="col">Supplier</th>
+                      <th scope="col">Receipt</th>
+                      <th scope="col">Review</th>
+                      <th scope="col">Amount</th>
+                      <th scope="col">Actions</th>
                     </tr>
                   </thead>
                   <tbody id="taxExpenseRows"></tbody>

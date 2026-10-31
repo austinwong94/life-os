@@ -677,6 +677,7 @@ let pendingTaxExpenseAttachment = null;
 let removePendingTaxExpenseAttachment = false;
 let expenseDraftBaseline=null,expenseDraftAfterDiscard=null,expenseDraftLastField='taxExpenseVendor';
 let expenseAttachmentGeneration=0,expenseAttachmentReading=false;
+let expenseListLayout='',expenseListSignature='',expenseListRevision=0;
 
 const els = {
   monthPicker: document.querySelector("#monthPicker"),
@@ -6861,9 +6862,9 @@ function saveTaxExpense(event) {
 function deleteTaxExpense(id) {
   const matches=(taxPlan.expenses || []).filter(expense=>expense.id===id),existing=matches[0];
   if(matches.length!==1 || !bookingWorkspaceAvailable() || activeView!=='dashboard' || financeSection!=='expenses'){setExpenseDraftStatus('This expense needs review before deletion. Original records are retained.','attention');return;}
-  const expected=JSON.stringify(existing);
+  const expected=JSON.stringify(existing),owner=cloudUser.id,villa=activeVillaKey();
   if (!window.confirm(existing?.financeMode === "legacy" ? "Delete this receipt record? The original monthly cost will stay in Finance." : "Delete this expense record?")) return;
-  if(!bookingWorkspaceAvailable() || !LifePropertyBookingList.unchanged(taxPlan.expenses,id,expected)){setExpenseDraftStatus('The expense changed while confirming. It was not deleted.','attention');return;}
+  if(!bookingWorkspaceAvailable() || cloudUser.id!==owner || activeVillaKey()!==villa || activeView!=='dashboard' || financeSection!=='expenses' || !LifePropertyBookingList.unchanged(taxPlan.expenses,id,expected)){setExpenseDraftStatus('The expense changed while confirming. It was not deleted.','attention');return;}
   createRecoverySnapshot("Before tax expense deleted");
   taxPlan = { ...taxPlan, expenses: (taxPlan.expenses || []).filter((expense) => expense.id !== id) };
   saveTaxPlan();
@@ -6892,6 +6893,50 @@ function taxExpenseExportRows(rows = filteredTaxExpenses()) {
   ]);
 }
 
+function expenseRowTarget(button,target) {
+  if(!bookingWorkspaceAvailable() || cloudUser.id!==target.owner || activeVillaKey()!==target.villa || activeView!=='dashboard' || financeSection!=='expenses' || document.querySelector('dialog[open]') || !button.isConnected || !els.taxExpenseRows.contains(button) || target.revision!==expenseListRevision)return null;
+  return LifePropertyBookingList.unchanged(taxPlan.expenses,target.id,target.expected);
+}
+
+function renderExpenseRows(rows,filters) {
+  const host=document.querySelector('#expenseResults'),mode=LifePropertyBookingList.layout(expenseListLayout,matchMedia('(max-width:1000px)').matches);
+  host.dataset.layout=mode;
+  for(const button of document.querySelectorAll('[data-expense-layout]'))button.setAttribute('aria-pressed',String(button.dataset.expenseLayout===mode));
+  const property=filters.property==='Selected'?activeVillaKey()+' Villa':filters.property==='All'?'All properties':filters.property;
+  const status=document.querySelector('#expenseResultStatus'),label=rows.length+' '+(rows.length===1?'expense':'expenses')+' shown · '+property+' · '+filters.year;
+  if(status.textContent!==label)status.textContent=label;
+  const signature=JSON.stringify([rows,filters,mode,activeVillaKey(),cloudUser?.id,(taxPlan.expenses || []).map(row=>row.id)]);
+  if(signature===expenseListSignature)return;
+  expenseListSignature=signature;expenseListRevision++;
+  const focused=document.activeElement,focusedAction=els.taxExpenseRows.contains(focused)?{id:focused.dataset.editTaxExpense || focused.dataset.deleteTaxExpense,kind:focused.dataset.editTaxExpense?'editTaxExpense':'deleteTaxExpense'}:null;
+  const counts=new Map();for(const row of taxPlan.expenses || [])counts.set(row.id,(counts.get(row.id)||0)+1);
+  els.taxExpenseRows.innerHTML=rows.length?rows.map(expense=>{
+    const invalid=typeof expense.id!=='string' || !expense.id.trim() || counts.get(expense.id)!==1,identity=escapeHtml(expense.id || '');
+    return `<tr>
+      <td data-expense-field="date">${shortDate(expense.date)}</td>
+      <td data-expense-field="business">${escapeHtml(expense.entity)}</td>
+      <td data-expense-field="property">${escapeHtml(expense.property)}</td>
+      <td data-expense-field="category"><span class="doc-status">${escapeHtml(expense.category)}</span></td>
+      <td data-expense-field="supplier">${escapeHtml(expense.vendor || 'Unnamed supplier')}${invalid?'<small>Identity needs review</small>':''}</td>
+      <td data-expense-field="receipt">${escapeHtml(receiptLabel(expense))}<br><span class="table-muted">${escapeHtml(expense.receipt || expense.attachment?.name || '-')}</span>${attachmentLink(expense)}</td>
+      <td data-expense-field="review">${expense.reviewed?'Reviewed':'Pending'}<small class="expense-finance-status">${expense.financeMode==='additional'?'Finance: included':expense.financeMode==='commitment'?'Finance: replaces budget':expense.financeMode==='legacy'?'Finance: linked monthly cost':expense.financeMode==='tax-only'?'Tax only':'Finance: not reconciled'}</small></td>
+      <td data-expense-field="amount"><strong>${money(expense.amount)}</strong></td>
+      <td class="actions" data-expense-field="actions"><button class="small-action" type="button" data-edit-tax-expense="${identity}" ${invalid?'disabled':''}>Edit</button><button class="small-action danger" type="button" data-delete-tax-expense="${identity}" ${invalid?'disabled':''}>Delete</button></td>
+    </tr>`;
+  }).join(''):'<tr><td colspan="9" class="empty-state">No expense records for this filter.</td></tr>';
+  for(const [index,row]of [...els.taxExpenseRows.rows].entries()){
+    const expense=rows[index];if(!expense)continue;
+    const target={id:expense.id,expected:JSON.stringify(expense),owner:cloudUser?.id,villa:activeVillaKey(),revision:expenseListRevision};
+    for(const button of row.querySelectorAll('button'))button.onclick=()=>{
+      const current=()=>{if(expenseRowTarget(button,target))return true;renderTaxExpenses();status.textContent='This expense or workspace changed. Choose it again from the current results. Your draft is retained.';return false;};
+      if(!current())return;
+      if(button.dataset.editTaxExpense)requestExpenseDraftReplacement(()=>{if(!current())return;if(fillTaxExpenseForm(target.id)){document.querySelector('#expenseEntryDisclosure').open=true;els.taxExpenseVendor.focus();}});
+      else deleteTaxExpense(target.id);
+    };
+  }
+  if(focusedAction)[...els.taxExpenseRows.querySelectorAll('button')].find(button=>button.dataset[focusedAction.kind]===focusedAction.id && !button.disabled)?.focus({preventScroll:true});
+}
+
 function renderTaxExpenses() {
   if (!els.taxExpenseRows) return;
   renderTaxExpenseSelects();
@@ -6911,34 +6956,13 @@ function renderTaxExpenses() {
   if (els.taxExpenseTableTitle) els.taxExpenseTableTitle.textContent = `${filters.year} Expense List`;
   if (els.taxExpenseSummary) {
     els.taxExpenseSummary.innerHTML = `
-      <article class="tax-expense-card"><span>Total expenses</span><strong>${money(total)}</strong></article>
+      <article class="tax-expense-card"><span>Filtered expenses</span><strong>${money(total)}</strong></article>
       <article class="tax-expense-card"><span>Missing receipts</span><strong>${missingReceiptCount}</strong></article>
       <article class="tax-expense-card"><span>Review pending</span><strong>${reviewPendingCount}</strong></article>
       <article class="tax-expense-card"><span>Top category</span><strong>${escapeHtml(topCategories[0]?.[0] || "-")}</strong></article>
     `;
   }
-  els.taxExpenseRows.innerHTML = rows.length
-    ? rows
-        .map(
-          (expense) => `
-            <tr>
-              <td>${shortDate(expense.date)}</td>
-              <td>${escapeHtml(expense.entity)}</td>
-              <td>${escapeHtml(expense.property)}</td>
-              <td><span class="doc-status">${escapeHtml(expense.category)}</span></td>
-              <td>${escapeHtml(expense.vendor || "-")}</td>
-              <td>${escapeHtml(receiptLabel(expense))}<br><span class="table-muted">${escapeHtml(expense.receipt || expense.attachment?.name || "-")}</span>${attachmentLink(expense)}</td>
-              <td>${expense.reviewed ? "Reviewed" : "Pending"}<small class="expense-finance-status">${expense.financeMode === "additional" ? "Finance: included" : expense.financeMode === "commitment" ? "Finance: replaces budget" : expense.financeMode === "legacy" ? "Finance: linked monthly cost" : expense.financeMode === "tax-only" ? "Tax only" : "Finance: not reconciled"}</small></td>
-              <td><strong>${money(expense.amount)}</strong></td>
-              <td class="actions">
-                <button class="small-action" type="button" data-edit-tax-expense="${expense.id}">Edit</button>
-                <button class="small-action danger" type="button" data-delete-tax-expense="${expense.id}">Delete</button>
-              </td>
-            </tr>
-          `,
-        )
-        .join("")
-    : `<tr><td colspan="9" class="empty-state">No expense records for this filter.</td></tr>`;
+  renderExpenseRows(rows,filters);
   if (typeof renderExpenseReview === "function") renderExpenseReview();
   renderExpenseDraftStatus();
 }
@@ -9728,12 +9752,6 @@ els.taxExpenseAttachment?.addEventListener("change", async (event) => {
   control?.addEventListener("input", renderTaxExpenses);
   control?.addEventListener("change", renderTaxExpenses);
 });
-els.taxExpenseRows?.addEventListener("click", (event) => {
-  const editId = event.target.dataset.editTaxExpense;
-  if (editId) requestExpenseDraftReplacement(()=>fillTaxExpenseForm(editId));
-  const deleteId = event.target.dataset.deleteTaxExpense;
-  if (deleteId) deleteTaxExpense(deleteId);
-});
 els.exportTaxExpensesExcel?.addEventListener("click", exportTaxExpensesExcel);
 els.exportTaxExpensesPdf?.addEventListener("click", exportTaxExpensesPdf);
 
@@ -10819,6 +10837,11 @@ function initializeExpenseEditor() {
 }
 
 initializeExpenseEditor();
+for(const button of document.querySelectorAll('[data-expense-layout]'))button.onclick=()=>{
+  if(!bookingWorkspaceAvailable() || activeView!=='dashboard' || financeSection!=='expenses' || document.querySelector('dialog[open]'))return;
+  expenseListLayout=button.dataset.expenseLayout;renderTaxExpenses();
+};
+matchMedia('(max-width:1000px)').addEventListener('change',()=>{if(!expenseListLayout)renderTaxExpenses();});
 
 ;
 let backupOperation = null;
