@@ -675,6 +675,8 @@ const propertyBookingBrowser = LifePropertyBookingList.create({
 });
 let pendingTaxExpenseAttachment = null;
 let removePendingTaxExpenseAttachment = false;
+let expenseDraftBaseline=null,expenseDraftAfterDiscard=null,expenseDraftLastField='taxExpenseVendor';
+let expenseAttachmentGeneration=0,expenseAttachmentReading=false;
 
 const els = {
   monthPicker: document.querySelector("#monthPicker"),
@@ -1140,6 +1142,7 @@ function normalizeTaxExpense(expense = {}) {
   const attachment =
     expense.attachment && typeof expense.attachment === "object"
       ? {
+          ...expense.attachment,
           name: String(expense.attachment.name || ""),
           type: String(expense.attachment.type || ""),
           dataUrl: safeDataUrl(expense.attachment.dataUrl, ["data:image/", "data:application/pdf"]),
@@ -1165,7 +1168,7 @@ function normalizeTaxExpense(expense = {}) {
     amount: Number(expense.amount || 0),
     financeMode: ["additional", "commitment", "legacy", "tax-only", "unreviewed"].includes(expense.financeMode) ? expense.financeMode : "unreviewed",
     commitmentId: String(expense.commitmentId || ""),
-    legacyCost: expense.financeMode === "legacy" && expense.legacyCost ? { monthKey: String(expense.legacyCost.monthKey || ""), costId: String(expense.legacyCost.costId || "") } : null,
+    legacyCost: expense.financeMode === "legacy" && expense.legacyCost ? { ...expense.legacyCost, monthKey: String(expense.legacyCost.monthKey || ""), costId: String(expense.legacyCost.costId || "") } : null,
     businessUsePct: clampPct(expense.businessUsePct, 100), // apportionment for mixed-use running costs
     createdAt: expense.createdAt || new Date().toISOString(),
     updatedAt: expense.updatedAt || new Date().toISOString(),
@@ -4118,7 +4121,7 @@ function renderDataHealth(statusMode = cloudStatusMode) {
       : "Cloud: login required";
     els.dataHealthStatus.textContent = cloudLabel;
     els.dataHealthStatus.dataset.status = statusMode || (cloudUser ? "connected" : "offline");
-    for(const workspaceStatus of document.querySelectorAll('#workspaceSaveState,#documentSaveState')){
+    for(const workspaceStatus of document.querySelectorAll('#workspaceSaveState,#documentSaveState,#expenseSaveState')){
       if(workspaceStatus.textContent!==cloudLabel)workspaceStatus.textContent=cloudLabel;
       workspaceStatus.dataset.status=els.dataHealthStatus.dataset.status;
     }
@@ -6581,15 +6584,19 @@ function clearTaxExpenseForm() {
   if (els.taxExpenseBizPct) els.taxExpenseBizPct.value = 100;
   pendingTaxExpenseAttachment = null;
   removePendingTaxExpenseAttachment = false;
+  expenseAttachmentGeneration++;expenseAttachmentReading=false;
   if (els.taxExpenseAttachment) els.taxExpenseAttachment.value = "";
   if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "No file attached";
   renderTaxExpenseHint();
+  captureExpenseDraft();
 }
 
 function formTaxExpense() {
   const now = new Date().toISOString();
   const existing = (taxPlan.expenses || []).find((expense) => expense.id === els.taxExpenseId.value);
+  const selectedLegacy=typeof selectedLegacyExpenseSource==='function'?selectedLegacyExpenseSource():existing?.legacyCost;
   return normalizeTaxExpense({
+    ...existing,
     id: safeRecordId(els.taxExpenseId.value),
     date: els.taxExpenseDate.value || isoDate(new Date()),
     entity: els.taxExpenseEntity.value,
@@ -6607,7 +6614,7 @@ function formTaxExpense() {
     amount: Number(els.taxExpenseAmount.value || 0),
     financeMode: document.querySelector("#expenseFinanceMode")?.value || existing?.financeMode || "unreviewed",
     commitmentId: document.querySelector("#expenseCommitment")?.value || "",
-    legacyCost: typeof selectedLegacyExpenseSource === "function" ? selectedLegacyExpenseSource() : existing?.legacyCost,
+    legacyCost: selectedLegacy && sameLegacySource(existing?.legacyCost,selectedLegacy)?{...existing.legacyCost,...selectedLegacy}:selectedLegacy,
     businessUsePct: els.taxExpenseBizPct ? clampPct(els.taxExpenseBizPct.value, 100) : 100,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
@@ -6712,8 +6719,8 @@ function attachmentLink(expense) {
 }
 
 function fillTaxExpenseForm(id) {
-  const expense = (taxPlan.expenses || []).find((item) => item.id === id);
-  if (!expense) return;
+  const matches=(taxPlan.expenses || []).filter(item=>item.id===id),expense=matches[0];
+  if(matches.length!==1){setExpenseDraftStatus('This expense needs identity review. Your draft is retained.','attention');return false;}
   renderTaxExpenseSelects();
   els.taxExpenseId.value = expense.id;
   els.taxExpenseDate.value = expense.date;
@@ -6734,11 +6741,68 @@ function fillTaxExpenseForm(id) {
   if (els.taxExpenseBizPct) els.taxExpenseBizPct.value = clampPct(expense.businessUsePct, 100);
   pendingTaxExpenseAttachment = null;
   removePendingTaxExpenseAttachment = false;
+  expenseAttachmentGeneration++;expenseAttachmentReading=false;
   if (els.taxExpenseAttachment) els.taxExpenseAttachment.value = "";
   if (els.taxExpenseAttachmentStatus) {
     els.taxExpenseAttachmentStatus.textContent = expense.attachment?.name ? `Attached: ${expense.attachment.name}` : "No file attached";
   }
   renderTaxExpenseHint();
+  captureExpenseDraft(expense);return true;
+}
+
+function expenseDraftSnapshot() {
+  return JSON.stringify([...els.taxExpenseForm.elements].filter(control=>control.id).map(control=>[control.id,control.value,Boolean(control.checked)]));
+}
+
+function captureExpenseDraft(record=null) {
+  const linked=record?.financeMode==='legacy'?legacySourceFor(record):null;
+  expenseDraftBaseline={form:expenseDraftSnapshot(),attachment:pendingTaxExpenseAttachment,remove:removePendingTaxExpenseAttachment,
+    owner:propertySession.user.id,villa:activeVillaKey(),id:els.taxExpenseId.value,expected:record?JSON.stringify(record):null,
+    legacyRequired:record?.financeMode==='legacy',legacy:linked?{monthKey:linked.monthKey,costId:linked.cost.id,expected:JSON.stringify(linked.cost)}:null};
+  renderExpenseDraftStatus();
+}
+
+function expenseDraftDirty() {
+  return Boolean(expenseDraftBaseline && (expenseAttachmentReading || expenseDraftBaseline.form!==expenseDraftSnapshot() || expenseDraftBaseline.attachment!==pendingTaxExpenseAttachment || expenseDraftBaseline.remove!==removePendingTaxExpenseAttachment));
+}
+
+function expenseDraftTarget() {
+  const baseline=expenseDraftBaseline;
+  if(!baseline || !bookingWorkspaceAvailable() || cloudUser.id!==baseline.owner || activeVillaKey()!==baseline.villa || activeView!=='dashboard' || financeSection!=='expenses' || els.taxExpenseId.value!==baseline.id)return false;
+  if(baseline.id && !LifePropertyBookingList.unchanged(taxPlan.expenses,baseline.id,baseline.expected))return false;
+  if(baseline.legacyRequired){const link=baseline.legacy,rows=link?legacyMonthlyCosts().filter(row=>row.monthKey===link.monthKey && row.cost.id===link.costId):[];if(rows.length!==1 || JSON.stringify(rows[0].cost)!==link.expected)return false;}
+  return baseline.id?true:baseline.expected===null;
+}
+
+function setExpenseDraftStatus(message,state='') {
+  const status=document.querySelector('#expenseDraftStatus');if(status){if(status.textContent!==message)status.textContent=message;status.dataset.state=state;}
+}
+
+function renderExpenseDraftStatus() {
+  if(!expenseDraftBaseline)return;
+  const staleScope=expenseDraftBaseline.villa!==activeVillaKey();
+  setExpenseDraftStatus(staleScope?'Draft from '+expenseDraftBaseline.villa+' Villa. Return there before saving.':expenseAttachmentReading?'Reading receipt...':expenseDraftDirty()?'Unsaved expense':expenseDraftBaseline.id?'Editing saved expense':'New expense',staleScope?'attention':'');
+}
+
+function requestExpenseDraftReplacement(action) {
+  if(typeof action!=='function' || !bookingWorkspaceAvailable() || document.querySelector('dialog[open]'))return false;
+  if(!expenseDraftDirty()){action();return true;}
+  expenseDraftAfterDiscard={action,owner:cloudUser.id,villa:activeVillaKey()};
+  const dialog=document.querySelector('#expenseDraftDiscard');dialog.showModal();dialog.querySelector('[data-expense-keep]').focus();return false;
+}
+
+function revealExpenseField(field) {
+  if(!field || !els.taxExpenseForm.contains(field))return;
+  showFinanceSection('expenses');
+  for(let parent=field.parentElement;parent;parent=parent.parentElement){if(parent.tagName==='DETAILS')parent.open=true;if(parent.id==='expenseEntryDisclosure')break;}
+}
+
+function validateExpenseDraft() {
+  if(!expenseDraftTarget()){setExpenseDraftStatus('This expense or workspace changed. Your draft is retained; reopen the original before saving.','attention');return false;}
+  if(expenseAttachmentReading){setExpenseDraftStatus('Receipt is still being read. Wait before saving.','attention');return false;}
+  const invalid=[...els.taxExpenseForm.elements].find(control=>control.willValidate && !control.validity.valid);
+  if(invalid){revealExpenseField(invalid);invalid.getBoundingClientRect();}
+  return els.taxExpenseForm.reportValidity();
 }
 
 let taxSaveStatusTimer = null;
@@ -6752,7 +6816,7 @@ function showSaveStatus(el, message) {
 
 function saveTaxExpense(event) {
   event.preventDefault();
-  if (!els.taxExpenseForm.reportValidity()) return;
+  if(event.target!==els.taxExpenseForm || !validateExpenseDraft())return;
   const expense = formTaxExpense();
   if (["additional", "commitment"].includes(expense.financeMode) && expense.property === "Shared") {
     window.alert("Choose Sunrise or Windmill for finance reporting. Split shared costs into one record per property.");
@@ -6765,7 +6829,10 @@ function saveTaxExpense(event) {
   try {
     if (typeof validateExpenseFinanceChange === "function" && !validateExpenseFinanceChange(expense)) return;
   } catch (error) { window.alert(error.message); return; }
-  const revisedProfitData = typeof prepareExpenseFinanceChange === "function" ? prepareExpenseFinanceChange(expense) : profitData;
+  if(!expenseDraftTarget()){setExpenseDraftStatus('The expense changed while confirming. Nothing was recorded. Your draft is retained.','attention');return;}
+  let revisedProfitData;
+  try{revisedProfitData=typeof prepareExpenseFinanceChange==='function'?prepareExpenseFinanceChange(expense):profitData;}
+  catch(error){setExpenseDraftStatus(error.message || 'The linked cost is unavailable. Your draft is retained.','attention');return;}
   createRecoverySnapshot("Before expense saved");
   profitData = revisedProfitData;
   saveProfitData();
@@ -6792,8 +6859,11 @@ function saveTaxExpense(event) {
 }
 
 function deleteTaxExpense(id) {
-  const existing = (taxPlan.expenses || []).find(expense => expense.id === id);
+  const matches=(taxPlan.expenses || []).filter(expense=>expense.id===id),existing=matches[0];
+  if(matches.length!==1 || !bookingWorkspaceAvailable() || activeView!=='dashboard' || financeSection!=='expenses'){setExpenseDraftStatus('This expense needs review before deletion. Original records are retained.','attention');return;}
+  const expected=JSON.stringify(existing);
   if (!window.confirm(existing?.financeMode === "legacy" ? "Delete this receipt record? The original monthly cost will stay in Finance." : "Delete this expense record?")) return;
+  if(!bookingWorkspaceAvailable() || !LifePropertyBookingList.unchanged(taxPlan.expenses,id,expected)){setExpenseDraftStatus('The expense changed while confirming. It was not deleted.','attention');return;}
   createRecoverySnapshot("Before tax expense deleted");
   taxPlan = { ...taxPlan, expenses: (taxPlan.expenses || []).filter((expense) => expense.id !== id) };
   saveTaxPlan();
@@ -6826,7 +6896,8 @@ function renderTaxExpenses() {
   if (!els.taxExpenseRows) return;
   renderTaxExpenseSelects();
   if (els.taxExpenseYearFilter && !els.taxExpenseYearFilter.value) els.taxExpenseYearFilter.value = taxPlan.year || currentYear();
-  if (els.taxExpenseDate && !els.taxExpenseDate.value) clearTaxExpenseForm();
+  // A temporarily empty date is an unfinished draft, not a reset request.
+  if(els.taxExpenseForm && (!expenseDraftBaseline || (!expenseDraftBaseline.id && !expenseDraftDirty() && expenseDraftBaseline.villa!==activeVillaKey())))clearTaxExpenseForm();
   const rows = filteredTaxExpenses();
   const filters = taxExpenseFilters();
   const total = rows.reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
@@ -6869,6 +6940,7 @@ function renderTaxExpenses() {
         .join("")
     : `<tr><td colspan="9" class="empty-state">No expense records for this filter.</td></tr>`;
   if (typeof renderExpenseReview === "function") renderExpenseReview();
+  renderExpenseDraftStatus();
 }
 
 function exportTaxExpensesExcel() {
@@ -9109,11 +9181,14 @@ els.quickColumnControls?.addEventListener("change", (event) => {
 });
 
 els.addOneOffCost?.addEventListener("click", () => {
+  requestExpenseDraftReplacement(()=>{
   showFinanceSection("expenses");
   clearTaxExpenseForm();
   els.taxExpenseDate.value = selectedMonth === isoDate(new Date()).slice(0, 7) ? isoDate(new Date()) : selectedMonth + "-01";
   document.querySelector("#expenseEntryDisclosure").open = true;
   els.taxExpenseVendor.focus();
+  captureExpenseDraft();
+  });
 });
 
 els.oneOffCostList?.addEventListener("change", (event) => {
@@ -9612,28 +9687,41 @@ els.documentArchiveRows?.addEventListener("click", (event) => {
 });
 
 els.taxExpenseForm?.addEventListener("submit", saveTaxExpense);
-els.clearTaxExpense?.addEventListener("click", clearTaxExpenseForm);
+els.clearTaxExpense?.addEventListener("click", () => requestExpenseDraftReplacement(clearTaxExpenseForm));
 els.removeTaxExpenseAttachment?.addEventListener("click", () => {
   pendingTaxExpenseAttachment = null;
   removePendingTaxExpenseAttachment = true;
+  expenseAttachmentGeneration++;expenseAttachmentReading=false;
   if (els.taxExpenseAttachment) els.taxExpenseAttachment.value = "";
   if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "Attachment will be removed";
+  renderExpenseDraftStatus();
 });
 els.taxExpenseAttachment?.addEventListener("change", async (event) => {
+  const generation=++expenseAttachmentGeneration,owner=cloudUser?.id,auth=authGeneration;
+  expenseAttachmentReading=false;
   const file = event.target.files?.[0];
   if (!file) return;
   if (file.size > 2_500_000) {
     event.target.value = "";
     if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "File too large. Use below 2.5 MB.";
+    renderExpenseDraftStatus();
     return;
   }
+  expenseAttachmentReading=true;renderExpenseDraftStatus();
   try {
-    pendingTaxExpenseAttachment = await fileToTaxAttachment(file);
+    const attachment=await fileToTaxAttachment(file);
+    if(generation!==expenseAttachmentGeneration || owner!==cloudUser?.id || auth!==authGeneration || !bookingWorkspaceAvailable())return;
+    if(!safeDataUrl(attachment.dataUrl,['data:image/','data:application/pdf']))throw new Error('Unsupported receipt type');
+    pendingTaxExpenseAttachment = attachment;
     removePendingTaxExpenseAttachment = false;
     if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = `Ready: ${file.name}`;
   } catch {
-    pendingTaxExpenseAttachment = null;
-    if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "Could not read file";
+    if(generation===expenseAttachmentGeneration && owner===cloudUser?.id && auth===authGeneration){
+      event.target.value='';
+      if (els.taxExpenseAttachmentStatus) els.taxExpenseAttachmentStatus.textContent = "Could not read this file. Previous attachment retained.";
+    }
+  } finally {
+    if(generation===expenseAttachmentGeneration){expenseAttachmentReading=false;renderExpenseDraftStatus();}
   }
 });
 [els.taxExpenseYearFilter, els.taxExpenseMonthFilter, els.taxExpenseCategoryFilter, els.taxExpenseReceiptFilter, els.taxExpenseSearch].forEach((control) => {
@@ -9642,7 +9730,7 @@ els.taxExpenseAttachment?.addEventListener("change", async (event) => {
 });
 els.taxExpenseRows?.addEventListener("click", (event) => {
   const editId = event.target.dataset.editTaxExpense;
-  if (editId) fillTaxExpenseForm(editId);
+  if (editId) requestExpenseDraftReplacement(()=>fillTaxExpenseForm(editId));
   const deleteId = event.target.dataset.deleteTaxExpense;
   if (deleteId) deleteTaxExpense(deleteId);
 });
@@ -10139,7 +10227,7 @@ function showFinanceSection(mode) {
   document.querySelector('#financeExpenses').hidden = financeSection !== 'expenses';
   if (financeSection === 'reports') renderDashboard();
   if (financeSection === 'payments') renderFinancePayments();
-  if (financeSection === 'expenses') { renderTaxExpenses(); renderExpenseFinanceOptions((taxPlan.expenses || []).find(item => item.id === els.taxExpenseId.value)); }
+  if (financeSection === 'expenses') renderTaxExpenses();
 }
 
 let propertyPaymentFollowup=null;
@@ -10569,7 +10657,7 @@ function renderLegacyExpenseOptions(expense) {
     return (!linked || linked.id === draft.id) && (isExisting || (row.property === draft.property && row.month === draft.date.slice(0, 7) && VillaLedger.cents(row.cost.amount) === VillaLedger.cents(draft.amount)));
   });
   select.innerHTML = '<option value="">Select matching monthly cost</option>' + rows.map(row => `<option value="${escapeHtml(JSON.stringify({ monthKey: row.monthKey, costId: row.cost.id }))}">${escapeHtml(row.cost.description || row.cost.category)} · ${escapeHtml(monthLabel(row.month))} · ${money(row.cost.amount)}</option>`).join('');
-  select.value = source ? JSON.stringify(source) : '';
+  select.value = source ? JSON.stringify({monthKey:source.monthKey,costId:source.costId}) : '';
   const visible = document.querySelector('#expenseFinanceMode').value === 'legacy';
   document.querySelector('#expenseLegacyCostLabel').hidden = !visible;
   select.required = visible;
@@ -10606,7 +10694,8 @@ function prepareExpenseFinanceChange(expense) {
   return { ...profitData, [row.monthKey]: { ...profitData[row.monthKey], oneOffCosts: profitData[row.monthKey].oneOffCosts.map(cost => cost.id === row.cost.id ? { ...cost, amount: expense.amount } : cost) } };
 }
 
-function openLegacyCostRecord(monthKey, costId, expenseId) {
+function openLegacyCostRecord(monthKey, costId, expenseId,discarded=false) {
+  if(!discarded)return requestExpenseDraftReplacement(()=>openLegacyCostRecord(monthKey,costId,expenseId,true));
   const row = legacyMonthlyCosts().find(item => item.monthKey === monthKey && item.cost.id === costId);
   if (!row) return;
   const linked = linkedLegacyExpense(monthKey, costId);
@@ -10672,7 +10761,7 @@ function initializeExpenseReview() {
   document.querySelector('.expense-imports').before(review);
   review.addEventListener('click', event => {
     const button = event.target.closest('button');
-    if (button?.dataset.reviewExpense) { fillTaxExpenseForm(button.dataset.reviewExpense); els.taxExpenseForm.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
+    if (button?.dataset.reviewExpense)requestExpenseDraftReplacement(()=>{fillTaxExpenseForm(button.dataset.reviewExpense);els.taxExpenseForm.scrollIntoView({block:'start',behavior:'smooth'});});
     if (button?.dataset.legacyCost) openLegacyCostRecord(button.dataset.legacyMonth, button.dataset.legacyCost);
   });
   const dialog = document.createElement('dialog');
@@ -10693,6 +10782,43 @@ function initializeExpenseReview() {
 }
 
 initializeExpenseReview();
+
+function initializeExpenseEditor() {
+  const form=els.taxExpenseForm,core=form.querySelector('.tax-expense-grid'),accounting=form.querySelector('.tax-accounting-grid');
+  form.noValidate=true;
+  for(const id of ['taxExpenseBizPct','taxExpenseEntity'])accounting.prepend(document.getElementById(id).closest('label'));
+  for(const id of ['taxExpenseDate','taxExpenseProperty','taxExpenseCategory','taxExpenseAmount','taxExpenseVendor','taxExpenseNotes'])core.append(document.getElementById(id).closest('label'));
+  els.taxExpenseAmount.inputMode='decimal';
+  const finance=document.createElement('details'),summary=document.createElement('summary');
+  finance.className='expense-finance-details';finance.open=true;summary.textContent='Finance impact';finance.append(summary);
+  const fields=document.querySelector('#expenseFinanceMode').closest('.form-grid');fields.before(finance);finance.append(fields);
+  accounting.append(els.taxExpenseHint);
+  const labels={additional:'Add to Finance costs',commitment:'Replace recurring budget',legacy:'Already in monthly costs','tax-only':'Records only - no additional Finance cost',unreviewed:'Needs review - not added to Finance'};
+  for(const option of document.querySelector('#expenseFinanceMode').options)option.textContent=labels[option.value] || option.textContent;
+  const actions=form.querySelector('.tax-expense-actions');actions.classList.add('expense-action-bar');form.prepend(actions);
+  actions.querySelector('[type=submit]').textContent='Save expense';els.clearTaxExpense.textContent='New / clear';
+  accounting.append(els.removeTaxExpenseAttachment);
+  const status=document.createElement('p');status.id='expenseDraftStatus';status.setAttribute('role','status');
+  const sync=document.createElement('span'),saved=document.createElement('span');saved.id='expenseSaveState';saved.setAttribute('role','status');saved.textContent=els.dataHealthStatus?.textContent || '';saved.dataset.status=els.dataHealthStatus?.dataset.status || '';sync.append('Recorded data: ',saved);sync.className='expense-recorded-status';
+  actions.append(status,sync);
+  form.addEventListener('input',event=>{expenseDraftLastField=event.target.id || expenseDraftLastField;renderExpenseDraftStatus();});
+  form.addEventListener('change',renderExpenseDraftStatus);
+  form.addEventListener('invalid',event=>revealExpenseField(event.target),true);
+  const dialog=document.createElement('dialog');dialog.id='expenseDraftDiscard';dialog.className='expense-draft-discard';dialog.setAttribute('aria-labelledby','expenseDiscardTitle');
+  dialog.innerHTML='<h2 id="expenseDiscardTitle">Discard this unfinished expense?</h2><div><button type="button" class="ghost-button" data-expense-keep>Keep editing</button><button type="button" class="ghost-button danger" data-expense-discard>Discard and continue</button></div>';
+  document.body.append(dialog);
+  const keep=()=>{if(!dialog.open)return;dialog.close();expenseDraftAfterDiscard=null;const field=document.getElementById(expenseDraftLastField);if(field){revealExpenseField(field);field.getBoundingClientRect();field.focus();}else{showFinanceSection('expenses');document.querySelector('#expenseEntryDisclosure').open=true;}};
+  dialog.addEventListener('cancel',event=>{event.preventDefault();keep();});
+  dialog.querySelector('[data-expense-keep]').onclick=keep;
+  dialog.querySelector('[data-expense-discard]').onclick=()=>{
+    if(!dialog.open)return;
+    const pending=expenseDraftAfterDiscard;dialog.close();expenseDraftAfterDiscard=null;
+    if(pending && bookingWorkspaceAvailable() && cloudUser.id===pending.owner && activeVillaKey()===pending.villa)pending.action();
+    else setExpenseDraftStatus('The workspace changed. Your unfinished expense is retained.','attention');
+  };
+}
+
+initializeExpenseEditor();
 
 ;
 let backupOperation = null;
@@ -10897,7 +11023,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-window.PropertyOperations={save:saveCloudSnapshot,export:allAppData,pending:()=>cloudDirty || documentHasUnsavedChanges || localStorage.pending(),flush:()=>localStorage.flush()};
+window.PropertyOperations={save:saveCloudSnapshot,export:allAppData,pending:()=>cloudDirty || documentHasUnsavedChanges || expenseDraftDirty() || localStorage.pending(),flush:()=>localStorage.flush()};
 // A clean editor can hand off its lifetime cache lock, never an unfinished form.
 if(typeof BroadcastChannel==='function'){
   const handoff=new BroadcastChannel('life-os-properties-handoff:'+propertySession.user.id);let releasing=false;
@@ -10995,6 +11121,6 @@ function initializePropertyPeriod() {
 initializePropertyPeriod();
 document.getElementById('cloudLogout').textContent='Life OS account';
 for(const id of ['aiDraftBtn','taxScanInput','taxScanBtn','taxBatchScanBtn','taxEarningsBtn','taxDocAnalyzeBtn','runTaxReviewBtn']){const control=document.getElementById(id);if(control){control.disabled=true;control.title='AI disabled. Manual records remain available.';}}
-window.addEventListener('beforeunload',event=>{if(cloudDirty || documentHasUnsavedChanges || localStorage.pending()){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(cloudDirty || documentHasUnsavedChanges || expenseDraftDirty() || localStorage.pending()){event.preventDefault();event.returnValue='';}});
 } catch(error) { window.PropertyHost.failed(error); }
 })();

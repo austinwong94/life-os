@@ -151,6 +151,51 @@ table{font-size:13px}
   .property-tool-symbol{display:inline;font-size:22px;line-height:1}
 }
 
+/* The existing expense fields stay mounted while optional details fold. */
+#financeExpenses .expense-entry-disclosure{padding:0;border:0;border-top:1px solid var(--line);margin:0 12px 18px}
+#financeExpenses .expense-entry-disclosure>summary{padding:14px 0;min-height:48px;box-sizing:border-box;font:600 14px/20px system-ui,sans-serif;letter-spacing:0}
+#financeExpenses .tax-expense-entry{margin:0!important;overflow:visible}
+#financeExpenses .tax-expense-form{gap:16px;min-width:0;padding:0}
+.property-integrated #financeExpenses .tax-expense-entry>.tax-expense-form{padding:0}
+#financeExpenses .tax-expense-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#financeExpenses .tax-expense-form label{min-width:0;font:500 13px/1.5 system-ui,sans-serif;text-transform:none;letter-spacing:0}
+#financeExpenses .tax-expense-form :is(input:not([type=checkbox]),select){min-height:44px;height:auto;max-width:100%;font:14px/1.5 system-ui,sans-serif;letter-spacing:0;scroll-margin-block:150px 24px}
+#financeExpenses .tax-expense-form textarea{font:14px/1.5 system-ui,sans-serif;letter-spacing:0;scroll-margin-block:150px 24px;box-sizing:border-box}
+#financeExpenses .tax-expense-form :is(button,summary){min-height:44px;font-size:13px;letter-spacing:0}
+#financeExpenses .expense-action-bar{position:sticky;top:0;z-index:4;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0 10px;margin:0;background:#fff;border-bottom:1px solid var(--line)}
+#financeExpenses .expense-action-bar>button{min-height:44px;min-width:44px;font:600 13px/1.5 system-ui,sans-serif;padding:8px 12px}
+#expenseDraftStatus{margin:0;flex-basis:100%;font:500 12px/1.5 system-ui,sans-serif;color:var(--muted);overflow-wrap:anywhere}
+#expenseDraftStatus[data-state=attention],#expenseSaveState[data-status=error]{color:var(--due)}
+.expense-recorded-status{flex-basis:100%;font:12px/1.5 system-ui,sans-serif;color:var(--muted);overflow-wrap:anywhere}
+#financeExpenses #taxExpenseSaveStatus{flex-basis:100%;margin:0;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+#financeExpenses #taxExpenseSaveStatus:empty{display:none}
+.expense-finance-details{border-block:1px solid var(--line);min-width:0}
+.expense-finance-details>summary{padding:12px 0;font:600 13px/20px system-ui,sans-serif;cursor:pointer;box-sizing:border-box}
+.expense-finance-details>.form-grid{padding:0 0 14px;margin:0;gap:12px}
+#financeExpenses .tax-accounting-drawer{border:0;border-bottom:1px solid var(--line);border-radius:0;padding:0;background:transparent}
+#financeExpenses .tax-accounting-drawer>summary{padding:12px 0;font:600 13px/20px system-ui,sans-serif}
+#financeExpenses .tax-accounting-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:4px 0 16px}
+#financeExpenses :is(.tax-expense-grid,.tax-accounting-grid)>.wide-field,#financeExpenses .tax-treatment-hint{grid-column:1/-1}
+#financeExpenses .tax-expense-form input[type=file]{font-size:12px;height:auto;white-space:normal}
+#financeExpenses #taxExpenseAttachmentStatus{overflow-wrap:anywhere}
+#financeExpenses .tax-accounting-grid .file-upload-field{display:grid;gap:6px;grid-column:1/-1}
+#financeExpenses .file-upload-field input[type=file]{width:100%}
+#financeExpenses #removeTaxExpenseAttachment{justify-self:start;max-width:100%}
+#financeExpenses .tax-expense-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:0 12px;padding:14px 0;border-top:1px solid var(--line)}
+#financeExpenses .tax-expense-card{border:0;border-radius:0;padding:0;background:transparent;min-width:0;box-shadow:none}
+#financeExpenses .tax-expense-card>span{font:12px/1.5 system-ui,sans-serif;text-transform:none;letter-spacing:0}
+#financeExpenses .tax-expense-card>strong{font:600 16px/1.5 system-ui,sans-serif;letter-spacing:0;overflow-wrap:anywhere}
+.expense-draft-discard{box-sizing:border-box;width:min(460px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;padding:20px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+.expense-draft-discard::backdrop{background:rgb(18 30 25 / 35%)}
+.expense-draft-discard h2{font:600 16px/1.5 system-ui,sans-serif;letter-spacing:0;margin:0 0 16px}
+.expense-draft-discard>div{display:flex;flex-wrap:wrap;gap:8px}
+.expense-draft-discard button{min-height:44px;font-size:13px}
+@media(max-width:700px){
+  #financeExpenses .tax-expense-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #financeExpenses :is(.tax-expense-grid,.tax-accounting-grid,.expense-finance-details>.form-grid){grid-template-columns:minmax(0,1fr)}
+  #financeExpenses .tax-expense-form :is(input:not([type=checkbox]),select,textarea){font-size:16px}
+}
+
 /* Payment follow-up is a read-only view of the original booking ledger. */
 #financePayments{padding-inline:12px;box-sizing:border-box}
 #financePayments .property-payment-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;padding:0 0 16px;border-bottom:1px solid var(--line)}
