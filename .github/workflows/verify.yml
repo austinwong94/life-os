@@ -264,6 +264,10 @@ jobs:
         run: npm run test:health-interface
         env:
           TEST_OUTPUT: test-results/health-interface
+      - name: Check the shared Health workspace and installation safety in Chromium
+        run: npm run test:health-workspace
+        env:
+          TEST_OUTPUT: test-results/health-workspace
       - name: Check meal reuse and original nutrition preservation in Chromium
         run: npm run test:meal-reuse
         env:
@@ -296,6 +300,11 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/health-interface-webkit
+      - name: Check the shared Health workspace and installation safety in WebKit
+        run: npm run test:health-workspace
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/health-workspace-webkit
       - run: npm run test:responsive
         env:
           TEST_OUTPUT: test-results
@@ -512,7 +521,7 @@ jobs:
           assert.match(site.id,/^[a-f0-9]{16}$/);
           assert.deepStrictEqual(fs.readdirSync('dist').sort(),[...Object.keys(site.files),'release.json'].sort(),'Unexpected public artifact files');
           for(const [file,hash] of Object.entries(site.files)){
-            assert.match(file,/^[a-z0-9-]+\.(html|js|css)$/);assert.match(hash,/^[a-f0-9]{64}$/);
+            assert.match(file,/^[a-z0-9-]+\.(html|js|css|webmanifest|png)$/);assert.match(hash,/^[a-f0-9]{64}$/);
             const actual=crypto.createHash('sha256').update(fs.readFileSync(path.join('dist',file))).digest('hex');
             assert.strictEqual(actual,hash,file+' failed its accepted fingerprint');
           }

@@ -156,7 +156,7 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     await page.setViewportSize({width:390,height:844});await page.locator('#mobileMoreButton').click();await page.locator('#dailyDialog').getByRole('button',{name:'Properties',exact:true}).click();assert.equal(await page.locator('#mobileMoreButton').getAttribute('aria-pressed'),'true');assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   });
   await run('editing a saved invoice keeps its original code, audit fields and booking payment total',async({page,getRow})=>{
-    const frame=await open(page);await frame.locator('[data-view="documents"]').click();await frame.locator('[data-document-workspace="archive"]').click();await frame.locator('[data-open-document="synthetic-invoice"]').click();await frame.locator('#docRemarks').fill('Complete document note\nSecond line retained');await frame.locator('#saveDocument').click();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);
+    const frame=await open(page);await frame.locator('#propertyMore>summary').click();await frame.locator('[data-view="documents"]').click();await frame.locator('[data-document-workspace="archive"]').click();await frame.locator('[data-open-document="synthetic-invoice"]').click();await frame.locator('#docRemarks').fill('Complete document note\nSecond line retained');await frame.locator('#saveDocument').click();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);
     assert.equal(getRow().data.documents.length,1);assert.equal(getRow().data.documents[0].code,base.documents[0].code);assert.deepEqual(getRow().data.documents[0].customAudit,base.documents[0].customAudit);assert.equal(getRow().data.documents[0].remarks,'Complete document note\nSecond line retained');assert.equal(getRow().data.bookings[0].paid,300);
     await page.reload();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations?.export().documents[0].remarks==='Complete document note\nSecond line retained');
   });
@@ -197,10 +197,26 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     },owner);assert.equal(result,true);assert.equal(await page.evaluate(()=>localStorage.length),0);
   });
   await run('AI remains disabled and opening each section makes no automatic property writes',async({page,writes})=>{
-    const frame=await open(page);for(const view of ['calendar','bookings','messages','dashboard','documents','tax','guide','today']){await frame.locator('[data-view="'+view+'"]').click();}assert.equal(await frame.locator('#aiDraftBtn').isEnabled(),false);assert.equal(writes(),0);assert.deepEqual(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export().futureRoot),base.futureRoot);
+    const frame=await open(page);for(const view of ['calendar','bookings','messages','dashboard','documents','tax','guide','today']){const control=frame.locator('[data-view="'+view+'"]');if(!await control.isVisible())await frame.locator('#propertyMore>summary').click();await control.click();}assert.equal(await frame.locator('#aiDraftBtn').isEnabled(),false);assert.equal(writes(),0);assert.deepEqual(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export().futureRoot),base.futureRoot);
+  });
+  await run('simplified property navigation keeps all tools reachable with keyboard and no record writes',async({page,writes,getRow})=>{
+    const original=JSON.stringify(getRow().data),frame=await open(page);
+    assert.equal(await frame.locator('.nav-tabs>.nav-button').count(),4);
+    const summary=frame.locator('#propertyMore>summary');await summary.press('Enter');
+    assert.equal(await frame.locator('#propertyMore').getAttribute('open'),'');
+    for(const view of ['messages','documents','tax','guide'])assert(await frame.locator('#propertyMore [data-view="'+view+'"]').isVisible());
+    await summary.press('Escape');assert.equal(await frame.locator('#propertyMore').getAttribute('open'),null);
+    for(const width of [1440,1080,768,390,320]){
+      await page.setViewportSize({width,height:900});await summary.click();
+      const boxes=await frame.locator('.property-more-options .nav-button').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,height:r.height,width:innerWidth};}));
+      assert(boxes.every(r=>r.left>=0 && r.right<=r.width && r.height>=44),JSON.stringify({width,boxes}));
+      await page.screenshot({path:path.join(out,'property-menu-'+width+'.png'),fullPage:true});await summary.press('Escape');
+    }
+    await summary.click();await frame.locator('[data-view="documents"]').click();assert.match(await summary.innerText(),/Documents/);assert.equal(await frame.locator('#propertyMore').getAttribute('open'),null);
+    assert.equal(JSON.stringify(getRow().data),original);assert.equal(writes(),0);
   });
   await run('document preview settles without resizing itself or truncating invoice content',async({page})=>{
-    const frame=await open(page);await frame.locator('[data-view="documents"]').click();await frame.locator('[data-document-workspace="archive"]').click();await frame.locator('[data-open-document="synthetic-invoice"]').click();
+    const frame=await open(page);await frame.locator('#propertyMore>summary').click();await frame.locator('[data-view="documents"]').click();await frame.locator('[data-document-workspace="archive"]').click();await frame.locator('[data-open-document="synthetic-invoice"]').click();
     await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.document.querySelector('iframe.doc-preview-frame')?.contentDocument?.querySelector('.doc-sheet'));
     const measure=()=>page.evaluate(()=>{const w=document.querySelector('iframe').contentWindow,f=w.document.querySelector('iframe.doc-preview-frame');return {frame:parseFloat(f.style.height),host:f.parentElement.getBoundingClientRect().height,text:f.contentDocument.body.textContent.includes('ORIGINAL-2025-INVOICE-18')};});
     await page.waitForTimeout(250);const before=await measure();await page.waitForTimeout(500);const after=await measure();assert(before.text && after.text);assert(before.frame<5000 && after.frame<5000);assert(Math.abs(before.host-after.host)<1,'preview height must settle');

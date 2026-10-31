@@ -149,6 +149,7 @@ function initializeDailyWorkspace() {
   };
   add('mobileTodayButton','Today','calendar',()=>setWorkspaceMode('today'),elements.railAddButton);
   add('mobileTasksButton','Plan','check',()=>setWorkspaceMode('tasks'),elements.railAddButton);
+  add('mobileHealthButton','Health','dumbbell',()=>setWorkspaceMode('health'),elements.railAddButton);
   add('mobileBoardButton','Board','layout-grid',()=>setWorkspaceMode('board'));
   add('mobileProgressButton','Progress','bar-chart',()=>setWorkspaceMode('priorities'));
   add('mobileCalendarButton','Calendar','calendar',()=>setWorkspaceMode('calendar'));
@@ -167,9 +168,10 @@ function renderDailyNavigation() {
   for(const mode of ['today','tasks','calendar'])document.getElementById('mobile'+mode[0].toUpperCase()+mode.slice(1)+'Button')?.setAttribute('aria-pressed',String(state.ui.workspaceMode===mode));
   document.getElementById('mobileTasksButton')?.setAttribute('aria-pressed',String(['tasks','calendar'].includes(state.ui.workspaceMode)));
   document.getElementById('mobileBoardButton')?.setAttribute('aria-pressed',String(state.ui.workspaceMode==='board'));
+  document.getElementById('mobileHealthButton')?.setAttribute('aria-pressed',String(state.ui.workspaceMode==='health'));
   document.getElementById('mobileProgressButton')?.setAttribute('aria-pressed',String(state.ui.workspaceMode==='priorities'));
   const more=document.getElementById('mobileMoreButton');
-  if(more){const active=['records','money','priorities','properties'].includes(state.ui.workspaceMode);more.setAttribute('aria-pressed',String(active));more.dataset.current=String(active);}
+  if(more){const active=['board','records','money','priorities','properties'].includes(state.ui.workspaceMode);more.setAttribute('aria-pressed',String(active));more.dataset.current=String(active);}
   document.getElementById('mobileCalendarButton')?.setAttribute('aria-pressed','false');
 }
 function openSaveDetails() {

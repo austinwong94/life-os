@@ -2,7 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#176b60" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="manifest" href="app.webmanifest" />
+    <link rel="apple-touch-icon" href="app-icon-180.png" />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://shrmhjulhfuodtrsqhpu.supabase.co http://127.0.0.1:* http://localhost:*; frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://www.instagram.com https://www.facebook.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
@@ -22,6 +27,7 @@
   <link rel="stylesheet" href="workspace-shell.css?v=20261015" />
   <link rel="stylesheet" href="workspace-momentum.css?v=20261016" />
   <link rel="stylesheet" href="properties-workspace.css?v=20261017" />
+  <link rel="stylesheet" href="health-workspace.css?v=20261031" />
   </head>
   <body>
     <div class="app-shell" id="appShell">
@@ -46,6 +52,7 @@
         <nav class="workspace-modes" aria-label="Workspaces">
           <button type="button" id="todayModeButton" aria-pressed="false" title="Today"><span data-icon="calendar"></span><span>Today</span></button>
           <button type="button" id="tasksModeButton" aria-pressed="false" title="Plan"><span data-icon="list"></span><span>Plan</span></button>
+          <button type="button" id="healthModeButton" aria-pressed="false" title="Health"><span data-icon="dumbbell"></span><span>Health</span></button>
           <button type="button" id="recordsModeButton" aria-pressed="false" title="Records"><span data-icon="pencil"></span><span>Records</span></button>
           <button type="button" id="boardModeButton" aria-pressed="true" title="My board"><span data-icon="layout-grid"></span><span>My board</span></button>
           <button type="button" id="prioritiesModeButton" aria-pressed="false" title="Progress"><span data-icon="bar-chart"></span><span>Progress</span></button>
@@ -1058,11 +1065,13 @@
   <script src="daily-workspace.js?v=20260921"></script>
   <script src="money.js?v=20261012"></script>
   <script src="records-workspace.js?v=20261013-redesign"></script>
+  <script src="health-workspace.js?v=20261031"></script>
   <script src="momentum.js?v=20261016"></script>
     <script src="experience.js?v=20260921-daily"></script>
   <script src="appearance.js?v=20261016"></script>
   <script src="app.js?v=20260921-daily"></script>
   <script src="properties-workspace.js?v=20261017"></script>
   <script src="workspace-shell.js?v=20261015"></script>
+  <script src="app-install.js?v=20261031"></script>
   </body>
 </html>

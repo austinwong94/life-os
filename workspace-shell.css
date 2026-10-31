@@ -67,6 +67,7 @@
   .has-workspace-shell .shell-navigation { display: none; }
   .has-workspace-shell .sidebar .rail-nav { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); border: 0; }
   .has-workspace-shell #mobileProgressButton { display: none; }
+  .has-workspace-shell #mobileBoardButton { display: none; }
   .has-workspace-shell #mobileMoreButton { display: flex; width: 100%; height: 54px; min-height: 54px; padding: 5px 2px; margin: 0; }
   .has-workspace-shell #mobileMoreButton small { display: block; font-size: 11px; }
   .has-workspace-shell #mobileMoreButton[data-current=true] { background: #e8f2ee; color: #166b60; }

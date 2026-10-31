@@ -26,7 +26,7 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
         await workspace(p,mode);await p.waitForTimeout(80);
         assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'page overflow '+mode+' '+width);
         assert.equal(await p.locator('.workspace-navigation .workspace-modes:visible').count(),0);
-        if(width<=980){assert.equal(await p.locator('.rail-nav > button:visible').count(),4);const active=await p.locator('.rail-nav > button[aria-pressed=true]:visible').evaluateAll(ns=>ns.map(n=>n.id));assert.deepEqual(active,[['money','records','priorities'].includes(mode)?'mobileMoreButton':mode==='calendar'?'mobileTasksButton':'mobile'+({today:'Today',tasks:'Tasks',board:'Board'}[mode])+'Button']);}
+        if(width<=980){assert.equal(await p.locator('.rail-nav > button:visible').count(),4);const active=await p.locator('.rail-nav > button[aria-pressed=true]:visible').evaluateAll(ns=>ns.map(n=>n.id));assert.deepEqual(active,[['board','money','records','priorities'].includes(mode)?'mobileMoreButton':mode==='calendar'?'mobileTasksButton':'mobile'+({today:'Today',tasks:'Tasks'}[mode])+'Button']);}
         else assert.equal(await p.getByRole('navigation',{name:'Every day',exact:true}).getByRole('button').count(),3);
       }
       await workspace(p,'board');await p.waitForTimeout(150);if(width===1080)assert.equal(await p.locator('.board-column').count(),3,'portrait desktop retains the selected three columns');

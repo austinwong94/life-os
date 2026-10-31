@@ -11,6 +11,7 @@ function guardedStartup(html,contents,id,localAsset,name){
   html=html.replace(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>\s*<\/script>|<link\b[^>]*\bhref="([^"]+)"[^>]*>/g,(tag,script,link)=>{
     const file=localAsset(script || link);
     if(!file)return tag;
+    if(!script && /^<link rel="(?:manifest|apple-touch-icon)" href="[^"]+"\s*\/>$/.test(tag) && /\.(?:webmanifest|png)$/.test(file))return tag;
     if(!file.endsWith('.js') && !file.endsWith('.css'))throw new Error('Unsupported startup asset: '+file);
     if(script){
       if(/\s(?:async|defer|type|nomodule)(?:\s|=|>)/i.test(tag))throw new Error('Startup bundle requires plain classic scripts: '+file);
@@ -45,11 +46,11 @@ function guardedStartup(html,contents,id,localAsset,name){
 
 function buildRelease({root=__dirname,output=path.join(root,'dist')}={}) {
   const files=JSON.parse(fs.readFileSync(path.join(root,'release-files.json'),'utf8'));
-  if(!Array.isArray(files) || !files.includes('index.html') || new Set(files).size!==files.length || files.some(file=>typeof file!=='string' || !/^[a-z0-9-]+\.(?:html|js|css)$/.test(file)))throw new Error('Invalid public release manifest');
+  if(!Array.isArray(files) || !files.includes('index.html') || new Set(files).size!==files.length || files.some(file=>typeof file!=='string' || !/^[a-z0-9-]+\.(?:html|js|css|webmanifest|png)$/.test(file)))throw new Error('Invalid public release manifest');
   const contents=new Map(files.map(file=>{
     const source=path.join(root,file);
     if(!fs.lstatSync(source).isFile() || fs.lstatSync(source).isSymbolicLink())throw new Error('Release source must be a regular file: '+file);
-    return [file,fs.readFileSync(source,'utf8')];
+    return [file,fs.readFileSync(source,file.endsWith('.png')?undefined:'utf8')];
   }));
   const localAsset=ref=>{
     if(ref.startsWith('data:'))return null;
@@ -60,6 +61,11 @@ function buildRelease({root=__dirname,output=path.join(root,'dist')}={}) {
     return file;
   };
   for(const [file,html] of contents)if(file.endsWith('.html'))for(const match of html.matchAll(references))localAsset(match[1]);
+  for(const [file,text] of contents)if(file.endsWith('.webmanifest')){
+    const manifest=JSON.parse(text);
+    if(manifest.display!=='standalone' || manifest.start_url!=='./?app=1' || manifest.scope!=='./' || !Array.isArray(manifest.icons))throw new Error('Invalid app manifest');
+    for(const icon of manifest.icons)if(!icon.src?.endsWith('.png') || !contents.has(icon.src))throw new Error('App icon is missing from release manifest');
+  }
   const id=digest(JSON.stringify({builder:digest(fs.readFileSync(__filename)),files:[...contents].map(([file,text])=>[file,digest(text)])})).slice(0,16);
   for(const [file,html] of [...contents])if(file.endsWith('.html'))contents.set(file,guardedStartup(html,contents,id,localAsset,file));
   if(fs.existsSync(output) && fs.readdirSync(output).length)throw new Error('Release output must be empty: '+output);

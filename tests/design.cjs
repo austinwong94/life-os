@@ -56,7 +56,7 @@ async function seed(page) {
         await p.evaluate(()=>new Promise(requestAnimationFrame));
         if(width<=980) {
           const active=await p.locator('.mobile-daily-nav[aria-pressed=true]:visible').evaluateAll(nodes=>nodes.map(e=>e.id));
-          assert.deepEqual(active,[{board:'mobileBoardButton',priorities:'mobileMoreButton',calendar:'mobileTasksButton',tasks:'mobileTasksButton',today:'mobileTodayButton'}[mode]]);
+          assert.deepEqual(active,[{board:'mobileMoreButton',priorities:'mobileMoreButton',calendar:'mobileTasksButton',tasks:'mobileTasksButton',today:'mobileTodayButton'}[mode]]);
         }
         await p.evaluate(()=>document.fonts.ready);
         assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),mode+' page overflow at '+width);
@@ -114,7 +114,7 @@ async function seed(page) {
       assert.deepEqual(counts,[3,3,3,3,3],'Three stable rendered columns at '+width);
     }
     await p.setViewportSize({width:390,height:844});
-    for(const id of ['mobileTodayButton','mobileTasksButton','mobileBoardButton','mobileMoreButton']) {
+    for(const id of ['mobileTodayButton','mobileTasksButton','mobileHealthButton','mobileMoreButton']) {
       const box=await p.locator('#'+id).boundingBox();assert.ok(box.width>=44&&box.height>=44,id);
     }
     await p.getByRole('button',{name:'Task options: Make time for a walk',exact:true}).click();

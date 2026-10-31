@@ -9995,6 +9995,36 @@ function renderWorkflowShell() {
   if (activeView === 'dashboard') els.pageTitle.textContent = 'Finance';
   if (activeView === 'guide') els.pageTitle.textContent = 'Settings';
   if (activeView === 'dashboard' && financeSection === 'payments') renderFinancePayments();
+  updatePropertyNavigation();
+}
+
+function updatePropertyNavigation() {
+  const more=document.getElementById('propertyMore');if(!more)return;
+  const secondary=['messages','documents','tax','guide'].includes(activeView);
+  more.dataset.current=String(secondary);
+  more.querySelector('summary').textContent=secondary?({messages:'Messages',documents:'Documents',tax:'Tax plan',guide:'Settings'})[activeView]+' · More':'More';
+}
+
+function initializePropertyNavigation() {
+  const nav=document.querySelector('#appShell .nav-tabs');
+  nav.setAttribute('aria-label','Property sections');
+  const more=document.createElement('details');more.id='propertyMore';more.className='property-more';
+  const summary=document.createElement('summary');summary.textContent='More';more.append(summary);
+  const tools=document.createElement('div');tools.className='property-more-options';
+  for(const key of ['messages','documents','tax','guide']){
+    const control=nav.querySelector('[data-view="'+key+'"]');if(control)tools.append(control);
+  }
+  more.append(tools);nav.append(more);
+  nav.querySelectorAll('.nav-group-label').forEach(node=>node.remove());
+  nav.addEventListener('click',event=>{
+    if(!event.target.closest('[data-view]'))return;
+    more.open=false;
+    els.pageTitle.tabIndex=-1;els.pageTitle.focus({preventScroll:true});
+  });
+  more.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();more.open=false;summary.focus();}});
+  document.addEventListener('click',event=>{if(more.open && !more.contains(event.target))more.open=false;});
+  document.body.classList.add('property-integrated');
+  updatePropertyNavigation();
 }
 
 function initializeWorkflowUI() {
@@ -10164,6 +10194,7 @@ function initializeWorkflowUI() {
 }
 
 initializeWorkflowUI();
+initializePropertyNavigation();
 
 ;
 let pendingRestore = null;

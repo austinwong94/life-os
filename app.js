@@ -3,7 +3,7 @@ if (window.top !== window.self) {
   throw new Error("Life OS must be opened directly, not inside another website.");
 }
 // Older cached HTML may omit modules introduced by a newer deployment.
-if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeExerciseReuse','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeMomentum'].some(name=>!globalThis[name])){
+if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeExerciseReuse','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeHealth','LifeMomentum'].some(name=>!globalThis[name])){
   window.LifeStartupBlocked=true;
   const shell=document.getElementById('appShell');if(shell)shell.hidden=true;
   const panel=document.createElement('section');panel.setAttribute('aria-label','Website startup');
@@ -2705,7 +2705,7 @@ function toggleBoardControls() {
 
 function renderBoardControls() {
   const controlsOpen = state.ui.controlsOpen !== false;
-  const todayMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties"].includes(state.ui.workspaceMode);
+  const todayMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties", "health"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
   elements.topControlsToggleButton.hidden = todayMode;
   const controlsLabel = controlsOpen ? "Hide filters" : "Show filters";
@@ -3154,7 +3154,7 @@ function renderCardsOnly(options = {}) {
 
   const visibleCards = filteredByFocus.filter((card) => matchesCategory(card));
   const todayMode = state.ui.workspaceMode === "today";
-  const planningMode = ["tasks", "calendar", "priorities", "money", "records", "properties"].includes(state.ui.workspaceMode);
+  const planningMode = ["tasks", "calendar", "priorities", "money", "records", "properties", "health"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("is-today-view", todayMode);
   elements.workspace.classList.toggle("is-planning-view", planningMode);
   renderBoardControls();
@@ -3165,10 +3165,13 @@ function renderCardsOnly(options = {}) {
   document.getElementById("prioritiesModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "priorities"));
   document.getElementById("moneyModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "money"));
   document.getElementById("recordsModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "records"));
+  document.getElementById("healthModeButton").setAttribute("aria-pressed", String(state.ui.workspaceMode === "health"));
   renderDailyNavigation();
   window.renderPropertiesWorkspace?.();
   if (state.ui.workspaceMode === "properties") {
     // Properties keeps its own mounted editor and separate owner-scoped storage.
+  } else if (state.ui.workspaceMode === "health") {
+    renderHealthWorkspace();
   } else if (state.ui.workspaceMode === "records") {
     renderRecordsWorkspace();
   } else if (state.ui.workspaceMode === "money") {
@@ -4886,6 +4889,13 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
   part.exercises.forEach((exercise, index) => {
     const row = document.createElement("div");
     row.className = "fitness-exercise-row";
+    const previous=LifeHealth.previous(card,dateKey,meta.key,exercise.name);
+    if(previous){
+      const hint=document.createElement('small');hint.className='fitness-previous';
+      const old=previous.exercise;
+      hint.textContent='Previous · '+formatReadableDateKey(previous.date)+' · '+(old.sets===''?'—':old.sets)+' sets × '+(old.reps || '—')+' reps · '+(old.weightKg===''?'—':old.weightKg)+' kg';
+      list.append(hint);
+    }
     row.append(
       createFitnessTextField("Exercise", exercise.name, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { name: value })),
       createFitnessNumberField("Sets", exercise.sets, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { sets: value }), { step: "1", decimals: 0, min: 0 }),

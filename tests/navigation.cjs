@@ -2,10 +2,10 @@ async function workspace(page, mode) {
   if(mode==='calendar'){await workspace(page,'tasks');return page.locator('#planCalendarButton').click();}
   const desktop=page.locator('#'+mode+'ModeButton');
   if(await desktop.isVisible())return desktop.click();
-  const mobile={today:'mobileTodayButton',tasks:'mobileTasksButton',board:'mobileBoardButton',priorities:'mobileProgressButton'}[mode];
+  const mobile={today:'mobileTodayButton',tasks:'mobileTasksButton',health:'mobileHealthButton',board:'mobileBoardButton',priorities:'mobileProgressButton'}[mode];
   if(mobile && await page.locator('#'+mobile).isVisible())return page.locator('#'+mobile).click();
   await page.locator('#mobileMoreButton').click();
-  await page.locator('#dailyDialog').getByRole('button',{name:{board:'My board',records:'Records',money:'Money',priorities:'Progress'}[mode],exact:true}).click();
+  await page.locator('#dailyDialog').getByRole('button',{name:{board:'My board',records:'Records',money:'Money',priorities:'Progress',health:'Health'}[mode],exact:true}).click();
 }
 async function capture(page) {
   if(await page.locator('#railAddButton').isVisible())return page.locator('#railAddButton').click();
