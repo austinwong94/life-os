@@ -1,5 +1,5 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),{execFileSync}=require('node:child_process'),browsers=require('playwright'),{workspace}=require('./navigation.cjs');
-const url=process.env.TEST_URL || 'http://127.0.0.1:5190/',out=process.env.TEST_OUTPUT || '/private/tmp/life-os-fitness-sets';
+const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_OUTPUT || '/private/tmp/life-os-fitness-sets';
 assert(['127.0.0.1','localhost'].includes(new URL(url).hostname));fs.mkdirSync(out,{recursive:true});
 const baseline='3d961349be7405687adc598edc073fa7780d7555';
 const gitFile=path=>execFileSync('git',['show',baseline+':'+path],{maxBuffer:8*1024*1024});
