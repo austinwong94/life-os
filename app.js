@@ -3131,7 +3131,7 @@ function renderCardsOnly(options = {}) {
     : null;
   const taskFocus=elements.boardGrid.contains(document.activeElement)?captureTaskControlFocus():null;
   const healthFocus = elements.boardGrid.contains(document.activeElement)
-    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button")?.id : "";
+    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button, .health-part-picker > summary")?.id : "";
   closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
@@ -4883,6 +4883,7 @@ function renderFitnessCardioEditor(card, dateKey, meta, part) {
 }
 
 function renderFitnessStrengthEditor(card, dateKey, meta, part) {
+  const boardId=state.activeBoardId;
   const section = createFitnessSection(meta.label, () => removeFitnessPart(card, dateKey, meta.key));
   const list = document.createElement("div");
   list.className = "fitness-exercises";
@@ -4897,11 +4898,11 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
       list.append(hint);
     }
     row.append(
-      createFitnessTextField("Exercise", exercise.name, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { name: value })),
-      createFitnessNumberField("Sets", exercise.sets, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { sets: value }), { step: "1", decimals: 0, min: 0 }),
-      createFitnessTextField("Reps", exercise.reps, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { reps: value })),
-      createFitnessNumberField("Kg", exercise.weightKg, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { weightKg: value }), { step: "0.25", decimals: 2, min: 0 }),
-      createFitnessNumberField("RPE", exercise.rpe, (value) => updateFitnessExercise(card, dateKey, meta.key, index, { rpe: value }), { step: "0.5", decimals: 1, min: 1, max: 10 })
+      createFitnessTextField("Exercise", exercise.name, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { name: value },boardId)),
+      createFitnessNumberField("Sets", exercise.sets, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { sets: value },boardId), { step: "1", decimals: 0, min: 0 }),
+      createFitnessTextField("Reps", exercise.reps, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { reps: value },boardId)),
+      createFitnessNumberField("Kg", exercise.weightKg, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { weightKg: value },boardId), { step: "0.25", decimals: 2, min: 0 }),
+      createFitnessNumberField("RPE", exercise.rpe, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { rpe: value },boardId), { step: "0.5", decimals: 1, min: 1, max: 10 })
     );
     const remove = document.createElement("button");
     remove.type = "button";
@@ -4909,8 +4910,10 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
     remove.innerHTML = ICONS["trash-2"];
     remove.title = "Remove exercise";
     remove.addEventListener("click", () => {
-      updateFitnessEntry(card, dateKey, (entry) => {
-        entry.parts[meta.key].exercises.splice(index, 1);
+      const target=fitnessExerciseTarget(card,dateKey,meta.key,exercise.id,boardId);
+      if(!target){setSaveStatus('This exercise changed or moved. Reopen the workout before removing it.','error');return;}
+      updateFitnessEntry(target.card, dateKey, (entry) => {
+        entry.parts[meta.key].exercises.splice(target.index, 1);
       }, { rerender: true });
     });
     row.append(remove);
@@ -5017,11 +5020,24 @@ function removeFitnessPart(card, dateKey, partKey) {
   }, { rerender: true });
 }
 
-function updateFitnessExercise(card, dateKey, partKey, index, updates) {
-  updateFitnessEntry(card, dateKey, (entry) => {
+function fitnessExerciseTarget(card,dateKey,partKey,exerciseId,boardId) {
+  if(boardId!==state.activeBoardId || typeof exerciseId!=='string' || !exerciseId)return null;
+  const cards=state.cards.filter(item=>item.id===card.id);
+  if(cards.length!==1 || cards[0].type!=='fitness' || cards[0].archivedAt)return null;
+  const part=cards[0].fitnessEntries?.[dateKey]?.parts?.[partKey];
+  if(part?.active!==true || !Array.isArray(part.exercises))return null;
+  const matches=part.exercises.map((exercise,index)=>({exercise,index})).filter(item=>item.exercise?.id===exerciseId);
+  return matches.length===1?{card:cards[0],index:matches[0].index}:null;
+}
+
+function updateFitnessExercise(card, dateKey, partKey, exerciseId, updates,boardId) {
+  const target=fitnessExerciseTarget(card,dateKey,partKey,exerciseId,boardId);
+  if(!target){setSaveStatus('This exercise changed or moved. Your entry was not saved; reopen the workout.','error');return false;}
+  updateFitnessEntry(target.card, dateKey, (entry) => {
     const part = entry.parts[partKey];
-    part.exercises[index] = normalizeFitnessExercise({ ...part.exercises[index], ...updates });
+    part.exercises[target.index] = normalizeFitnessExercise({ ...part.exercises[target.index], ...updates });
   });
+  return true;
 }
 
 function renderFitnessMetrics(card, dateKey, entry) {
@@ -6977,9 +6993,14 @@ function handlePlannerBulletKeydown(event) {
 }
 
 function autoGrowTextarea(textarea) {
-  if (!textarea) return;
+  if (!textarea?.isConnected || !textarea.getClientRects().length) return;
+  const style = getComputedStyle(textarea);
+  const borders = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+  const padding = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
   textarea.style.height = "auto";
-  textarea.style.height = `${textarea.scrollHeight}px`;
+  // scrollHeight includes padding but not borders; match the actual CSS box.
+  const height = textarea.scrollHeight + (style.boxSizing === "border-box" ? borders : -padding);
+  textarea.style.height = `${Math.max(0, height)}px`;
 }
 
 function getActivePlannerDate(card) {

@@ -87,20 +87,31 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname));fs.mkdirSync(o
   await run('a delayed board scroll restore cannot move an exercise control away from the next click',async p=>{
     const before=await data(p),diary=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='routine-diary')));
     await p.evaluate(()=>{
-      window.exerciseRestoreCallbacks=[];const original=requestAnimationFrame;
-      window.requestAnimationFrame=callback=>{exerciseRestoreCallbacks.push(callback);return exerciseRestoreCallbacks.length;};
+      window.exerciseRestoreCallbacks=[];window.exerciseRestoreTrace=[];const original=requestAnimationFrame;
+      window.requestAnimationFrame=callback=>{const scheduled=captureScrollPosition();exerciseRestoreCallbacks.push(time=>{const before=captureScrollPosition();callback(time);exerciseRestoreTrace.push({scheduled,before,after:captureScrollPosition()});});return exerciseRestoreCallbacks.length;};
       try{renderCardsOnly({force:true});}finally{window.requestAnimationFrame=original;}
     });
     const button=card(p).getByRole('button',{name:'Reuse Chest exercises',exact:true});await button.scrollIntoViewIfNeeded();
     const reached=await p.evaluate(()=>captureScrollPosition());assert(reached.windowY+reached.workspaceTop>0,'Exercise control must require scrolling in this fixture');
     const target=await button.boundingBox();assert(target);const point={x:target.x+target.width/2,y:target.y+target.height/2};
     await p.evaluate(()=>{exerciseRestoreCallbacks.splice(0).forEach(callback=>callback(performance.now()));});
-    assert.deepEqual(await p.evaluate(()=>captureScrollPosition()),reached,'A stale scroll callback moved the control after the user reached it');
+    assert.deepEqual(await p.evaluate(()=>captureScrollPosition()),reached,'A stale scroll callback moved the control after the user reached it: '+JSON.stringify(await p.evaluate(()=>exerciseRestoreTrace)));
     assert(await button.evaluate(n=>{const r=n.getBoundingClientRect();return n.contains(n.ownerDocument.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));
     await p.mouse.click(point.x,point.y);await modal(p).waitFor();assert.deepEqual(await data(p),before);
     assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='routine-diary'))),diary);
     await p.screenshot({path:out+'/delayed-scroll-exercise.png',fullPage:false});
   },{viewport:{width:1080,height:844},isMobile:true,hasTouch:true});
+  await run('textarea auto-sizing respects borders and padding without cumulative shrink or clipped writing',async p=>{
+    const result=await p.getByLabel('Diary thoughts',{exact:true}).evaluate(textarea=>{
+      const original=textarea.value,results=[];textarea.value=Array.from({length:12},(_,i)=>'Complete diary line '+i).join('\n');
+      for(const box of ['border-box','content-box']){
+        textarea.style.boxSizing=box;textarea.style.borderWidth='3px';textarea.style.padding='11px';autoGrowTextarea(textarea);
+        const height=textarea.getBoundingClientRect().height;for(let i=0;i<5;i++)autoGrowTextarea(textarea);
+        results.push({height,after:textarea.getBoundingClientRect().height,visible:textarea.clientHeight>=textarea.scrollHeight-1});
+      }
+      textarea.value=original;return results;
+    });assert(result.every(row=>row.height===row.after && row.visible),JSON.stringify(result));
+  });
   await run('touch-tablet names remain inert, wrapped and reachable with 44px controls',async p=>{
     const name='<img src=x onerror=alert(1)> A long exercise name for a full readable preview that stays inside its dialog';await p.evaluate(async name=>{state.cards.find(c=>c.id==='routine-fitness').fitnessEntries['2026-10-14'].parts.chest.exercises[1].name=name;saveState();await flushDeviceWrites();},name);await open(p);const dialog=modal(p);
     assert.equal(await dialog.locator('img').count(),0);assert.match(await dialog.innerText(),/A long exercise name/);assert(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth+1));

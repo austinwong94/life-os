@@ -23,7 +23,7 @@
 const healthSessions=new Map();
 function renderHealthWorkspace() {
   const root=elements.boardGrid;
-  if(!healthSessions.has(state.activeBoardId))healthSessions.set(state.activeBoardId,{view:'workout',cardId:''});
+  if(!healthSessions.has(state.activeBoardId))healthSessions.set(state.activeBoardId,{view:'workout',cardId:'',partPickers:new Map()});
   const session=healthSessions.get(state.activeBoardId),head=planningNode('header','health-workspace-head');
   head.append(planningNode('h1','', 'Health'),planningButton('Reports',openReportsModal,'bar-chart'));
   root.append(head);
@@ -60,9 +60,16 @@ function renderHealthWorkspace() {
   const log=type==='fitness'?renderFitnessLog(card):renderFoodTracker(card);
   if(type==='fitness'){
     const parts=log.querySelector('.fitness-parts'),picker=planningNode('details','health-part-picker'),options=planningNode('div','health-part-options');
-    const summary=planningNode('summary','','Add workout part');picker.append(summary,options);
+    const summary=planningNode('summary','','Add workout part');summary.id='health-part-picker-'+card.id;picker.append(summary,options);
     for(const button of [...parts.children])if(!button.classList.contains('is-active'))options.append(button);
-    if(options.children.length){picker.open=!parts.children.length;parts.append(picker);}
+    if(options.children.length){
+      const key=JSON.stringify([card.id,getActiveFitnessDate(card)]);
+      picker.open=session.partPickers.get(key) ?? !parts.children.length;
+      // Remember disclosure state before an asynchronous device commit can redraw it.
+      summary.addEventListener('click',event=>{event.preventDefault();picker.open=!picker.open;session.partPickers.set(key,picker.open);});
+      picker.addEventListener('toggle',()=>{if(picker.isConnected)session.partPickers.set(key,picker.open);});
+      parts.append(picker);
+    }
   }
   editor.append(planningNode('h2','',card.title),log);
   root.append(editor);
