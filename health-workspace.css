@@ -36,8 +36,9 @@
 .health-lift-history>summary{cursor:pointer;box-sizing:border-box;min-height:44px;padding:12px 0;font-weight:600}
 .health-lift-history:not([open])>:not(summary){display:none}
 .health-lift-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end;gap:12px;padding:8px 0}
-.health-lift-controls .planning-field{min-width:0}
-.health-lift-controls select{box-sizing:border-box;display:block;width:100%;min-width:0;max-width:100%;height:44px;min-height:44px;overflow:hidden;text-overflow:ellipsis;font-size:14px}
+.health-lift-controls .planning-field{min-width:0;max-width:100%;overflow-x:clip}
+.health-lift-controls select{box-sizing:border-box;display:block;width:100%;min-width:0;max-width:100%;min-inline-size:0;max-inline-size:100%;height:44px;min-height:44px;overflow:hidden;text-overflow:ellipsis;font-size:14px}
+.health-lift-controls select:focus-visible{outline-offset:-3px}
 .health-lift-source{margin:0;align-self:center;overflow-wrap:anywhere;color:var(--muted)}
 .health-lift-name{font-family:inherit;font-size:14px;line-height:1.5;font-weight:600;letter-spacing:0;overflow-wrap:anywhere;margin:12px 0}
 .health-lift-total{font-size:13px;color:var(--muted);line-height:1.5;margin:12px 0}
