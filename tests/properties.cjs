@@ -71,6 +71,15 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     for(const [width,height]of [[1440,1000],[390,568],[320,568]]){await page.setViewportSize({width,height});await status.getByRole('button',{name:'Check status',exact:true}).click();await status.getByText('Calendar sync failed',{exact:true}).waitFor();assert(await status.locator('[data-calendar-warning]').isVisible());assert.equal(await frame.locator('.data-menu').getAttribute('open'),null);assert.equal(await status.locator('time').getAttribute('datetime'),'2026-10-16T23:07:02.000Z');assert.equal(await status.evaluate(n=>Boolean(n.closest('.data-menu'))),false);const layout=await status.evaluate(n=>({bottom:n.getBoundingClientRect().bottom,height:innerHeight,scroll:document.documentElement.scrollWidth,width:innerWidth}));assert(layout.bottom<=height && layout.scroll<=width+1,JSON.stringify(layout));await page.screenshot({path:path.join(out,'compact-warning-'+width+'.png'),fullPage:false});}
     assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
   });
+  await run('compact property secondary navigation remains clickable above wider header controls across fonts and viewports',async({page,getRow,writes})=>{
+    const original=JSON.stringify(getRow().data),frame=await open(page),more=frame.locator('#propertyMore');
+    for(const width of [1440,1080,768,390,320]){
+      await page.setViewportSize({width,height:1000});await frame.locator('.data-menu>summary').evaluate(n=>{n.style.fontFamily='monospace';n.style.fontSize='14px';});await more.locator(':scope>summary').click();
+      const controls=await more.locator('[data-view]').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {view:n.dataset.view,left:r.left,right:r.right,width:innerWidth,hit:n.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};}));assert.equal(controls.length,4);assert(controls.every(r=>r.hit && r.left>=0 && r.right<=width+1),JSON.stringify(controls));
+      await more.locator('[data-view=documents]').click();assert(await frame.locator('#documentsView').isVisible());assert.equal(await more.getAttribute('open'),null);await frame.getByRole('button',{name:'Today',exact:true}).click();
+    }
+    assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
   await run('compact property agenda computes guest annotations only for displayed stays and preserves original row focus',async({page,getRow,writes})=>{
     const original=JSON.stringify(getRow().data),frame=await open(page);
     const result=await frame.locator('body').evaluate(()=>{

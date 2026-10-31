@@ -124,7 +124,6 @@ table{font-size:13px}
 .property-integrated[data-workspace-view=today] #mobileMonthBar{display:none!important}
 .property-integrated #appShell .data-health-panel{margin:0;padding:0 0 4px;gap:6px}
 .property-integrated #appShell .data-health-panel #dataHealthStatus{height:auto;min-height:28px;max-width:100%;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere;line-height:1.5;padding:4px 10px}
-.property-integrated #appShell .data-menu{z-index:6}
 .property-integrated #appShell .data-menu-list{box-sizing:border-box;width:min(320px,calc(100vw - 24px));min-width:0;max-height:calc(100dvh - 180px);overflow:auto;overscroll-behavior:contain;border-radius:6px}
 .property-integrated #appShell .data-menu-list>button,.property-integrated #appShell .data-menu-list>.file-button{height:auto;min-height:44px;white-space:normal;text-align:left;line-height:1.5}
 .property-tool-details{min-width:0;border-top:1px solid var(--line)}
