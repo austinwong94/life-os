@@ -32,5 +32,31 @@
 .health-workspace-editor .fitness-exercise-row .fitness-remove-exercise{grid-column:6;grid-row:1}
 .fitness-previous{grid-column:1/-1;display:block;margin:0 0 4px;color:var(--card-muted);font-size:12px;line-height:1.5}
 .health-history-row.planning-button{width:100%;justify-content:space-between;min-height:54px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;text-align:left;font-size:14px;white-space:normal}
+.health-lift-history{max-width:860px;width:100%;min-width:0;margin:0 0 20px;border-block:1px solid var(--line);font-size:14px}
+.health-lift-history>summary{cursor:pointer;box-sizing:border-box;min-height:44px;padding:12px 0;font-weight:600}
+.health-lift-history:not([open])>:not(summary){display:none}
+.health-lift-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end;gap:12px;padding:8px 0}
+.health-lift-controls .planning-field{min-width:0}
+.health-lift-controls select{box-sizing:border-box;display:block;width:100%;min-width:0;max-width:100%;height:44px;min-height:44px;overflow:hidden;text-overflow:ellipsis;font-size:14px}
+.health-lift-source{margin:0;align-self:center;overflow-wrap:anywhere;color:var(--muted)}
+.health-lift-name{font-family:inherit;font-size:14px;line-height:1.5;font-weight:600;letter-spacing:0;overflow-wrap:anywhere;margin:12px 0}
+.health-lift-total{font-size:13px;color:var(--muted);line-height:1.5;margin:12px 0}
+.health-lift-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}
+.health-lift-comparison dt,.health-lift-date{font-size:12px;color:var(--muted)}
+.health-lift-comparison dd{margin:4px 0;overflow-wrap:anywhere}
+.health-lift-entry{border-top:1px solid var(--line);padding:12px 0;min-width:0}
+.health-lift-entry-heading{display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:4px 12px}
+.health-lift-open.planning-button{border:0;background:none;border-radius:0;min-height:44px;min-width:44px;padding:8px 0;font-size:14px;text-align:left;white-space:normal;max-width:100%;overflow-wrap:anywhere}
+.health-lift-open svg{flex:none;width:18px;height:18px}
+.health-lift-entry-status{font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}
+.health-lift-summary{line-height:1.6;overflow-wrap:anywhere;margin:8px 0}
+.health-lift-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:13px;line-height:1.5}
+.health-lift-table caption{text-align:left;font-size:12px;color:var(--muted);padding:8px 0}
+.health-lift-table th,.health-lift-table td{text-align:left;vertical-align:top;padding:8px 6px;border-bottom:1px solid var(--line);overflow-wrap:anywhere;font-weight:400}
+.health-lift-table thead th{font-weight:600;font-size:12px}
+.health-lift-table th:first-child{width:32px;padding-left:0}
+.health-lift-table thead th:last-child{width:88px}
+.health-lift-table td:last-child{white-space:nowrap;overflow-wrap:normal}
+@media(max-width:700px){.health-lift-controls select{font-size:16px}.health-lift-comparison{grid-template-columns:minmax(0,1fr);gap:8px}}
 .app-install-note{font-size:13px;line-height:1.6;color:var(--muted);max-width:560px}
 @media(max-width:700px){.health-workspace-editor .fitness-exercise-row{grid-template-columns:repeat(2,minmax(0,1fr)) 44px}.health-workspace-editor .fitness-exercise-row .fitness-field{grid-row:auto;grid-column:auto}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(1){grid-column:1/3;grid-row:1}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(2){grid-column:1;grid-row:2}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(3){grid-column:2;grid-row:2}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(4){grid-column:1;grid-row:3}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(5){grid-column:2;grid-row:3}.health-workspace-editor .fitness-exercise-row .fitness-remove-exercise{grid-column:3;grid-row:1}.health-workspace-editor input,.health-workspace-editor select,.health-workspace-editor textarea{font-size:16px}.health-workspace-tabs{gap:16px}.health-workspace-tabs .planning-button{font-size:13px}}

@@ -323,6 +323,15 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/workout-rest-webkit
+      - name: Check read-only exercise history and original record preservation in Chromium
+        run: npm run test:exercise-history
+        env:
+          TEST_OUTPUT: test-results/exercise-history-chromium
+      - name: Check read-only exercise history and original record preservation in WebKit
+        run: npm run test:exercise-history
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/exercise-history-webkit
       - run: npm run test:responsive
         env:
           TEST_OUTPUT: test-results

@@ -19,6 +19,7 @@
     "test:health-workspace": "node tests/health-workspace.cjs",
     "test:fitness-sets": "node tests/fitness-sets.cjs",
     "test:workout-rest": "node tests/workout-rest.cjs",
+    "test:exercise-history": "node tests/exercise-history.cjs",
     "test:meal-reuse": "node tests/meal-reuse.cjs",
     "test:exercise-reuse": "node tests/exercise-reuse.cjs",
     "test:appearance": "node tests/appearance.cjs",

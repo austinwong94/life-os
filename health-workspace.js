@@ -30,7 +30,7 @@ function openHealthLogComposer(type) {
   resetFormState();setFormType(type);openCardComposer();
 }
 function renderHealthWorkspace() {
-  const root=elements.boardGrid;
+  const root=elements.boardGrid,boardId=state.activeBoardId;
   if(!healthSessions.has(state.activeBoardId))healthSessions.set(state.activeBoardId,{view:'workout',sources:{fitness:'',food:''},partPickers:new Map()});
   const session=healthSessions.get(state.activeBoardId),head=planningNode('header','health-workspace-head');
   head.append(planningNode('h1','', 'Health'),planningButton('Reports',openReportsModal,'bar-chart'));
@@ -48,13 +48,13 @@ function renderHealthWorkspace() {
   summary.append(planningNode('strong','',String(days.size)),planningNode('span','',(days.size===1?'day':'days')+' with workout entries in the last 7 days'));
   root.append(summary);
   if(session.view==='history') {
+    root.append(renderExerciseHistory(cards,session));
     const list=planningNode('section','health-history');list.setAttribute('aria-label','Training history');root.append(list);
     if(!workouts.length)list.append(planningNode('p','planning-empty','No workouts recorded on this board yet.'));
     for(const row of workouts){
       const parts=Object.entries(row.entry.parts || {}).filter(([,part])=>part?.active).map(([key])=>FITNESS_PARTS.find(part=>part.key===key)?.label || key);
       const item=planningButton(formatReadableDateKey(row.date)+' · '+parts.join(', '),()=>{
-        const card=state.cards.find(card=>card.id===row.cardId);if(!card)return;
-        card.activeFitnessDate=row.date;session.sources.fitness=card.id;session.view='workout';renderCardsOnly({force:true});
+        openHealthHistoryEntry({boardId,cardId:row.cardId,date:row.date},session);
       },'chevron-right');item.classList.add('health-history-row');list.append(item);
     }
     return;
