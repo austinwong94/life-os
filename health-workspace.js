@@ -79,6 +79,7 @@ function renderHealthWorkspace() {
       parts.append(picker);
     }
   }
+  if(type==='fitness')editor.append(LifeWorkoutRestUI.render());
   editor.append(planningNode('h2','',card.title),log);
   root.append(editor);
 }

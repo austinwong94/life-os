@@ -314,6 +314,15 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/fitness-sets-webkit
+      - name: Check temporary workout rest timing and record preservation in Chromium
+        run: npm run test:workout-rest
+        env:
+          TEST_OUTPUT: test-results/workout-rest-chromium
+      - name: Check temporary workout rest timing and record preservation in WebKit
+        run: npm run test:workout-rest
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/workout-rest-webkit
       - run: npm run test:responsive
         env:
           TEST_OUTPUT: test-results

@@ -76,6 +76,16 @@ The additive `setLog` lives inside the original exercise record, not a second wo
 
 This increment has 19 focused unit cases and ten browser workflows per engine, alongside existing workout, food, history and reuse regression suites. The first hosted candidate stopped because this new suite defaulted to a developer-only port rather than CI's preview port; the test default now matches the other suites. Hosted release gates and live byte verification are still required before publication. No database migration, account change, server job or automatic conversion of existing records is included. Physical phone keyboards and signed-in cross-device use are not certified by these isolated tests. Rest timers, dedicated routine templates and longitudinal lift charts remain later work.
 
+### Follow-up: Rest Timing
+
+The individual-set increment is live as release `36e209079e2f7cd8`: all three hosted gates and deployment passed, and all 73 public files plus the canonical root and manifest matched the tested artifact. The check used no private requests and wrote no records.
+
+The next increment adds an optional rest timer to Health, Workout. A duration selector, start/pause/resume and reset use the existing one-second display scheduler. The display uses an absolute deadline, refreshes when the tab regains visibility/focus, and changes only its own text and controls; it does not redraw workout fields, move the cursor or tick an exercise. Background redraws retain timer-control keyboard focus. The native selector and buttons have explicit 44px sizing on desktop and phone.
+
+The timer is deliberately temporary and tab-local. It is not added to a card, diary, report, journal or cloud snapshot. Navigation within the same page retains it; a different tab starts independently. Refreshing or closing the page resets it. It does not provide sound, push notifications, an alarm while closed or a measured rest-history record. A tooltip states these limits. Duration choices are conveniences, not personalized training prescriptions. Browser throttling means the on-screen countdown updates only when JavaScript runs; an elapsed timestamp corrects the display on return rather than promising background execution. System clock changes can affect a wall-clock deadline.
+
+This increment has nine pure timing cases and seven isolated browser workflows per engine, including explicit pause/resume, suspended display refresh, no staged data writes, unchanged original records, focused multi-digit entry, independent tabs, reload reset and 320px through 1440px target geometry. Full hosted gates and live fingerprints remain required before publication. There is no database, account, backend job or persistence change. Dedicated routine templates and longitudinal lift charts remain later work.
+
 For progress, show comparable evidence: load and reps for the same movement, logged training days, distance/duration for cardio, and user-chosen consistency targets. Do not equate more load or volume with better health or claim estimated energy expenditure is measured. Keep body metrics optional and secondary to recording the workout.
 
 Nutrition should stay meal-first: choose a meal, add a familiar food, enter a clearly stated quantity/unit, then collapse the details. Keep the saved monthly targets and snapshot nutrition values. Do not silently update old meals when a library food changes.
@@ -107,7 +117,8 @@ This routine is a design recommendation, not evidence that the application can g
 | Standalone installation metadata and guidance | Implemented; manifest/icon checks pass; physical-device installation is not certified |
 | Full native property form/report redesign | Next increment, not complete |
 | Opt-in individual sets, completion history and reporting | Implemented; 19 focused unit cases and ten browser workflows per engine; full hosted acceptance required |
-| Rest timers, dedicated routine templates and lift-trend charts | Later work; not included in this increment |
+| Optional temporary rest timer in Health, Workout | Implemented; nine unit cases and seven browser workflows per engine; hosted acceptance required |
+| Dedicated routine templates and lift-trend charts | Later work; not included in this increment |
 | Habit targets and optional gentle follow-up | Design backlog; reuse existing weekly records before adding another store |
 | Incremental record persistence and smaller domain modules | Architectural backlog; must not be enabled as an unverified migration |
 | Offline shell and push notifications | Not enabled |
@@ -115,7 +126,7 @@ This routine is a design recommendation, not evidence that the application can g
 
 Acceptance must include both Chromium and WebKit; phone, tablet, portrait and wide desktop screenshots; keyboard/menu focus; multi-digit entry without lost focus; existing diary/notes/other-board preservation; payment/document identity and history; stale-write refusal; and complete public release fingerprints after deployment. A physical phone, its on-screen keyboard, installation and actual signed-in cross-device operation remain separate acceptance steps.
 
-Verification includes 483 unit checks, 40 Properties cases per engine, ten individual-set workflows per engine, nine dedicated Health workflows per engine, seven existing fitness/food interface cases per engine, thirteen exercise-reuse/sizing cases per engine, eleven guarded-startup cases per engine, four design cases and three shell/navigation cases. Full hosted gates must accept the final source revision before it can deploy; an earlier candidate correctly stopped on the delayed textarea-sizing regression rather than publishing it. Chromium parsed the manifest without errors and returned no installability errors. Browser cases use disposable records and mocked private requests, not production accounts. These results do not certify physical-device installation or live signed-in cross-device operation.
+Verification includes 492 unit checks, 40 Properties cases per engine, ten individual-set workflows per engine, seven rest-timer workflows per engine, nine dedicated Health workflows per engine, seven existing fitness/food interface cases per engine, thirteen exercise-reuse/sizing cases per engine, eleven guarded-startup cases per engine, four design cases and three shell/navigation cases. Full hosted gates must accept the final source revision before it can deploy; an earlier candidate correctly stopped on the delayed textarea-sizing regression rather than publishing it. Chromium parsed the manifest without errors and returned no installability errors. Browser cases use disposable records and mocked private requests, not production accounts. These results do not certify physical-device installation or live signed-in cross-device operation.
 
 ## Research Basis
 
@@ -135,3 +146,4 @@ These sources inform the design choices; none proves that a particular redesign 
 12. [web.dev: Installation](https://web.dev/learn/pwa/installation) - browser/platform differences and isolated installation storage.
 13. [Apple: iPhone web apps](https://support.apple.com/en-eg/guide/iphone/iphea86e5236/ios) - current phone installation actions.
 14. [Apple: Safari web apps on Mac](https://support.apple.com/en-us/104996) - desktop installation rather than requiring a separate native build.
+15. [MDN: Page Visibility API](https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API) - background timer throttling and return-to-visible handling; not a reliable closed-app alarm.
