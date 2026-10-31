@@ -658,6 +658,21 @@ const propertyStayAgenda = LifePropertyStayAgenda.create({
   },
   available:()=>Boolean(cloudReady && cloudUser && !window.frameElement?.hidden && !window.frameElement?.inert && !document.querySelector('#appShell')?.inert)
 });
+const propertyBookingBrowser = LifePropertyBookingList.create({
+  document,media:window.matchMedia('(max-width:1100px)'),read:()=>bookings,scope:()=>activeVillaKey(),
+  available:()=>Boolean(activeView==='bookings' && cloudReady && cloudUser && !window.frameElement?.hidden && !window.frameElement?.inert && !document.querySelector('#appShell')?.inert),
+  onLayout:renderBookingsTable,openBooking:openAgendaBooking,
+  describe:booking=>{
+    const flags=[],excluded=isExcludedBooking(booking),total=guestStayTotal(booking,scopedBookings());
+    if(isTentativeBooking(booking))flags.push(booking.status==='quoted'?'Quoted - not confirmed':'Inquiry - not confirmed');
+    else if(excluded)flags.push('Record only - excluded from financial totals');
+    if(total>1)flags.push('Returning guest - '+total+' completed stays');
+    if(guestProfile(guestKeyFor(booking)).blocklist)flags.push('Flagged guest');
+    return {guest:booking.guest || 'Unnamed guest',stay:shortDate(booking.arrival)+' - '+shortDate(departureFor(booking))+' / '+booking.nights+' nights',channel:booking.channel || 'Direct',flags,
+      values:excluded?[]:[['Total incl. deposit',money(totalToReceiveFor(booking))],['Recorded received',money(booking.paid)],['Balance',money(balanceFor(booking))]],
+      note:!excluded && refundPendingFor(booking)>0?'Deposit to return: '+money(refundPendingFor(booking)):''};
+  }
+});
 let pendingTaxExpenseAttachment = null;
 let removePendingTaxExpenseAttachment = false;
 
@@ -5297,6 +5312,8 @@ function renderBookingsTable() {
       return true;
     })
     .sort((a, b) => a.arrival.localeCompare(b.arrival));
+  propertyBookingBrowser.render(sorted,{allMonths:effectiveMonth==='All',monthLabel});
+  if(propertyBookingBrowser.layout()==='table'){
   let currentMonthHeader = "";
   const bookingRowHtml = sorted
     .map((booking) => {
@@ -5333,6 +5350,7 @@ function renderBookingsTable() {
     })
     .join("");
   els.bookingRows.innerHTML = bookingRowHtml || `<tr><td colspan="15" class="empty-row">No bookings match these filters.</td></tr>`;
+  }
   renderBookingColumnControls();
 }
 
@@ -8966,7 +8984,7 @@ document.querySelector("#exportSheets").addEventListener("click", () => {
 
 
 [els.bookingMonthFilter, els.bookingSearch, els.channelFilter, els.paymentFilter, els.depositFilter, els.contactFilter].forEach((control) => {
-  control?.addEventListener("input", renderBookingsTable);
+  if(control===els.bookingSearch)control.addEventListener("input", renderBookingsTable);
   control?.addEventListener("change", () => {
     if (control === els.bookingMonthFilter) {
       appSettings = { ...appSettings, bookingMonthFilter: els.bookingMonthFilter.value };
@@ -10227,10 +10245,8 @@ function initializeWorkflowUI() {
     const button = document.querySelector("#" + id); if (button) button.textContent = label;
   });
   const guestTab = document.querySelector('[data-view="guests"]');
-  const bookingTabs = document.createElement("div");
-  bookingTabs.className = "workspace-tabs booking-subnav";
-  bookingTabs.append(guestTab);
-  document.querySelector("#bookingsView").prepend(bookingTabs);
+  guestTab.classList.add('property-guest-book');
+  document.querySelector('#addFromTable').before(guestTab);
   const returnToBookings = document.createElement("button");
   returnToBookings.type = "button"; returnToBookings.className = "ghost-button"; returnToBookings.textContent = "All bookings";
   returnToBookings.addEventListener("click", () => { setView("bookings"); renderBookingsTable(); });

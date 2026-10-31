@@ -69,6 +69,7 @@
   "property-calendar-day.js",
   "property-calendar-status.js",
   "property-stay-agenda.js",
+  "property-booking-list.js",
   "property-runtime.js",
   "property-client.js",
   "property-styles.css",
