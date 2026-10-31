@@ -118,6 +118,28 @@ table{font-size:13px}
 @media(max-width:600px){.property-integrated #appShell .nav-tabs>.nav-button,.property-more>summary{font-size:12px;padding:8px 4px}.property-integrated .today-columns,.property-integrated .today-action-grid{grid-template-columns:1fr;gap:8px}.property-integrated .topbar-actions input,.property-integrated .topbar-actions select{font-size:16px}}
 
 /* Booking capture shares the workspace's typography and one scrolling body. */
+.property-stay-agenda{min-width:0;border-bottom:1px solid var(--line);padding-bottom:16px}
+.property-agenda-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 16px}
+.property-agenda-heading h3{font:600 15px/1.5 system-ui,sans-serif;margin:0;letter-spacing:0}
+.property-agenda-heading p{font:12px/1.5 system-ui,sans-serif;color:var(--muted);margin:4px 0;overflow-wrap:anywhere}
+.property-agenda-controls{display:grid;grid-template-columns:44px minmax(120px,180px) 44px auto;gap:6px;max-width:100%;min-width:0}
+.property-agenda-controls button,.property-agenda-controls input{box-sizing:border-box;min-width:44px;height:44px;min-height:44px;margin:0;font:14px system-ui,sans-serif}
+.property-agenda-controls button{padding:8px}
+.property-agenda-controls button:first-child,.property-agenda-controls button:nth-child(3){font-size:24px}
+.property-agenda-controls input{width:100%;min-width:0;padding:8px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink)}
+.property-agenda-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:12px}
+.property-agenda-groups>section{min-width:0}
+.property-agenda-groups h4{font:600 13px/1.5 system-ui,sans-serif;margin:8px 0}
+.property-agenda-row{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;min-width:0;min-height:44px;padding:10px 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink);text-align:left;font:13px/1.5 system-ui,sans-serif;white-space:normal;overflow-wrap:anywhere}
+.property-agenda-row strong,.property-agenda-row span{max-width:100%;overflow-wrap:anywhere}
+.property-agenda-row strong{font-size:13px;font-weight:600}
+.property-agenda-row span,.property-agenda-empty,.property-agenda-notice{font-size:12px;color:var(--muted);line-height:1.5}
+.property-agenda-row:hover{background:var(--soft)}
+.property-agenda-notice:empty{display:none}
+.property-today-tools{min-width:0;border-top:1px solid var(--line)}
+.property-today-tools>summary{box-sizing:border-box;min-height:44px;padding:12px 0;cursor:pointer;font:600 13px/1.5 system-ui,sans-serif}
+.property-today-tools:not([open])>:not(summary){display:none}
+@media(max-width:700px){.property-agenda-groups{grid-template-columns:minmax(0,1fr);gap:8px}.property-agenda-controls{width:100%;grid-template-columns:44px minmax(0,1fr) 44px 60px}.property-agenda-controls input{font-size:16px}.property-agenda-heading{align-items:flex-start}}
 .property-integrated #bookingDialog{width:min(720px,calc(100vw - 24px));max-width:720px;max-height:calc(100dvh - 24px);border-radius:8px;background:#fff}
 .property-integrated #bookingDialog[open]{animation:none}
 .property-integrated #bookingDialog .booking-form{max-height:calc(100dvh - 26px);min-height:0}

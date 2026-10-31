@@ -645,6 +645,19 @@ let profitData = loadProfitData();
 let appSettings = loadAppSettings();
 let selectedMonth = initialMonth();
 let activeView = "today";
+let propertyTodayActualDate = '';
+const propertyTodaySections = new Set();
+const propertyStayAgenda = LifePropertyStayAgenda.create({
+  document,read:()=>scopedBookings(),scope:()=>activeVillaKey(),today:()=>isoDate(new Date()),departure:departureFor,tentative:isTentativeBooking,
+  openBooking:openAgendaBooking,
+  annotations:(booking,list)=>{
+    const total=guestStayTotal(booking,list),labels=[];
+    if(total>1)labels.push('Returning guest - '+total+' completed stays');
+    if(guestProfile(guestKeyFor(booking)).blocklist)labels.push('Flagged guest');
+    return labels;
+  },
+  available:()=>Boolean(cloudReady && cloudUser && !window.frameElement?.hidden && !window.frameElement?.inert && !document.querySelector('#appShell')?.inert)
+});
 let pendingTaxExpenseAttachment = null;
 let removePendingTaxExpenseAttachment = false;
 
@@ -2976,9 +2989,9 @@ function setMessageFlow(flow) {
   els.manualCopyBox?.classList.add("hidden");
 }
 
-function setTaxInnerTab(mode) {
-  if (mode === "expenses" && typeof showFinanceSection === "function") { showFinanceSection("expenses"); return; }
-  if (["assets", "claim", "plan"].includes(mode) && typeof showFinanceSection === "function") setView("tax");
+function setTaxInnerTab(mode, {navigate=true}={}) {
+  if (navigate && mode === "expenses" && typeof showFinanceSection === "function") { showFinanceSection("expenses"); return; }
+  if (navigate && ["assets", "claim", "plan"].includes(mode) && typeof showFinanceSection === "function") setView("tax");
   const valid = ["plan", "expenses", "assets", "claim"];
   const nextMode = valid.includes(mode) ? mode : "plan";
   document.querySelectorAll("[data-tax-inner-tab]").forEach((button) => {
@@ -3729,6 +3742,7 @@ function syncCloudAuthUi() {
   const canOpen = isLoggedIn && cloudReady;
   ui.appShell?.classList.toggle("private-locked", !canOpen);
   if (ui.appShell) ui.appShell.hidden = !canOpen;
+  if(canOpen)propertyStayAgenda.refresh();
   if (!canOpen) {
     document.querySelectorAll("dialog[open]").forEach(dialog => dialog.close());
     const workspace = document.querySelector("#bookingWorkspace");
@@ -8375,17 +8389,12 @@ function upcomingVacancies(daysAhead = 45) {
 
 function renderToday() {
   const bookings = scopedBookings();
-  const stays = bookings.filter(booking => !isTentativeBooking(booking));
   const host = document.querySelector("#todayContent");
   if (!host) return;
   const todayIso = isoDate(new Date());
+  propertyTodayActualDate = todayIso;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const fmtNights = (n) => `${n} night${Number(n) === 1 ? "" : "s"}`;
-
-  const arrivals = stays.filter((b) => b.arrival === todayIso).sort((a, b) => a.guest.localeCompare(b.guest));
-  const departures = stays.filter((b) => departureFor(b) === todayIso);
-  const inhouse = stays.filter((b) => overlapsDate(b, todayIso));
 
   const daysFromToday = (iso) => Math.round((dateObj(iso) - today) / 86400000);
   const airbnbPayouts = [];
@@ -8414,22 +8423,7 @@ function renderToday() {
   depositRefunds.sort((a, b) => a.dep - b.dep);
   const attentionCount = airbnbPayouts.length + directBalances.length + depositRefunds.length;
 
-  const guestRow = (b, meta) => `
-    <div class="today-row row-clickable" data-open-booking="${b.id}" title="Open ${escapeHtml(b.guest)}'s booking">
-      <span class="today-avatar">${prefixFor(b.guest)}</span>
-      <div class="today-row-main">
-        <strong>${escapeHtml(b.guest)} ${returningBadgeHtml(b, bookings)}${blocklistBadgeHtml(b)}</strong>
-        <span>${b.villa === "Windmill" ? "Windmill" : "Sunrise"} · ${meta}</span>
-      </div>
-      ${channelBadgeFor(b)}
-    </div>`;
-
   const emptyMsg = (t) => `<div class="today-empty">${t}</div>`;
-  const col = (title, count, rowsHtml, emptyText) => `
-    <section class="today-card">
-      <div class="today-card-head"><h3>${title}</h3><span class="count-pill">${count}</span></div>
-      <div class="today-card-body">${rowsHtml || emptyMsg(emptyText)}</div>
-    </section>`;
 
   // --- "Send today": typed lifecycle nudges with inline phone capture ---
   const fmtN = (n) => `${n} night${Number(n) === 1 ? "" : "s"}`;
@@ -8467,7 +8461,6 @@ function renderToday() {
   // --- Improvement #3: open / gap nights ahead ---
   const vacancies = upcomingVacancies(45);
   const vacRows = vacancies
-    .slice(0, 6)
     .map((v) => {
       const tight = v.type === "gap" && v.nights <= 2;
       const tag = v.type === "gap" ? "gap between stays" : "open";
@@ -8521,24 +8514,19 @@ function renderToday() {
       ].join("")
     : emptyMsg("All caught up — nothing needs action.");
 
-  host.innerHTML = `
-    <div class="today-headline">
-      <p class="eyebrow">Daily operations</p>
-      <h3 class="today-date">${new Date().toLocaleDateString("en-MY", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).replace("Sept", "Sep")}</h3>
-    </div>
-    <div class="today-columns">
-      ${col("Arrivals today", arrivals.length, arrivals.map((b) => guestRow(b, `${fmtNights(b.nights)} · out ${shortDate(departureFor(b))}`)).join(""), "No arrivals today.")}
-      ${col("In-house now", inhouse.length, inhouse.map((b) => guestRow(b, `until ${shortDate(departureFor(b))}`)).join(""), "No guests in-house.")}
-      ${col("Departures today", departures.length, departures.map((b) => guestRow(b, "checking out")).join(""), "No departures today.")}
-    </div>
-    <div class="today-action-grid">
-      ${sendCard}
-      ${vacancyCard}
-    </div>
+  let agenda=host.querySelector('#propertyStayAgenda');
+  if(!agenda){agenda=document.createElement('section');agenda.id='propertyStayAgenda';host.prepend(agenda);}
+  const toolFocus=document.activeElement?.closest?.('details[data-today-section]>summary')?.parentElement.dataset.todaySection;
+  for(const child of [...host.childNodes])if(child!==agenda)child.remove();
+  host.insertAdjacentHTML('beforeend',`
     <section class="today-card today-attention">
-      <div class="today-card-head"><h3>Needs your attention</h3><span class="count-pill">${attentionCount}</span></div>
+      <div class="today-card-head"><h3>Payment follow-up - ${shortDate(todayIso)}</h3><span class="count-pill">${attentionCount}</span></div>
       <div class="today-card-body">${attentionBody}</div>
-    </section>`;
+    </section>
+    <details class="property-today-tools" data-today-section="messages" ${propertyTodaySections.has('messages')?'open':''}><summary>Send today (${sendList.length})</summary>${sendCard}</details>
+    <details class="property-today-tools" data-today-section="vacancies" ${propertyTodaySections.has('vacancies')?'open':''}><summary>Open nights ahead (${vacancies.length})</summary>${vacancyCard}</details>`);
+  propertyStayAgenda.mount(agenda);
+  if(toolFocus)host.querySelector('details[data-today-section="'+toolFocus+'"]>summary')?.focus({preventScroll:true});
 }
 
 function renderAll() {
@@ -8801,6 +8789,8 @@ els.bookingRows.addEventListener("click", (event) => {
 // Improvement #1 + #2: "Send today" card — one-click check-in send + inline phone capture.
 const todayContentEl = document.querySelector("#todayContent");
 todayContentEl?.addEventListener("click", (event) => {
+  const summary=event.target.closest('details[data-today-section]>summary');
+  if(summary){event.preventDefault();const details=summary.parentElement;details.open=!details.open;if(details.open)propertyTodaySections.add(details.dataset.todaySection);else propertyTodaySections.delete(details.dataset.todaySection);return;}
   // A clickable attention / arrival / in-house / departure row opens that booking.
   const openRow = event.target.closest("[data-open-booking]");
   if (openRow && !event.target.closest("button, input, a")) {
@@ -9858,6 +9848,11 @@ function updateBookingRecord(next, reason) {
   renderAll();
 }
 
+function openAgendaBooking(id) {
+  if(bookings.filter(booking=>booking.id===id).length!==1)return false;
+  openBookingWorkspace(id,'overview');return true;
+}
+
 function openBookingWorkspace(id, tab = 'overview') {
   if (!bookings.some(booking => booking.id === id)) return;
   bookingWorkspaceId = id;
@@ -10729,7 +10724,7 @@ initializeBackupSecurity();
 createStartupRecoverySnapshot();
 fillDocumentForm(defaultDocumentDraft());
 setMessageFlow("quote");
-setTaxInnerTab("plan");
+setTaxInnerTab("plan",{navigate:false});
 setView(activeView);
 initThemePicker();
 initSidebar();
@@ -10752,13 +10747,17 @@ const propertyCalendarStatus = window.LifePropertyCalendarStatus.create({
 });
 initCloudStorage();
 window.setInterval(() => {
-  if (document.visibilityState === 'visible') void propertyCalendarStatus?.refresh();
+  if (document.visibilityState === 'visible') {
+    void propertyCalendarStatus?.refresh();
+    if(propertyTodayActualDate!==isoDate(new Date()))renderToday();else propertyStayAgenda.refresh();
+  }
 }, 60000);
 
 // Coming back to the tab re-pulls what the servers refreshed while it was
 // hidden (hourly iCal blocks, new booking candidates) — no manual sync tap.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && supabaseClient && cloudUser) {
+    if(propertyTodayActualDate!==isoDate(new Date()))renderToday();else propertyStayAgenda.refresh();
     void propertyCalendarStatus?.refresh();
     mergeServerIcalBlocks();
     loadBookingCandidates();

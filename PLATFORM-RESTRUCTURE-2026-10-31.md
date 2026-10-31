@@ -46,7 +46,7 @@ The daily surface should answer: Who is arriving? Who is staying? Who is leaving
 
 The first increment reduces eight peer navigation buttons to four primary buttons and a More menu. It retains the actual original controls and handlers, not replacement buttons with independent copies of records. The menu has keyboard dismissal, focus return and a current-section label. Calendar-sync health, account locking, document identifiers, payment-ledger history, original migration copies and disabled AI tools remain in place.
 
-Remaining property work is substantial: simplify booking entry into stay/contact/payment groups, provide an operational arrival/departure agenda, make open balances directly actionable, reduce repeated month and status controls, and place advanced tax/setup/import tools further from everyday booking work. A full visual redesign of those forms and reports is not completed by this navigation increment.
+The follow-ups below implement grouped booking capture and a dated stay agenda. Remaining property work is substantial: reduce repeated month and status controls, simplify financial reports, and place advanced tax/setup/import tools further from everyday booking work. A complete native replacement of all property forms and reports is not yet implemented.
 
 ### Follow-up: Booking Capture
 
@@ -57,6 +57,22 @@ The next increment simplifies the booking editor into Stay, Guest and Payment. A
 Native constraints still block saving. Invalid fields inside folded sections are revealed before focus/error reporting; WebKit gets a layout frame before that focus. A late validation callback cannot affect a newly opened booking. Opening another booking clears only the transient pasted-email importer and its feedback, not saved guest data. Free-text incident notes preserve indentation, complete lines and trailing whitespace when saving; the old blanket trim is removed. Cancellation and resizing do not save or rewrite booking records.
 
 Forty synthetic Properties cases pass in each browser engine, covering the new capture flow as well as existing bookings, payments, document identities, shared-session failures, multi-tab handoff and account locking. The new cases include short 320px/390px phone layouts, collapsed-field preservation, malformed email, missing received amount, negative deposit, precise decimals, manual nights, duplicate prevention and import-draft isolation. Hosted release gates and live file verification remain required for publication. No database, cache ownership, authentication, calendar job, payment arithmetic or migration-copy changes are part of this increment. Physical phone keyboard testing remains outstanding.
+
+### Follow-up: Dated Stay Agenda (1 November)
+
+The preceding exercise-history release, `6da5d1be54b84d25`, passed all hosted gates and deployment. All 77 public file fingerprints plus the canonical root and manifest matched its tested artifact. That acceptance check used no private requests and wrote no records.
+
+Release candidate `e4329e80a0bead4a` adds a compact Stay agenda inside Properties, Today. Previous/next day, a native date field and Today browse the original recorded bookings. Each villa retains its own temporary date in this tab; default Today follows the current date when the tab returns or its display timer runs. An explicit past/future choice stays pinned. Reloading resets these browsing choices; they are not another cloud store. Imported iCal availability blocks remain in Calendar and are not presented as guest bookings.
+
+Arrivals, Continuing stays and Departures are mutually exclusive calendar-day groups. Checkout is not an occupied night. Inquiry/Quoted leads stay out; complimentary confirmed stays remain visible operationally without changing financial exclusions. Returning-guest and flagged-guest indicators are retained. All matching rows remain reachable, including more than eight. Long guest names render as inert text, not markup. Invalid dates are counted for review rather than silently repaired or deleted.
+
+Selecting a row opens its original booking Overview, with the existing Payments and Documents sections. Missing, duplicate, changed, wrong-villa, locked or captured stale targets refuse to open another editor. Payment follow-up remains tied to actual today, not the browsed agenda date; its calculations and payment-ledger writers are unchanged. Send today and Open nights ahead use native folded sections; all existing tools and all vacancy rows in the existing 45-day window are retained. Controls have 44px targets, and the three desktop groups stack on compact screens.
+
+Testing also exposed a startup bug: initializing the Tax sub-tab navigated the entire workspace to Tax. Initialization now sets only the inner sub-tab, allowing Properties to open on Today. Explicit user navigation to Tax remains available. Background day-rollover redraws preserve the mounted agenda date field, unfinished date draft and keyboard focus. Folded tool state remains tab-local and retains focused summaries across a redraw.
+
+Local acceptance: 516 unit checks and all 48 Properties workflows in each of Chromium and WebKit pass. Eleven pure agenda cases and eight added browser workflows cover calendar boundaries, independent villas, actual-day payment separation, original document/payment access, source-byte preservation, stale-action refusal, date drafts, rollover and 320px through 1440px layouts. The tests use synthetic records and intercepted private requests, not production accounts. The complete 78-file artifact is frozen for hosted gates and live fingerprint acceptance. Deployment is accepted only after all hosted gates pass and public bytes match this candidate.
+
+No production diary, notes, tasks, bookings, payments, documents or migration backups were edited by this work. There is no schema, authentication-policy, backend job, payment calculation, migration or persistence change. Explicit villa switching retains its existing saved preference behavior. Physical phone keyboards and actual signed-in cross-device use remain separate acceptance steps; browser simulation does not certify them.
 
 ## Training And Nutrition
 
@@ -120,6 +136,7 @@ This routine is a design recommendation, not evidence that the application can g
 | --- | --- |
 | Simplified Properties navigation and retained original tools | Implemented; included in the complete 40-case synthetic suite in Chromium and WebKit |
 | Simplified booking capture, preserved optional fields and reachable actions | Implemented; 40 Properties cases pass per engine; hosted gates and live verification required before release |
+| Dated Properties stay agenda and original booking navigation | Implemented; all 48 Properties workflows pass in both engines; 11 focused pure cases; hosted gates and complete live byte acceptance required |
 | Health workspace sharing existing workout/food sources | Implemented; nine dedicated browser workflows cover navigation, writing, multiple sources, empty views and target integrity |
 | Previous exercise reference and original dated history | Implemented; tested with synthetic records |
 | Stable-ID strength editing/removal and correctly sized textareas | Implemented; reordered, ambiguous and wrong-board targets plus delayed scroll/box-model regressions tested |
@@ -137,7 +154,7 @@ This routine is a design recommendation, not evidence that the application can g
 
 Acceptance must include both Chromium and WebKit; phone, tablet, portrait and wide desktop screenshots; keyboard/menu focus; multi-digit entry without lost focus; existing diary/notes/other-board preservation; payment/document identity and history; stale-write refusal; and complete public release fingerprints after deployment. A physical phone, its on-screen keyboard, installation and actual signed-in cross-device operation remain separate acceptance steps.
 
-Verification includes 505 unit checks, 40 Properties cases per engine, eight exercise-history workflows per engine, ten individual-set workflows per engine, seven rest-timer workflows per engine, nine dedicated Health workflows per engine, seven existing fitness/food interface cases per engine, thirteen exercise-reuse/sizing cases per engine, eleven guarded-startup cases per engine, four design cases and three shell/navigation cases. Full hosted gates must accept the final source revision before it can deploy; an earlier candidate correctly stopped on the delayed textarea-sizing regression rather than publishing it. Chromium parsed the manifest without errors and returned no installability errors. Browser cases use disposable records and mocked private requests, not production accounts. These results do not certify physical-device installation or live signed-in cross-device operation.
+Verification includes 516 unit checks, 48 Properties cases per engine, eight exercise-history workflows per engine, ten individual-set workflows per engine, seven rest-timer workflows per engine, nine dedicated Health workflows per engine, seven existing fitness/food interface cases per engine, thirteen exercise-reuse/sizing cases per engine, eleven guarded-startup cases per engine, four design cases and three shell/navigation cases. Full hosted gates must accept the final source revision before it can deploy; an earlier candidate correctly stopped on the delayed textarea-sizing regression rather than publishing it. Chromium parsed the manifest without errors and returned no installability errors. Browser cases use disposable records and mocked private requests, not production accounts. These results do not certify physical-device installation or live signed-in cross-device operation.
 
 ## Research Basis
 
