@@ -4082,6 +4082,8 @@ function shortDateTimeLabel(value) {
 
 function renderDataHealth(statusMode = cloudStatusMode) {
   renderCloudCopyAction();
+  const paymentPeriod=document.getElementById('propertyPaymentPeriod');
+  if(paymentPeriod)paymentPeriod.textContent='Working month - '+monthLabel(selectedMonth);
   const notice = document.querySelector("#syncNotice");
   if (notice) {
     notice.hidden = statusMode !== "error";
@@ -10792,6 +10794,29 @@ if(typeof BroadcastChannel==='function'){
 for(const [selector,label,cls] of [['.focus-panel','Payment summary','property-payment-summary']]){
   const section=document.querySelector(selector);if(section){const details=document.createElement('details'),summary=document.createElement('summary');details.className=cls;summary.textContent=label;section.before(details);details.append(summary,section);}
 }
+function initializePropertyTools() {
+  const menu=document.querySelector('.topbar .data-menu'),list=menu?.querySelector('.data-menu-list');
+  if(!list)return;
+  const summary=menu.querySelector(':scope>summary');
+  function disclosure(label,id) {
+    const details=document.createElement('details'),heading=document.createElement('summary');
+    details.id=id;details.className='property-tool-details';heading.textContent=label;details.append(heading);list.append(details);return details;
+  }
+  const saving=disclosure('Saving details','propertySavingDetails'),info=document.createElement('div');
+  info.className='property-saving-details';saving.append(info);
+  for(const id of ['dataHealthLastSync','dataHealthBackup','dataHealthRecords'])info.append(document.getElementById(id));
+  const payment=document.querySelector('.property-payment-summary');
+  if(payment){
+    payment.id='propertyPaymentSummary';payment.classList.add('property-tool-details');list.append(payment);
+    const period=document.createElement('p');period.id='propertyPaymentPeriod';period.className='property-payment-period';period.textContent='Working month - '+monthLabel(selectedMonth);payment.querySelector('.focus-panel').prepend(period);
+  }
+  const notice=document.createElement('p');notice.className='property-ai-notice';notice.textContent='AI tools are off. No guest, receipt or tax records are sent to an AI provider.';list.append(notice);
+  menu.addEventListener('keydown',event=>{
+    if(event.key==='Escape' && menu.open){event.preventDefault();event.stopPropagation();menu.open=false;summary.focus();}
+  });
+  document.addEventListener('click',event=>{if(menu.open && !menu.contains(event.target))menu.open=false;});
+}
+initializePropertyTools();
 function initializePropertyPeriod() {
   const bar = document.getElementById('mobileMonthBar');
   const section = document.querySelector('.month-switcher');
@@ -10846,7 +10871,6 @@ function initializePropertyPeriod() {
 initializePropertyPeriod();
 document.getElementById('cloudLogout').textContent='Life OS account';
 for(const id of ['aiDraftBtn','taxScanInput','taxScanBtn','taxBatchScanBtn','taxEarningsBtn','taxDocAnalyzeBtn','runTaxReviewBtn']){const control=document.getElementById(id);if(control){control.disabled=true;control.title='AI disabled. Manual records remain available.';}}
-const aiNotice=document.createElement('p');aiNotice.className='property-ai-notice';aiNotice.textContent='AI tools are off. No guest, receipt or tax records are sent to an AI provider.';document.querySelector('.topbar').after(aiNotice);
 window.addEventListener('beforeunload',event=>{if(cloudDirty || documentHasUnsavedChanges || localStorage.pending()){event.preventDefault();event.returnValue='';}});
 } catch(error) { window.PropertyHost.failed(error); }
 })();

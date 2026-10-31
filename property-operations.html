@@ -293,7 +293,7 @@
               <button class="villa-tab" data-villa="Sunrise" type="button">Sunrise</button>
               <button class="villa-tab" data-villa="Windmill" type="button">Windmill</button>
             </div>
-            <button class="primary-button" id="openAddBooking" type="button">+ Booking</button>
+            <button class="primary-button" id="openAddBooking" type="button" aria-label="Add booking" title="Add booking"><span aria-hidden="true">+</span><span class="property-action-label">Booking</span></button>
             <div class="theme-menu" id="themeMenu">
               <button class="ghost-button theme-trigger" id="themeTrigger" type="button" aria-haspopup="true" aria-expanded="false"><span class="theme-swatch-dot"></span> Theme</button>
               <div class="theme-popover popover" id="themePopover" hidden>
@@ -302,7 +302,7 @@
               </div>
             </div>
             <details class="data-menu">
-              <summary>Data tools</summary>
+              <summary aria-label="Data tools" title="Data tools"><span class="property-tool-symbol" aria-hidden="true">&#8942;</span><span class="property-action-label">Data tools</span></summary>
               <div class="data-menu-list">
                 <button class="ghost-button" id="exportSheets" type="button">Google Sheets CSV</button>
                 <button class="ghost-button soft-action" id="exportJson" type="button">Download backup</button>
@@ -351,7 +351,7 @@
             <span data-calendar-detail>Automatic calendar refresh: hourly</span>
             <p data-calendar-warning role="alert" hidden></p>
           </div>
-          <button type="button" class="ghost-button compact">Check status</button>
+          <button type="button" class="ghost-button compact" aria-label="Check status" title="Check automatic calendar sync status"><span aria-hidden="true">&#8635;</span></button>
         </section>
 
         <div class="sync-notice" id="syncNotice" role="alert" hidden>

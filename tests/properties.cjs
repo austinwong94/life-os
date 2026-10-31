@@ -36,6 +36,49 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     assert.equal(await frame.locator('#appShell').isVisible(),true);assert(calls.some(s=>s.includes('/property_workspaces')));assert(!calls.some(s=>s.includes('nigzeyamrzrozftbujmm') || s.includes('/user_states')));
     assert.equal(await page.evaluate(()=>localStorage.length),0);assert.equal(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export().bookings[0].customHistory.retained),'Original future field');
   });
+  await run('compact property header keeps daily booking controls and the first stay reachable on short phones without saving',async({page,getRow,writes})=>{
+    getRow().data.bookings[0].arrival='2026-10-17';const original=JSON.stringify(getRow().data),frame=await open(page);
+    for(const [width,height]of [[1440,1000],[1080,1000],[768,900],[390,844],[390,568],[320,568]]){
+      await page.setViewportSize({width,height});await frame.locator('body').evaluate(()=>window.scrollTo(0,0));
+      assert.equal(await frame.locator('#mobileMonthBar').isVisible(),false);assert(await frame.locator('#dataHealthStatus').isVisible());assert(await frame.locator('#propertyCalendarSync').isVisible());
+      const geometry=await frame.locator('#appShell').evaluate(()=>{
+        const row=document.querySelector('[data-agenda-booking=synthetic-booking]').getBoundingClientRect();
+        const controls=[...document.querySelectorAll('.villa-switch button,#openAddBooking,.data-menu>summary,#propertyCalendarSync button')].map(n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height,hit:n.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};});
+        return {width:innerWidth,height:innerHeight,scroll:document.documentElement.scrollWidth,rowTop:row.top,controls};
+      });assert(geometry.scroll<=width+1 && geometry.rowTop<height-44,JSON.stringify(geometry));assert(geometry.controls.every(r=>r.left>=0 && r.right<=width+1 && r.height>=43.9 && r.width>=43.9 && r.hit),JSON.stringify(geometry));
+      if(width<=600){const r=geometry.controls.slice(0,4);assert(r.every(n=>Math.abs(n.top-r[0].top)<=1),JSON.stringify(r));}
+      await page.screenshot({path:path.join(out,'compact-header-'+width+'-'+height+'.png'),fullPage:false});
+    }
+    const period=await frame.locator('#monthPicker').inputValue();await frame.getByRole('button',{name:'Calendar',exact:true}).click();assert(await frame.locator('#mobileMonthBar').isVisible());assert.equal(await frame.locator('#monthPicker').inputValue(),period);await frame.getByRole('button',{name:'Today',exact:true}).click();assert.equal(await frame.locator('#mobileMonthBar').isVisible(),false);assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
+  await run('compact property tools retain saving metadata payment snapshot backup controls and privacy details with keyboard dismissal',async({page,getRow,writes})=>{
+    const original=JSON.stringify(getRow().data),frame=await open(page),menu=frame.locator('.topbar .data-menu'),summary=menu.locator(':scope>summary');
+    for(const [width,height]of [[1440,1000],[1080,1000],[768,900],[390,568],[390,320],[320,568]]){
+      await page.setViewportSize({width,height});await summary.press('Enter');assert.equal(await menu.getAttribute('open'),'');
+      const saving=menu.locator('#propertySavingDetails');if(await saving.getAttribute('open')===null)await saving.locator(':scope>summary').click();assert.match(await saving.innerText(),/Records saved:.*Export requested:.*1 booking/s);
+      const payment=menu.locator('#propertyPaymentSummary');if(await payment.getAttribute('open')===null)await payment.locator(':scope>summary').click();assert(await menu.locator('.focus-panel').isVisible());assert.match(await payment.innerText(),/Upcoming unpaid/);assert.match(await payment.locator('#propertyPaymentPeriod').innerText(),/Working month - October 2026/);
+      const body=menu.locator('.data-menu-list');await body.evaluate(n=>{n.scrollTop=n.scrollHeight;});await menu.locator('.property-ai-notice').waitFor();assert.match(await menu.locator('.property-ai-notice').innerText(),/AI tools are off/);
+      const layout=await body.evaluate(n=>{const r=n.getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,scroll:document.documentElement.scrollWidth,width:innerWidth,height:innerHeight,overflow:n.scrollWidth>n.clientWidth+1};});assert(layout.left>=0 && layout.right<=width+1 && layout.bottom<=height+1 && layout.scroll<=width+1 && !layout.overflow,JSON.stringify(layout));
+      for(const id of ['exportSheets','exportJson','syncCloudNow','restoreBackup'])assert.equal(await menu.locator('#'+id).count(),1);
+      assert(await menu.locator('.property-ai-notice').evaluate(n=>{const r=n.getBoundingClientRect();return r.top>=0 && r.bottom<=innerHeight;}));await page.screenshot({path:path.join(out,'compact-tools-'+width+'.png'),fullPage:false});await payment.locator(':scope>summary').press('Escape');assert.equal(await menu.getAttribute('open'),null);assert(await summary.evaluate(n=>n===document.activeElement));
+    }
+    await summary.click();await frame.locator('#pageTitle').click();assert.equal(await menu.getAttribute('open'),null);assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
+  await run('compact property status keeps calendar failures and their last successful time visible outside closed tools',async({page,context,getRow,writes})=>{
+    const original=JSON.stringify(getRow().data);let failed=false;
+    await context.route('https://**/rest/v1/property_calendar_sync_status?**',route=>route.fulfill({json:[{owner_id:owner,status:failed?'error':'success',last_success_at:'2026-10-16T23:07:02Z',last_attempt_at:'2026-10-16T23:07:02Z',block_count:4}]}));
+    const frame=await open(page),status=frame.locator('#propertyCalendarSync');await status.getByText('Calendar up to date',{exact:true}).waitFor();failed=true;
+    for(const [width,height]of [[1440,1000],[390,568],[320,568]]){await page.setViewportSize({width,height});await status.getByRole('button',{name:'Check status',exact:true}).click();await status.getByText('Calendar sync failed',{exact:true}).waitFor();assert(await status.locator('[data-calendar-warning]').isVisible());assert.equal(await frame.locator('.data-menu').getAttribute('open'),null);assert.equal(await status.locator('time').getAttribute('datetime'),'2026-10-16T23:07:02.000Z');assert.equal(await status.evaluate(n=>Boolean(n.closest('.data-menu'))),false);const layout=await status.evaluate(n=>({bottom:n.getBoundingClientRect().bottom,height:innerHeight,scroll:document.documentElement.scrollWidth,width:innerWidth}));assert(layout.bottom<=height && layout.scroll<=width+1,JSON.stringify(layout));await page.screenshot({path:path.join(out,'compact-warning-'+width+'.png'),fullPage:false});}
+    assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
+  await run('compact property agenda computes guest annotations only for displayed stays and preserves original row focus',async({page,getRow,writes})=>{
+    const original=JSON.stringify(getRow().data),frame=await open(page);
+    const result=await frame.locator('body').evaluate(()=>{
+      const rows=Array.from({length:1000},(_,i)=>({id:'isolated-'+i,guest:'Sample '+i,arrival:i===0?'2026-10-17':'2026-01-01',departure:i===0?'2026-10-19':'2026-01-03',unknown:{keep:true}})),before=JSON.stringify(rows),calls=[],root=document.createElement('div');document.body.append(root);
+      const controller=LifePropertyStayAgenda.create({document,read:()=>rows,scope:()=> 'Sunrise',today:()=> '2026-10-17',departure:b=>b.departure,tentative:()=>false,annotations:(b,source)=>{calls.push(b.id);return ['Sample history - '+source.length+' records'];},available:()=>true,openBooking:()=>true});controller.mount(root);
+      const view=document.body.lastElementChild,row=view.querySelector('[data-agenda-booking]');row.focus();controller.refresh();const value={calls,sourceUnchanged:JSON.stringify(rows)===before,sameRow:view.querySelector('[data-agenda-booking]')===row,focused:document.activeElement===row,text:row.innerText};view.remove();return value;
+    });assert.deepEqual(result.calls,['isolated-0','isolated-0']);assert.equal(result.sourceUnchanged,true);assert.equal(result.sameRow,true);assert.equal(result.focused,true);assert.match(result.text,/1000 records/);assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
   await run('automatic calendar status shows success, retained failure, overdue and unavailable states without saving',async({page,context,getRow,writes})=>{
     let mode='success';const last='2026-10-16T23:07:02Z',original=JSON.stringify(getRow().data);
     await context.route('https://**/rest/v1/property_calendar_sync_status?**',route=>mode==='unavailable'?route.fulfill({status:503,body:'private internal details'}):route.fulfill({json:[{owner_id:owner,status:mode==='error'?'error':'success',last_attempt_at:last,last_success_at:mode==='overdue'?'2026-10-16T00:07:02Z':last,block_count:0}]}));
@@ -173,6 +216,7 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
   await run('a stale browser cannot overwrite newer property data',async({page,getRow,makeStale})=>{
     const frame=await open(page);makeStale();await edit(frame,'Pending conflicting draft');await page.waitForTimeout(1200);
     assert.equal(getRow().data.bookings[0].guest,'Synthetic Guest');assert.equal(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export().bookings[0].guest),'Pending conflicting draft');assert.equal(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()),true);
+    assert(await frame.locator('#dataHealthStatus').isVisible());assert.equal(await frame.locator('#dataHealthStatus').evaluate(n=>Boolean(n.closest('.data-menu'))),false);assert(await frame.locator('#syncNotice').isVisible());assert.equal(await frame.locator('.data-menu').getAttribute('open'),null);
   });
   await run('desktop, portrait and phone operations stay within the viewport',async({page})=>{
     await open(page);for(const width of [1440,1080,768,390,320]){await page.setViewportSize({width,height:1000});await page.waitForTimeout(80);const sizes=await page.evaluate(()=>{const w=document.querySelector('iframe').contentWindow;return {page:document.documentElement.scrollWidth,width:innerWidth,child:w.document.documentElement.scrollWidth,childWidth:w.innerWidth};});assert(sizes.page<=sizes.width+1);assert(sizes.child<=sizes.childWidth+1,JSON.stringify(sizes));await page.screenshot({path:path.join(out,'properties-'+width+'.png'),fullPage:true});}
@@ -253,13 +297,13 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
       const sizes=await bar.locator('button,summary').evaluateAll(nodes=>nodes.filter(n=>n.getClientRects().length).map(n=>({width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height})));assert(sizes.every(n=>n.width>=44 && n.height>=44),JSON.stringify(sizes));
       await page.screenshot({path:path.join(out,'property-month-'+width+'.png'),fullPage:true});await summary.press('Escape');assert.equal(await picker.getAttribute('open'),null);assert.equal(await summary.evaluate(n=>n===n.ownerDocument.activeElement),true);
     }
-    await summary.click();await picker.locator('[data-month-value="2026-12"]').click();assert.match(await summary.innerText(),/December 2026/);assert.equal(await picker.getAttribute('open'),null);assert.equal(await summary.evaluate(n=>n===n.ownerDocument.activeElement),true);
+    await summary.click();await picker.locator('[data-month-value="2026-12"]').click();assert.match(await summary.innerText(),/December 2026/);assert.match(await frame.locator('#propertyPaymentPeriod').textContent(),/Working month - December 2026/);assert.equal(await picker.getAttribute('open'),null);assert.equal(await summary.evaluate(n=>n===n.ownerDocument.activeElement),true);
     await bar.getByRole('button',{name:'Next month',exact:true}).click();assert.match(await summary.innerText(),/January 2027/);await bar.getByRole('button',{name:'Previous month',exact:true}).click();assert.match(await summary.innerText(),/December 2026/);
     await summary.click();await picker.getByRole('button',{name:'This month',exact:true}).click();assert.match(await summary.innerText(),/October 2026/);assert.equal(await picker.getAttribute('open'),null);
     await summary.click();await frame.locator('#pageTitle').click();assert.equal(await picker.getAttribute('open'),null);
     await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);
     assert.deepEqual(fields(getRow().data),original);retained(getRow().data,fields(raw));
-    await page.reload();await open(page);assert.match(await summary.innerText(),/October 2026/);
+    await page.reload();await open(page);assert.equal(await frame.locator('#mobileMonthBar').isVisible(),false);await frame.getByRole('button',{name:'Calendar',exact:true}).click();assert.match(await summary.innerText(),/October 2026/);
   });
   await run('direct operations access is refused without an authorized parent',async({page})=>{const requests=[];page.on('request',r=>{if(r.url().includes('/rest/v1/'))requests.push(r.url());});await page.goto(url+'property-operations.html');await page.getByRole('alert').waitFor();assert.equal(await page.locator('#appShell').isVisible(),false);assert.deepEqual(requests,[]);});
   await run('payments are recorded once, persist through reload and retain historical receipts',async({page,getRow})=>{

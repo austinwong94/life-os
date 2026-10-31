@@ -50,10 +50,11 @@
       if(previousScope!==property || document.activeElement!==dateInput)dateInput.value=date;
       previousScope=property;heading.textContent=property+' Villa - '+label(date)+' - Recorded bookings';
       prev.disabled=!shift(date,-1);next.disabled=!shift(date,1);current.disabled=date===today();
-      const labels=new Map(source.map(booking=>[booking,annotations(booking,source)]));
+      const data=model(source,date,{departure,tentative});
+      const labels=new Map([...data.arrivals,...data.continuing,...data.departures].map(booking=>[booking,annotations(booking,source)]));
       const stamp=JSON.stringify([property,date,source,[...labels.values()]]);if(stamp===signature)return;signature=stamp;
       const focused=document.activeElement?.closest?.('[data-agenda-booking]'),focusedId=focused && groups.contains(focused)?focused.dataset.agendaBooking:null;
-      const data=model(source,date,{departure,tentative});groups.replaceChildren();
+      groups.replaceChildren();
       const counts=new Map();for(const booking of source)counts.set(booking.id,(counts.get(booking.id) || 0)+1);
       for(const [key,title,empty] of [['arrivals','Arrivals','No arrivals on this date.'],['continuing','Continuing stays','No continuing stays on this date.'],['departures','Departures','No departures on this date.']]) {
         const section=node('section'),head=node('h4',title+' ('+data[key].length+')');section.dataset.agendaGroup=key;section.append(head);
