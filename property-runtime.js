@@ -4118,8 +4118,10 @@ function renderDataHealth(statusMode = cloudStatusMode) {
       : "Cloud: login required";
     els.dataHealthStatus.textContent = cloudLabel;
     els.dataHealthStatus.dataset.status = statusMode || (cloudUser ? "connected" : "offline");
-    const workspaceStatus=document.querySelector('#workspaceSaveState');
-    if(workspaceStatus){if(workspaceStatus.textContent!==cloudLabel)workspaceStatus.textContent=cloudLabel;workspaceStatus.dataset.status=els.dataHealthStatus.dataset.status;}
+    for(const workspaceStatus of document.querySelectorAll('#workspaceSaveState,#documentSaveState')){
+      if(workspaceStatus.textContent!==cloudLabel)workspaceStatus.textContent=cloudLabel;
+      workspaceStatus.dataset.status=els.dataHealthStatus.dataset.status;
+    }
   }
   if (els.dataHealthLastSync) {
     els.dataHealthLastSync.textContent = `Records saved: ${shortDateTimeLabel(cloudKnownUpdatedAt || appSettings.lastCloudSyncAt)}`;
@@ -5786,6 +5788,7 @@ function fillDocumentForm(doc) {
   updateReceiptVisibility();
   renderDocumentPreview(normalized);
   setDocumentWorkspace("editor");
+  setDocumentEditorMode('editor');
   const saved = documents.some(item => item.id === normalized.id);
   setDocumentFeedback(saved ? "Saved document opened" : normalized.guestName ? "Unsaved document" : "New document", !saved && Boolean(normalized.guestName));
 }
@@ -6106,6 +6109,8 @@ function setDocumentWorkspace(mode) {
   view.querySelector(".documents-layout").hidden = archive;
   view.querySelector(".document-editor-tools").hidden = archive;
   view.querySelector(".document-archive").hidden = !archive;
+  const actions=view.querySelector('.document-action-bar');
+  if(actions)actions.hidden=archive;
   const mobileSwitch = view.querySelector(".document-mobile-switch");
   if (mobileSwitch) mobileSwitch.hidden = archive;
   view.querySelectorAll("[data-document-workspace]").forEach(button => {
@@ -6113,6 +6118,55 @@ function setDocumentWorkspace(mode) {
     button.classList.toggle("active", selected);
     button.setAttribute("aria-selected", String(selected));
   });
+}
+
+function setDocumentEditorMode(mode) {
+  if(!['editor','preview'].includes(mode))return false;
+  const view=document.querySelector('#documentsView');
+  view.dataset.mobileDocument=mode;
+  view.querySelectorAll('[data-mobile-document]').forEach(button=>{
+    const active=button.dataset.mobileDocument===mode;
+    button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
+  });
+  return true;
+}
+
+function revealDocumentField(field) {
+  if(!field || !els.documentForm.contains(field))return;
+  setDocumentWorkspace('editor');setDocumentEditorMode('editor');
+  for(let parent=field.parentElement;parent && parent!==els.documentForm;parent=parent.parentElement){
+    if(parent.tagName==='DETAILS')parent.open=true;
+  }
+}
+
+function initializeDocumentEditor() {
+  const view=document.querySelector('#documentsView'),form=els.documentForm;
+  const titles=['Document details','Guest & billing','Stay & pricing','Balance invoice','Payment transactions'];
+  [...form.querySelectorAll(':scope>.document-form-section:not(.action-section)')].forEach((section,index)=>{
+    const heading=section.querySelector(':scope>.section-heading'),details=document.createElement('details'),summary=document.createElement('summary');
+    details.className='document-fields';details.open=index!==0;summary.textContent=titles[index];details.append(summary);
+    const content=document.createElement('div');content.className='document-fields-body';
+    for(const button of heading?.querySelectorAll('button') || [])content.append(button);
+    heading?.remove();while(section.firstChild)content.append(section.firstChild);
+    details.append(content);section.append(details);
+  });
+  form.addEventListener('invalid',event=>revealDocumentField(event.target),true);
+  const actions=form.querySelector('.action-section'),buttons=actions.querySelector('.document-actions');
+  actions.className='document-action-bar';actions.setAttribute('aria-label','Document actions');
+  els.generateDocument.textContent='Preview';els.saveDocument.textContent='Save document';
+  els.generateDocument.className='ghost-button';buttons.prepend(els.saveDocument,els.generateDocument);
+  const menu=document.createElement('details');menu.className='document-action-menu';
+  const summary=document.createElement('summary');summary.textContent='\u22ef';summary.title='More document actions';summary.setAttribute('aria-label','More document actions');
+  const choices=document.createElement('div');choices.className='document-action-choices';
+  choices.append(els.printDocument,els.duplicateDocument,els.newDocument);menu.append(summary,choices);buttons.append(menu);
+  menu.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();menu.open=false;summary.focus();}});
+  menu.addEventListener('click',event=>{if(event.target.closest('button')){const returnFocus=choices.contains(document.activeElement);menu.open=false;if(returnFocus)summary.focus();}});
+  document.addEventListener('click',event=>{if(menu.open && !menu.contains(event.target))menu.open=false;});
+  const feedback=document.createElement('div');feedback.className='document-action-feedback';
+  const saved=document.createElement('span');saved.id='documentSaveState';saved.setAttribute('role','status');saved.textContent=els.dataHealthStatus?.textContent || '';saved.dataset.status=els.dataHealthStatus?.dataset.status || '';
+  const sync=document.createElement('span');sync.append('Recorded data: ',saved);
+  feedback.append(document.querySelector('#documentFeedback'),sync);actions.append(feedback);
+  view.querySelector('.document-editor-tools').before(actions);
 }
 
 function renderDocumentPaymentSummary(doc) {
@@ -6129,6 +6183,9 @@ function renderDocumentPaymentSummary(doc) {
 function validateDocumentForm() {
   els.docCheckOut.setCustomValidity(els.docCheckOut.value <= els.docCheckIn.value ? "Check-out must be after check-in." : "");
   els.docPreviouslyReceived?.setCustomValidity(Number(els.docPreviouslyReceived.value) > receiptTotalFromForm() ? "Previously received cannot exceed this booking total." : "");
+  // WebKit needs folded fields laid out before native validation can focus them.
+  const invalid=[...els.documentForm.elements].find(control=>control.willValidate && !control.validity.valid);
+  if(invalid){revealDocumentField(invalid);invalid.getBoundingClientRect();}
   if (!els.documentForm.reportValidity()) return false;
   if (els.docType.value === "Official Receipt" && paymentTotalFor(formDocument()) <= 0) {
     setDocumentFeedback("Enter at least one payment amount and transaction date.");
@@ -6158,7 +6215,7 @@ function saveCurrentDocument() {
   saveDocuments();
   fillDocumentForm(doc);
   renderDocumentArchive();
-  setDocumentFeedback("Saved on this device. Cloud status is shown above.", false);
+  setDocumentFeedback("Document updated. Check recorded-data sync status.", false);
 }
 
 function duplicateCurrentDocument() {
@@ -9176,6 +9233,7 @@ document.querySelectorAll("[data-document-type]").forEach(button => {
   });
 });
 document.querySelector("#jumpToPayments")?.addEventListener("click", () => {
+  revealDocumentField(els.paymentRows.querySelector('input'));
   els.receiptPaymentSection.scrollIntoView({ behavior: "smooth", block: "center" });
   els.paymentRows.querySelector("input")?.focus({ preventScroll: true });
 });
@@ -9462,6 +9520,7 @@ els.paymentRows?.addEventListener("click", (event) => {
     const dateInput = rows[i]?.querySelector("[data-payment-date]");
     if (dateInput && !dateInput.value) dateInput.value = isoDate(new Date());
     renderDocumentPreview(formDocument());
+    setDocumentFeedback('Unsaved changes',true);
     return;
   }
   const removeIndex = event.target.dataset.removePayment;
@@ -9470,13 +9529,15 @@ els.paymentRows?.addEventListener("click", (event) => {
   payments.splice(Number(removeIndex), 1);
   renderPaymentRows(payments.length ? payments : [normalizePayment({})]);
   renderDocumentPreview(formDocument());
+  setDocumentFeedback('Unsaved changes',true);
 });
 
 els.addPaymentRow?.addEventListener("click", () => {
   renderPaymentRows([...paymentRowsFromForm(true), normalizePayment({})]);
+  setDocumentFeedback('Unsaved changes',true);
 });
 
-els.generateDocument?.addEventListener("click", () => { if (validateDocumentForm()) renderDocumentPreview(formDocument()); });
+els.generateDocument?.addEventListener("click", () => { if (validateDocumentForm()){renderDocumentPreview(formDocument());setDocumentEditorMode('preview');} });
 els.saveDocument?.addEventListener("click", saveCurrentDocument);
 els.docFromBooking?.addEventListener("change", (event) => {
   const id = event.target.value;
@@ -10241,23 +10302,15 @@ function initializeWorkflowUI() {
   document.querySelector(".document-editor-tools").prepend(bookingSource);
   const documentPreviewSwitch = document.createElement('div');
   documentPreviewSwitch.className = 'workspace-tabs document-mobile-switch';
-  documentPreviewSwitch.innerHTML = '<button type="button" class="ghost-button active" data-mobile-document="editor">Editor</button><button type="button" class="ghost-button" data-mobile-document="preview">Preview</button><button type="button" class="ghost-button" data-mobile-print>Print / PDF</button>';
+  documentPreviewSwitch.innerHTML = '<button type="button" class="ghost-button active" aria-pressed="true" data-mobile-document="editor">Editor</button><button type="button" class="ghost-button" aria-pressed="false" data-mobile-document="preview">Preview</button>';
   documentPreviewSwitch.addEventListener('click', event => {
-    if (event.target.hasAttribute('data-mobile-print')) {
-      if (!els.documentForm.checkValidity()) {
-        document.querySelector('#documentsView').dataset.mobileDocument = 'editor';
-        documentPreviewSwitch.querySelector('[data-mobile-document="editor"]').click();
-      }
-      printDocumentPreview();
-      return;
-    }
     const mode = event.target.dataset.mobileDocument;
     if (!mode) return;
-    document.querySelector('#documentsView').dataset.mobileDocument = mode;
-    documentPreviewSwitch.querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.mobileDocument === mode));
+    setDocumentEditorMode(mode);
     if (mode === 'preview') renderDocumentPreview();
   });
   document.querySelector('.documents-layout').before(documentPreviewSwitch);
+  initializeDocumentEditor();
   const propertyFilter = document.createElement("label");
   propertyFilter.innerHTML = '<span>Property</span><select id="expensePropertyFilter"><option value="Selected">Selected property</option><option value="All">All properties</option><option>Sunrise Villa</option><option>Windmill Villa</option><option>Shared</option></select>';
   document.querySelector(".tax-expense-toolbar").prepend(propertyFilter);
