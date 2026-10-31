@@ -70,6 +70,7 @@
   "property-calendar-status.js",
   "property-stay-agenda.js",
   "property-booking-list.js",
+  "property-payment-followup.js",
   "property-runtime.js",
   "property-client.js",
   "property-styles.css",

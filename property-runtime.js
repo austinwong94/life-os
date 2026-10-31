@@ -8628,6 +8628,7 @@ function renderAll() {
   renderTaxPlan();
   setupDashboardToggles();
   applyDashboardMode();
+  if(activeView==='dashboard' && financeSection==='payments')renderFinancePayments();
 }
 
 function renderActiveView() {
@@ -8635,6 +8636,7 @@ function renderActiveView() {
     bookings: renderBookingsTable, guests: renderGuests, messages: renderMessageGenerator, guide: renderGuide, documents: renderDocuments, tax: renderTaxPlan };
   renderers[activeView]?.();
   renderDataHealth();
+  if(activeView==='dashboard' && financeSection==='payments')renderFinancePayments();
 }
 
 document.querySelectorAll(".nav-button").forEach((button) => {
@@ -10127,7 +10129,7 @@ function renderExpenseFinanceOptions(expense) {
 function showFinanceSection(mode) {
   financeSection = ['reports', 'payments', 'expenses'].includes(mode) ? mode : 'reports';
   setView('dashboard');
-  document.querySelectorAll('[data-finance-section]').forEach(button => {
+  document.querySelectorAll('button[data-finance-section]').forEach(button => {
     const selected = button.dataset.financeSection === financeSection;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-pressed', String(selected));
@@ -10140,14 +10142,28 @@ function showFinanceSection(mode) {
   if (financeSection === 'expenses') { renderTaxExpenses(); renderExpenseFinanceOptions((taxPlan.expenses || []).find(item => item.id === els.taxExpenseId.value)); }
 }
 
+let propertyPaymentFollowup=null;
 function renderFinancePayments() {
   const host = document.querySelector('#financePayments');
   if (!host) return;
-  const list = scopedBookings().filter(booking => !isExcludedBooking(booking));
-  const cash = list.flatMap(booking => VillaLedger.entries(booking)).filter(entry => !entry.voidedAt && entry.kind === 'payment' && entry.date.startsWith(selectedMonth));
-  const legacy = list.flatMap(booking => VillaLedger.entries(booking)).filter(entry => !entry.voidedAt && entry.kind === 'opening');
-  const open = list.filter(booking => balanceFor(booking) > 0 || refundPendingFor(booking) > 0).sort((a, b) => a.arrival.localeCompare(b.arrival));
-  host.innerHTML = `<div class="workspace-metrics"><span>Recorded transfers · ${escapeHtml(monthLabel(selectedMonth))}<strong>${money(VillaLedger.total(cash))}</strong></span><span>Historical receipts to reconcile · all dates<strong>${money(VillaLedger.total(legacy))}</strong></span></div><h3>Open balances and deposits · all dates</h3><div class="workspace-table-scroll"><table class="workspace-table"><thead><tr><th>Guest</th><th>Arrival</th><th>Received</th><th>Outstanding</th><th>Deposit to refund</th></tr></thead><tbody>${open.map(booking => `<tr><td><button type="button" class="workspace-link" data-workspace-booking="${booking.id}">${escapeHtml(booking.guest)}</button></td><td>${shortDate(booking.arrival)}</td><td class="money-cell">${money(booking.paid)}</td><td class="money-cell">${money(balanceFor(booking))}</td><td class="money-cell">${money(refundPendingFor(booking))}</td></tr>`).join('') || '<tr><td colspan="5">No open balances or deposits.</td></tr>'}</tbody></table></div>`;
+  if(!propertyPaymentFollowup)propertyPaymentFollowup=LifePropertyPaymentFollowup.create({
+    document,host,media:window.matchMedia('(max-width:1100px)'),read:()=>bookings,scope:()=>activeVillaKey(),
+    available:()=>bookingWorkspaceAvailable() && activeView==='dashboard' && financeSection==='payments',
+    openBooking:id=>openBookingWorkspace(id,'payments'),
+    describe:booking=>{
+      if(villaOf(booking)!==activeVillaKey() || isExcludedBooking(booking))return null;
+      return {guest:booking.guest || 'Unnamed guest',arrival:shortDate(booking.arrival),stay:shortDate(booking.arrival)+' - '+shortDate(departureFor(booking)),channel:booking.channel || 'Direct',
+        outstanding:balanceFor(booking)>0,deposit:refundPendingFor(booking)>0,search:[booking.guest,booking.arrival,shortDate(booking.arrival),booking.channel].join(' '),
+        values:[['Received',money(booking.paid)],['Outstanding',money(balanceFor(booking))],['Deposit to refund',money(refundPendingFor(booking))]]};
+    },
+    summary:()=>{
+      const list=scopedBookings().filter(booking=>!isExcludedBooking(booking));
+      const cash=list.flatMap(booking=>VillaLedger.entries(booking)).filter(entry=>!entry.voidedAt && entry.kind==='payment' && entry.date.startsWith(selectedMonth));
+      const legacy=list.flatMap(booking=>VillaLedger.entries(booking)).filter(entry=>!entry.voidedAt && entry.kind==='opening');
+      return [['Recorded transfers - '+monthLabel(selectedMonth),money(VillaLedger.total(cash))],['Historical receipts to reconcile - all dates',money(VillaLedger.total(legacy))]];
+    }
+  });
+  propertyPaymentFollowup.render();
 }
 
 function renderWorkflowShell() {
