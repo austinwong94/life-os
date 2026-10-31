@@ -55,6 +55,21 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname),'Use isolated l
   await run('training history opens the original dated log and never edits an earlier workout merely by viewing it',async p=>{
     await workspace(p,'health');await p.getByRole('button',{name:'Training history',exact:true}).click();await p.locator('.health-history-row').last().click();assert.equal(await p.getByLabel('Workout date',{exact:true}).inputValue(),'2026-10-29');assert.equal(await p.getByLabel('Kg',{exact:true}).inputValue(),'12.5');assert.equal(await p.evaluate(()=>state.cards.filter(c=>c.type==='fitness').length),1);
   });
+  await run('multiple original workout and food logs keep independent selections and duplicate identities block editing',async p=>{
+    await p.evaluate(async()=>{
+      const fitness=LifeStateMerge.copy(state.cards.find(card=>card.id==='workout'));fitness.id='workout-two';fitness.title='Second gym log';fitness.fitnessEntries['2026-10-31'].parts.chest.exercises[0].weightKg=55;
+      const food=LifeStateMerge.copy(state.cards.find(card=>card.id==='food'));food.id='food-two';food.title='Second nutrition log';state.cards.push(fitness,food);saveState({skipCloud:true});await flushDeviceWrites();
+    });await workspace(p,'health');await p.getByLabel('Log',{exact:true}).selectOption('workout-two');assert.equal(await p.getByLabel('Kg',{exact:true}).inputValue(),'55');
+    await p.getByRole('button',{name:'Food',exact:true}).click();await p.getByLabel('Log',{exact:true}).selectOption('food-two');await p.getByRole('button',{name:'Workout',exact:true}).click();assert.equal(await p.getByLabel('Log',{exact:true}).inputValue(),'workout-two');assert.equal(await p.getByLabel('Kg',{exact:true}).inputValue(),'55');
+    await p.getByRole('button',{name:'Food',exact:true}).click();assert.equal(await p.getByLabel('Log',{exact:true}).inputValue(),'food-two');
+    const before=await p.evaluate(()=>{state.cards.push(LifeStateMerge.copy(state.cards.find(card=>card.id==='food-two')));return JSON.stringify(state.cards);});await p.evaluate(()=>renderCardsOnly({force:true}));assert.equal(await p.locator('.food-tracker').count(),0);assert.match(await p.locator('#boardGrid').innerText(),/duplicate identity/);assert.equal(await p.evaluate(()=>JSON.stringify(state.cards)),before);
+  });
+  await run('empty Health views open the requested log type and preserve an unfinished composer draft',async p=>{
+    await p.evaluate(async()=>{for(const card of state.cards)if(['fitness','food'].includes(card.type))card.archivedAt=1793419200000;saveState({skipCloud:true});await flushDeviceWrites();});await workspace(p,'health');
+    await p.getByRole('button',{name:'Add Fitness Log',exact:true}).click();assert.equal(await p.evaluate(()=>getSelectedFormType()),'fitness');await p.evaluate(()=>closeCardComposer({reset:true}));
+    await p.getByRole('button',{name:'Food',exact:true}).click();await p.getByRole('button',{name:'Add Food Tracker',exact:true}).click();assert.equal(await p.evaluate(()=>getSelectedFormType()),'food');
+    await p.evaluate(()=>{setFormType('sidenote');elements.cardTitle.value='Keep my unfinished idea';draftTouched=true;closeCardComposer();});await p.getByRole('button',{name:'Add Food Tracker',exact:true}).click();assert.equal(await p.evaluate(()=>getSelectedFormType()),'sidenote');assert.equal(await p.evaluate(()=>elements.cardTitle.value),'Keep my unfinished idea');
+  });
   await run('an open workout row edits and removes its original exercise ID after the live list is reordered',async p=>{
     await workspace(p,'health');await p.evaluate(()=>flushDeviceWrites());await p.getByLabel('Kg',{exact:true}).focus();
     await p.evaluate(async()=>{const part=state.cards.find(c=>c.id==='workout').fitnessEntries['2026-10-31'].parts.chest;part.exercises.push(normalizeFitnessExercise({id:'other-lift',name:'Another lift',sets:4,reps:'8',weightKg:80}));part.exercises.reverse();saveState({skipCloud:true});await flushDeviceWrites();});

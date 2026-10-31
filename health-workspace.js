@@ -21,9 +21,17 @@
 })(typeof window==='undefined'?globalThis:window);
 
 const healthSessions=new Map();
+function openHealthLogComposer(type) {
+  if(draftTouched || editingCardId){
+    openCardComposer();
+    setSaveStatus('Your existing card draft is still open. Finish or cancel it before adding another log.','notice');
+    return;
+  }
+  resetFormState();setFormType(type);openCardComposer();
+}
 function renderHealthWorkspace() {
   const root=elements.boardGrid;
-  if(!healthSessions.has(state.activeBoardId))healthSessions.set(state.activeBoardId,{view:'workout',cardId:'',partPickers:new Map()});
+  if(!healthSessions.has(state.activeBoardId))healthSessions.set(state.activeBoardId,{view:'workout',sources:{fitness:'',food:''},partPickers:new Map()});
   const session=healthSessions.get(state.activeBoardId),head=planningNode('header','health-workspace-head');
   head.append(planningNode('h1','', 'Health'),planningButton('Reports',openReportsModal,'bar-chart'));
   root.append(head);
@@ -46,15 +54,15 @@ function renderHealthWorkspace() {
       const parts=Object.entries(row.entry.parts || {}).filter(([,part])=>part?.active).map(([key])=>FITNESS_PARTS.find(part=>part.key===key)?.label || key);
       const item=planningButton(formatReadableDateKey(row.date)+' · '+parts.join(', '),()=>{
         const card=state.cards.find(card=>card.id===row.cardId);if(!card)return;
-        card.activeFitnessDate=row.date;session.cardId=card.id;session.view='workout';renderCardsOnly({force:true});
+        card.activeFitnessDate=row.date;session.sources.fitness=card.id;session.view='workout';renderCardsOnly({force:true});
       },'chevron-right');item.classList.add('health-history-row');list.append(item);
     }
     return;
   }
   const type=session.view==='food'?'food':'fitness',sources=cards.filter(card=>card.type===type);
-  if(!sources.length){root.append(planningNode('p','planning-empty',type==='fitness'?'No Fitness Log on this board yet.':'No Food Tracker on this board yet.'),planningButton('Add '+(type==='fitness'?'Fitness Log':'Food Tracker'),()=>openCardComposer(),'plus'));return;}
-  const card=sources.find(card=>card.id===session.cardId) || sources[0];session.cardId=card.id;
-  if(sources.length>1)root.append(planningField('Log',planningSelect(sources.map(card=>[card.id,card.title]),card.id,id=>{if(isProtectedTextEditActive())document.activeElement?.blur();session.cardId=id;renderCardsOnly({force:true});})));
+  if(!sources.length){root.append(planningNode('p','planning-empty',type==='fitness'?'No Fitness Log on this board yet.':'No Food Tracker on this board yet.'),planningButton('Add '+(type==='fitness'?'Fitness Log':'Food Tracker'),()=>openHealthLogComposer(type),'plus'));return;}
+  const card=sources.find(card=>card.id===session.sources[type]) || sources[0];session.sources[type]=card.id;
+  if(sources.length>1)root.append(planningField('Log',planningSelect(sources.map(card=>[card.id,card.title]),card.id,id=>{if(isProtectedTextEditActive())document.activeElement?.blur();session.sources[type]=id;renderCardsOnly({force:true});})));
   if(state.cards.filter(item=>item.id===card.id).length!==1){root.append(planningNode('p','planning-empty','This log has a duplicate identity. Editing is paused to protect both copies.'));return;}
   const editor=planningNode('section','health-workspace-editor task-card');editor.dataset.id=card.id;
   const log=type==='fitness'?renderFitnessLog(card):renderFoodTracker(card);

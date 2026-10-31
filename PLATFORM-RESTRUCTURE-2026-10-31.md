@@ -50,7 +50,7 @@ Remaining property work is substantial: simplify booking entry into stay/contact
 
 ## Training And Nutrition
 
-The dedicated Health view reuses the same Fitness Log and Food Tracker cards. It does not create a second workout history, food library, target table or duplicate report source. Phone inputs use roomier rows and native numeric/date controls. The previous-performance hint uses an earlier dated entry from the same card, muscle part and exact normalized exercise name; ambiguous matches are not guessed. History opens the original dated log.
+The dedicated Health view reuses the same Fitness Log and Food Tracker cards. It does not create a second workout history, food library, target table or duplicate report source. Workout and Food remember their source selections independently, including boards with multiple logs. Empty views open the requested card type without discarding an unfinished composer draft. Phone inputs use roomier rows and native numeric/date controls. The previous-performance hint uses an earlier dated entry from the same card, muscle part and exact normalized exercise name; ambiguous matches are not guessed. History opens the original dated log. The workout-part chooser retains its open state and keyboard focus during background redraws.
 
 The review also reproduced a correctness bug: strength inputs and removal used an exercise's array position. An open editor could target another exercise after the underlying list was reordered. They now resolve the original exercise ID within the original board, source, day and workout part; missing, duplicate, archived or wrong-board targets are refused. A separate textarea sizing bug omitted CSS borders, allowing delayed resizing to move an exercise control after it had been reached. Auto-sizing now accounts for both CSS box models and skips detached or hidden fields. Both fixes have dedicated synthetic regression coverage.
 
@@ -79,7 +79,7 @@ This routine is a design recommendation, not evidence that the application can g
 | Work | State |
 | --- | --- |
 | Simplified Properties navigation and retained original tools | Implemented; complete 36-case synthetic suite passes in Chromium and WebKit |
-| Health workspace sharing existing workout/food sources | Implemented; seven dedicated browser workflows cover navigation, writing and target integrity |
+| Health workspace sharing existing workout/food sources | Implemented; nine dedicated browser workflows cover navigation, writing, multiple sources, empty views and target integrity |
 | Previous exercise reference and original dated history | Implemented; tested with synthetic records |
 | Stable-ID strength editing/removal and correctly sized textareas | Implemented; reordered, ambiguous and wrong-board targets plus delayed scroll/box-model regressions tested |
 | Direct mobile Health entry, active-part shortcuts and roomier numeric inputs | Implemented; phone, tablet, portrait and desktop screenshots inspected |
@@ -93,7 +93,7 @@ This routine is a design recommendation, not evidence that the application can g
 
 Acceptance must include both Chromium and WebKit; phone, tablet, portrait and wide desktop screenshots; keyboard/menu focus; multi-digit entry without lost focus; existing diary/notes/other-board preservation; payment/document identity and history; stale-write refusal; and complete public release fingerprints after deployment. A physical phone, its on-screen keyboard, installation and actual signed-in cross-device operation remain separate acceptance steps.
 
-Verification includes 464 unit checks, 36 Properties cases per engine, seven dedicated Health workflows per engine, seven existing fitness/food interface cases per engine, thirteen exercise-reuse/sizing cases per engine, eleven guarded-startup cases per engine, four design cases and three shell/navigation cases. Full hosted gates must accept the final source revision before it can deploy; an earlier candidate correctly stopped on the delayed textarea-sizing regression rather than publishing it. Chromium parsed the manifest without errors and returned no installability errors. Browser cases use disposable records and mocked private requests, not production accounts. These results do not certify physical-device installation or live signed-in cross-device operation.
+Verification includes 464 unit checks, 36 Properties cases per engine, nine dedicated Health workflows per engine, seven existing fitness/food interface cases per engine, thirteen exercise-reuse/sizing cases per engine, eleven guarded-startup cases per engine, four design cases and three shell/navigation cases. Full hosted gates must accept the final source revision before it can deploy; an earlier candidate correctly stopped on the delayed textarea-sizing regression rather than publishing it. Chromium parsed the manifest without errors and returned no installability errors. Browser cases use disposable records and mocked private requests, not production accounts. These results do not certify physical-device installation or live signed-in cross-device operation.
 
 ## Research Basis
 
