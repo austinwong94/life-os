@@ -257,6 +257,35 @@ table{font-size:13px}
   #dashboardView #financeReports :is(input:not([type=checkbox]),select,textarea){font-size:16px}
 }
 
+/* Mounted cost editors distinguish unfinished input from recorded totals. */
+#financeReports .cost-editor-state{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line);min-width:0}
+#financeReports .cost-editor-state p{margin:0;min-width:0;flex:1 1 160px;font:12px/1.5 system-ui,sans-serif;color:var(--muted);overflow-wrap:anywhere}
+#financeReports .cost-editor-state[data-state=attention] p{color:var(--due)}
+#financeReports .cost-editor-state button{min-height:44px;font-size:13px}
+#dashboardView #financeReports :is(.commitment-row,.one-off-row){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;padding:16px 0;border:0;border-bottom:1px solid var(--line);border-radius:0;min-width:0;background:transparent}
+#dashboardView #financeReports :is(.commitment-row,.one-off-row) label{display:grid;gap:6px;min-width:0;font:500 12px/1.5 system-ui,sans-serif;letter-spacing:0}
+#dashboardView #financeReports :is(.commitment-row,.one-off-row) :is(input,select){min-height:44px;width:100%;min-width:0;box-sizing:border-box;font-size:14px}
+#dashboardView #financeReports :is(.commitment-row,.one-off-row) button{justify-self:start;align-self:end;min-width:44px}
+#dashboardView #financeReports .receipt-field{min-width:0;grid-column:1/-1}
+#dashboardView #financeReports .receipt-preview{display:flex;flex-wrap:wrap;gap:12px;min-width:0}
+#dashboardView #financeReports .receipt-preview img{width:100px;max-width:100%;max-height:100px;object-fit:contain}
+#dashboardView #financeReports .receipt-preview>div{min-width:0;overflow-wrap:anywhere}
+#dashboardView #financeReports .receipt-upload{display:grid;gap:8px;min-width:0;height:auto;padding:0;border:0;background:transparent;align-items:start;justify-content:stretch}
+#dashboardView #financeReports .receipt-upload input[type=file]{position:static;width:100%;height:auto;min-height:44px;clip:auto;opacity:1;overflow:hidden;margin:0;padding:8px;max-width:100%;font-size:12px}
+#dashboardView #financeReports :is(.commitment-editor,.one-off-editor,.annual-commitments,.annual-table-wrap){min-width:0;max-width:100%;box-sizing:border-box}
+#dashboardView #financeReports .commitment-editor{grid-template-columns:minmax(0,1fr)}
+#dashboardView #financeReports .annual-commitments:not([open])>:not(summary){display:none}
+#dashboardView #financeReports input.annual-amount-input{min-height:44px;font-size:14px}
+.cost-draft-dialog{box-sizing:border-box;width:min(460px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow:auto;padding:20px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+.cost-draft-dialog::backdrop{background:rgb(18 30 25 / 35%)}
+.cost-draft-dialog h2{font:600 16px/1.5 system-ui,sans-serif;letter-spacing:0;margin:0 0 12px}
+.cost-draft-dialog button{min-height:44px;font-size:13px;margin:8px 8px 0 0}
+@media(max-width:700px){
+  #dashboardView #financeReports :is(.commitment-row,.one-off-row){grid-template-columns:minmax(0,1fr)}
+  #dashboardView #financeReports :is(.commitment-row,.one-off-row) :is(input,select){font-size:16px}
+  #dashboardView #financeReports .commitment-summary{flex-wrap:wrap}
+}
+
 /* One original expense table adapts to a complete, readable compact list. */
 #financeExpenses .table-panel{padding:16px 12px;border:0;border-radius:0;box-shadow:none;background:transparent;min-width:0}
 #financeExpenses .table-panel .section-heading{flex-wrap:wrap;gap:12px;padding:0}

@@ -678,6 +678,8 @@ let removePendingTaxExpenseAttachment = false;
 let expenseDraftBaseline=null,expenseDraftAfterDiscard=null,expenseDraftLastField='taxExpenseVendor';
 let expenseAttachmentGeneration=0,expenseAttachmentReading=false;
 let expenseListLayout='',expenseListSignature='',expenseListRevision=0;
+let costEditors=null;
+let costPointerTarget=null;
 
 const els = {
   monthPicker: document.querySelector("#monthPicker"),
@@ -1951,6 +1953,7 @@ function loadProfitData() {
 function normalizeProfitMonth(monthData = {}) {
   const fallback = defaultProfitMonth();
   return {
+    ...monthData,
     cleaning: Number(monthData.cleaning || 0),
     utilities: Number(monthData.utilities || 0),
     maintenance: Number(monthData.maintenance || 0),
@@ -4192,18 +4195,101 @@ function receiptImageFromFile(file) {
       const image = new Image();
       image.onerror = () => reject(new Error("Could not load receipt image."));
       image.onload = () => {
-        const maxSide = 1200;
-        const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(image.width * scale));
-        canvas.height = Math.max(1, Math.round(image.height * scale));
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.72));
+        try {
+          const maxSide = 1200;
+          const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(image.width * scale));
+          canvas.height = Math.max(1, Math.round(image.height * scale));
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.72));
+        } catch { reject(new Error('Could not convert receipt image.')); }
       };
       image.src = reader.result;
     };
     reader.readAsDataURL(file);
+  });
+}
+
+function costWorkspaceAvailable() {
+  return bookingWorkspaceAvailable() && activeView==='dashboard' && financeSection==='reports' && !document.querySelector('dialog[open]');
+}
+
+function costEditorsPending() {
+  return Object.values(costEditors || {}).some(editor=>editor.pending());
+}
+
+function createCostEditor(host,read,scope,idFor) {
+  let baseline=null,signature='',dependencies=null,warning='',repaint=false;
+  const fields=new Map(),targets=new Map(),reading=new Map();
+  const bar=document.createElement('div'),status=document.createElement('p'),discard=document.createElement('button');
+  bar.className='cost-editor-state';status.setAttribute('role','status');discard.type='button';discard.className='ghost-button';discard.textContent='Discard draft';bar.append(status,discard);(host.tagName==='TBODY'?host.closest('.table-scroll'):host).before(bar);
+  const sameScope=()=>baseline && JSON.stringify(baseline)===JSON.stringify(scope());
+  const pending=()=>reading.size>0 || [...fields].some(([field,value])=>field.value!==value || field.validity?.badInput);
+  const stamp=()=>JSON.stringify([scope(),read(),dependencies]);
+  function show(message) {
+    if(message)warning=message;
+    const dirty=pending(),text=warning || (!sameScope() && dirty?'Draft for '+baseline.label+'. Return there before saving.':reading.size?'Reading receipt...':dirty?'Unsaved changes · '+baseline.label:scope().label);
+    if(status.textContent!==text)status.textContent=text;
+    bar.dataset.state=warning || (!sameScope() && dirty)?'attention':'';discard.hidden=!dirty;
+  }
+  function target(control) {
+    const captured=targets.get(control);
+    if(!costWorkspaceAvailable() || !sameScope() || !captured || captured.dataset!==JSON.stringify(control.dataset) || control.disabled || !control.isConnected || !host.contains(control)){
+      show('This cost workspace changed. Your draft is retained.');return null;
+    }
+    const record=LifePropertyBookingList.unchanged(read(),captured.id,captured.expected);
+    if(!record)show('This cost changed or needs identity review. Your draft is retained.');
+    return record;
+  }
+  function render(html,nextDependencies=null) {
+    dependencies=nextDependencies;
+    if(pending()){show();return false;}
+    if(signature===stamp()){show();return false;}
+    // A blur-save can redraw a neighbouring editor during the next field's mousedown.
+    const focused=host.contains(costPointerTarget)?costPointerTarget:host.contains(document.activeElement)?document.activeElement:null;
+    const focusKey=sameScope() && focused?.matches('input,select')?JSON.stringify(focused.dataset):null;
+    const selection=focused && typeof focused.selectionStart==='number'?[focused.selectionStart,focused.selectionEnd]:null;
+    host.innerHTML=html;baseline=scope();signature=stamp();repaint=false;fields.clear();targets.clear();
+    const source=read();let ambiguous=false;
+    for(const control of host.querySelectorAll('input,select,button')){
+      const id=idFor(control),matches=source.filter(record=>record.id===id);
+      if(control.matches('input,select'))fields.set(control,control.value);
+      if(matches.length===1 && typeof id==='string' && id.trim())targets.set(control,{id,expected:JSON.stringify(matches[0]),dataset:JSON.stringify(control.dataset)});
+      else {control.disabled=true;ambiguous=true;}
+    }
+    if(ambiguous)warning='Some costs need identity review. Original records are retained.';
+    if(focusKey!==null && costWorkspaceAvailable()){
+      const next=[...fields.keys()].find(field=>JSON.stringify(field.dataset)===focusKey && !field.disabled);
+      if(next){next.focus({preventScroll:true});if(selection && typeof next.selectionStart==='number')next.setSelectionRange(...selection);}
+    }
+    show();return true;
+  }
+  function accept(control,refresh=false) {
+    fields.has(control) && fields.set(control,control.value);
+    const saved=targets.get(control),matches=saved?read().filter(record=>record.id===saved.id):[];
+    if(matches.length===1)for(const item of targets.values())if(item.id===saved.id)item.expected=JSON.stringify(matches[0]);
+    warning='';repaint=repaint || refresh;signature=repaint?'':stamp();show();
+  }
+  function discardDraft() {
+    fields.clear();targets.clear();reading.clear();baseline=null;signature='';warning='';renderDashboard();
+  }
+  discard.onclick=()=>{
+    if(!bookingWorkspaceAvailable() || cloudUser.id!==baseline?.owner || document.querySelector('dialog[open]'))return;
+    const owner=cloudUser.id,dialog=document.createElement('dialog');dialog.className='cost-draft-dialog';dialog.setAttribute('aria-label','Discard unfinished cost changes');
+    const title=document.createElement('h2');title.textContent='Discard unfinished cost changes?';const keep=document.createElement('button'),confirm=document.createElement('button');
+    for(const button of [keep,confirm]){button.type='button';button.className='ghost-button';}keep.textContent='Keep editing';confirm.textContent='Discard changes';
+    dialog.append(title,keep,confirm);document.body.append(dialog);const close=()=>{dialog.close();dialog.remove();};
+    keep.onclick=()=>{if(dialog.open)close();};dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+    confirm.onclick=()=>{if(!dialog.open)return;close();if(bookingWorkspaceAvailable() && cloudUser.id===owner)discardDraft();};dialog.showModal();keep.focus();
+  };
+  host.addEventListener('input',()=>{warning='';show();});
+  return Object.freeze({render,target,accept,pending,sameScope,show,
+    invalidate:()=>{signature='';},
+    begin:control=>{if(!target(control))return null;const ticket={control,generation:authGeneration};reading.set(control,ticket);show();return ticket;},
+    current:ticket=>reading.get(ticket.control)===ticket && ticket.generation===authGeneration && Boolean(target(ticket.control)),
+    finish:ticket=>{if(reading.get(ticket.control)===ticket)reading.delete(ticket.control);show();}
   });
 }
 
@@ -4212,7 +4298,7 @@ function renderOneOffCosts() {
   const expenses = profitMonth(selectedMonth);
   const oneOffTotal = expenses.oneOffCosts.reduce((sum, cost) => sum + Number(cost.amount || 0), 0);
   if (els.oneOffTotalOut) els.oneOffTotalOut.textContent = money(oneOffTotal);
-  els.oneOffCostList.innerHTML = expenses.oneOffCosts.length
+  const html = expenses.oneOffCosts.length
     ? expenses.oneOffCosts
         .map(
           (cost) => `
@@ -4241,11 +4327,11 @@ function renderOneOffCosts() {
                           <button class="small-action danger" type="button" data-remove-receipt="${cost.id}">Remove receipt</button>
                         </div>
                       </div>`
-                    : `<label class="receipt-upload">
-                        Attach receipt
-                        <input data-receipt-upload="${cost.id}" type="file" accept="image/*" />
-                      </label>`
+                    : ''
                 }
+                <label class="receipt-upload">${cost.receiptImage?'Replace receipt':'Attach receipt'}
+                  <input data-receipt-upload="${cost.id}" type="file" accept="image/*" />
+                </label>
               </div>
               ${typeof linkedLegacyExpense === "function" && linkedLegacyExpense(profitMonthKey(selectedMonth), cost.id)
                 ? `<button class="small-action" type="button" data-open-linked-cost="${cost.id}">Edit linked record</button>`
@@ -4255,6 +4341,7 @@ function renderOneOffCosts() {
         )
         .join("")
     : `<div class="empty-one-off">No one-off costs recorded for ${monthLabel(selectedMonth)}.</div>`;
+  costEditors.oneOff.render(html,(taxPlan.expenses || []).filter(expense=>expense.financeMode==='legacy').map(expense=>[expense.id,expense.legacyCost]));
 }
 
 function renderCommitments() {
@@ -4283,7 +4370,7 @@ function renderCommitments() {
   if (!els.commitmentList) return;
   const commitments = (appSettings.commitments || []).map(normalizeCommitment).filter((item) => item.villa === activeVillaKey());
   const activeTotal = commitmentTotalFor(selectedMonth);
-  els.commitmentList.innerHTML = `
+  const html = `
     <div class="commitment-summary">
       <span>Active this month</span>
       <strong>${money(activeTotal)}</strong>
@@ -4314,9 +4401,17 @@ function renderCommitments() {
       )
       .join("")}
   `;
+  costEditors.fixed.render(html);
+  if(costEditors.fixed.sameScope() && !costEditors.fixed.pending()){
+    const total=els.commitmentList.querySelector('.commitment-summary strong');if(total)total.textContent=money(activeTotal);
+    for(const row of els.commitmentList.querySelectorAll('.commitment-row')){
+      const id=row.querySelector('[data-commitment-id]')?.dataset.commitmentId,record=commitments.find(item=>item.id===id);
+      if(record)row.classList.toggle('inactive',!commitmentActiveInMonth(record,selectedMonth));
+    }
+  }
   if (els.annualCommitmentRows) {
     const months = Array.from({ length: 12 }, (_, index) => `${selectedYear}-${String(index + 1).padStart(2, "0")}`);
-    els.annualCommitmentRows.innerHTML = commitments
+    const annualHtml = commitments
       .map(
         (commitment) => `
           <tr>
@@ -4334,6 +4429,7 @@ function renderCommitments() {
         `,
       )
       .join("");
+    costEditors.annual.render(annualHtml);
   }
 }
 
@@ -9222,34 +9318,39 @@ els.addOneOffCost?.addEventListener("click", () => {
 });
 
 els.oneOffCostList?.addEventListener("change", (event) => {
-  const receiptId = event.target.dataset.receiptUpload;
+  const control=event.target,editor=costEditors.oneOff,record=editor.target(control);
+  if(!record){renderDashboard();return;}
+  const receiptId = event.target.dataset.receiptUpload?record.id:null;
   if (receiptId) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const receiptMonth = selectedMonth;
-    const receiptVilla = activeVillaKey();
+    const receiptMonth = selectedMonth,receiptVilla=activeVillaKey(),ticket=editor.begin(control);
+    if(!ticket)return;
+    if(file.size>2_500_000 || !file.type.startsWith('image/')){control.value='';editor.finish(ticket);editor.show('Use a receipt image below 2.5 MB. Previous receipt retained.');return;}
     receiptImageFromFile(file)
       .then((receiptImage) => {
+        if(!editor.current(ticket))return;
         const current = profitMonth(receiptMonth, receiptVilla);
         saveSelectedProfitMonth({
           ...current,
           oneOffCosts: current.oneOffCosts.map((cost) => (cost.id === receiptId ? normalizeOneOffCost({ ...cost, receiptImage, receiptName: file.name }) : cost)),
         }, receiptMonth, receiptVilla);
-        renderDashboard();
+        editor.accept(control,true);
         document.querySelector(".one-off-block")?.setAttribute("open", "");
       })
-      .catch((error) => window.alert(error.message || "Could not attach receipt image."));
+      .catch(() => {if(editor.current(ticket)){control.value='';editor.show('Could not read receipt. Previous receipt retained.');}})
+      .finally(()=>{editor.finish(ticket);renderDashboard();});
     return;
   }
-  const id = event.target.dataset.oneOffId;
+  const id = record.id;
   const field = event.target.dataset.oneOffField;
-  if (!id || !field) return;
+  if (!id || !['category','description','amount'].includes(field) || !control.reportValidity()) return;
   const current = profitMonth(selectedMonth);
   if (field === "amount" && typeof linkedLegacyExpense === "function" && linkedLegacyExpense(profitMonthKey(selectedMonth), id)) {
-    window.alert("This cost is linked to an expense record. Update its amount from Finance > Expenses to keep both records aligned.");
-    renderOneOffCosts();
+    editor.show('This amount is linked. Edit its original record in Expenses. Your draft is retained.');
     return;
   }
+  if(record[field]===(field==='amount'?Number(control.value || 0):control.value)){editor.accept(control);return;}
   saveSelectedProfitMonth({
     ...current,
     oneOffCosts: current.oneOffCosts.map((cost) =>
@@ -9261,36 +9362,46 @@ els.oneOffCostList?.addEventListener("change", (event) => {
         : cost,
     ),
   });
+  editor.accept(control);
   renderDashboard();
   document.querySelector(".one-off-block")?.setAttribute("open", "");
 });
 
 els.oneOffCostList?.addEventListener("click", (event) => {
-  const linkedCost = event.target.dataset.openLinkedCost;
+  const control=event.target.closest('button');if(!control)return;
+  const editor=costEditors.oneOff,record=editor.target(control);if(!record){renderDashboard();return;}
+  const linkedCost = event.target.dataset.openLinkedCost?record.id:null;
   if (linkedCost) { openLegacyCostRecord(profitMonthKey(selectedMonth), linkedCost); return; }
-  const receiptId = event.target.dataset.removeReceipt;
+  const receiptId = event.target.dataset.removeReceipt?record.id:null;
   if (receiptId) {
+    if(editor.pending()){editor.show('Finish or discard unfinished cost changes before removing a receipt.');return;}
+    if(!window.confirm('Remove this receipt image? The cost record will stay.') || !editor.target(control))return;
+    createRecoverySnapshot('Before one-off receipt removed');
     const current = profitMonth(selectedMonth);
     saveSelectedProfitMonth({
       ...current,
       oneOffCosts: current.oneOffCosts.map((cost) => (cost.id === receiptId ? normalizeOneOffCost({ ...cost, receiptImage: "", receiptName: "" }) : cost)),
     });
+    editor.invalidate();
     renderDashboard();
     document.querySelector(".one-off-block")?.setAttribute("open", "");
     return;
   }
-  const id = event.target.dataset.deleteOneOff;
+  const id = event.target.dataset.deleteOneOff?record.id:null;
   if (!id) return;
+  if(editor.pending()){editor.show('Finish or discard unfinished cost changes before deleting.');return;}
   if (typeof linkedLegacyExpense === "function" && linkedLegacyExpense(profitMonthKey(selectedMonth), id)) {
     window.alert("This cost is linked to an expense record. Delete or unlink that receipt record first. No cost was deleted.");
     return;
   }
+  if(!window.confirm('Delete this one-off cost?') || !editor.target(control))return;
   createRecoverySnapshot("Before one-off cost deleted");
   const current = profitMonth(selectedMonth);
   saveSelectedProfitMonth({
     ...current,
     oneOffCosts: current.oneOffCosts.filter((cost) => cost.id !== id),
   });
+  editor.invalidate();
   renderDashboard();
   document.querySelector(".one-off-block")?.setAttribute("open", "");
 });
@@ -9496,6 +9607,8 @@ els.copyReminderMessage?.addEventListener("click", async () => {
 els.addCommitment?.addEventListener("click", (event) => {
   event.preventDefault();
   event.stopPropagation();
+  if(!costWorkspaceAvailable())return;
+  if(costEditors.fixed.pending() || costEditors.annual.pending()){costEditors.fixed.show('Finish or discard unfinished fixed-cost changes before adding another.');return;}
   appSettings = {
     ...appSettings,
     commitments: [
@@ -9510,9 +9623,12 @@ els.addCommitment?.addEventListener("click", (event) => {
 });
 
 els.commitmentList?.addEventListener("change", (event) => {
-  const id = event.target.dataset.commitmentId;
+  const control=event.target,editor=costEditors.fixed,record=editor.target(control);
+  if(!record){renderDashboard();return;}
+  const id = record.id;
   const field = event.target.dataset.commitmentField;
-  if (!id || !field) return;
+  if (!id || !['name','amount','category','starts','expires'].includes(field) || !control.reportValidity()) return;
+  if(record[field]===(field==='amount'?Number(control.value || 0):control.value)){editor.accept(control);return;}
   appSettings = {
     ...appSettings,
     commitments: (appSettings.commitments || []).map((commitment) =>
@@ -9520,25 +9636,34 @@ els.commitmentList?.addEventListener("change", (event) => {
     ),
   };
   saveAppSettings();
+  editor.accept(control);
   renderDashboard();
 });
 
 els.commitmentList?.addEventListener("click", (event) => {
-  const id = event.target.dataset.deleteCommitment;
+  const control=event.target.closest('button');if(!control)return;
+  const editor=costEditors.fixed,record=editor.target(control);if(!record){renderDashboard();return;}
+  const id = event.target.dataset.deleteCommitment?record.id:null;
   if (!id) return;
+  if(editor.pending() || costEditors.annual.pending()){editor.show('Finish or discard unfinished fixed-cost changes before deleting.');return;}
+  if(!window.confirm('Delete this fixed cost and its monthly overrides?') || !editor.target(control))return;
   createRecoverySnapshot("Before monthly commitment deleted");
   appSettings = {
     ...appSettings,
     commitments: (appSettings.commitments || []).filter((commitment) => commitment.id !== id),
   };
   saveAppSettings();
+  editor.invalidate();
   renderDashboard();
 });
 
 els.annualCommitmentRows?.addEventListener("change", (event) => {
-  const id = event.target.dataset.annualCommitmentId;
+  const control=event.target,editor=costEditors.annual,record=editor.target(control);
+  if(!record){renderDashboard();return;}
+  const id = record.id;
   const monthValue = event.target.dataset.annualMonth;
-  if (!id || !monthValue) return;
+  if (!id || !new RegExp('^'+selectedMonth.slice(0,4)+'-(0[1-9]|1[0-2])$').test(monthValue) || !control.reportValidity()) return;
+  if(record.overrides?.[monthValue]===Number(control.value || 0)){editor.accept(control);return;}
   appSettings = {
     ...appSettings,
     commitments: (appSettings.commitments || []).map((commitment) =>
@@ -9551,6 +9676,7 @@ els.annualCommitmentRows?.addEventListener("change", (event) => {
     ),
   };
   saveAppSettings();
+  editor.accept(control);
   renderDashboard();
   const drawer = document.querySelector(".commitments-block");
   if (drawer) drawer.open = true;
@@ -10862,6 +10988,15 @@ function initializeFinanceReports() {
 }
 
 initializeFinanceReports();
+const costScope=(annual=false)=>({owner:cloudUser?.id,villa:activeVillaKey(),period:annual?selectedMonth.slice(0,4):selectedMonth,label:activeVillaKey()+' Villa · '+(annual?selectedMonth.slice(0,4):monthLabel(selectedMonth))});
+costEditors={
+  oneOff:createCostEditor(els.oneOffCostList,()=>{const rows=profitData[profitMonthKey(selectedMonth)]?.oneOffCosts;return Array.isArray(rows)?rows:[];},()=>costScope(),control=>control.dataset.oneOffId || control.dataset.receiptUpload || control.dataset.removeReceipt || control.dataset.deleteOneOff || control.dataset.openLinkedCost),
+  fixed:createCostEditor(els.commitmentList,()=>appSettings.commitments || [],()=>costScope(),control=>control.dataset.commitmentId || control.dataset.deleteCommitment),
+  annual:createCostEditor(els.annualCommitmentRows,()=>appSettings.commitments || [],()=>costScope(true),control=>control.dataset.annualCommitmentId)
+};
+document.addEventListener('pointerdown',event=>{const field=event.target.closest?.('input,select');costPointerTarget=field && [els.oneOffCostList,els.commitmentList,els.annualCommitmentRows].some(host=>host.contains(field))?field:null;},true);
+for(const event of ['pointerup','pointercancel'])document.addEventListener(event,()=>{costPointerTarget=null;},true);
+window.addEventListener('blur',()=>{costPointerTarget=null;});
 initializeExpenseEditor();
 for(const button of document.querySelectorAll('[data-expense-layout]'))button.onclick=()=>{
   if(!bookingWorkspaceAvailable() || activeView!=='dashboard' || financeSection!=='expenses' || document.querySelector('dialog[open]'))return;
@@ -11072,7 +11207,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-window.PropertyOperations={save:saveCloudSnapshot,export:allAppData,pending:()=>cloudDirty || documentHasUnsavedChanges || expenseDraftDirty() || localStorage.pending(),flush:()=>localStorage.flush()};
+window.PropertyOperations={save:saveCloudSnapshot,export:allAppData,pending:()=>cloudDirty || documentHasUnsavedChanges || expenseDraftDirty() || costEditorsPending() || localStorage.pending(),flush:()=>localStorage.flush()};
 // A clean editor can hand off its lifetime cache lock, never an unfinished form.
 if(typeof BroadcastChannel==='function'){
   const handoff=new BroadcastChannel('life-os-properties-handoff:'+propertySession.user.id);let releasing=false;
@@ -11170,6 +11305,6 @@ function initializePropertyPeriod() {
 initializePropertyPeriod();
 document.getElementById('cloudLogout').textContent='Life OS account';
 for(const id of ['aiDraftBtn','taxScanInput','taxScanBtn','taxBatchScanBtn','taxEarningsBtn','taxDocAnalyzeBtn','runTaxReviewBtn']){const control=document.getElementById(id);if(control){control.disabled=true;control.title='AI disabled. Manual records remain available.';}}
-window.addEventListener('beforeunload',event=>{if(cloudDirty || documentHasUnsavedChanges || expenseDraftDirty() || localStorage.pending()){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(cloudDirty || documentHasUnsavedChanges || expenseDraftDirty() || costEditorsPending() || localStorage.pending()){event.preventDefault();event.returnValue='';}});
 } catch(error) { window.PropertyHost.failed(error); }
 })();
