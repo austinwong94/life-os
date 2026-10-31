@@ -618,6 +618,7 @@ function renderHealthVersion(record,conflict) {
     if (record.source) add('Source',record.source);
   } else if (conflict.recordType==='fitness-exercise') {
     for (const [label,key,unit] of [['Sets','sets',''],['Reps','reps',''],['Weight','weightKg','kg'],['Effort (RPE)','rpe','/10']]) add(label,number(record[key],unit));
+    if(Object.hasOwn(record,'setLog'))for(const [index,line] of fitnessSetReportLines(record).entries())add(index===0?'Individual sets':'',line);
   } else if (conflict.recordType==='body-metrics') {
     for (const field of FITNESS_METRIC_FIELDS) add(field.label,number(record[field.key],field.suffix));
   } else {

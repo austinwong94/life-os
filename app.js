@@ -3,7 +3,7 @@ if (window.top !== window.self) {
   throw new Error("Life OS must be opened directly, not inside another website.");
 }
 // Older cached HTML may omit modules introduced by a newer deployment.
-if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeExerciseReuse','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeHealth','LifeMomentum'].some(name=>!globalThis[name])){
+if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeExerciseReuse','LifeFitnessSets','LifeFitnessSetsUI','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeHealth','LifeMomentum'].some(name=>!globalThis[name])){
   window.LifeStartupBlocked=true;
   const shell=document.getElementById('appShell');if(shell)shell.hidden=true;
   const panel=document.createElement('section');panel.setAttribute('aria-label','Website startup');
@@ -3131,7 +3131,7 @@ function renderCardsOnly(options = {}) {
     : null;
   const taskFocus=elements.boardGrid.contains(document.activeElement)?captureTaskControlFocus():null;
   const healthFocus = elements.boardGrid.contains(document.activeElement)
-    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button, .health-part-picker > summary")?.id : "";
+    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button, .health-part-picker > summary, .fitness-set-row input[type=checkbox], .fitness-set-actions button, .fitness-set-disclosure > summary, .fitness-set-restore")?.id : "";
   closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
@@ -4700,8 +4700,9 @@ function updateFitnessEntry(card, dateKey, updater, options = {}) {
   entry.metrics = normalizeFitnessMetrics(entry.metrics);
   entry.updatedAt = Date.now();
   card.fitnessEntries[normalizedDate] = normalizeFitnessEntry(entry);
-  saveState({ quiet: true });
+  const saved = saveState({ quiet: true });
   if (options.rerender) renderCardsOnly({ force: true });
+  return saved;
 }
 
 function syncFitnessUiStateFromDom(card) {
@@ -4795,7 +4796,7 @@ function renderFitnessLog(card) {
   if (!activeParts.length) {
     const empty = document.createElement("p");
     empty.className = "fitness-empty";
-    empty.textContent = "Select the workout parts completed for this date.";
+    empty.textContent = "No workout parts recorded for this date.";
     activeBody.append(empty);
   } else {
     const overview = document.createElement("details");
@@ -4835,6 +4836,11 @@ function getFitnessPartSummary(meta, part) {
   }
   if (meta.type === "strength") {
     const exercises = Array.isArray(part.exercises) ? part.exercises : [];
+    const results=exercises.map(exercise=>LifeFitnessSets.stats(exercise));
+    if(results.some(result=>result.mode!=='summary')){
+      const done=results.reduce((sum,result)=>sum+result.completed,0),summary=results.reduce((sum,result)=>sum+result.summary,0),unknown=results.filter(result=>result.mode==='unrecognized').length;
+      return done+' completed sets'+(summary?' · '+summary+' summary sets':'')+(unknown?' · '+unknown+' need review':'');
+    }
     const sets = exercises.reduce((sum, exercise) => sum + (Number(exercise.sets) || 0), 0);
     if (sets && exercises.length) return `${sets} sets · ${exercises.length} ex`;
     if (exercises.length) return `${exercises.length} exercise${exercises.length === 1 ? "" : "s"}`;
@@ -4887,15 +4893,25 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
   const section = createFitnessSection(meta.label, () => removeFitnessPart(card, dateKey, meta.key));
   const list = document.createElement("div");
   list.className = "fitness-exercises";
-  part.exercises.forEach((exercise, index) => {
+  part.exercises.forEach((exercise) => {
     const row = document.createElement("div");
     row.className = "fitness-exercise-row";
     const previous=LifeHealth.previous(card,dateKey,meta.key,exercise.name);
     if(previous){
       const hint=document.createElement('small');hint.className='fitness-previous';
       const old=previous.exercise;
-      hint.textContent='Previous · '+formatReadableDateKey(previous.date)+' · '+(old.sets===''?'—':old.sets)+' sets × '+(old.reps || '—')+' reps · '+(old.weightKg===''?'—':old.weightKg)+' kg';
+      const result=LifeFitnessSets.stats(old);
+      const last=result.rows.filter(row=>row.done).at(-1);
+      hint.textContent='Previous · '+formatReadableDateKey(previous.date)+'\n'+(result.mode==='summary' ? [old.sets!==''?old.sets+' sets':'',old.reps?old.reps+' reps':'',old.weightKg!==''?old.weightKg+' kg':''].filter(Boolean).join(' · ') : result.mode==='sets' ? result.completed+' completed sets'+(last?' · Last: '+last.weightKg+' kg × '+last.reps+' reps':'') : 'Set log needs review');
       list.append(hint);
+    }
+    if(Object.hasOwn(exercise,'setLog')){
+      const group=document.createElement('section');group.className='fitness-set-exercise';
+      if(LifeFitnessSets.stats(exercise).mode!=='unrecognized'){
+        const header=document.createElement('div');header.className='fitness-set-heading';
+        header.append(createFitnessTextField('Exercise',exercise.name,value=>updateFitnessExercise(card,dateKey,meta.key,exercise.id,{name:value},boardId)),createFitnessExerciseRemove(card,dateKey,meta.key,exercise.id,boardId));group.append(header);
+      }else group.append(planningNode('h3','',exercise.name));
+      group.append(renderFitnessSetLog(card,dateKey,meta.key,exercise));list.append(group);return;
     }
     row.append(
       createFitnessTextField("Exercise", exercise.name, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { name: value },boardId)),
@@ -4904,20 +4920,9 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
       createFitnessNumberField("Kg", exercise.weightKg, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { weightKg: value },boardId), { step: "0.25", decimals: 2, min: 0 }),
       createFitnessNumberField("RPE", exercise.rpe, (value) => updateFitnessExercise(card, dateKey, meta.key, exercise.id, { rpe: value },boardId), { step: "0.5", decimals: 1, min: 1, max: 10 })
     );
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "fitness-remove-exercise";
-    remove.innerHTML = ICONS["trash-2"];
-    remove.title = "Remove exercise";
-    remove.addEventListener("click", () => {
-      const target=fitnessExerciseTarget(card,dateKey,meta.key,exercise.id,boardId);
-      if(!target){setSaveStatus('This exercise changed or moved. Reopen the workout before removing it.','error');return;}
-      updateFitnessEntry(target.card, dateKey, (entry) => {
-        entry.parts[meta.key].exercises.splice(target.index, 1);
-      }, { rerender: true });
-    });
-    row.append(remove);
+    row.append(createFitnessExerciseRemove(card,dateKey,meta.key,exercise.id,boardId));
     list.append(row);
+    const start=planningButton('Log individual sets',()=>openFitnessSetLog(card,dateKey,meta.key,exercise),'plus');start.classList.add('fitness-set-start');list.append(start);
   });
   const add = document.createElement("button");
   add.type = "button";
@@ -4940,6 +4945,26 @@ function renderFitnessStrengthEditor(card, dateKey, meta, part) {
   return section;
 }
 
+function createFitnessExerciseRemove(card,dateKey,partKey,exerciseId,boardId){
+  const remove=document.createElement('button');remove.type='button';remove.className='fitness-remove-exercise';remove.innerHTML=ICONS['trash-2'];remove.title='Remove exercise';remove.setAttribute('aria-label',remove.title);
+  remove.addEventListener('click',()=>{
+    const target=fitnessExerciseTarget(card,dateKey,partKey,exerciseId,boardId);
+    if(!target){setSaveStatus('This exercise changed or moved. Reopen the workout before removing it.','error');return;}
+    const current=target.card.fitnessEntries[dateKey].parts[partKey].exercises[target.index];
+    if(Object.hasOwn(current,'setLog')){
+      const expected=LifeStateMerge.copy(current),dialog=dailyDialog('Remove exercise?');
+      dialog.append(planningNode('p','', 'Remove '+current.name+' and its individual-set records from '+formatReadableDateKey(dateKey)+'?'));
+      const message=planningNode('p','fitness-set-message');message.setAttribute('role','status');
+      dialog.append(message,planningButton('Cancel',()=>dialog.close()),planningButton('Remove exercise',()=>{
+        const live=fitnessExerciseTarget(card,dateKey,partKey,exerciseId,boardId);
+        if(!live || !LifeStateMerge.equal(live.card.fitnessEntries[dateKey].parts[partKey].exercises[live.index],expected)){message.textContent='This exercise changed. Nothing was removed; reopen it to review.';return;}
+        updateFitnessEntry(live.card,dateKey,entry=>{entry.parts[partKey].exercises.splice(live.index,1);},{rerender:true});dialog.close();
+      },'trash-2'));return;
+    }
+    updateFitnessEntry(target.card,dateKey,entry=>{entry.parts[partKey].exercises.splice(target.index,1);},{rerender:true});
+  });return remove;
+}
+
 function openFitnessExerciseReuse(card,dateKey,partKey) {
   const boardId=state.activeBoardId,cardId=card.id,meta=FITNESS_PARTS.find(part=>part.key===partKey && part.type==='strength'),board=()=>({id:state.activeBoardId,cards:state.cards});
   const matches=state.cards.filter(item=>item.id===cardId);
@@ -4959,8 +4984,11 @@ function openFitnessExerciseReuse(card,dateKey,partKey) {
       for(const exercise of command.source.exercises){
         const row=planningNode('label','daily-check'),check=document.createElement('input');check.type='checkbox';check.checked=command.selectedIds.includes(exercise.id);check.setAttribute('aria-label',exercise.name);
         const text=planningNode('span','',exercise.name),values=[];
-        if(Number(exercise.sets)>0)values.push(exercise.sets+' sets');if(exercise.reps)values.push(exercise.reps+' reps');if(Number(exercise.weightKg)>=0 && exercise.weightKg!=='')values.push(exercise.weightKg+' kg');if(Number(exercise.rpe)>0)values.push('RPE '+exercise.rpe);
-        if(values.length)text.append(planningNode('small','daily-task-source','Previously: '+values.join(' · ')));
+        const logged=LifeFitnessSets.stats(exercise),last=logged.rows.filter(row=>row.done).at(-1);
+        if(logged.mode==='sets'){values.push(logged.completed+' completed sets');if(last)values.push('Last: '+last.weightKg+' kg × '+last.reps+' reps');}
+        else if(logged.mode==='unrecognized')values.push('Individual-set measurements need review');
+        else{if(Number(exercise.sets)>0)values.push(exercise.sets+' sets');if(exercise.reps)values.push(exercise.reps+' reps');if(Number(exercise.weightKg)>=0 && exercise.weightKg!=='')values.push(exercise.weightKg+' kg');if(Number(exercise.rpe)>0)values.push('RPE '+exercise.rpe);}
+        if(values.length)text.append(planningNode('small','daily-task-source',(logged.mode==='summary'?'Summary: ':'Previously: ')+values.join(' · ')));
         if(!check.checked)text.append(planningNode('small','daily-task-source','Already listed on this date'));
         check.onchange=()=>{command.selectedIds=check.checked?[...command.selectedIds,exercise.id]:command.selectedIds.filter(id=>id!==exercise.id);add.disabled=!command.selectedIds.length;};
         row.append(check,text);preview.append(row);
@@ -8421,25 +8449,28 @@ function renderFitnessReport(range) {
   const summary = document.createElement("div");
   summary.className = "report-metric-grid";
   summary.append(
-    createReportMetric("Sessions", sessions.length, "logged workout days"),
+    createReportMetric("Logged entries", sessions.length, "workout or body-metric entries"),
     createReportMetric("Running", `${formatReportNumber(totals.runningKm)} km`, `${formatReportNumber(totals.runningMinutes)} min`),
-    createReportMetric("Strength", `${totals.strengthSets} sets`, `${totals.strengthDays} training days`),
+    createReportMetric("Strength", `${totals.completedSets} completed sets`, `${totals.summarySets} sets in summary entries · ${totals.strengthDays} recorded days`),
     createReportMetric("Coverage", `${totals.partLabels.length}`, totals.partLabels.join(", ") || "no parts yet")
   );
   documentNode.append(summary);
+
+  if(totals.unrecognizedExercises)documentNode.append(planningNode('p','report-lede',totals.unrecognizedExercises+' set logs need review and are excluded from calculated strength totals.'));
 
   const targetWeeks = Math.max(1, range.dayCount / 7);
   const targetMinutes = Math.round(150 * targetWeeks);
   const targetStrengthDays = Math.max(2, Math.round(2 * targetWeeks));
   documentNode.append(createReportSection("Health reference", [
     `Aerobic minutes: ${Math.round(totals.runningMinutes)} / ${targetMinutes} min reference`,
-    `Strength days: ${totals.strengthDays} / ${targetStrengthDays} day reference`,
+    `Recorded strength-entry days: ${totals.strengthDays} / ${targetStrengthDays} day reference; summary entries are not explicit set-completion records.`,
     `Best use: compare trend and consistency, then adjust training load gradually.`
   ]));
 
   documentNode.append(createFitnessSplitSection(totals.partCounts));
   documentNode.append(createFitnessMetricsTrendSection(sessions));
   documentNode.append(createFitnessRecentSessionsSection(sessions));
+  documentNode.append(createFitnessSetReportSection(sessions));
   return documentNode;
 }
 
@@ -8467,6 +8498,7 @@ function getFitnessReportTotals(sessions) {
   let runningKm = 0;
   let runningMinutes = 0;
   let strengthSets = 0;
+  let completedSets = 0,summarySets = 0,unrecognizedExercises = 0;
   const strengthDates = new Set();
   sessions.forEach((session) => {
     session.activeParts.forEach((meta) => {
@@ -8478,13 +8510,16 @@ function getFitnessReportTotals(sessions) {
         runningMinutes += Number(part.durationMinutes) || 0;
       }
       if (meta.type === "strength") {
-        const sets = (part.exercises || []).reduce((sum, exercise) => sum + (Number(exercise.sets) || 0), 0);
+        const results=(part.exercises || []).map(exercise=>LifeFitnessSets.stats(exercise));
+        const completed=results.reduce((sum,result)=>sum+result.completed,0),summarized=results.reduce((sum,result)=>sum+result.summary,0);
+        const sets=completed+summarized;completedSets+=completed;summarySets+=summarized;
+        unrecognizedExercises+=results.filter(result=>result.mode==='unrecognized').length;
         strengthSets += sets;
-        if (sets > 0 || part.exercises?.length) strengthDates.add(session.dateKey);
+        if (sets > 0 || results.some(result=>result.mode==='summary')) strengthDates.add(session.dateKey);
       }
     });
   });
-  return { runningKm, runningMinutes, strengthSets, strengthDays: strengthDates.size, partCounts, partLabels: [...partLabels] };
+  return { runningKm, runningMinutes, strengthSets, completedSets, summarySets, unrecognizedExercises, strengthDays: strengthDates.size, partCounts, partLabels: [...partLabels] };
 }
 
 function createFitnessSplitSection(partCounts) {
@@ -8549,7 +8584,7 @@ function createFitnessRecentSessionsSection(sessions) {
   sessions.slice(0, 8).forEach((session) => {
     const item = document.createElement("article");
     const title = document.createElement("strong");
-    title.textContent = `${formatRecordDate(session.dateKey)} · ${session.activeParts.map((part) => part.label).join(", ") || "Metrics"}`;
+    title.textContent = `${formatRecordDate(session.dateKey)} · ${session.card.title} · ${session.activeParts.map((part) => part.label).join(", ") || "Metrics"}`;
     const details = document.createElement("p");
     details.textContent = getFitnessSessionLine(session);
     item.append(title, details);
@@ -8571,11 +8606,33 @@ function getFitnessSessionLine(session) {
   session.activeParts.forEach((meta) => {
     if (meta.type !== "strength") return;
     const part = session.entry.parts[meta.key];
-    const sets = (part.exercises || []).reduce((sum, exercise) => sum + (Number(exercise.sets) || 0), 0);
-    lines.push(`${meta.label} ${sets} sets`);
+    const results=(part.exercises || []).map(exercise=>LifeFitnessSets.stats(exercise));
+    lines.push(`${meta.label} ${results.reduce((sum,result)=>sum+result.completed,0)} completed sets, ${results.reduce((sum,result)=>sum+result.summary,0)} summary sets`);
   });
   if (session.entry.notes) lines.push(session.entry.notes);
   return lines.join(" · ") || "Metrics recorded";
+}
+
+function createFitnessSetReportSection(sessions){
+  const section=planningNode('section','report-section');section.append(planningNode('h3','','Individual sets'));
+  let count=0;
+  for(const session of sessions)for(const meta of session.activeParts.filter(part=>part.type==='strength'))for(const exercise of session.entry.parts[meta.key].exercises || []){
+    if(!Object.hasOwn(exercise,'setLog'))continue;count++;
+    section.append(planningNode('h4','',formatReadableDateKey(session.dateKey)+' · '+session.card.title+' · '+exercise.name));
+    for(const line of fitnessSetReportLines(exercise))section.append(planningNode('p','fitness-set-report-row',line));
+  }
+  if(!count)section.append(planningNode('p','','No individual-set logs in this period. Summary entries remain unchanged.'));return section;
+}
+
+function fitnessSetReportLines(exercise){
+  const result=LifeFitnessSets.stats(exercise);
+  if(result.mode==='unrecognized')return ['Unrecognized set log: original data retained, excluded from calculated totals.'];
+  if(result.mode!=='sets')return [];
+  const measured=value=>[value.weightKg===''?'Weight not recorded':value.weightKg+' kg',value.reps===''?'Reps not recorded':value.reps+' reps',value.rpe===''?'':'RPE '+value.rpe].filter(Boolean).join(' · ');
+  return exercise.setLog.rows.flatMap((row,index)=>{
+    const status=row.removedAt?'Removed':row.done?'Completed':'Not completed';
+    return ['Set '+(index+1)+' · '+status+' · '+measured(row),...row.history.map(event=>'  '+event.action+' · recorded '+new Date(event.at).toISOString()+' · '+measured(event))];
+  });
 }
 
 function renderFoodReport(range) {
@@ -13319,7 +13376,7 @@ function renderReadableFitnessPart(meta, part = {}) {
   if (meta.type === "strength") {
     const exercises = Array.isArray(part.exercises) ? part.exercises : [];
     return `<div class="entry"><div class="entry-head"><strong>${escapeHtml(meta.label)}</strong><span>${exercises.length} exercises</span></div>
-      <ul class="clean">${exercises.map((exercise) => renderReadableItem(exercise.name, false, [
+      <ul class="clean">${exercises.map((exercise) => Object.hasOwn(exercise,'setLog')?`<li><strong>${escapeHtml(exercise.name)}</strong><div class="text">Summary entry (preserved): ${escapeHtml(fitnessExerciseSummary(exercise))}\n${escapeHtml(fitnessSetReportLines(exercise).join('\n'))}</div>${LifeFitnessSets.stats(exercise).mode==='unrecognized'?`<pre class="text">${escapeHtml(JSON.stringify(exercise.setLog,null,2))}</pre>`:''}</li>`:renderReadableItem(exercise.name, false, [
         exercise.sets !== "" ? `${exercise.sets} sets` : "",
         exercise.reps ? `${exercise.reps} reps` : "",
         exercise.weightKg !== "" ? `${exercise.weightKg} kg` : "",

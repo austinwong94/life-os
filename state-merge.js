@@ -383,7 +383,8 @@
       return type==='food-definition' || strings(['foodId']) && record.foodId && number('amount') && ['g','serving'].includes(record.unit);
     }
     if (type==='fitness-exercise') return record.id===segments.at(-1) && strings(['name','reps','notes']) && record.name.trim() &&
-      ['sets','weightKg','rpe'].every(key=>number(key,true));
+      ['sets','weightKg','rpe'].every(key=>number(key,true)) &&
+      (!Object.hasOwn(record,'setLog') || (root.LifeFitnessSets || (typeof require==='function'?require('./fitness-sets.js'):null))?.validLog(record.setLog));
     if (type==='fitness-part') return typeof record.active==='boolean' && strings(['notes']) && number('durationMinutes',true) &&
       (segments[7]==='running' ? number('distanceKm',true) && ['Easy','Moderate','Hard','Max'].includes(record.intensity) : strings(['area']));
     if (type==='body-metrics') {

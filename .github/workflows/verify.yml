@@ -305,6 +305,15 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/health-workspace-webkit
+      - name: Check individual set logging and preceding-client preservation in Chromium
+        run: npm run test:fitness-sets
+        env:
+          TEST_OUTPUT: test-results/fitness-sets-chromium
+      - name: Check individual set logging and preceding-client preservation in WebKit
+        run: npm run test:fitness-sets
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/fitness-sets-webkit
       - run: npm run test:responsive
         env:
           TEST_OUTPUT: test-results
