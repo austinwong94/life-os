@@ -52,6 +52,62 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);assert(writes()>0);assert.equal(getRow().data.bookings[0].guest,'Updated synthetic guest');assert.deepEqual(getRow().data.futureRoot,base.futureRoot);
     await page.reload();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations?.export().bookings[0].guest==='Updated synthetic guest');
   });
+  await run('booking capture groups Stay Guest and Payment with reachable actions on short phones and no record writes',async({page,getRow,writes})=>{
+    const original=JSON.stringify(getRow().data),frame=await open(page);await frame.locator('#openAddBooking').click();
+    assert.deepEqual(await frame.locator('#bookingDialog .form-section>h4').allTextContents(),['Stay','Guest','Payment']);
+    const fields=['bookingId','airbnbEmailInput','villaInput','channelInput','arrivalInput','nightsInput','nightsManualInput','guestInput','contactInput','guestEmailInput','guestTitleInput','revenueInput','paidInput','depositAmountInput','depositPaidInput','depositRefundedInput','statusInput','excludeCalculationsInput','incidentLogInput'];
+    assert.deepEqual((await frame.locator('#bookingForm input,#bookingForm select,#bookingForm textarea').evaluateAll(nodes=>nodes.map(node=>node.id))).sort(),fields.sort());
+    for(const id of ['bookingContactDetails','bookingDepositDetails','bookingOtherDetails'])assert.equal(await frame.locator('#'+id).getAttribute('open'),null);
+    assert.match(await frame.locator('#bookingDepositPreview').innerText(),/RM 500\.00.*Not received/);
+    for(const [width,height]of [[1440,1000],[1080,1000],[768,900],[390,844],[390,568],[320,568]]){
+      await page.setViewportSize({width,height});
+      await frame.locator('#bookingDialog .form-sections').evaluate(node=>{node.scrollTop=0;});
+      const layout=await frame.locator('#bookingDialog').evaluate(dialog=>{
+        const r=dialog.getBoundingClientRect(),body=dialog.querySelector('.form-sections'),save=dialog.querySelector('#saveBooking'),s=save.getBoundingClientRect();
+        const controls=[...dialog.querySelectorAll('button,summary,input:not([type=hidden]):not([type=checkbox]),select,textarea')].filter(node=>{
+          if(!node.getClientRects().length)return false;
+          for(let parent=node.parentElement;parent && parent!==dialog;parent=parent.parentElement)if(parent.tagName==='DETAILS' && !parent.open && !parent.querySelector(':scope>summary')?.contains(node))return false;
+          return true;
+        }).map(node=>{const b=node.getBoundingClientRect();return {id:node.id,left:b.left,right:b.right,width:b.width,height:b.height};});
+        return {top:r.top,bottom:r.bottom,height:innerHeight,width:innerWidth,bodyHeight:body.clientHeight,overflow:dialog.scrollWidth>dialog.clientWidth+1,saveVisible:s.top>=r.top && s.bottom<=r.bottom,saveHit:save.contains(document.elementFromPoint(s.x+s.width/2,s.y+s.height/2)),controls};
+      });assert(layout.top>=0 && layout.bottom<=height+1 && layout.bodyHeight>90 && !layout.overflow && layout.saveVisible && layout.saveHit,JSON.stringify(layout));
+      assert(layout.controls.every(control=>control.left>=0 && control.right<=width+1 && control.height>=43.9 && control.width>=43.9),JSON.stringify(layout));
+      await page.screenshot({path:path.join(out,'booking-capture-'+width+'-'+height+'.png'),fullPage:false});
+      await frame.locator('#bookingDialog .form-sections').evaluate(node=>{node.scrollTop=node.scrollHeight;});assert(await frame.locator('#saveBooking').isVisible());
+    }
+    await frame.locator('#cancelBookingDialog').click();assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
+  await run('collapsed optional booking details retain complete original contact deposit notes documents and unknown fields',async({page,getRow})=>{
+    Object.assign(getRow().data.bookings[0],{guestTitle:'Ms',guestEmail:'guest@example.invalid',contact:'60123456789',depositAmount:450.25,depositPaid:true,depositRefunded:false,status:'in-house',incidentLog:'Private sample note\nSecond complete line'});
+    const frame=await open(page),original=await frame.locator('body').evaluate(()=>PropertyOperations.export());await booking(frame);await frame.locator('[data-booking-section="overview"]').click();await frame.getByRole('button',{name:'Edit booking',exact:true}).click();
+    for(const id of ['bookingContactDetails','bookingDepositDetails','bookingOtherDetails']){assert.equal(await frame.locator('#'+id).getAttribute('open'),'');await frame.locator('#'+id+'>summary').click();}
+    assert.match(await frame.locator('#bookingDepositPreview').innerText(),/RM 450\.25.*Received/);assert.match(await frame.locator('#bookingOptionsPreview').innerText(),/In-house.*Notes saved/);
+    await frame.locator('#guestInput').fill('Renamed sample guest');await frame.locator('#saveBooking').click();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);
+    const saved=getRow().data.bookings.find(row=>row.id==='synthetic-booking'),before=original.bookings.find(row=>row.id==='synthetic-booking');
+    for(const key of ['guestTitle','guestEmail','contact','arrival','nights','revenue','paid','depositAmount','depositPaid','depositRefunded','status','incidentLog','customHistory'])assert.deepEqual(saved[key],before[key],key);
+    assert.deepEqual(getRow().data.documents,original.documents);assert.deepEqual(getRow().data.futureRoot,base.futureRoot);await page.reload();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations?.export().bookings[0].guest==='Renamed sample guest');
+  });
+  await run('invalid collapsed fields reveal for correction and a new manual-night booking saves only once with exact decimals',async({page,getRow,writes})=>{
+    const frame=await open(page);await frame.locator('#openAddBooking').click();await frame.locator('#guestInput').fill('New sample stay');await frame.locator('#arrivalInput').fill('2026-12-10');await frame.locator('[data-nights-choice=manual]').click();await frame.locator('#nightsManualInput').fill('7');await frame.locator('#nightsManualInput').dispatchEvent('input');
+    await frame.locator('#revenueInput').fill('1234.56');await frame.locator('#paidInput').fill('456.78');await frame.locator('[data-form-channel=Airbnb]').click();assert.equal(await frame.locator('#bookingDepositPreview').innerText(),'No deposit');await frame.locator('[data-form-channel=Direct]').click();assert.match(await frame.locator('#bookingDepositPreview').innerText(),/RM 500\.00.*Not received/);
+    await frame.locator('#bookingContactDetails>summary').click();await frame.locator('#guestEmailInput').fill('not-an-email');await frame.locator('#bookingContactDetails>summary').click();await frame.locator('#saveBooking').click();assert.equal(await frame.locator('#bookingContactDetails').getAttribute('open'),'');assert.equal(writes(),0);assert.equal(getRow().data.bookings.length,1);await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.document.activeElement?.id==='guestEmailInput');assert(await frame.locator('#guestEmailInput').evaluate(node=>!node.validity.valid));
+    await frame.locator('#guestEmailInput').fill('new@example.invalid');await frame.locator('#paidInput').fill('');await frame.locator('#saveBooking').click();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.document.activeElement?.id==='paidInput');assert.equal(writes(),0);
+    await frame.locator('#paidInput').fill('456.78');await frame.locator('#bookingDepositDetails>summary').click();await frame.locator('#depositAmountInput').fill('-1');await frame.locator('#bookingDepositDetails>summary').click();await frame.locator('#saveBooking').click();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.document.activeElement?.id==='depositAmountInput');assert.equal(await frame.locator('#bookingDepositDetails').getAttribute('open'),'');assert.equal(writes(),0);await frame.locator('#depositAmountInput').fill('500');
+    assert.match(await frame.locator('#checkoutEcho').innerText(),/7 nights/);await frame.locator('#saveBooking').click();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()===false);
+    const added=getRow().data.bookings.filter(row=>row.guest==='New sample stay');assert.equal(added.length,1);assert.equal(getRow().data.bookings.length,2);assert.equal(added[0].arrival,'2026-12-10');assert.equal(added[0].nights,7);assert.equal(added[0].revenue,1234.56);assert.equal(added[0].paid,456.78);assert.equal(added[0].guestEmail,'new@example.invalid');
+    await page.reload();await page.waitForFunction(()=>document.querySelector('iframe').contentWindow.PropertyOperations?.export().bookings.length===2);assert.equal(getRow().data.bookings.filter(row=>row.guest==='New sample stay').length,1);
+  });
+  await run('Airbnb import drafts clear between booking dialogs while saved records and an open draft stay untouched',async({page,getRow,writes})=>{
+    const original=JSON.stringify(getRow().data),frame=await open(page);await frame.locator('#openAddBooking').click();await frame.locator('.airbnb-import-box>summary').click();await frame.locator('#airbnbEmailInput').fill('Private sample reservation email from an earlier guest');await frame.locator('#guestInput').fill('An unfinished sample guest');
+    await page.setViewportSize({width:390,height:844});assert.equal(await frame.locator('#guestInput').inputValue(),'An unfinished sample guest');assert.match(await frame.locator('#airbnbEmailInput').inputValue(),/earlier guest/);
+    await frame.locator('#cancelBookingDialog').click();await frame.locator('#openAddBooking').click();assert.equal(await frame.locator('#airbnbEmailInput').inputValue(),'');assert.equal(await frame.locator('#airbnbAutofillStatus').innerText(),'');assert.equal(await frame.locator('.airbnb-import-box').getAttribute('open'),null);assert.equal(await frame.locator('#guestInput').inputValue(),'');
+    await frame.locator('body').evaluate(()=>{
+      document.querySelector('#saveBooking').click();document.querySelector('#cancelBookingDialog').click();document.querySelector('#openAddBooking').click();
+      const guest=document.querySelector('#guestInput');guest.value='A fresh unsaved draft';document.querySelector('#paidInput').value='';guest.focus();
+    });await frame.locator('body').evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    assert(await frame.locator('#guestInput').evaluate(node=>node===document.activeElement && node.validity.valid));assert.equal(await frame.locator('#guestInput').inputValue(),'A fresh unsaved draft');
+    await frame.locator('#cancelBookingDialog').click();assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
+  });
   await run('a stale browser cannot overwrite newer property data',async({page,getRow,makeStale})=>{
     const frame=await open(page);makeStale();await edit(frame,'Pending conflicting draft');await page.waitForTimeout(1200);
     assert.equal(getRow().data.bookings[0].guest,'Synthetic Guest');assert.equal(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.export().bookings[0].guest),'Pending conflicting draft');assert.equal(await page.evaluate(()=>document.querySelector('iframe').contentWindow.PropertyOperations.pending()),true);

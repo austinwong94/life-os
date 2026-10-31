@@ -5545,6 +5545,7 @@ function autofillBookingFromAirbnbEmail() {
     status.textContent = `Filled: ${bits}${parsed.code ? ` · ${parsed.code}` : ""}. Add the guest's phone if you'll WhatsApp them, then Save.`;
     status.className = "airbnb-import-status ok";
   }
+  updateBookingDisclosureSummary();
 }
 
 function conflictingBookings(candidate) {
@@ -5554,8 +5555,25 @@ function conflictingBookings(candidate) {
     && villaOf(booking) === villaOf(candidate) && booking.arrival < end && departureFor(booking) > candidate.arrival);
 }
 
+let bookingValidationGeneration = 0;
+
+function updateBookingDisclosureSummary() {
+  const amount = Number(els.depositAmountInput.value);
+  const received = els.depositPaidInput.checked;
+  const refunded = els.depositRefundedInput.checked;
+  const deposit = document.getElementById('bookingDepositPreview');
+  if (deposit) deposit.textContent = els.excludeCalculationsInput.checked ? 'Excluded from totals'
+    : !els.depositAmountInput.value || !Number.isFinite(amount) || amount < 0 ? 'Enter amount'
+    : amount === 0 ? 'No deposit'
+    : `${money(amount)} · ${refunded ? received ? 'Refunded' : 'Check received status' : received ? 'Received' : 'Not received'}`;
+  const options = document.getElementById('bookingOptionsPreview');
+  if (options) options.textContent = [els.statusInput.selectedOptions[0]?.textContent,
+    els.excludeCalculationsInput.checked ? 'Complimentary' : '', els.incidentLogInput.value.trim() ? 'Notes saved' : ''].filter(Boolean).join(' · ');
+}
+
 function openBookingDialog(booking = null, edit = false) {
   if (booking && !edit && typeof openBookingWorkspace === "function") { openBookingWorkspace(booking.id); return; }
+  bookingValidationGeneration += 1;
   els.dialogTitle.textContent = booking ? "Edit Booking" : "Add Booking";
   els.bookingId.value = booking?.id || "";
   els.channelInput.value = booking?.channel || "Direct";
@@ -5563,6 +5581,7 @@ function openBookingDialog(booking = null, edit = false) {
   if (els.guestTitleInput) els.guestTitleInput.value = booking?.guestTitle === "Ms" ? "Ms" : "Mr";
   syncGuestTitleChoice();
   els.guestInput.value = booking?.guest || "";
+  els.guestInput.setCustomValidity('');
   els.contactInput.value = booking?.contact || "";
   if (els.guestEmailInput) els.guestEmailInput.value = booking?.guestEmail || "";
   if (els.incidentLogInput) els.incidentLogInput.value = booking?.incidentLog || "";
@@ -5577,6 +5596,16 @@ function openBookingDialog(booking = null, edit = false) {
   els.depositPaidInput.checked = Boolean(booking?.depositPaid);
   els.depositRefundedInput.checked = Boolean(booking?.depositRefunded);
   if (!booking) applyChannelDepositDefault(true);
+  document.getElementById('bookingContactDetails').open = Boolean(booking?.guestEmail || booking?.guestTitle === 'Ms');
+  document.getElementById('bookingDepositDetails').open = Boolean(booking?.depositPaid || booking?.depositRefunded ||
+    booking && Number(booking.depositAmount ?? defaultDepositForChannel(booking.channel)) !== defaultDepositForChannel(booking.channel));
+  document.getElementById('bookingOtherDetails').open = Boolean(booking?.status && booking.status !== 'confirmed' || booking?.excludeFromCalculations || booking?.incidentLog);
+  // Pasted email is a transient import draft, never the next guest's default.
+  if (els.airbnbEmailInput) els.airbnbEmailInput.value = '';
+  if (els.airbnbAutofillStatus) { els.airbnbAutofillStatus.textContent = ''; els.airbnbAutofillStatus.className = 'airbnb-import-status'; }
+  els.dialog.querySelector('.airbnb-import-box').open = false;
+  updateBookingDisclosureSummary();
+  els.dialog.querySelector('.form-sections').scrollTop = 0;
   els.dialog.showModal();
 }
 
@@ -8631,6 +8660,7 @@ document.querySelectorAll("[data-form-channel]").forEach((button) => {
     els.channelInput.value = button.dataset.formChannel;
     syncBookingChannelChoice();
     applyChannelDepositDefault();
+    updateBookingDisclosureSummary();
   });
 });
 
@@ -8655,11 +8685,29 @@ els.arrivalInput?.addEventListener("change", updateCheckoutEcho);
 
 els.excludeCalculationsInput?.addEventListener("change", applyExcludedBookingDefaults);
 
+els.form.addEventListener('input', updateBookingDisclosureSummary);
+els.form.addEventListener('change', updateBookingDisclosureSummary);
+els.form.addEventListener('invalid', event => {
+  // Native validation must be able to focus optional fields inside disclosures.
+  for (let parent = event.target.parentElement; parent && parent !== els.form; parent = parent.parentElement) {
+    if (parent.tagName === 'DETAILS') parent.open = true;
+  }
+}, true);
+
 els.form.addEventListener("submit", (event) => {
   if (event.submitter?.value === "cancel") return;
   event.preventDefault();
+  const validationGeneration = ++bookingValidationGeneration;
   els.guestInput.setCustomValidity(els.guestInput.value.trim() ? "" : "Enter a guest name.");
-  if (!els.form.reportValidity()) return;
+  if (!els.form.checkValidity()) {
+    // WebKit needs the opened disclosure laid out before native error focus.
+    requestAnimationFrame(() => {
+      if (!els.dialog.open || validationGeneration !== bookingValidationGeneration) return;
+      const field = [...els.form.elements].find(control => control.willValidate && !control.validity.valid);
+      if (field) { field.getBoundingClientRect(); field.focus(); field.reportValidity(); }
+    });
+    return;
+  }
   const id = safeRecordId(els.bookingId.value);
   const excluded = els.excludeCalculationsInput.checked;
   // Guard the costliest data-entry mistake: a paying booking saved at RM 0 silently

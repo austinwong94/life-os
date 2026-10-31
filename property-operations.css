@@ -116,3 +116,38 @@ table{font-size:13px}
 .property-integrated .property-ai-notice{font-size:12px;color:var(--muted);padding:8px 0;border-bottom:1px solid var(--line)}
 .property-integrated :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media(max-width:600px){.property-integrated #appShell .nav-tabs>.nav-button,.property-more>summary{font-size:12px;padding:8px 4px}.property-integrated .today-columns,.property-integrated .today-action-grid{grid-template-columns:1fr;gap:8px}.property-integrated .topbar-actions input,.property-integrated .topbar-actions select{font-size:16px}}
+
+/* Booking capture shares the workspace's typography and one scrolling body. */
+.property-integrated #bookingDialog{width:min(720px,calc(100vw - 24px));max-width:720px;max-height:calc(100dvh - 24px);border-radius:8px;background:#fff}
+.property-integrated #bookingDialog[open]{animation:none}
+.property-integrated #bookingDialog .booking-form{max-height:calc(100dvh - 26px);min-height:0}
+.property-integrated #bookingDialog .dialog-head,.property-integrated #bookingDialog .dialog-actions{flex-shrink:0;padding:14px 20px;background:#fff}
+.property-integrated #bookingDialog .dialog-head{align-items:center}
+.property-integrated #bookingDialog .dialog-head h3{margin:0;font:600 18px/1.4 system-ui,sans-serif;letter-spacing:0}
+.property-integrated #bookingDialog .dialog-head .icon-button{width:44px;height:44px;min-width:44px;min-height:44px}
+.property-integrated #bookingDialog .form-sections{flex:1 1 auto;min-height:0;gap:14px;padding:16px 20px;overscroll-behavior:contain;scroll-padding:12px}
+.property-integrated #bookingDialog .form-section{gap:12px;min-width:0}
+.property-integrated #bookingDialog .form-section+.form-section{padding-top:18px}
+.property-integrated #bookingDialog .form-section h4{margin:0;color:var(--ink);font:600 14px/1.4 system-ui,sans-serif;letter-spacing:0;text-transform:none}
+.property-integrated #bookingDialog label,.property-integrated #bookingDialog .form-field>span{min-width:0;color:var(--muted);font:500 13px/1.5 system-ui,sans-serif;letter-spacing:0;text-transform:none}
+.property-integrated #bookingDialog input:not([type=checkbox]),.property-integrated #bookingDialog select,.property-integrated #bookingDialog textarea{width:100%;min-width:0;min-height:44px;box-sizing:border-box;border-radius:6px;font:14px/1.5 system-ui,sans-serif}
+.property-integrated #bookingDialog .booking-channel-option,.property-integrated #bookingDialog .dialog-actions button{min-width:44px;min-height:44px;font-size:13px;letter-spacing:0}
+.property-integrated #bookingDialog .checkout-echo{margin:0;font-size:13px;letter-spacing:0}
+.property-integrated #bookingDialog .booking-disclosure{min-width:0;border-top:1px solid var(--line);padding-top:4px}
+.property-integrated #bookingDialog .booking-disclosure>summary{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;box-sizing:border-box;min-height:44px;cursor:pointer;list-style:none;color:var(--ink);font:500 13px/1.5 system-ui,sans-serif}
+.property-integrated #bookingDialog .booking-disclosure>summary::-webkit-details-marker{display:none}
+.property-integrated #bookingDialog .booking-disclosure>summary::after{content:'+';margin-left:auto;color:var(--muted)}
+.property-integrated #bookingDialog .booking-disclosure[open]>summary::after{content:'-'}
+.property-integrated #bookingDialog .booking-disclosure>summary span{color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.property-integrated #bookingDialog .booking-disclosure>.form-grid,.property-integrated #bookingDialog .booking-disclosure>.full-width-label{margin:8px 0 0}
+.property-integrated #bookingDialog .checkbox-label{align-items:center;min-height:44px}
+.property-integrated #bookingDialog .airbnb-import-box{margin:0;padding:0;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;flex-shrink:0}
+.property-integrated #bookingDialog .airbnb-import-box>summary{min-height:44px;box-sizing:border-box;font-size:13px;padding:10px 0}
+.property-integrated #bookingDialog .airbnb-import-actions{padding-block:10px}
+@media(max-width:600px){
+  .property-integrated #bookingDialog .dialog-head,.property-integrated #bookingDialog .dialog-actions{padding:10px 14px}
+  .property-integrated #bookingDialog .form-sections{padding:14px}
+  .property-integrated #bookingDialog .form-grid.two-col{grid-template-columns:minmax(0,1fr)}
+  .property-integrated #bookingDialog input:not([type=checkbox]),.property-integrated #bookingDialog select,.property-integrated #bookingDialog textarea{font-size:16px}
+  .property-integrated #bookingDialog .dialog-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr);gap:8px}
+}

@@ -1781,28 +1781,33 @@
       </main>
     </div>
 
-    <dialog id="bookingDialog">
-      <form method="dialog" class="booking-form" id="bookingForm">
+    <dialog id="bookingDialog" aria-labelledby="dialogTitle">
+      <form method="dialog" class="booking-form" id="bookingForm" novalidate>
         <div class="dialog-head">
           <div>
-            <p class="eyebrow">Booking details</p>
             <h3 id="dialogTitle">Add Booking</h3>
           </div>
-          <button class="icon-button" id="closeBookingDialog" type="button" title="Close">×</button>
+          <button class="icon-button" id="closeBookingDialog" type="button" title="Close" aria-label="Close booking details">×</button>
         </div>
         <input id="bookingId" type="hidden" />
+        <div class="form-sections">
         <details class="airbnb-import-box">
-          <summary>📋 Paste an Airbnb booking email to auto-fill</summary>
-          <textarea id="airbnbEmailInput" rows="4" placeholder="Paste the Airbnb &quot;Reservation confirmed&quot; email here, then click Auto-fill."></textarea>
+          <summary>Import Airbnb email</summary>
+          <textarea id="airbnbEmailInput" rows="4" aria-label="Airbnb reservation email" placeholder="Paste the Airbnb &quot;Reservation confirmed&quot; email here, then click Auto-fill."></textarea>
           <div class="airbnb-import-actions">
             <button class="ghost-button" id="airbnbAutofillBtn" type="button">Auto-fill from email</button>
             <span class="airbnb-import-status" id="airbnbAutofillStatus"></span>
           </div>
         </details>
-        <div class="form-sections">
           <section class="form-section">
-            <h4>Guest</h4>
+            <h4>Stay</h4>
             <div class="form-grid two-col">
+              <label>Villa
+                <select id="villaInput">
+                  <option value="Sunrise">Sunrise Villa</option>
+                  <option value="Windmill">Windmill Villa</option>
+                </select>
+              </label>
               <div class="form-field">
                 <span>Channel</span>
                 <input id="channelInput" type="hidden" value="Direct" required />
@@ -1811,7 +1816,40 @@
                   <button class="booking-channel-option" type="button" data-form-channel="Airbnb" aria-pressed="false">Airbnb</button>
                 </div>
               </div>
-              <div class="guest-name-fields">
+              <label>Date of Arrival <span class="req" aria-hidden="true">*</span>
+                <input id="arrivalInput" type="date" required />
+              </label>
+              <div class="form-field">
+                <span>Nights of Stay</span>
+                <input id="nightsInput" type="hidden" value="1" required />
+                <div class="booking-channel-choice nights-choice" role="group" aria-label="Nights of stay">
+                  <button class="booking-channel-option active" type="button" data-nights-choice="1" aria-pressed="true">1</button>
+                  <button class="booking-channel-option" type="button" data-nights-choice="2" aria-pressed="false">2</button>
+                  <button class="booking-channel-option" type="button" data-nights-choice="3" aria-pressed="false">3</button>
+                  <button class="booking-channel-option" type="button" data-nights-choice="manual" aria-pressed="false">Manual</button>
+                </div>
+                <input class="hidden" id="nightsManualInput" type="number" min="4" step="1" placeholder="Enter nights" aria-label="Nights of stay" />
+              </div>
+            </div>
+            <p class="checkout-echo" id="checkoutEcho" aria-live="polite"></p>
+          </section>
+
+          <section class="form-section">
+            <h4>Guest</h4>
+            <div class="form-grid two-col">
+              <label>Guest Name <span class="req" aria-hidden="true">*</span>
+                <input id="guestInput" required placeholder="Guest full name" autocomplete="off" />
+              </label>
+              <label>Guest Contact (WhatsApp)
+                <input id="contactInput" type="tel" inputmode="tel" placeholder="60123456789" autocomplete="off" />
+              </label>
+            </div>
+            <details class="booking-disclosure" id="bookingContactDetails">
+              <summary>More guest details</summary>
+              <div class="form-grid two-col">
+                <label>Guest Email
+                  <input id="guestEmailInput" type="email" placeholder="guest@email.com" autocomplete="off" />
+                </label>
                 <div class="form-field">
                   <span>Title</span>
                   <input id="guestTitleInput" type="hidden" value="Mr" />
@@ -1820,16 +1858,41 @@
                     <button class="booking-channel-option" type="button" data-title-choice="Ms" aria-pressed="false">Ms</button>
                   </div>
                 </div>
-                <label>Guest Name <span class="req" aria-hidden="true">*</span>
-                  <input id="guestInput" required placeholder="Guest full name" />
-                </label>
               </div>
-              <label>Villa
-                <select id="villaInput">
-                  <option value="Sunrise">Sunrise Villa</option>
-                  <option value="Windmill">Windmill Villa</option>
-                </select>
+            </details>
+          </section>
+
+          <section class="form-section">
+            <h4>Payment</h4>
+            <div class="form-grid two-col">
+              <label>Accommodation Fees (RM) <span class="req" aria-hidden="true">*</span>
+                <input id="revenueInput" type="number" min="0" step="0.01" required />
               </label>
+              <label>Total received (RM, including deposit) <span class="req" aria-hidden="true">*</span>
+                <input id="paidInput" type="number" min="0" step="0.01" required />
+              </label>
+            </div>
+            <details class="booking-disclosure" id="bookingDepositDetails">
+              <summary>Damage deposit <span id="bookingDepositPreview"></span></summary>
+              <div class="form-grid two-col">
+              <label>Damage Deposit Amount (RM)
+                <input id="depositAmountInput" type="number" min="0" step="0.01" value="500" />
+              </label>
+              <label class="checkbox-label">
+                <input id="depositPaidInput" type="checkbox" />
+                Damage deposit received
+              </label>
+              <label class="checkbox-label">
+                <input id="depositRefundedInput" type="checkbox" />
+                Damage deposit refunded
+              </label>
+              </div>
+            </details>
+          </section>
+
+          <details class="booking-disclosure" id="bookingOtherDetails">
+            <summary>More booking details <span id="bookingOptionsPreview"></span></summary>
+            <div class="form-grid two-col">
               <label>Booking Status
                 <select id="statusInput">
                   <option value="inquiry">Inquiry</option>
@@ -1843,65 +1906,11 @@
                 <input id="excludeCalculationsInput" type="checkbox" />
                 Influencer / complimentary stay (record only, exclude from calculations)
               </label>
-              <label>Guest Contact (WhatsApp)
-                <input id="contactInput" type="tel" inputmode="tel" placeholder="60123456789" />
-              </label>
-              <label>Guest Email
-                <input id="guestEmailInput" type="email" placeholder="guest@email.com" />
-              </label>
             </div>
-          </section>
-
-          <section class="form-section">
-            <h4>Stay</h4>
-            <div class="form-grid two-col">
-              <label>Date of Arrival <span class="req" aria-hidden="true">*</span>
-                <input id="arrivalInput" type="date" required />
-              </label>
-              <div class="form-field">
-                <span>Nights of Stay</span>
-                <input id="nightsInput" type="hidden" value="1" required />
-                <div class="booking-channel-choice nights-choice" role="group" aria-label="Nights of stay">
-                  <button class="booking-channel-option active" type="button" data-nights-choice="1" aria-pressed="true">1</button>
-                  <button class="booking-channel-option" type="button" data-nights-choice="2" aria-pressed="false">2</button>
-                  <button class="booking-channel-option" type="button" data-nights-choice="3" aria-pressed="false">3</button>
-                  <button class="booking-channel-option" type="button" data-nights-choice="manual" aria-pressed="false">Manual</button>
-                </div>
-                <input class="hidden" id="nightsManualInput" type="number" min="4" step="1" placeholder="Enter nights" />
-              </div>
-            </div>
-            <p class="checkout-echo" id="checkoutEcho" aria-live="polite"></p>
-          </section>
-
-          <section class="form-section">
-            <h4>Payment</h4>
-            <div class="form-grid two-col">
-              <label>Accommodation Fees <span class="req" aria-hidden="true">*</span>
-                <input id="revenueInput" type="number" min="0" step="0.01" required />
-              </label>
-              <label>Amount Received <span class="req" aria-hidden="true">*</span>
-                <input id="paidInput" type="number" min="0" step="0.01" required />
-              </label>
-              <label>Damage Deposit Amount
-                <input id="depositAmountInput" type="number" min="0" step="0.01" value="500" />
-              </label>
-              <label class="checkbox-label">
-                <input id="depositPaidInput" type="checkbox" />
-                Damage deposit received
-              </label>
-              <label class="checkbox-label">
-                <input id="depositRefundedInput" type="checkbox" />
-                Damage deposit refunded
-              </label>
-            </div>
-          </section>
-
-          <section class="form-section">
-            <h4>Incident / damage log <span class="form-hint">(private — what happened, cost, resolved?)</span></h4>
-            <label class="full-width-label">
+            <label class="full-width-label">Incident / damage log
               <textarea id="incidentLogInput" rows="2" placeholder="e.g. Broken wine glass, RM20 deducted from deposit — resolved 12 Jun"></textarea>
             </label>
-          </section>
+          </details>
         </div>
         <div class="dialog-actions">
           <button class="ghost-button" id="cancelBookingDialog" type="button">Cancel</button>
