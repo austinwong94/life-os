@@ -1,7 +1,7 @@
 .health-workspace-head{display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:20px;font-weight:650}
 .health-workspace-head h1{font-family:inherit;font-size:20px;font-weight:650;line-height:1.4;margin:0;letter-spacing:0}
 .health-workspace-tabs{display:flex;flex-wrap:wrap;gap:20px;border-bottom:1px solid var(--line);margin-block:16px}
-.health-workspace-tabs .planning-button{border:0;border-radius:0;background:none;padding:10px 0;min-height:44px;font-size:14px;border-bottom:2px solid transparent}
+.health-workspace-tabs .planning-button{border:0;border-radius:0;background:none;padding:10px 0;min-width:44px;min-height:44px;font-size:14px;border-bottom:2px solid transparent}
 .health-workspace-tabs [aria-pressed=true]{border-bottom-color:var(--action);color:var(--action)}
 .health-week-summary{display:flex;align-items:baseline;gap:10px;margin-block:18px;color:var(--muted);font-size:13px}
 .health-week-summary strong{font-size:24px;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -11,16 +11,15 @@
 .health-workspace-editor .fitness-parts>button{flex:0 1 auto;min-width:80px}
 .health-part-picker{font-size:13px;min-width:0}
 .health-part-picker>summary{display:flex;align-items:center;justify-content:center;min-height:44px;box-sizing:border-box;padding:8px 12px;cursor:pointer;border:1px solid var(--line);border-radius:6px;list-style:none}
-.health-part-picker>summary::before{content:'+';margin-right:8px;color:var(--action);font-size:18px}
 .health-part-picker>summary::-webkit-details-marker{display:none}
 .health-part-picker[open]{flex-basis:100%}
 .health-part-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(95px,1fr));gap:6px;padding-top:10px}
 .health-part-picker:not([open])>.health-part-options{display:none}
 .health-workspace-editor .fitness-section,.health-workspace-editor .fitness-metrics,.health-workspace-editor .food-entry-panel{border-radius:6px;box-shadow:none}
-.health-workspace-editor .fitness-exercise-row{grid-template-columns:minmax(150px,2fr) repeat(4,minmax(64px,1fr)) 36px}
+.health-workspace-editor .fitness-exercise-row{grid-template-columns:minmax(150px,2fr) repeat(4,minmax(64px,1fr)) 44px}
 .health-workspace-editor .fitness-exercise-row .fitness-field{grid-column:auto;grid-row:1}
 .health-workspace-editor .fitness-exercise-row .fitness-remove-exercise{grid-column:6;grid-row:1}
 .fitness-previous{grid-column:1/-1;display:block;margin:0 0 4px;color:var(--card-muted);font-size:12px;line-height:1.5}
 .health-history-row.planning-button{width:100%;justify-content:space-between;min-height:54px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:none;text-align:left;font-size:14px;white-space:normal}
 .app-install-note{font-size:13px;line-height:1.6;color:var(--muted);max-width:560px}
-@media(max-width:700px){.health-workspace-editor .fitness-exercise-row{grid-template-columns:repeat(2,minmax(0,1fr)) 36px}.health-workspace-editor .fitness-exercise-row .fitness-field{grid-row:auto;grid-column:auto}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(1){grid-column:1/3;grid-row:1}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(2){grid-column:1;grid-row:2}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(3){grid-column:2;grid-row:2}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(4){grid-column:1;grid-row:3}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(5){grid-column:2;grid-row:3}.health-workspace-editor .fitness-exercise-row .fitness-remove-exercise{grid-column:3;grid-row:1}.health-workspace-editor input,.health-workspace-editor select,.health-workspace-editor textarea{font-size:16px}.health-workspace-tabs{gap:16px}.health-workspace-tabs .planning-button{font-size:13px}}
+@media(max-width:700px){.health-workspace-editor .fitness-exercise-row{grid-template-columns:repeat(2,minmax(0,1fr)) 44px}.health-workspace-editor .fitness-exercise-row .fitness-field{grid-row:auto;grid-column:auto}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(1){grid-column:1/3;grid-row:1}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(2){grid-column:1;grid-row:2}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(3){grid-column:2;grid-row:2}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(4){grid-column:1;grid-row:3}.health-workspace-editor .fitness-exercise-row>label:nth-of-type(5){grid-column:2;grid-row:3}.health-workspace-editor .fitness-exercise-row .fitness-remove-exercise{grid-column:3;grid-row:1}.health-workspace-editor input,.health-workspace-editor select,.health-workspace-editor textarea{font-size:16px}.health-workspace-tabs{gap:16px}.health-workspace-tabs .planning-button{font-size:13px}}

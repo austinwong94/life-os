@@ -27,8 +27,13 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname),'Use isolated l
       await p.setViewportSize({width,height:1000});await workspace(p,'health');await p.getByRole('heading',{name:'Health',exact:true}).waitFor();
       assert.match(await p.locator('.fitness-previous').innerText(),/12.5 kg/);assert.equal(await p.evaluate(()=>state.cards.length),count);
       assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
-      const bounds=await p.locator('.health-workspace-editor input,.health-workspace-tabs button').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,height:r.height,width:innerWidth};}));
-      assert(bounds.every(r=>r.left>=0 && r.right<=r.width+1 && r.height>=36),JSON.stringify({width,bounds}));
+      const bounds=await p.locator('.health-workspace-editor input,.health-workspace-editor button,.health-workspace-editor summary,.health-workspace-tabs button').evaluateAll(nodes=>nodes.filter(node=>{
+        if(!node.getClientRects().length)return false;
+        for(let parent=node.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS' && !parent.open && !parent.querySelector(':scope > summary')?.contains(node))return false;
+        return true;
+      }).map(node=>{const r=node.getBoundingClientRect();return {left:r.left,right:r.right,height:r.height,width:r.width,text:node.getAttribute('aria-label') || node.textContent};}));
+      const minimum=width<=980?43.9:35.9;
+      assert(bounds.every(r=>r.left>=0 && r.right<=width+1 && r.height>=minimum && r.width>=minimum),JSON.stringify({width,bounds}));
       await p.screenshot({path:out+'/health-'+width+'.png',fullPage:width>700});
       await p.getByRole('button',{name:'Training history',exact:true}).click();assert.equal(await p.locator('.health-history-row').count(),2);await p.getByRole('button',{name:'Workout',exact:true}).click();
     }
