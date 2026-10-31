@@ -10746,10 +10746,17 @@ const propertyCalendarStatus = window.LifePropertyCalendarStatus.create({
   }
 });
 initCloudStorage();
+function refreshPropertyTodayDisplay() {
+  const phoneFields=[...document.querySelectorAll('#todayContent [data-contact-input]')];
+  const hasPhoneDraft=phoneFields.some(input=>input.value!=='' || input===document.activeElement);
+  // Keep unsaved contact text; the existing financial heading still shows its actual date.
+  if(propertyTodayActualDate!==isoDate(new Date()) && !hasPhoneDraft)renderToday();
+  else propertyStayAgenda.refresh();
+}
 window.setInterval(() => {
   if (document.visibilityState === 'visible') {
     void propertyCalendarStatus?.refresh();
-    if(propertyTodayActualDate!==isoDate(new Date()))renderToday();else propertyStayAgenda.refresh();
+    refreshPropertyTodayDisplay();
   }
 }, 60000);
 
@@ -10757,7 +10764,7 @@ window.setInterval(() => {
 // hidden (hourly iCal blocks, new booking candidates) — no manual sync tap.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && supabaseClient && cloudUser) {
-    if(propertyTodayActualDate!==isoDate(new Date()))renderToday();else propertyStayAgenda.refresh();
+    refreshPropertyTodayDisplay();
     void propertyCalendarStatus?.refresh();
     mergeServerIcalBlocks();
     loadBookingCandidates();
