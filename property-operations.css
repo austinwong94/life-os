@@ -152,6 +152,49 @@ table{font-size:13px}
 }
 
 /* Booking capture shares the workspace's typography and one scrolling body. */
+.property-integrated #bookingWorkspace{box-sizing:border-box;width:min(780px,calc(100vw - 24px));max-width:780px;max-height:calc(100dvh - 24px);padding:0;overflow:hidden;border-radius:8px;background:#fff}
+.property-integrated #bookingWorkspace[open]{display:flex;flex-direction:column}
+.property-integrated #bookingWorkspace [hidden]{display:none!important}
+.property-integrated #bookingWorkspace .booking-workspace-head{flex-shrink:0;align-items:center;gap:12px;padding:12px 16px;margin:0;border-bottom:1px solid var(--line)}
+.property-integrated #bookingWorkspace .booking-workspace-head>div{min-width:0;max-height:96px;overflow:auto}
+.property-integrated #bookingWorkspace .booking-workspace-head h2{margin:0;font:600 17px/1.4 system-ui,sans-serif;letter-spacing:0;overflow-wrap:anywhere}
+.property-integrated #bookingWorkspace .booking-workspace-head p{margin:4px 0 0;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.property-integrated #bookingWorkspace [data-workspace-close]{flex:none;width:44px;height:44px;min-width:44px;min-height:44px;padding:8px;font-size:24px}
+.property-integrated #bookingWorkspace>.workspace-tabs{flex-shrink:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:8px 12px;margin:0;border-bottom:1px solid var(--line)}
+.property-integrated #bookingWorkspace>.workspace-tabs button{min-width:0;min-height:44px;padding:8px 4px;font:600 13px/1.4 system-ui,sans-serif;letter-spacing:0}
+.booking-workspace-body{flex:1 1 auto;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;scroll-padding:12px;padding:0 16px 16px}
+.property-integrated #bookingWorkspace .workspace-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:12px 0;margin:0 0 12px;border-top:0}
+.property-integrated #bookingWorkspace .workspace-metrics strong{font-size:16px;line-height:1.4;letter-spacing:0}
+.property-integrated #bookingWorkspace .booking-facts{gap:12px;margin:12px 0}
+.property-integrated #bookingWorkspace .booking-facts dd{font-size:13px;line-height:1.5}
+.property-integrated #bookingWorkspace .booking-workspace-body>section{min-width:0}
+.property-integrated #bookingWorkspace .booking-workspace-body p{font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.property-integrated #bookingWorkspace .workspace-payment-form{gap:12px;min-width:0}
+.property-integrated #bookingWorkspace .workspace-payment-form label{min-width:0;font-size:13px;line-height:1.5;font-weight:500;text-transform:none;letter-spacing:0}
+.property-integrated #bookingWorkspace .workspace-payment-form input:not([type=checkbox]),.property-integrated #bookingWorkspace .workspace-payment-form select{min-height:44px;height:44px;font:14px/1.5 system-ui,sans-serif}
+.property-integrated #bookingWorkspace .workspace-check{min-height:44px}
+.property-integrated #bookingWorkspace .workspace-document-row,.property-integrated #bookingWorkspace .workspace-message-row button,.property-integrated #bookingWorkspace .workspace-actions button,.property-integrated #bookingWorkspace .workspace-table button{min-height:44px;min-width:44px;font-size:13px;overflow-wrap:anywhere}
+.property-integrated #bookingWorkspace .workspace-document-row span{font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.property-integrated #bookingWorkspace .workspace-table{min-width:560px;table-layout:fixed}
+.property-integrated #bookingWorkspace .workspace-table :is(th,td){white-space:normal;overflow-wrap:anywhere;vertical-align:top}
+.booking-workspace-footer{flex-shrink:0;min-width:0;padding:10px 16px;border-top:1px solid var(--line);background:#fff}
+.property-integrated #bookingWorkspace .booking-workspace-footer p{margin:0 0 8px;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.booking-workspace-footer #workspacePaymentStatus:empty{display:none}
+.booking-workspace-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
+.workspace-save-copy{display:grid;gap:2px;flex:1;min-width:0;color:var(--muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+#workspaceSaveState{flex:1;min-width:0;font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}
+#workspaceSaveState[data-status=error]{color:var(--due)}
+.booking-workspace-footer button{flex:none;min-height:44px;min-width:44px;max-width:100%;font:600 13px/1.5 system-ui,sans-serif;letter-spacing:0;white-space:normal}
+#workspacePaymentDraft{color:var(--muted);font-weight:600}
+#workspacePaymentDiscard>div{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+@media(max-width:700px){
+  .property-integrated #bookingWorkspace .workspace-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px}
+  .property-integrated #bookingWorkspace .workspace-payment-form{grid-template-columns:minmax(0,1fr)}
+  .property-integrated #bookingWorkspace .workspace-payment-form input:not([type=checkbox]),.property-integrated #bookingWorkspace .workspace-payment-form select{font-size:16px}
+  .property-integrated #bookingWorkspace>.workspace-tabs button{font-size:12px}
+  .booking-workspace-body{padding-inline:14px}
+  .booking-workspace-footer{padding-inline:14px}
+}
 .property-booking-list[hidden],#bookingsView .bookings-table-wrap[hidden],#bookingsView .property-booking-columns[hidden]{display:none!important}
 .property-booking-layout{display:inline-flex;flex:none;gap:2px;padding:2px;border:1px solid var(--line);border-radius:6px;background:var(--soft)}
 .property-booking-layout button{min-width:52px;min-height:44px;padding:8px 12px;border:0;border-radius:4px;background:transparent;color:var(--muted);font:600 13px/1.5 system-ui,sans-serif;letter-spacing:0}

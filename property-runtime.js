@@ -4118,6 +4118,8 @@ function renderDataHealth(statusMode = cloudStatusMode) {
       : "Cloud: login required";
     els.dataHealthStatus.textContent = cloudLabel;
     els.dataHealthStatus.dataset.status = statusMode || (cloudUser ? "connected" : "offline");
+    const workspaceStatus=document.querySelector('#workspaceSaveState');
+    if(workspaceStatus){if(workspaceStatus.textContent!==cloudLabel)workspaceStatus.textContent=cloudLabel;workspaceStatus.dataset.status=els.dataHealthStatus.dataset.status;}
   }
   if (els.dataHealthLastSync) {
     els.dataHealthLastSync.textContent = `Records saved: ${shortDateTimeLabel(cloudKnownUpdatedAt || appSettings.lastCloudSyncAt)}`;
@@ -9855,6 +9857,35 @@ let bookingWorkspaceId = '';
 let bookingWorkspaceTab = 'overview';
 let financeSection = 'reports';
 let workspacePaymentDirty = false;
+let bookingWorkspaceExpected = '', bookingWorkspaceVilla = '', bookingWorkspaceAfterClose = null, workspacePaymentLastField = 'amount';
+
+function bookingWorkspaceAvailable() {
+  const shell=document.querySelector('#appShell');
+  return Boolean(cloudReady && cloudUser && !window.frameElement?.hidden && !window.frameElement?.inert && shell && !shell.hidden && !shell.inert);
+}
+
+function bookingWorkspaceRecord() {
+  if(!bookingWorkspaceAvailable() || !document.querySelector('#bookingWorkspace')?.open || activeVillaKey()!==bookingWorkspaceVilla)return null;
+  const booking=LifePropertyBookingList.unchanged(bookings,bookingWorkspaceId,bookingWorkspaceExpected);
+  return booking && villaOf(booking)===bookingWorkspaceVilla?booking:null;
+}
+
+function selectBookingWorkspaceTab(tab) {
+  if(!['overview','payments','documents','messages'].includes(tab))return false;
+  const host=document.querySelector('#bookingWorkspace');bookingWorkspaceTab=tab;
+  for(const button of host.querySelectorAll('[data-booking-section]')){const current=button.dataset.bookingSection===tab;button.classList.toggle('active',current);button.setAttribute('aria-pressed',String(current));}
+  for(const section of host.querySelectorAll('[data-workspace-panel]'))section.hidden=section.dataset.workspacePanel!==tab;
+  host.querySelector('[data-workspace-edit]').hidden=tab!=='overview';
+  host.querySelector('#workspaceRecordPayment').hidden=tab!=='payments';
+  host.querySelector('.booking-workspace-body').scrollTop=0;
+  return true;
+}
+
+function finishBookingWorkspaceClose() {
+  const action=bookingWorkspaceAfterClose,canContinue=Boolean(bookingWorkspaceRecord());
+  document.querySelector('#bookingWorkspace').close();workspacePaymentDirty=false;bookingWorkspaceAfterClose=null;
+  if(action && canContinue)action();
+}
 
 function bookingReceiptPayments(booking) {
   return VillaLedger.entries(booking).filter(entry => !entry.voidedAt && entry.kind === 'payment' && entry.date)
@@ -9870,23 +9901,24 @@ function updateBookingRecord(next, reason) {
 
 function openAgendaBooking(id) {
   if(bookings.filter(booking=>booking.id===id).length!==1)return false;
-  openBookingWorkspace(id,'overview');return true;
+  return openBookingWorkspace(id,'overview')!==false;
 }
 
 function openBookingWorkspace(id, tab = 'overview') {
-  if (!bookings.some(booking => booking.id === id)) return;
+  const dialog = document.querySelector('#bookingWorkspace'),matches=bookings.filter(item=>item.id===id);
+  if(!bookingWorkspaceAvailable() || document.querySelector('dialog[open]') || (workspacePaymentDirty && dialog.querySelector('#workspacePaymentForm')) || typeof id!=='string' || !id.trim() || matches.length!==1 || villaOf(matches[0])!==activeVillaKey() || !['overview','payments','documents','messages'].includes(tab))return false;
   bookingWorkspaceId = id;
   bookingWorkspaceTab = tab;
+  bookingWorkspaceVilla=activeVillaKey();bookingWorkspaceExpected=JSON.stringify(matches[0]);bookingWorkspaceAfterClose=null;workspacePaymentLastField='amount';
   workspacePaymentDirty = false;
   renderBookingWorkspace();
-  const dialog = document.querySelector('#bookingWorkspace');
-  if (!dialog.open) dialog.showModal();
+  dialog.showModal();return true;
 }
 
-function closeBookingWorkspace() {
-  if (workspacePaymentDirty && !window.confirm('Discard the unrecorded payment?')) return false;
-  document.querySelector('#bookingWorkspace').close();
-  workspacePaymentDirty = false;
+function closeBookingWorkspace(afterClose=null) {
+  bookingWorkspaceAfterClose=typeof afterClose==='function'?afterClose:null;
+  if(workspacePaymentDirty){const panel=document.querySelector('#workspacePaymentDiscard');panel.hidden=false;panel.querySelector('[data-workspace-keep]').focus();return false;}
+  finishBookingWorkspaceClose();
   return true;
 }
 
@@ -9894,49 +9926,55 @@ function renderBookingWorkspace() {
   const booking = bookings.find(item => item.id === bookingWorkspaceId);
   if (!booking) return;
   const host = document.querySelector('#bookingWorkspace');
+  bookingWorkspaceExpected=JSON.stringify(booking);
   const ledger = VillaLedger.entries(booking);
   const unresolved = ledger.filter(entry => entry.kind === 'opening' && !entry.voidedAt).reduce((sum, entry) => sum + entry.amountSen, 0);
   const docs = documents.filter(doc => doc.bookingId === booking.id);
   host.innerHTML = `
-    <header class="booking-workspace-head"><div><h2 id="bookingWorkspaceTitle">${escapeHtml(booking.guest)}</h2><p>${escapeHtml(villaOf(booking))} Villa · ${shortDate(booking.arrival)} to ${shortDate(departureFor(booking))}</p></div><button class="ghost-button" type="button" data-workspace-close aria-label="Close booking">Close</button></header>
-    <div class="workspace-metrics"><span>Total due<strong>${money(totalToReceiveFor(booking))}</strong></span><span>Received<strong>${money(booking.paid)}</strong></span><span>Outstanding<strong>${money(balanceFor(booking))}</strong></span><span>Deposit to refund<strong>${money(refundPendingFor(booking))}</strong></span></div>
+    <header class="booking-workspace-head"><div><h2 id="bookingWorkspaceTitle">${escapeHtml(booking.guest)}</h2><p>${escapeHtml(villaOf(booking))} Villa · ${shortDate(booking.arrival)} to ${shortDate(departureFor(booking))}</p></div><button class="ghost-button" type="button" data-workspace-close aria-label="Close booking" title="Close booking">&#215;</button></header>
     <nav class="workspace-tabs" aria-label="Booking sections">${['overview', 'payments', 'documents', 'messages'].map(tab => `<button type="button" class="ghost-button ${tab === bookingWorkspaceTab ? 'active' : ''}" aria-pressed="${tab === bookingWorkspaceTab}" data-booking-section="${tab}">${tab[0].toUpperCase() + tab.slice(1)}</button>`).join('')}</nav>
-    <section ${bookingWorkspaceTab === 'overview' ? '' : 'hidden'}>
+    <div class="booking-workspace-body">
+    <div class="workspace-metrics"><span>Total due<strong>${money(totalToReceiveFor(booking))}</strong></span><span>Received<strong>${money(booking.paid)}</strong></span><span>Outstanding<strong>${money(balanceFor(booking))}</strong></span><span>Deposit to refund<strong>${money(refundPendingFor(booking))}</strong></span></div>
+    <section data-workspace-panel="overview" ${bookingWorkspaceTab === 'overview' ? '' : 'hidden'}>
       <dl class="booking-facts"><div><dt>Contact</dt><dd>${escapeHtml(booking.contact || 'Not recorded')}</dd></div><div><dt>Channel</dt><dd>${escapeHtml(booking.channel)}</dd></div><div><dt>Stay status</dt><dd>${escapeHtml(booking.status)}</dd></div><div><dt>Nights</dt><dd>${booking.nights}</dd></div><div><dt>Accommodation</dt><dd>${money(booking.revenue)}</dd></div><div><dt>Security deposit</dt><dd>${money(booking.depositAmount)}</dd></div></dl>
-      <button type="button" class="primary-button" data-workspace-edit>Edit booking</button>
       ${booking.incidentLog ? `<h3>Notes</h3><p>${escapeMultiline(booking.incidentLog)}</p>` : ''}
     </section>
-    <section ${bookingWorkspaceTab === 'payments' ? '' : 'hidden'}>
+    <section data-workspace-panel="payments" ${bookingWorkspaceTab === 'payments' ? '' : 'hidden'}>
       ${unresolved ? `<p class="workspace-notice">${money(VillaLedger.amount(unresolved))} was recorded before transaction details. Match transfers below to preserve the received total.</p>` : ''}
       <form id="workspacePaymentForm" class="workspace-payment-form">
         <label>Payment action<select name="action"><option value="new">New money received</option>${unresolved ? '<option value="match">Match previously recorded money</option>' : ''}</select></label>
-        <label>Amount (RM)<input name="amount" type="number" min="0.01" step="0.01" required /></label>
+        <label>Amount (RM)<input name="amount" type="number" inputmode="decimal" min="0.01" step="0.01" required /></label>
         <label>Transaction date<input name="date" type="date" required value="${isoDate(new Date())}" /></label>
         <label>Bank / method<input name="bank" placeholder="Bank transfer, cash" /></label>
         <label class="wide-field">Reference<input name="reference" autocomplete="off" /></label>
         <label class="workspace-check"><input name="deposit" type="checkbox" ${booking.depositPaid ? 'checked' : ''} /> Security deposit received</label>
-        <button class="primary-button" type="submit">Record payment</button>
       </form>
-      <p id="workspacePaymentStatus" role="status"></p>
       <div class="workspace-table-scroll"><table class="workspace-table"><thead><tr><th>Date</th><th>Bank / reference</th><th>Amount</th><th>Status</th></tr></thead><tbody>${ledger.length ? ledger.map(entry => `<tr><td>${entry.date ? shortDate(entry.date) : 'Not recorded'}</td><td>${escapeHtml(entry.bank || entry.note || 'Payment')}<small>${escapeHtml(entry.reference)}</small></td><td class="money-cell">${money(VillaLedger.amount(entry.amountSen))}</td><td>${entry.voidedAt ? 'Voided' : entry.kind === 'opening' ? 'To reconcile' : entry.kind === 'adjustment' ? 'Correction' : `<button type="button" class="small-action danger" data-void-payment="${escapeHtml(entry.id)}">Void</button>`}</td></tr>`).join('') : '<tr><td colspan="4">No money recorded.</td></tr>'}</tbody></table></div>
     </section>
-    <section ${bookingWorkspaceTab === 'documents' ? '' : 'hidden'}>
+    <section data-workspace-panel="documents" ${bookingWorkspaceTab === 'documents' ? '' : 'hidden'}>
       <div class="workspace-actions"><button class="primary-button" type="button" data-booking-document="Official Receipt">Create receipt</button><button class="ghost-button" type="button" data-booking-document="Invoice">Create invoice</button></div>
       <div class="workspace-document-list">${docs.length ? docs.map(doc => `<button class="workspace-document-row" type="button" data-booking-open-document="${doc.id}"><strong>${escapeHtml(doc.code)}</strong><span>${escapeHtml(doc.type)} · ${shortDate(doc.date)} · ${escapeHtml(doc.status)}</span></button>`).join('') : '<p>No linked documents.</p>'}</div>
     </section>
-    <section ${bookingWorkspaceTab === 'messages' ? '' : 'hidden'}>
+    <section data-workspace-panel="messages" ${bookingWorkspaceTab === 'messages' ? '' : 'hidden'}>
       ${[['checkin', 'Check-in details'], ['guide', 'Guest guide'], ['review', 'Review request']].map(([type, label]) => `<div class="workspace-message-row"><span><strong>${label}</strong><small>${type === 'checkin' ? hasCheckinBeenSent(booking) ? 'Marked sent' : 'Not marked sent' : booking.sentLog?.[type] ? 'Marked sent ' + shortDate(booking.sentLog[type]) : 'Not marked sent'}</small></span><button type="button" class="ghost-button" data-booking-message="${type}">Open WhatsApp</button><button type="button" class="ghost-button" data-booking-message-done="${type}">Mark sent</button></div>`).join('')}
-    </section>`;
+    </section></div>
+    <footer class="booking-workspace-footer">
+      <p id="workspacePaymentStatus" role="status"></p>
+      <p id="workspacePaymentDraft" hidden>Unrecorded payment</p>
+      <section id="workspacePaymentDiscard" role="alert" hidden><p>Discard this unrecorded payment?</p><div><button type="button" class="ghost-button" data-workspace-keep>Keep editing</button><button type="button" class="ghost-button danger" data-workspace-discard>Discard and continue</button></div></section>
+      <div class="booking-workspace-actions"><span class="workspace-save-copy"><span>Recorded booking sync</span><span id="workspaceSaveState" role="status" data-status="${escapeHtml(els.dataHealthStatus?.dataset.status || '')}">${escapeHtml(els.dataHealthStatus?.textContent || '')}</span></span><button type="button" class="primary-button" data-workspace-edit ${bookingWorkspaceTab==='overview'?'':'hidden'}>Edit booking</button><button class="primary-button" id="workspaceRecordPayment" type="submit" form="workspacePaymentForm" ${bookingWorkspaceTab==='payments'?'':'hidden'}>Record payment</button></div>
+    </footer>`;
 }
 
 function recordWorkspacePayment(event) {
   event.preventDefault();
   const form = event.target;
+  const booking=bookingWorkspaceRecord(),host=document.querySelector('#bookingWorkspace');
+  if(!booking || bookingWorkspaceTab!=='payments' || form!==host.querySelector('#workspacePaymentForm')){const status=host.querySelector('#workspacePaymentStatus');if(status)status.textContent='This booking changed or is unavailable. Your payment was not recorded. Close and reopen the booking to review it.';return;}
   if (!form.reportValidity()) return;
-  const booking = bookings.find(item => item.id === bookingWorkspaceId);
   const values = new FormData(form);
-  const payment = VillaLedger.normalize({ amount: values.get('amount'), date: values.get('date'), bank: values.get('bank'), reference: values.get('reference') });
   try {
+    const payment = VillaLedger.normalize({ amount: values.get('amount'), date: values.get('date'), bank: values.get('bank'), reference: values.get('reference') });
     rejectDuplicateTransfer(booking, [payment]);
     let next = values.get('action') === 'match' ? VillaLedger.reconcile(booking, [payment], '') : VillaLedger.append(booking, payment);
     next.depositPaid = Boolean(values.get('deposit'));
@@ -10097,35 +10135,36 @@ function initializeWorkflowUI() {
   dialog.setAttribute('aria-labelledby', 'bookingWorkspaceTitle');
   document.body.append(dialog);
   dialog.addEventListener('cancel', event => { event.preventDefault(); closeBookingWorkspace(); });
-  dialog.addEventListener('input', event => { if (event.target.closest('#workspacePaymentForm')) workspacePaymentDirty = true; });
+  dialog.addEventListener('input', event => { if (event.target.closest('#workspacePaymentForm')){workspacePaymentDirty=true;workspacePaymentLastField=event.target.name || 'amount';dialog.querySelector('#workspacePaymentDraft').hidden=false;} });
   dialog.addEventListener('submit', event => { if (event.target.id === 'workspacePaymentForm') recordWorkspacePayment(event); });
   dialog.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
-    const booking = bookings.find(item => item.id === bookingWorkspaceId);
-    if (button.hasAttribute('data-workspace-close')) closeBookingWorkspace();
+    if(button.hasAttribute('data-workspace-close')){closeBookingWorkspace();return;}
+    if(button.hasAttribute('data-workspace-keep')){bookingWorkspaceAfterClose=null;dialog.querySelector('#workspacePaymentDiscard').hidden=true;selectBookingWorkspaceTab('payments');dialog.querySelector('#workspacePaymentForm').elements.namedItem(workspacePaymentLastField)?.focus();return;}
+    if(button.hasAttribute('data-workspace-discard')){finishBookingWorkspaceClose();return;}
     if (button.dataset.bookingSection) {
-      if (workspacePaymentDirty && !window.confirm('Discard the unrecorded payment?')) return;
-      workspacePaymentDirty = false;
-      bookingWorkspaceTab = button.dataset.bookingSection;
-      renderBookingWorkspace();
+      dialog.querySelector('#workspacePaymentDiscard').hidden=true;bookingWorkspaceAfterClose=null;selectBookingWorkspaceTab(button.dataset.bookingSection);return;
     }
-    if (button.hasAttribute('data-workspace-edit') && closeBookingWorkspace()) openBookingDialog(booking, true);
+    const booking=bookingWorkspaceRecord();
+    if(!booking){dialog.querySelector('#workspacePaymentStatus').textContent='This booking changed or is unavailable. Close and reopen it before making changes.';return;}
+    if(workspacePaymentDirty && (button.dataset.voidPayment || button.dataset.bookingMessageDone)){dialog.querySelector('#workspacePaymentStatus').textContent='Record or discard the unrecorded payment before changing this booking.';return;}
+    if(button.hasAttribute('data-workspace-edit'))closeBookingWorkspace(()=>openBookingDialog(booking,true));
     if (button.dataset.voidPayment && window.confirm('Void this transfer? Its history will remain and the received total will decrease. Any issued receipt must be amended separately.')) {
       const ledger = VillaLedger.entries(booking).map(entry => entry.id === button.dataset.voidPayment ? { ...entry, voidedAt: new Date().toISOString() } : entry);
       try { updateBookingRecord(VillaLedger.withEntries(booking, ledger), 'Before voiding payment'); renderBookingWorkspace(); }
       catch (error) { window.alert(error.message); }
     }
-    if (button.dataset.bookingDocument && confirmDocumentReplacement() && closeBookingWorkspace()) {
+    if (button.dataset.bookingDocument && confirmDocumentReplacement()) closeBookingWorkspace(()=>{
       setView('documents');
       els.docType.value = button.dataset.bookingDocument;
       prefillDocFromBooking(booking.id);
       setDocumentFeedback('Unsaved document', true);
-    }
-    if (button.dataset.bookingOpenDocument && confirmDocumentReplacement() && closeBookingWorkspace()) {
+    });
+    if (button.dataset.bookingOpenDocument && confirmDocumentReplacement()) closeBookingWorkspace(()=>{
       setView('documents');
       fillDocumentForm(documents.find(doc => doc.id === button.dataset.bookingOpenDocument));
-    }
+    });
     if (button.dataset.bookingMessage) openWhatsappForBooking(booking, button.dataset.bookingMessage);
     if (button.dataset.bookingMessageDone) { markNudgeSent(booking.id, button.dataset.bookingMessageDone); renderDetails(); renderBookingWorkspace(); }
   });
