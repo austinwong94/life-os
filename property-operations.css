@@ -197,6 +197,66 @@ table{font-size:13px}
   #financeExpenses .tax-expense-form :is(input:not([type=checkbox]),select,textarea){font-size:16px}
 }
 
+/* Reports keep original values and controls, with secondary detail disclosed. */
+#dashboardView #financeReports{gap:20px;padding:0 12px}
+#dashboardView #financeReports .dashboard-guide{align-items:center;margin:0;gap:12px}
+#dashboardView #financeReports #dashboardGuideTitle{font:600 18px/1.5 system-ui,sans-serif;letter-spacing:0}
+#financeReportScope{margin:4px 0 0;font:12px/1.5 system-ui,sans-serif;color:var(--muted);overflow-wrap:anywhere}
+#dashboardView #financeReports .dashboard-guide-actions{flex-wrap:wrap;gap:8px;min-width:0}
+#dashboardView #financeReports :is(.dashboard-section,.chart-panel,.pnl-breakdown-card){border:0;border-radius:0;box-shadow:none;background:transparent;min-width:0}
+#dashboardView #financeReports .dashboard-section{border-top:1px solid var(--line);overflow:visible}
+#dashboardView #financeReports .section-heading{display:grid;grid-template-columns:minmax(0,1fr) auto;padding:14px 0 10px;gap:12px}
+#dashboardView #financeReports .section-heading>div{min-width:0}
+#dashboardView #financeReports :is(h3,h4){font:600 15px/1.5 system-ui,sans-serif;letter-spacing:0;margin:0;overflow-wrap:anywhere}
+#dashboardView #financeReports .section-heading .eyebrow{display:none}
+#dashboardView #financeReports .section-note{font:12px/1.5 system-ui,sans-serif;letter-spacing:0;margin:4px 0 0;max-width:70ch}
+#dashboardView #financeReports .dashboard-section>:not(.section-heading){padding:0}
+#dashboardView #financeReports .overview-card{display:block;margin:0;padding:0;border:0;border-radius:0;overflow:visible;background:transparent}
+#dashboardView #financeReports .dashboard-section.collapsed>:not(.section-heading){display:none}
+#dashboardView #financeReports .finance-primary-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;padding:4px 0 12px}
+#dashboardView #financeReports :is(.hero-kpi,.mini-kpi){min-width:0;min-height:0;border:0;border-radius:0;box-shadow:none;background:transparent;padding:8px 0;gap:6px;justify-content:flex-start}
+#dashboardView #financeReports :is(.hero-kpi,.mini-kpi)>span{font:500 12px/1.5 system-ui,sans-serif;letter-spacing:0;text-transform:none}
+#dashboardView #financeReports :is(.hero-kpi,.mini-kpi)>strong{font:600 20px/1.5 system-ui,sans-serif;letter-spacing:0;white-space:normal;overflow-wrap:anywhere}
+#dashboardView #financeReports :is(.hero-kpi,.mini-kpi)>small{font:12px/1.5 system-ui,sans-serif;letter-spacing:0;overflow-wrap:anywhere}
+#dashboardView #financeReports :is(.supporting-kpis,.pnl-cards){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:0;border-radius:0;background:transparent;gap:12px;padding:0 0 12px}
+#dashboardView #financeReports .supporting-kpis strong{font-size:16px}
+#dashboardView #financeReports :is(.finance-collection-details,.finance-cost-details,.finance-performance-details){border-block:1px solid var(--line);min-width:0;padding:0;background:transparent}
+#dashboardView #financeReports :is(summary,button){min-height:44px;box-sizing:border-box;font-size:13px;letter-spacing:0}
+#dashboardView #financeReports summary{padding:12px 0;cursor:pointer;overflow-wrap:anywhere}
+#dashboardView #financeReports :is(.finance-collection-details,.finance-cost-details,.finance-performance-details)>summary{display:list-item;list-style:disclosure-closed inside}
+#dashboardView #financeReports :is(.finance-collection-details,.finance-cost-details,.finance-performance-details)[open]>summary{list-style-type:disclosure-open}
+#dashboardView #financeReports :is(.finance-collection-details,.finance-cost-details,.finance-performance-details)>summary::marker{content:normal}
+#dashboardView #financeReports :is(.finance-collection-details,.finance-cost-details,.finance-performance-details)>summary::-webkit-details-marker{display:inline}
+#dashboardView #financeReports .dashboard-mode-option{height:auto;min-width:44px;border-radius:5px;padding:8px 12px}
+#dashboardView #financeReports [data-dashboard-toggle]{width:auto;min-width:44px;height:auto;min-height:44px;padding:8px;transform:none}
+#dashboardView #financeReports .profit-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+#dashboardView #financeReports .profit-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+#dashboardView #financeReports .pnl-breakdown-card{padding:0 0 12px}
+#dashboardView #financeReports .pnl-breakdown-list>div{gap:12px;align-items:start}
+#dashboardView #financeReports .pnl-breakdown-list strong{white-space:normal;overflow-wrap:anywhere;text-align:right;min-width:0}
+#dashboardView #financeReports .dashboard-charts{grid-template-columns:minmax(0,1fr);gap:16px}
+#dashboardView.mode-monthly #financeReports .dashboard-charts{display:none}
+#dashboardView #financeReports .finance-performance-details .dashboard-section{border:0}
+#dashboardView #financeReports .performance-grid{grid-template-columns:minmax(0,1fr) minmax(0,2fr);padding:0 0 16px;gap:16px}
+#dashboardView #financeReports .performance-hero{border:0;border-radius:0;box-shadow:none;padding:12px 0;background:transparent;min-width:0}
+#dashboardView #financeReports .performance-hero>strong{font:600 22px/1.5 system-ui,sans-serif;letter-spacing:0}
+#dashboardView #financeReports .performance-hero>small{font-size:12px;overflow-wrap:anywhere}
+#dashboardView #financeReports .performance-grid .mini-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+#dashboardView #financeReports .performance-grid .mini-kpi strong{font-size:16px}
+#dashboardView #financeReports :is(.bar-chart,.channel-list){padding:0 0 16px}
+#dashboardView #financeReports .bar-row{grid-template-columns:44px minmax(0,1fr) minmax(90px,auto);font-size:12px;gap:12px}
+#dashboardView #financeReports .bar-row>span{white-space:normal;overflow-wrap:anywhere;text-align:right;min-width:0}
+#dashboardView #financeReports :is(.report-drawer,.one-off-block,.commitments-block){border:0;border-top:1px solid var(--line);border-radius:0;box-shadow:none;padding:0}
+#dashboardView #financeReports .table-scroll{max-width:100%;overflow:auto}
+#dashboardView #financeReports :is(.pnl-table-wrap,.dashboard-monthly-table .table-scroll) table{min-width:800px}
+#dashboardView #financeReports .annual-table-wrap table{min-width:1100px}
+@media(max-width:700px){
+  #dashboardView #financeReports :is(.finance-primary-metrics,.profit-summary,.supporting-kpis,.pnl-cards){grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  #dashboardView #financeReports :is(.finance-primary-metrics,.profit-summary)>:first-child{grid-column:1/-1}
+  #dashboardView #financeReports .performance-grid{grid-template-columns:minmax(0,1fr)}
+  #dashboardView #financeReports :is(input:not([type=checkbox]),select,textarea){font-size:16px}
+}
+
 /* One original expense table adapts to a complete, readable compact list. */
 #financeExpenses .table-panel{padding:16px 12px;border:0;border-radius:0;box-shadow:none;background:transparent;min-width:0}
 #financeExpenses .table-panel .section-heading{flex-wrap:wrap;gap:12px;padding:0}

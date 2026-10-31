@@ -5095,7 +5095,11 @@ function applyDashboardToggles() {
     const isHidden = Boolean(appSettings.dashboardHidden?.[key]);
     section.classList.toggle("collapsed", isHidden);
     const button = section.querySelector("[data-dashboard-toggle]");
-    if (button) button.textContent = isHidden ? "Show" : "Hide";
+    if (button) {
+      button.textContent = isHidden ? "Show" : "Hide";
+      button.setAttribute('aria-expanded',String(!isHidden));
+      button.setAttribute('aria-label',(isHidden?'Show ':'Hide ')+(section.querySelector('h3')?.textContent || 'report section'));
+    }
   });
 }
 
@@ -5125,6 +5129,8 @@ function renderDashboard() {
   const upcomingPayments = upcomingPaymentsThroughYearEnd(year);
   const dashboardGuideTitle = document.querySelector("#dashboardGuideTitle");
   if (dashboardGuideTitle) dashboardGuideTitle.textContent = appSettings.dashboardMode === "annual" ? String(year) : monthLabel(selectedMonth);
+  const scope=document.querySelector('#financeReportScope');
+  if(scope)scope.textContent=activeVillaKey()+' Villa · Bookings by check-in '+(appSettings.dashboardMode==='annual'?'year':'month');
   els.sideRevenue.textContent = money(totals.revenue);
   if (els.sideTotalToReceive) els.sideTotalToReceive.textContent = money(totals.totalToReceive);
   if (els.sideRefundPending) els.sideRefundPending.textContent = money(totals.refundPending);
@@ -10836,6 +10842,26 @@ function initializeExpenseEditor() {
   };
 }
 
+function initializeFinanceReports() {
+  const host=document.querySelector('#financeReports'),scope=document.createElement('p');
+  scope.id='financeReportScope';host.querySelector('#dashboardGuideTitle').after(scope);
+  els.showDashboardSections.textContent='Show hidden sections';
+  const node=(tag,text,className)=>{const element=document.createElement(tag);if(text)element.textContent=text;if(className)element.className=className;return element;};
+  for(const [selector,ids]of [['.dashboard-month',['kpiRevenue','kpiPaid','kpiBalance']],['.dashboard-year',['overallRevenue','overallPaid','overallBalance']]]){
+    const section=host.querySelector(selector),overview=section.querySelector('.overview-card'),secondary=overview.querySelector('.supporting-kpis'),primary=node('div',null,'finance-primary-metrics');
+    for(const [index,id]of ids.entries()){
+      const cell=document.getElementById(id).closest('article');cell.querySelector('span').textContent=['Accommodation fees','Received for these bookings','Unpaid for these bookings'][index];primary.append(cell);
+    }
+    const remainingHero=overview.querySelector(':scope>.hero-kpi');if(remainingHero)secondary.prepend(remainingHero);
+    const details=node('details',null,'finance-collection-details');details.append(node('summary','Collection details'),secondary);overview.replaceChildren(primary,details);
+  }
+  const cost=host.querySelector('.pnl-breakdown-card'),costDetails=node('details',null,'finance-cost-details');
+  costDetails.append(node('summary','Cost breakdown'));cost.before(costDetails);costDetails.append(cost);cost.querySelector('h4').remove();
+  const performance=host.querySelector('.dashboard-performance'),channels=host.querySelector('.chart-panel[data-dashboard-scope=monthly]'),performanceDetails=node('details',null,'finance-performance-details');
+  performanceDetails.dataset.dashboardScope='monthly';performanceDetails.append(node('summary','Stay performance and channels'));performance.before(performanceDetails);performanceDetails.append(performance,channels);
+}
+
+initializeFinanceReports();
 initializeExpenseEditor();
 for(const button of document.querySelectorAll('[data-expense-layout]'))button.onclick=()=>{
   if(!bookingWorkspaceAvailable() || activeView!=='dashboard' || financeSection!=='expenses' || document.querySelector('dialog[open]'))return;
