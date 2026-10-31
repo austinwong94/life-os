@@ -86,9 +86,14 @@ const clone=x=>JSON.parse(JSON.stringify(x));
   const source=backend.state.boards.find(board=>board.id===personal).cards.find(c=>c.id==='sync-review-source');assert.equal(source.plannerTasks.length,1);assert(source.plannerTasks[0].archivedAt);assert.equal(source.plannerTasks[0].id,'sync-review-task');
   for(const p of [a,q,r,b])await p.evaluate(()=>window.dispatchEvent(new Event('online')));
   for(const p of [a,q,r,b]){
-   await p.waitForFunction(()=>!cloudPushInFlight && /^Cloud (saved and readback verified|copy verified current)/.test(cloudStatusMessage));
-   const snapshot=await p.evaluate(()=>({state:getStateForStorage(),pending:LifeDeviceStore.pending().length,conflicts:state.syncConflicts.length,token:loadCloudSession().access_token}));
-   assert.equal(snapshot.pending,0);assert.equal(snapshot.conflicts,0);for(const [id,text] of expected)assert.equal(snapshot.state.boards.find(board=>board.id===id).cards.find(c=>c.type==='diary').diaryEntries[day].thoughts,text);
+   assert.equal(await p.evaluate(()=>flushDeviceWrites()),true,'Observed device writes must be drainable');
+   const settled=await p.waitForFunction(()=>{
+    if(cloudPushInFlight || cloudSyncRetry.status().scheduled || !/^Cloud (saved and readback verified|copy verified current)/.test(cloudStatusMessage))return false;
+    if(LifeDeviceStore.pending().length)return false;
+    return {state:getStateForStorage(),pending:LifeDeviceStore.pending().length,conflicts:state.syncConflicts.length,token:loadCloudSession().access_token};
+   },null,{timeout:25000});
+   const snapshot=await settled.jsonValue();await settled.dispose();
+   assert.equal(snapshot.pending,0,'Every observed device journal must finish committing');assert.equal(snapshot.conflicts,0,'Independent-board edits must not create conflicts');for(const [id,text] of expected)assert.equal(snapshot.state.boards.find(board=>board.id===id).cards.find(c=>c.type==='diary').diaryEntries[day].thoughts,text);
    assert.equal(snapshot.token,p===b?'synthetic-independent-phone-token':'synthetic-test-token');
   }
   assert.equal(await q.evaluate(()=>state.activeBoardId),'work');assert.equal(await r.evaluate(()=>state.activeBoardId),'wellbeing');
