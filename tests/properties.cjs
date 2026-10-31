@@ -78,7 +78,7 @@ const harness=`<!doctype html><html><body style="margin:0"><iframe id="propertyO
     await frame.locator('#cancelBookingDialog').click();assert.equal(writes(),0);assert.equal(JSON.stringify(getRow().data),original);
   });
   await run('collapsed optional booking details retain complete original contact deposit notes documents and unknown fields',async({page,getRow})=>{
-    Object.assign(getRow().data.bookings[0],{guestTitle:'Ms',guestEmail:'guest@example.invalid',contact:'60123456789',depositAmount:450.25,depositPaid:true,depositRefunded:false,status:'in-house',incidentLog:'Private sample note\nSecond complete line'});
+    Object.assign(getRow().data.bookings[0],{guestTitle:'Ms',guestEmail:'guest@example.invalid',contact:'60123456789',depositAmount:450.25,depositPaid:true,depositRefunded:false,status:'in-house',incidentLog:'  Private sample note\n\tSecond complete line\n\n'});
     const frame=await open(page),original=await frame.locator('body').evaluate(()=>PropertyOperations.export());await booking(frame);await frame.locator('[data-booking-section="overview"]').click();await frame.getByRole('button',{name:'Edit booking',exact:true}).click();
     for(const id of ['bookingContactDetails','bookingDepositDetails','bookingOtherDetails']){assert.equal(await frame.locator('#'+id).getAttribute('open'),'');await frame.locator('#'+id+'>summary').click();}
     assert.match(await frame.locator('#bookingDepositPreview').innerText(),/RM 450\.25.*Received/);assert.match(await frame.locator('#bookingOptionsPreview').innerText(),/In-house.*Notes saved/);

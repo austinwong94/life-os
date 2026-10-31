@@ -8740,7 +8740,7 @@ els.form.addEventListener("submit", (event) => {
     guestEmail: els.guestEmailInput?.value.trim() || "",
     checkinSentAt: existing?.checkinSentAt ?? null,
     reminderSentAt: existing?.reminderSentAt ?? null,
-    incidentLog: els.incidentLogInput?.value.trim() ?? (existing?.incidentLog || ""),
+    incidentLog: els.incidentLogInput?.value ?? (existing?.incidentLog || ""),
   };
 
   if (Array.isArray(existing?.paymentLedger)) nextBooking = VillaLedger.setTotal({ ...nextBooking, paid: existing.paid }, nextBooking.paid);
