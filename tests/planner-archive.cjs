@@ -2,7 +2,10 @@ const engines=require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {workspace}=require('./navigation.cjs');
-const URL=process.env.TEST_URL || 'http://127.0.0.1:5180/';
+const target=new globalThis.URL(process.env.TEST_URL || 'http://127.0.0.1:5180/');
+target.searchParams.set('preview','1');target.searchParams.set('liveReload','0');
+assert(['127.0.0.1','localhost'].includes(target.hostname));
+const URL=target.href;
 const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-planner-archive';
 fs.mkdirSync(out,{recursive:true});const results=[];
 async function seed(page,{completed=false}={}) {
@@ -34,7 +37,7 @@ async function absent(page) {
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'External services blocked in synthetic tests'}));
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(9000);page.on('pageerror',e=>errors.push(e.stack));
     // Exercise archive persistence, not the localhost source-reload watcher.
-    try{await page.goto(URL+'?preview=1&liveReload=0');await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
+    try{await page.goto(URL);await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
     catch(e){results.push({name,pass:false,error:e.stack,pageErrors:errors});await page.screenshot({path:out+'/failure-'+results.length+'.png'}).catch(()=>{});}
     console.log(JSON.stringify(results.at(-1)));await context.close();
   }
@@ -121,7 +124,7 @@ async function absent(page) {
     await page.locator('#railArchiveButton').click();await page.locator('.archived-task-row').filter({hasText:'Archive regression task'}).getByRole('button',{name:'Restore',exact:true}).click();await flush(page);await page.reload();assert.equal((await task(page)).deletedAt,0);assert.equal((await task(page)).done,false);
   });
   for(const edit of ['rename','complete'])for(const order of ['archive-first','edit-first'])await run(`Two-tab stale ${edit}, ${order}, cannot revive an archive after reload`,async(page,context)=>{
-    const before=await seed(page),other=await context.newPage();await other.goto(URL+'?preview=1&liveReload=0');
+    const before=await seed(page),other=await context.newPage();await other.goto(URL);
     for(const p of [page,other])await p.evaluate(()=>LifeDeviceStore.configure(()=>false));
     async function stale(){await other.evaluate(edit=>{
       const card=getPlannerSourceCards()[0];if(edit==='rename')LifePlanner.change(card,'archive-task',{title:'Stale tab renamed task'});else LifePlanner.complete(card,'archive-task',getTodayKey());
@@ -209,7 +212,7 @@ async function absent(page) {
     await seed(page);await page.evaluate(async()=>{
       const c=makeCard({type:'routine',title:'Synthetic routine',items:['Rest']});c.id='clock-routine';state.cards.push(c);syncRoutineTodayHistory(c);saveState({skipCloud:true});await flushDeviceWrites();render();
     });
-    const other=await context.newPage();await other.goto(URL+'?preview=1&liveReload=0');
+    const other=await context.newPage();await other.goto(URL);
     const day=await page.evaluate(()=>getTodayKey());
     for(const p of [page,other])assert.equal(await p.evaluate(async()=>{const saved=await flushDeviceWrites();LifeDeviceStore.configure(()=>false);return saved;}),true);
     assert.equal(await page.evaluate(()=>LifeDeviceStore.pending().length),0);
