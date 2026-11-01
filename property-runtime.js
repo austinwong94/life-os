@@ -10194,7 +10194,7 @@ let bookingWorkspaceId = '';
 let bookingWorkspaceTab = 'overview';
 let financeSection = 'reports';
 let workspacePaymentDirty = false;
-let bookingWorkspaceExpected = '', bookingWorkspaceVilla = '', bookingWorkspaceAfterClose = null, workspacePaymentLastField = 'amount';
+let bookingWorkspaceExpected = '', bookingWorkspaceVilla = '', bookingWorkspaceAfterClose = null, bookingWorkspaceAfterCloseCheck = null, workspacePaymentLastField = 'amount';
 
 function bookingWorkspaceAvailable() {
   const shell=document.querySelector('#appShell');
@@ -10205,6 +10205,30 @@ function bookingWorkspaceRecord() {
   if(!bookingWorkspaceAvailable() || !document.querySelector('#bookingWorkspace')?.open || activeVillaKey()!==bookingWorkspaceVilla)return null;
   const booking=LifePropertyBookingList.unchanged(bookings,bookingWorkspaceId,bookingWorkspaceExpected);
   return booking && villaOf(booking)===bookingWorkspaceVilla?booking:null;
+}
+
+function currentBookingDocumentTarget(target) {
+  if(!target || !bookingWorkspaceAvailable() || cloudUser.id!==target.owner || activeVillaKey()!==target.villa || !['saved','Invoice','Official Receipt'].includes(target.mode))return null;
+  const booking=LifePropertyBookingList.unchanged(bookings,target.bookingId,target.bookingExpected);
+  if(!booking || villaOf(booking)!==target.villa)return null;
+  if(target.mode!=='saved')return {booking,document:null};
+  const doc=LifePropertyBookingList.unchanged(documents,target.documentId,target.documentExpected);
+  return doc && doc.bookingId===booking.id?{booking,document:doc}:null;
+}
+
+function requestBookingDocument(button,target) {
+  const host=document.querySelector('#bookingWorkspace');
+  const available=()=>Boolean(button.isConnected && !button.disabled && host.contains(button) && bookingWorkspaceTab==='documents' && bookingWorkspaceRecord() && currentBookingDocumentTarget(target));
+  if(!available()){host.querySelector('#workspacePaymentStatus').textContent='This booking or document changed. Nothing was opened. Your unfinished work is kept.';return false;}
+  if(!confirmDocumentReplacement())return false;
+  if(!available()){host.querySelector('#workspacePaymentStatus').textContent='This booking or document changed while confirming. Nothing was opened. Your unfinished work is kept.';return false;}
+  return closeBookingWorkspace(()=>{
+    const current=currentBookingDocumentTarget(target);if(!current)return;
+    setView('documents');
+    if(current.document)fillDocumentForm(current.document);
+    else {els.docType.value=target.mode;prefillDocFromBooking(current.booking.id);setDocumentFeedback('Unsaved document',true);}
+    revealDocumentField(els.docGuestName);els.docGuestName.focus({preventScroll:true});
+  },available);
 }
 
 function selectBookingWorkspaceTab(tab) {
@@ -10220,8 +10244,16 @@ function selectBookingWorkspaceTab(tab) {
 
 function finishBookingWorkspaceClose() {
   const action=bookingWorkspaceAfterClose,canContinue=Boolean(bookingWorkspaceRecord());
-  document.querySelector('#bookingWorkspace').close();workspacePaymentDirty=false;bookingWorkspaceAfterClose=null;
+  const host=document.querySelector('#bookingWorkspace');
+  if(action && bookingWorkspaceAfterCloseCheck && (!canContinue || !bookingWorkspaceAfterCloseCheck())){
+    bookingWorkspaceAfterClose=null;bookingWorkspaceAfterCloseCheck=null;host.querySelector('#workspacePaymentDiscard').hidden=true;
+    host.querySelector('#workspacePaymentStatus').textContent='The booking or document changed while confirming. Nothing was opened. Your unfinished work is kept.';
+    if(workspacePaymentDirty){selectBookingWorkspaceTab('payments');host.querySelector('#workspacePaymentForm').elements.namedItem(workspacePaymentLastField)?.focus();}
+    return false;
+  }
+  host.close();workspacePaymentDirty=false;bookingWorkspaceAfterClose=null;bookingWorkspaceAfterCloseCheck=null;
   if(action && canContinue)action();
+  return true;
 }
 
 function bookingReceiptPayments(booking) {
@@ -10246,17 +10278,17 @@ function openBookingWorkspace(id, tab = 'overview') {
   if(!bookingWorkspaceAvailable() || document.querySelector('dialog[open]') || (workspacePaymentDirty && dialog.querySelector('#workspacePaymentForm')) || typeof id!=='string' || !id.trim() || matches.length!==1 || villaOf(matches[0])!==activeVillaKey() || !['overview','payments','documents','messages'].includes(tab))return false;
   bookingWorkspaceId = id;
   bookingWorkspaceTab = tab;
-  bookingWorkspaceVilla=activeVillaKey();bookingWorkspaceExpected=JSON.stringify(matches[0]);bookingWorkspaceAfterClose=null;workspacePaymentLastField='amount';
+  bookingWorkspaceVilla=activeVillaKey();bookingWorkspaceExpected=JSON.stringify(matches[0]);bookingWorkspaceAfterClose=null;bookingWorkspaceAfterCloseCheck=null;workspacePaymentLastField='amount';
   workspacePaymentDirty = false;
   renderBookingWorkspace();
   dialog.showModal();return true;
 }
 
-function closeBookingWorkspace(afterClose=null) {
+function closeBookingWorkspace(afterClose=null,check=null) {
   bookingWorkspaceAfterClose=typeof afterClose==='function'?afterClose:null;
+  bookingWorkspaceAfterCloseCheck=typeof check==='function'?check:null;
   if(workspacePaymentDirty){const panel=document.querySelector('#workspacePaymentDiscard');panel.hidden=false;panel.querySelector('[data-workspace-keep]').focus();return false;}
-  finishBookingWorkspaceClose();
-  return true;
+  return finishBookingWorkspaceClose();
 }
 
 function renderBookingWorkspace() {
@@ -10290,7 +10322,8 @@ function renderBookingWorkspace() {
     </section>
     <section data-workspace-panel="documents" ${bookingWorkspaceTab === 'documents' ? '' : 'hidden'}>
       <div class="workspace-actions"><button class="primary-button" type="button" data-booking-document="Official Receipt">Create receipt</button><button class="ghost-button" type="button" data-booking-document="Invoice">Create invoice</button></div>
-      <div class="workspace-document-list">${docs.length ? docs.map(doc => `<button class="workspace-document-row" type="button" data-booking-open-document="${doc.id}"><strong>${escapeHtml(doc.code)}</strong><span>${escapeHtml(doc.type)} · ${shortDate(doc.date)} · ${escapeHtml(doc.status)}</span></button>`).join('') : '<p>No linked documents.</p>'}</div>
+      <p class="workspace-document-count" role="status">${docs.length} linked document${docs.length===1?'':'s'}</p>
+      <div class="workspace-document-list">${docs.length ? docs.map(doc => `<button class="workspace-document-row" type="button" data-booking-open-document="${escapeHtml(doc.id)}"><span class="workspace-document-main"><strong>${escapeHtml(doc.code)}</strong><small>${escapeHtml(doc.type)} · ${shortDate(doc.date)} · ${escapeHtml(doc.status)}</small></span><span class="workspace-document-value"><strong>${money(doc.type==='Official Receipt'?paymentTotalFor(doc):documentAmountDueFor(doc))}</strong><small>${doc.type==='Official Receipt'?'Received':'Amount due'}</small></span></button>`).join('') : '<p>No linked documents.</p>'}</div>
     </section>
     <section data-workspace-panel="messages" ${bookingWorkspaceTab === 'messages' ? '' : 'hidden'}>
       ${[['checkin', 'Check-in details'], ['guide', 'Guest guide'], ['review', 'Review request']].map(([type, label]) => `<div class="workspace-message-row"><span><strong>${label}</strong><small>${type === 'checkin' ? hasCheckinBeenSent(booking) ? 'Marked sent' : 'Not marked sent' : booking.sentLog?.[type] ? 'Marked sent ' + shortDate(booking.sentLog[type]) : 'Not marked sent'}</small></span><button type="button" class="ghost-button" data-booking-message="${type}">Open WhatsApp</button><button type="button" class="ghost-button" data-booking-message-done="${type}">Mark sent</button></div>`).join('')}
@@ -10301,6 +10334,17 @@ function renderBookingWorkspace() {
       <section id="workspacePaymentDiscard" role="alert" hidden><p>Discard this unrecorded payment?</p><div><button type="button" class="ghost-button" data-workspace-keep>Keep editing</button><button type="button" class="ghost-button danger" data-workspace-discard>Discard and continue</button></div></section>
       <div class="booking-workspace-actions"><span class="workspace-save-copy"><span>Recorded booking sync</span><span id="workspaceSaveState" role="status" data-status="${escapeHtml(els.dataHealthStatus?.dataset.status || '')}">${escapeHtml(els.dataHealthStatus?.textContent || '')}</span></span><button type="button" class="primary-button" data-workspace-edit ${bookingWorkspaceTab==='overview'?'':'hidden'}>Edit booking</button><button class="primary-button" id="workspaceRecordPayment" type="submit" form="workspacePaymentForm" ${bookingWorkspaceTab==='payments'?'':'hidden'}>Record payment</button></div>
     </footer>`;
+  const counts=new Map();for(const doc of documents)counts.set(doc.id,(counts.get(doc.id)||0)+1);
+  const owner=cloudUser?.id,expected=bookingWorkspaceExpected,villa=bookingWorkspaceVilla;
+  const bind=(button,mode,doc)=>{
+    const target=Object.freeze({owner,villa,mode,bookingId:booking.id,bookingExpected:expected,documentId:doc?.id || '',documentExpected:doc?JSON.stringify(doc):''});
+    if(doc && (typeof doc.id!=='string' || !doc.id.trim() || counts.get(doc.id)!==1)){
+      button.disabled=true;const warning=document.createElement('small');warning.textContent='Identity needs review';button.querySelector('.workspace-document-main').append(warning);
+    }
+    button.onclick=()=>requestBookingDocument(button,target);
+  };
+  host.querySelectorAll('[data-booking-open-document]').forEach((button,index)=>bind(button,'saved',docs[index]));
+  host.querySelectorAll('[data-booking-document]').forEach(button=>bind(button,button.dataset.bookingDocument));
 }
 
 function recordWorkspacePayment(event) {
@@ -10494,11 +10538,12 @@ function initializeWorkflowUI() {
   dialog.addEventListener('click', event => {
     const button = event.target.closest('button');
     if (!button) return;
+    if(button.hasAttribute('data-booking-document') || button.hasAttribute('data-booking-open-document'))return;
     if(button.hasAttribute('data-workspace-close')){closeBookingWorkspace();return;}
-    if(button.hasAttribute('data-workspace-keep')){bookingWorkspaceAfterClose=null;dialog.querySelector('#workspacePaymentDiscard').hidden=true;selectBookingWorkspaceTab('payments');dialog.querySelector('#workspacePaymentForm').elements.namedItem(workspacePaymentLastField)?.focus();return;}
+    if(button.hasAttribute('data-workspace-keep')){bookingWorkspaceAfterClose=null;bookingWorkspaceAfterCloseCheck=null;dialog.querySelector('#workspacePaymentDiscard').hidden=true;selectBookingWorkspaceTab('payments');dialog.querySelector('#workspacePaymentForm').elements.namedItem(workspacePaymentLastField)?.focus();return;}
     if(button.hasAttribute('data-workspace-discard')){finishBookingWorkspaceClose();return;}
     if (button.dataset.bookingSection) {
-      dialog.querySelector('#workspacePaymentDiscard').hidden=true;bookingWorkspaceAfterClose=null;selectBookingWorkspaceTab(button.dataset.bookingSection);return;
+      dialog.querySelector('#workspacePaymentDiscard').hidden=true;bookingWorkspaceAfterClose=null;bookingWorkspaceAfterCloseCheck=null;selectBookingWorkspaceTab(button.dataset.bookingSection);return;
     }
     const booking=bookingWorkspaceRecord();
     if(!booking){dialog.querySelector('#workspacePaymentStatus').textContent='This booking changed or is unavailable. Close and reopen it before making changes.';return;}
@@ -10509,16 +10554,6 @@ function initializeWorkflowUI() {
       try { updateBookingRecord(VillaLedger.withEntries(booking, ledger), 'Before voiding payment'); renderBookingWorkspace(); }
       catch (error) { window.alert(error.message); }
     }
-    if (button.dataset.bookingDocument && confirmDocumentReplacement()) closeBookingWorkspace(()=>{
-      setView('documents');
-      els.docType.value = button.dataset.bookingDocument;
-      prefillDocFromBooking(booking.id);
-      setDocumentFeedback('Unsaved document', true);
-    });
-    if (button.dataset.bookingOpenDocument && confirmDocumentReplacement()) closeBookingWorkspace(()=>{
-      setView('documents');
-      fillDocumentForm(documents.find(doc => doc.id === button.dataset.bookingOpenDocument));
-    });
     if (button.dataset.bookingMessage) openWhatsappForBooking(booking, button.dataset.bookingMessage);
     if (button.dataset.bookingMessageDone) { markNudgeSent(booking.id, button.dataset.bookingMessageDone); renderDetails(); renderBookingWorkspace(); }
   });

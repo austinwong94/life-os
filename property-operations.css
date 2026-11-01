@@ -474,6 +474,13 @@ table{font-size:13px}
 .property-integrated #bookingWorkspace .workspace-check{min-height:44px}
 .property-integrated #bookingWorkspace .workspace-document-row,.property-integrated #bookingWorkspace .workspace-message-row button,.property-integrated #bookingWorkspace .workspace-actions button,.property-integrated #bookingWorkspace .workspace-table button{min-height:44px;min-width:44px;font-size:13px;overflow-wrap:anywhere}
 .property-integrated #bookingWorkspace .workspace-document-row span{font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.property-integrated #bookingWorkspace .workspace-document-count{margin:12px 0;color:var(--muted);font:13px/1.5 system-ui,sans-serif}
+.property-integrated #bookingWorkspace .workspace-document-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,150px);align-items:start;gap:12px;width:100%;padding:14px 0;min-width:0;letter-spacing:0}
+.property-integrated #bookingWorkspace .workspace-document-row span{min-width:0;margin:0}
+.property-integrated #bookingWorkspace .workspace-document-row strong{display:block;font:600 13px/1.5 system-ui,sans-serif;letter-spacing:0;color:var(--ink)}
+.property-integrated #bookingWorkspace .workspace-document-row small{display:block;margin-top:4px;font:12px/1.5 system-ui,sans-serif;color:var(--muted);letter-spacing:0;overflow-wrap:anywhere}
+.workspace-document-value{text-align:right;font-variant-numeric:tabular-nums}
+@media(max-width:600px){.property-integrated #bookingWorkspace .workspace-document-row{grid-template-columns:minmax(0,1fr) minmax(0,110px)}}
 .property-integrated #bookingWorkspace .workspace-table{min-width:560px;table-layout:fixed}
 .property-integrated #bookingWorkspace .workspace-table :is(th,td){white-space:normal;overflow-wrap:anywhere;vertical-align:top}
 .booking-workspace-footer{flex-shrink:0;min-width:0;padding:10px 16px;border-top:1px solid var(--line);background:#fff}
