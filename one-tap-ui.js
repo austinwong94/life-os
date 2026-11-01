@@ -71,7 +71,7 @@
       }
       if(!await flushDeviceWrites())throw Error('This check-in is pending on this device. Keep this tab open and retry.');
       if(!T.equal(original(boardId).oneTapExperiment?.events?.[pending.event.id],pending.event))throw Error('The saved check-in needs verification. Its pending copy is kept.');
-      s.lastId=pending.event.id;s.error=false;s.message='Recorded: '+T.describe(pending.event);delete s.pending;
+      s.lastId=pending.event.id;s.error=false;s.message='Recorded: '+(pending.event.kind==='note'?(pending.event.data.text.trim()?'Your thought':'Actual time'):T.describe(pending.event));delete s.pending;
       const clear=pending.clearDraft;
       if(clear?.kind==='food' && T.equal(s.foodDraft,clear.expected)){s.foodDraft={name:'',amount:'',unit:'g',pin:true};s.foodSetup=false;}
       if(clear?.kind==='note' && T.equal(s.notes?.[pending.viewDay],clear.expected)){s.notes[pending.viewDay]={text:'',time:'',targetId:''};s.thoughtOpen=false;}
@@ -147,7 +147,7 @@
     const stepActions=node('div','trial-actions');for(const value of ['Started something','Finished a small step'])stepActions.append(writeButton(root,ref,value,'step',{value},value==='Started something'?'play':'check'));step.append(stepActions);
     const water=card('water','plus',model.waterMl+' mL recorded'),waterActions=node('div','trial-actions');for(const ml of [250,350,500])waterActions.append(writeButton(root,ref,ml+' mL','water',{ml}));water.append(waterActions);
     const food=card('food','utensils',model.foodEntries+' food entr'+(model.foodEntries===1?'y':'ies')+' - no nutrition totals in this trial'),foods=node('div','trial-foods');
-    for(const f of [...model.shortcuts.slice(-8).reverse(),...T.foods()]){
+    for(const f of [...model.shortcuts.slice().reverse(),...T.foods()]){
       const button=writeButton(root,ref,f.name+' - '+f.amount+' '+f.unit+(f.amount!==1 && f.unit!=='g'?'s':''),'food',{name:f.name,amount:f.amount,unit:f.unit});button.replaceChildren(node('strong','',f.name),node('span','',f.amount+' '+f.unit+(f.amount!==1 && f.unit!=='g'?'s':'')));foods.append(button);
     }food.append(foods);
     const setup=node('details','trial-food-setup');setup.append(node('summary','','Custom food / shortcut'));disclosure(setup,'foodSetup',boardId,s);
