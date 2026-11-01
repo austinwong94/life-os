@@ -514,6 +514,32 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/design-webkit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-life-os-site
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-feature-results
+          path: test-results/
+  verify-properties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Build complete property regression artifact
+        run: npm run build
+      - name: Start isolated property regression preview
+        run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-property-regression.log 2>&1 &
       - name: Check Properties booking and payment workflows
         run: npm run test:properties
         env:
@@ -525,17 +551,17 @@ jobs:
           TEST_OUTPUT: test-results/properties-webkit
       - uses: actions/upload-artifact@v4
         with:
-          name: verified-life-os-site
-          path: dist/
+          name: verified-property-manifest
+          path: dist/release.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: synthetic-feature-results
+          name: synthetic-property-regression-results
           path: test-results/
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [verify, verify-features, property-ui-preflight]
+    needs: [verify, verify-features, property-ui-preflight, verify-properties]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -556,13 +582,19 @@ jobs:
         with:
           name: verified-core-manifest
           path: verification/core
-      - name: Verify both test jobs accepted identical complete release bytes
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-property-manifest
+          path: verification/properties
+      - name: Verify test jobs accepted identical complete release bytes
         run: |
           node <<'NODE'
           const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto');
           const core=JSON.parse(fs.readFileSync('verification/core/release.json','utf8'));
+          const properties=JSON.parse(fs.readFileSync('verification/properties/release.json','utf8'));
           const site=JSON.parse(fs.readFileSync('dist/release.json','utf8'));
           assert.deepStrictEqual(site,core,'The test jobs verified different artifacts');
+          assert.deepStrictEqual(site,properties,'The property test job verified a different artifact');
           assert.match(site.id,/^[a-f0-9]{16}$/);
           assert.deepStrictEqual(fs.readdirSync('dist').sort(),[...Object.keys(site.files),'release.json'].sort(),'Unexpected public artifact files');
           for(const [file,hash] of Object.entries(site.files)){
@@ -570,7 +602,7 @@ jobs:
             const actual=crypto.createHash('sha256').update(fs.readFileSync(path.join('dist',file))).digest('hex');
             assert.strictEqual(actual,hash,file+' failed its accepted fingerprint');
           }
-          console.log('Both test jobs verified release '+site.id+' and every public file matches.');
+          console.log('Core, feature and property jobs verified release '+site.id+' and every public file matches.');
           NODE
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
