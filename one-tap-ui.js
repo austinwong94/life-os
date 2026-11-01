@@ -9,6 +9,7 @@
   function validDraft(v){
     return draftObject(v) && v.draftVersion===1 && (!v.notes || draftObject(v.notes) && Object.entries(v.notes).every(([day,d])=>T.day(day) && noteDraft(d))) &&
       (!v.foodDraft || draftObject(v.foodDraft) && typeof v.foodDraft.name==='string' && typeof v.foodDraft.amount==='string' && T.units.includes(v.foodDraft.unit) && typeof v.foodDraft.pin==='boolean') &&
+      (v.waterAmount===undefined || typeof v.waterAmount==='string') &&
       (!v.pending || draftObject(v.pending) && T.validEvent(v.pending.event) && T.day(v.pending.viewDay));
   }
   function session(boardId=state.activeBoardId){
@@ -47,7 +48,7 @@
     if(s.pending){s.error=true;s.message='An earlier check-in still needs saving. Retry it before adding another.';redraw(ref.boardId);return;}
     const captured=event(kind,data,date,ref.today,ref.boardId);
     try{
-      if(!T.validEvent(captured))throw Error(date>ref.today?'Future check-ins are not enabled. Choose today or a past day.':kind==='note'?'Add a thought, or select an entry for an actual time.':'Enter a food name, a supported unit and a positive amount up to 100,000.');
+      if(!T.validEvent(captured))throw Error(date>ref.today?'Future check-ins are not enabled. Choose today or a past day.':kind==='note'?'Add a thought, or select an entry for an actual time.':kind==='water'?'Enter a positive water amount up to 100,000 mL.':'Enter a food name, a supported unit and a positive amount up to 100,000.');
       T.record(original(ref.boardId).oneTapExperiment,captured,{today:ref.today});
     }catch(error){s.error=true;s.message=error.message;const status=root.querySelector('.trial-result [role=status]');status.textContent=s.message;status.className='trial-error';return;}
     s.pending={event:captured,viewDay:ref.day,clearDraft:T.copy(clearDraft)};keep(ref.boardId,s);
@@ -74,6 +75,7 @@
       s.lastId=pending.event.id;s.error=false;s.message='Recorded: '+(pending.event.kind==='note'?(pending.event.data.text.trim()?'Your thought':'Actual time'):T.describe(pending.event));delete s.pending;
       const clear=pending.clearDraft;
       if(clear?.kind==='food' && T.equal(s.foodDraft,clear.expected)){s.foodDraft={name:'',amount:'',unit:'g',pin:true};s.foodSetup=false;}
+      if(clear?.kind==='water' && s.waterAmount===clear.expected){s.waterAmount='';s.waterSetup=false;}
       if(clear?.kind==='note' && T.equal(s.notes?.[pending.viewDay],clear.expected)){s.notes[pending.viewDay]={text:'',time:'',targetId:''};s.thoughtOpen=false;}
       if(order.includes(pending.event.kind))s.next=order[(order.indexOf(pending.event.kind)+1)%order.length];
     }catch(error){s.error=true;s.message=error.message;}
@@ -146,6 +148,22 @@
     const step=card('step','check',model.finishes+' small step'+(model.finishes===1?'':'s')+' finished - '+model.starts+' start'+(model.starts===1?'':'s'));
     const stepActions=node('div','trial-actions');for(const value of ['Started something','Finished a small step'])stepActions.append(writeButton(root,ref,value,'step',{value},value==='Started something'?'play':'check'));step.append(stepActions);
     const water=card('water','plus',model.waterMl+' mL recorded'),waterActions=node('div','trial-actions');for(const ml of [250,350,500])waterActions.append(writeButton(root,ref,ml+' mL','water',{ml}));water.append(waterActions);
+    const recentWater=T.recentWater(b.oneTapExperiment,ref.day).filter(ml=>![250,350,500].includes(ml));
+    if(recentWater.length){
+      const section=node('section','trial-recent-foods');section.setAttribute('aria-label','Recent water amounts');section.append(node('h4','','Recent amounts'));
+      const choices=node('div','trial-actions'),limit=Number.isSafeInteger(s.waterLimit) && s.waterLimit>=4?s.waterLimit:4;
+      for(const ml of recentWater.slice(0,limit))choices.append(writeButton(root,ref,ml+' mL','water',{ml}));section.append(choices);
+      if(recentWater.length>limit)section.append(planningButton('More water amounts',()=>{if(!current(root,ref) || s.busy || s.pending)return;s.waterLimit=limit+4;keep(boardId,s);redraw(boardId);},'plus'));water.append(section);
+    }
+    const waterSetup=node('details','trial-water-setup');waterSetup.append(node('summary','','Other water amount'));disclosure(waterSetup,'waterSetup',boardId,s);
+    const waterForm=node('form','trial-form'),waterChoices=node('div','trial-portion-choices');waterChoices.setAttribute('role','group');waterChoices.setAttribute('aria-label','Water amount choices');
+    const canEditWater=()=>current(root,ref) && waterSetup.open && ref.day<=today;
+    const canChangeWater=()=>canEditWater() && !s.busy && !s.pending;
+    const markWater=()=>waterChoices.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(s.waterAmount!=='' && Number(s.waterAmount)===Number(button.dataset.amount))));
+    const waterAmount=planningInput('number',s.waterAmount || '',v=>{if(!canEditWater())return;s.waterAmount=v;keep(boardId,s);markWater();});waterAmount.required=true;waterAmount.min='0.01';waterAmount.max='100000';waterAmount.step='any';waterAmount.inputMode='decimal';
+    for(const ml of [100,200,750,1000]){const button=planningButton(ml+' mL',()=>{if(!canChangeWater())return;s.waterAmount=String(ml);waterAmount.value=s.waterAmount;keep(boardId,s);markWater();});button.setAttribute('aria-label','Set water amount to '+ml+' mL');button.dataset.amount=String(ml);button.dataset.trialWrite='';button.disabled=s.busy || Boolean(s.pending) || ref.day>today;waterChoices.append(button);}markWater();
+    const recordWater=planningButton('Record water',null,'check');recordWater.type='submit';recordWater.dataset.trialWrite='';recordWater.disabled=s.busy || Boolean(s.pending) || ref.day>today;waterForm.append(waterChoices,planningField('Water amount (mL)',waterAmount),recordWater);
+    waterForm.onsubmit=e=>{e.preventDefault();if(!canChangeWater())return;save(root,ref,'water',{ml:Number(s.waterAmount)},{clearDraft:{kind:'water',expected:s.waterAmount}});};waterSetup.append(waterForm);water.append(waterSetup);
     const food=card('food','utensils',model.foodEntries+' food entr'+(model.foodEntries===1?'y':'ies')+' - no nutrition totals in this trial'),foods=node('div','trial-foods');
     const portionLabel=f=>f.amount+' '+f.unit+(f.amount!==1 && f.unit!=='g'?'s':''),portionKey=f=>JSON.stringify([f.name,f.amount,f.unit]);
     const foodButton=f=>{const button=writeButton(root,ref,f.name+' - '+portionLabel(f),'food',{name:f.name,amount:f.amount,unit:f.unit});button.replaceChildren(node('strong','',f.name),node('span','',portionLabel(f)));return button;};

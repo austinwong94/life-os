@@ -58,6 +58,18 @@ test('observed capture sequence orders same-millisecond taps without inventing a
 test('portion presets are editable quantities not nutrition conversions and never share mutable arrays',()=>{
   assert.deepEqual(T.portions('egg'),[1,2,3]);assert.deepEqual(T.portions('scoop'),[1,2,3]);assert.deepEqual(T.portions('g'),[50,100,150,200]);assert.deepEqual(T.portions('unknown'),[]);const p=T.portions('egg');p[0]=99;assert.deepEqual(T.portions('egg'),[1,2,3]);
 });
+test('recent water amounts preserve exact decimals, deduplicate choices only, and never mutate the journal',()=>{
+  assert.deepEqual(T.recentWater(undefined,today),[]);let store;
+  for(const [i,ml]of [750,125.5,750,250].entries())store=add(store,{...event('w'+i,'water',{ml}),sequence:i+1});
+  const before=JSON.stringify(store),recent=T.recentWater(store,today);assert.deepEqual(recent,[250,750,125.5]);recent.push(999);assert.equal(JSON.stringify(store),before);assert.equal(T.summary(store,today).waterMl,1875.5);assert.equal(Object.keys(store.events).length,4);
+});
+test('recent water excludes later selected dates and undone records while retaining earlier matching amounts',()=>{
+  let store=add(undefined,{...event('past','water',{ml:750},'2026-10-31'),sequence:1});store=add(store,{...event('repeat','water',{ml:750}),sequence:2});store=add(store,{...event('other','water',{ml:200}),sequence:3});store=add(store,{...event('undo','undo',{targetId:'repeat'}),sequence:4});
+  assert.deepEqual(T.recentWater(store,today),[200,750]);assert.deepEqual(T.recentWater(store,'2026-10-31'),[750]);store=add(store,{...event('undo-past','undo',{targetId:'past'},'2026-10-31'),sequence:5});assert.deepEqual(T.recentWater(store,'2026-10-31'),[]);assert.equal(Object.keys(store.events).length,5);
+});
+test('invalid water history or comparison dates fail closed without replacing originals',()=>{
+  const bad={version:99,events:{original:'Keep me'}};assert.throws(()=>T.recentWater(bad,today));assert.deepEqual(bad,{version:99,events:{original:'Keep me'}});assert.throws(()=>T.recentWater(undefined,'invalid'));
+});
 test('recent food portions preserve exact names units and decimals without nutrition or invented defaults',()=>{
   assert.deepEqual(T.recentFoods(undefined,today),[]);let store;for(const [i,p]of [{name:'Labelled powder',amount:1.5,unit:'scoop'},{name:'Labelled powder',amount:37.25,unit:'g'},{name:'Another brand',amount:1.5,unit:'scoop'}].entries())store=add(store,{...event('f'+i,'food',p),sequence:i+1});const before=JSON.stringify(store),recent=T.recentFoods(store,today);assert.deepEqual(recent.map(p=>[p.name,p.amount,p.unit]),[['Another brand',1.5,'scoop'],['Labelled powder',37.25,'g'],['Labelled powder',1.5,'scoop']]);recent[0].amount=99;assert.equal(JSON.stringify(store),before);assert(!Object.hasOwn(T.recentFoods(store,today)[0],'protein'));
 });

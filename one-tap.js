@@ -99,6 +99,10 @@
     return result;
   }
   const portions=unit=>units.includes(unit)?(unit==='g'?[50,100,150,200]:[1,2,3]):[];
+  function recentWater(value,date){
+    if(!day(date))throw Error('Choose a valid experiment day.');
+    return [...new Set(active(value).slice().reverse().filter(e=>e.kind==='water' && e.date<=date).map(e=>e.data.ml))];
+  }
   function describe(e){
     if(e.kind==='water')return e.data.ml+' mL water';
     if(e.kind==='food' || e.kind==='shortcut')return e.data.name+' - '+e.data.amount+' '+e.data.unit+(e.data.amount!==1 && e.data.unit!=='g'?'s':'');
@@ -107,6 +111,6 @@
     if(e.kind==='undo')return 'Undid '+e.data.targetId;
     return e.data.value;
   }
-  const api=Object.freeze({copy,equal,day,validEvent,inspect,record,active,sorted,summary,progress,recentFoods,portions,describe,moods:Object.freeze([...moods]),types:Object.freeze([...types]),units:Object.freeze([...units]),foods:()=>copy(foodChoices)});
+  const api=Object.freeze({copy,equal,day,validEvent,inspect,record,active,sorted,summary,progress,recentFoods,recentWater,portions,describe,moods:Object.freeze([...moods]),types:Object.freeze([...types]),units:Object.freeze([...units]),foods:()=>copy(foodChoices)});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeOneTap=api;
 })(typeof globalThis==='undefined'?window:globalThis);

@@ -50,8 +50,9 @@
 .trial-portion-choices>.planning-button{white-space:normal;padding:8px 4px;font-size:13px}
 .trial-common-foods>.planning-button,.trial-portion-choices>.planning-button{transition:none}
 .one-tap-workspace .trial-common-foods [aria-pressed=true],.one-tap-workspace .trial-portion-choices [aria-pressed=true]{background:var(--action-fill,var(--action));border-color:var(--action);color:var(--action-on,#fff)}
-.trial-food-setup{margin-top:12px;border-top:1px solid var(--line)}
-.trial-food-setup>summary,.trial-reflection>summary,.trial-journal>summary{cursor:pointer;padding:13px 0;color:var(--ink);font-size:13px;font-weight:550}
+.trial-food-setup,.trial-water-setup{margin-top:12px;border-top:1px solid var(--line)}
+.trial-water-setup .trial-portion-choices{grid-template-columns:repeat(2,minmax(44px,1fr))}
+.trial-food-setup>summary,.trial-water-setup>summary,.trial-reflection>summary,.trial-journal>summary{cursor:pointer;padding:13px 0;color:var(--ink);font-size:13px;font-weight:550}
 .trial-form{display:grid;gap:12px;padding:8px 0 14px;min-width:0}
 .trial-form input:not([type=checkbox]),.trial-form select,.trial-form textarea{box-sizing:border-box;max-width:100%;width:100%;min-width:0;min-height:44px;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--surface,#fff);color:var(--ink);font:16px/1.5 system-ui,sans-serif}
 .trial-form textarea{resize:vertical;min-height:100px}.trial-form .planning-field>span{font-size:12px;font-weight:500}
