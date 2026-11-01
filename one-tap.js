@@ -103,6 +103,21 @@
     if(!day(date))throw Error('Choose a valid experiment day.');
     return [...new Set(active(value).slice().reverse().filter(e=>e.kind==='water' && e.date<=date).map(e=>e.data.ml))];
   }
+  function recentDays(value,today){
+    if(!day(today))throw Error('Choose a valid comparison day.');
+    const days=Array.from({length:7},(_,i)=>{const d=new Date(today+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-6+i);const date=d.toISOString().slice(0,10);if(!day(date))throw Error('This comparison needs seven valid calendar dates.');return {date,mood:'',waterMl:null,foodEntries:null,movement:[],starts:null,finishes:null,thoughts:0};});
+    const index=new Map(days.map(d=>[d.date,d]));
+    for(const e of active(value)){
+      const d=index.get(e.date);if(!d)continue;
+      if(e.kind==='mood')d.mood=e.data.value;
+      if(e.kind==='water')d.waterMl=(d.waterMl ?? 0)+e.data.ml;
+      if(e.kind==='food')d.foodEntries=(d.foodEntries ?? 0)+1;
+      if(e.kind==='movement')d.movement.push(e.data.value);
+      if(e.kind==='step'){d.starts ??= 0;d.finishes ??= 0;if(e.data.value==='Started something')d.starts++;else d.finishes++;}
+      if(e.kind==='note' && e.data.text.trim())d.thoughts++;
+    }
+    return days;
+  }
   function describe(e){
     if(e.kind==='water')return e.data.ml+' mL water';
     if(e.kind==='food' || e.kind==='shortcut')return e.data.name+' - '+e.data.amount+' '+e.data.unit+(e.data.amount!==1 && e.data.unit!=='g'?'s':'');
@@ -111,6 +126,6 @@
     if(e.kind==='undo')return 'Undid '+e.data.targetId;
     return e.data.value;
   }
-  const api=Object.freeze({copy,equal,day,validEvent,inspect,record,active,sorted,summary,progress,recentFoods,recentWater,portions,describe,moods:Object.freeze([...moods]),types:Object.freeze([...types]),units:Object.freeze([...units]),foods:()=>copy(foodChoices)});
+  const api=Object.freeze({copy,equal,day,validEvent,inspect,record,active,sorted,summary,progress,recentFoods,recentWater,recentDays,portions,describe,moods:Object.freeze([...moods]),types:Object.freeze([...types]),units:Object.freeze([...units]),foods:()=>copy(foodChoices)});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeOneTap=api;
 })(typeof globalThis==='undefined'?window:globalThis);

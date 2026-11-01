@@ -24,6 +24,13 @@
 .trial-week{display:flex;gap:6px}.trial-week>span{display:grid;place-items:center;width:30px;height:32px;border-radius:6px;background:var(--line);color:var(--muted);font-size:12px;font-weight:600}
 .trial-week>span.is-recorded{background:var(--action-fill,var(--action));color:var(--action-on,#fff)}
 .trial-recap .trial-milestone{padding:5px 9px;border:1px solid var(--line);border-radius:6px;color:var(--ink);font-weight:600}
+.trial-day-review{margin-bottom:20px;border-bottom:1px solid var(--line)}
+.trial-day-review>summary{min-height:44px;padding:12px 0;cursor:pointer;font-size:13px;font-weight:550;color:var(--ink)}
+.trial-day-list{padding-bottom:8px}
+.one-tap-workspace .trial-day-row{display:flex;justify-content:space-between;align-items:center;gap:14px;width:100%;min-height:64px;padding:12px;border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;color:var(--ink);text-align:left;white-space:normal;box-shadow:none}
+.one-tap-workspace .trial-day-row[aria-current=date]{border-left:3px solid var(--action);padding-left:9px}
+.trial-day-info{display:grid;gap:4px;overflow-wrap:anywhere}.trial-day-info strong{font-size:13px;font-weight:600}.trial-day-info>span{font-size:12px;line-height:1.6;color:var(--muted)}
+.trial-day-arrow{width:18px;height:18px;flex:none;color:var(--muted)}.trial-day-arrow svg{width:18px;height:18px}
 .trial-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
 .trial-card{padding:18px;border:1px solid var(--line);border-radius:8px;background:var(--surface,#fff);box-shadow:0 2px 6px #18232105;transition:border-color .15s ease,box-shadow .15s ease}
 .trial-card.is-next{border-color:var(--action);box-shadow:0 0 0 1px var(--action)}
@@ -69,3 +76,4 @@
 @media(max-width:1150px){.trial-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.trial-mood{grid-column:span 2}}
 @media(max-width:700px){.one-tap-workspace{display:flex;flex-direction:column}.trial-head{gap:8px;margin-bottom:14px}.trial-head h2{font-size:22px}.trial-tools{gap:4px}.trial-scope{max-width:260px;font-size:12px}.trial-grid{grid-template-columns:minmax(0,1fr);gap:14px;order:1}.trial-recap{order:2;margin-top:20px}.trial-reflection{order:3}.trial-journal{order:4}.trial-feedback{order:5}.trial-mood{grid-column:auto}.trial-card{padding:15px}.trial-moods{grid-template-columns:repeat(4,minmax(0,1fr))}.trial-moods .trial-mood{min-height:72px}.trial-recap{gap:12px}.trial-date-row>input{flex:1;width:120px}.trial-preferences{margin-left:0}.trial-result{flex-wrap:wrap;gap:6px}.trial-week>span{width:28px}.trial-feedback h3{width:100%;margin-bottom:4px}.trial-feedback .planning-button{flex:1 1 80px}.trial-head .trial-tools{flex-wrap:nowrap}}
 @media(prefers-reduced-motion:reduce){.trial-card{transition:none}}
+@media(max-width:700px){.trial-day-review{order:2}.trial-day-row{scroll-margin-bottom:80px}}

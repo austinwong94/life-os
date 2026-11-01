@@ -115,8 +115,8 @@
     const head=node('header','trial-head'),title=node('div');title.append(node('span','trial-eyebrow','OPTIONAL EXPERIMENT'),node('h2','','One Tap'),node('p','trial-scope','Separate trial journal - your main records stay unchanged.'));
     const tools=node('div','trial-tools');tools.append(planningIcon('Download experiment',()=>download(boardId),'download'),planningIcon('Return to Today',()=>setWorkspaceMode('today'),'chevron-left'));head.append(title,tools);root.append(head);
     if(s.sessionError){root.append(node('p','trial-error','This tab has an unrecognized experiment draft. The original copy is kept; other Life OS sections are unchanged.'),planningButton('Download original draft',()=>downloadTextFile('life-os-one-tap-retained-draft.txt',s.originalDraft,'text/plain;charset=utf-8'),'download'));return;}
-    let b,model,progress;
-    try{b=original(boardId);model=T.summary(b.oneTapExperiment,s.day);progress=T.progress(b.oneTapExperiment,today);}catch(error){root.append(node('p','trial-error',error.message),planningButton('Download original experiment',()=>download(boardId),'download'));return;}
+    let b,model,progress,recentDays;
+    try{b=original(boardId);model=T.summary(b.oneTapExperiment,s.day);progress=T.progress(b.oneTapExperiment,today);recentDays=T.recentDays(b.oneTapExperiment,today);}catch(error){root.append(node('p','trial-error',error.message),planningButton('Download original experiment',()=>download(boardId),'download'));return;}
     const dates=node('div','trial-date-row'),date=document.createElement('input');date.type='date';date.value=s.day;date.setAttribute('aria-label','Experiment day');date.onchange=()=>{const value=date.value;if(!T.day(value) || !current(root,ref))return;s.day=value;s.manualDay=value!==today;keep(boardId,s);redraw(boardId);};
     const changeDate=amount=>{if(!current(root,ref))return;s.day=LifePlanning.shift(s.day,amount);s.manualDay=true;keep(boardId,s);redraw(boardId);};
     dates.append(planningIcon('Previous experiment day',()=>changeDate(-1),'chevron-left'),date,planningIcon('Next experiment day',()=>changeDate(1),'chevron-right'));
@@ -136,6 +136,16 @@
     const week=node('div','trial-week');week.setAttribute('aria-label','Last seven recording days');for(const d of progress.days){const item=node('span',d.recorded?'is-recorded':'');item.textContent=new Date(d.date+'T12:00:00').toLocaleDateString(undefined,{weekday:'narrow'});item.title=d.date+(d.recorded?' - recorded':' - no record');item.setAttribute('aria-label',item.title);week.append(item);}recap.append(copy,week);
     if(model.rewards && progress.milestone)recap.append(node('span','trial-milestone',progress.milestone===1?'First check-in':progress.milestone+' days recorded'));
     root.append(recap);
+    const dayReview=node('details','trial-day-review');dayReview.append(node('summary','','Last 7 days'));disclosure(dayReview,'daysOpen',boardId,s);
+    const dayList=node('div','trial-day-list');dayList.setAttribute('role','group');dayList.setAttribute('aria-label','Recent check-in days');dayReview.append(dayList);
+    for(const d of recentDays.slice().reverse()){
+      const label=new Date(d.date+'T12:00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}),parts=[];
+      if(d.mood)parts.push(d.mood);if(d.waterMl!==null)parts.push(d.waterMl+' mL water');if(d.foodEntries!==null)parts.push(d.foodEntries+' food '+(d.foodEntries===1?'entry':'entries'));
+      for(const value of ['Gym','Walk','Stretch']){const count=d.movement.filter(v=>v===value).length;if(count)parts.push(value+(count>1?' x'+count:''));}
+      if(d.starts)parts.push(d.starts+' '+(d.starts===1?'start':'starts'));if(d.finishes)parts.push(d.finishes+' small '+(d.finishes===1?'step':'steps')+' finished');if(d.thoughts)parts.push(d.thoughts+' '+(d.thoughts===1?'thought':'thoughts'));
+      const button=planningButton(label,()=>{if(!current(root,ref) || !dayReview.open || s.busy || s.pending)return;s.day=d.date;s.manualDay=s.day!==today;keep(boardId,s);redraw(boardId);const fresh=document.querySelector('.one-tap-workspace'),heading=fresh?.querySelector('h2');if(heading){heading.tabIndex=-1;heading.focus({preventScroll:true});fresh.scrollIntoView({block:'start',behavior:'instant'});}});button.classList.add('trial-day-row');button.dataset.trialDate=d.date;button.setAttribute('aria-label','View check-ins for '+d.date);if(d.date===ref.day)button.setAttribute('aria-current','date');button.disabled=s.busy || Boolean(s.pending);
+      const info=node('span','trial-day-info');info.append(node('strong','',label),node('span','',parts.length?parts.join(', '):'Not recorded'));button.replaceChildren(info);const arrow=node('span','trial-day-arrow');arrow.innerHTML=ICONS['chevron-right'];arrow.setAttribute('aria-hidden','true');button.append(arrow);dayList.append(button);
+    }root.append(dayReview);
     const grid=node('div','trial-grid');root.append(grid);
     const card=(kind,icon,summary)=>{
       const section=node('article','trial-card trial-'+kind);section.dataset.trialKind=kind;section.classList.toggle('is-next',model.guided && s.next===kind);
