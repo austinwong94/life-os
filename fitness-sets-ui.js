@@ -48,7 +48,14 @@ function openFitnessPastSet(ref,exercise,source,prefix){
     if(state.activeBoardId!==ref.boardId || card?.activeFitnessDate!==ref.date){message.textContent='The board or day changed. Reopen the original workout. Nothing was copied.';return;}
     const expected=targets.find(row=>row.id===target.value);if(!expected || !selected){message.textContent='Choose a blank new set and a recorded set.';return;}
     const after=applyFitnessSetChange(ref,{type:'copy-previous',rowId:expected.id,expected,expectedName,source:{date:source.date,exerciseId:source.exercise.id,setId:selected.id,expectedExercise:source.exercise}},message,{rollbackOnFailure:true});
-    if(after){dialog.close();renderCardsOnly({force:true});document.getElementById(prefix+'-tick-'+encodeURIComponent(expected.id))?.focus();}
+    if(after){
+      // Native dialog focus restoration finishes with the close event.
+      dialog.addEventListener('close',()=>{
+        const current=state.cards.find(card=>card.id===ref.cardId);
+        if(state.activeBoardId!==ref.boardId || current?.activeFitnessDate!==ref.date || document.querySelector('dialog[open]'))return;
+        renderCardsOnly({force:true});document.getElementById(prefix+'-tick-'+encodeURIComponent(expected.id))?.focus();
+      },{once:true});dialog.close();
+    }
   };
   dialog.append(form);
 }
