@@ -15,3 +15,46 @@ test('ambiguous or removed exercise records are not presented as verified previo
 test('malformed history and invalid dates do not crash the health projection or invent a score',()=>{
   const card=workout();card.fitnessEntries['2026-10-29'].parts.chest.exercises=[null,{name:123}];assert.equal(health.previous(card,'2026-10-31','chest','Bench press'),null);assert.equal(health.validDay('2026-02-29'),false);assert.equal(health.validDay('2028-02-29'),true);assert.equal(health.previous(card,'bad','chest','Bench press'),null);assert.equal(Object.hasOwn(health.sessions([card])[0],'score'),false);
 });
+const timing={plannedTime:'',eatenTime:'12:15',windowMinutes:60,recordedAt:1};
+const meal=(id,kind='meal')=>({id,kind,items:[{id:id+'-food',amount:1}],timing});
+const checkedExercise=()=>({id:'checked-lift',setLog:{version:1,id:'sets',createdAt:1,updatedAt:2,rows:[{id:'set',reps:8,weightKg:15,rpe:'',done:true,removedAt:0,history:[{id:'event',at:2,action:'completed',reps:8,weightKg:15,rpe:''}]}]}});
+test('Today health counts actual meals separately from snacks and drinks without creating records or goals',()=>{
+  const cards=[{id:'food',type:'food',foodEntries:{'2026-10-31':{meals:[meal('breakfast'),meal('coffee','drink'),meal('fruit','snack'),{id:'empty',items:[]}]},'2026-10-30':{meals:[meal('older')]},'2026-11-01':{meals:[meal('future')]}}}],before=JSON.stringify(cards);
+  const data=health.daily(cards,'2026-10-31');assert.equal(data.food.status,'ready');assert.equal(data.food.meals,1);assert.equal(data.food.drinks,1);assert.equal(data.food.snacks,1);assert.equal(data.food.recordedDays,2);assert.equal(data.food.lastTime,'12:15');assert.equal(Object.hasOwn(data.food,'target'),false);assert.equal(JSON.stringify(cards),before);
+});
+test('weight alone, active blank parts and unfinished individual sets are not recorded training',()=>{
+  const exercise=checkedExercise();exercise.setLog.rows=[];const entry={metrics:{weightKg:72.3},parts:{chest:{active:true,exercises:[{id:'plan',name:'Planned lift',sets:3,reps:''},exercise]},running:{active:true,distanceKm:'',durationMinutes:''}}};
+  assert.deepEqual(health.trainingDay(entry),{checkedSets:0,exerciseEntries:0,activityEntries:0,review:false,hasEntry:false});assert.equal(health.trainingDay({notes:'Rest day'}).hasEntry,false);
+});
+test('checked sets, legacy entries and activity measurements retain distinct read-only meanings',()=>{
+  const entry={parts:{chest:{active:true,exercises:[checkedExercise(),{id:'legacy',name:'Push-ups',sets:3,reps:'8-12'},{id:'amrap',name:'Pull-ups',sets:1,reps:'AMRAP'}]},running:{active:true,distanceKm:5,durationMinutes:30},mobility:{active:true,durationMinutes:10}}},before=JSON.stringify(entry);
+  assert.deepEqual(health.trainingDay(entry),{checkedSets:1,exerciseEntries:2,activityEntries:2,review:false,hasEntry:true});assert.equal(JSON.stringify(entry),before);
+});
+test('Today uses a chosen original health source and never sums multiple logs or silently replaces a removed selection',()=>{
+  const cards=[{id:'one',type:'food',foodEntries:{'2026-10-31':{meals:[meal('one-meal')]}}},{id:'two',type:'food',foodEntries:{'2026-10-31':{meals:[meal('two-meal'),meal('another')]}}}];
+  assert.equal(health.daily(cards,'2026-10-31').food.status,'choose');assert.equal(health.daily(cards,'2026-10-31',{food:'two'}).food.meals,2);cards.pop();assert.equal(health.daily(cards,'2026-10-31',{food:'two'}).food.status,'unavailable');assert.equal(health.daily(cards,'2026-10-31').food.meals,1);
+});
+test('archived duplicate and conflicting sources pause Today totals without combining unrelated boards',()=>{
+  const card={id:'food',type:'food',foodEntries:{}},cards=[card,{...card,id:'archived',archivedAt:1}],conflict={segments:['boards','board','cards','food','foodEntries']};
+  assert.equal(health.daily(cards,'2026-10-31').food.sources.length,1);assert.equal(health.daily(cards,'2026-10-31',{}, {boardId:'board',conflicts:[conflict]}).food.status,'review');assert.equal(health.daily(cards,'2026-10-31',{}, {boardId:'other',conflicts:[conflict]}).food.status,'ready');assert.equal(health.daily([...cards,card],'2026-10-31',{food:'food'}).food.status,'review');
+});
+test('invalid food identities and unrecognised strength logs are review states rather than invented progress',()=>{
+  const cards=[{id:'food',type:'food',foodEntries:{'2026-10-31':{meals:[meal('same'),meal('same')]}}},{id:'gym',type:'fitness',fitnessEntries:{'2026-10-31':{parts:{chest:{active:true,exercises:[{id:'bad',setLog:{version:99}}]}}}}}];
+  const before=JSON.stringify(cards),data=health.daily(cards,'2026-10-31');assert.equal(data.food.status,'review');assert.equal(data.fitness.status,'review');assert.equal(health.daily(cards,'bad').food.status,'review');assert.equal(JSON.stringify(cards),before);
+});
+test('weekly training counts use dated exercise evidence, not future plans body measurements or notes',()=>{
+  const card={id:'gym',type:'fitness',fitnessEntries:{'2026-10-31':{metrics:{weightKg:72}},'2026-10-30':{parts:{chest:{active:true,exercises:[checkedExercise()]}}},'2026-10-29':{notes:'A rest day'},'2026-11-01':{parts:{chest:{active:true,exercises:[checkedExercise()]}}}}};
+  const result=health.daily([card],'2026-10-31').fitness;assert.equal(result.recordedDays,1);assert.equal(result.checkedSets,0);assert.equal(result.hasEntry,false);
+});
+test('missing actual meal times never become an inferred schedule or late judgement',()=>{
+  const card={id:'food',type:'food',foodEntries:{'2026-10-31':{meals:[{...meal('actual'),timing:{...timing,eatenTime:''}}]}}};
+  const result=health.daily([card],'2026-10-31').food;assert.equal(result.lastTime,'');assert.equal(result.meals,1);assert.equal(Object.hasOwn(result,'late'),false);assert.equal(Object.hasOwn(result,'completed'),false);
+});
+test('malformed day containers and null records pause progress instead of being presented as an empty successful review',()=>{
+  for(const value of [null,[],42,'bad']){
+    assert.equal(health.daily([{id:'food',type:'food',foodEntries:value}],'2026-10-31').food.status,'review');
+    assert.equal(health.daily([{id:'gym',type:'fitness',fitnessEntries:value}],'2026-10-31').fitness.status,'review');
+    assert.equal(health.daily([{id:'food',type:'food',foodEntries:{'2026-10-31':value}}],'2026-10-31').food.status,'review');
+    assert.equal(health.trainingDay(value).review,true);
+  }
+});

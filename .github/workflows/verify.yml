@@ -281,6 +281,15 @@ jobs:
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/food-daily-webkit
+      - name: Check Today food and training shortcuts without modifying original records in Chromium
+        run: npm run test:today-health
+        env:
+          TEST_OUTPUT: test-results/today-health-chromium
+      - name: Check Today food and training shortcuts without modifying original records in WebKit
+        run: npm run test:today-health
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/today-health-webkit
       - name: Check meal reuse and original nutrition preservation in WebKit
         run: npm run test:meal-reuse
         env:

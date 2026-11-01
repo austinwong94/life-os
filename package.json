@@ -17,6 +17,7 @@
     "test:health-review": "node tests/health-review.cjs",
     "test:health-interface": "node tests/health-interface.cjs",
     "test:health-workspace": "node tests/health-workspace.cjs",
+    "test:today-health": "node tests/today-health.cjs",
     "test:fitness-sets": "node tests/fitness-sets.cjs",
     "test:workout-rest": "node tests/workout-rest.cjs",
     "test:exercise-history": "node tests/exercise-history.cjs",

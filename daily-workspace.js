@@ -301,6 +301,7 @@ function renderDailyHome() {
   const overview=planningNode('div','daily-actions daily-focus-footer');
   overview.append(planningButton('All tasks ('+all.length+')',()=>{planningSession().view='all';planningSession().area='*';planningSession().search='';savePlanningSession();setWorkspaceMode('tasks');}),
     planningButton('My board',()=>setWorkspaceMode('board')));focus.append(overview);columns.append(focus);
+  if(session.sections.health!==false)columns.append(renderDailyHealth());
   if(!session.light && session.sections.agenda!==false){
     const agenda=dailySection('Coming up',planningButton('Calendar',()=>setWorkspaceMode('calendar'),'calendar'));
     const items=dailyUpcoming(day);
@@ -338,7 +339,7 @@ function renderDailyHome() {
 }
 function openDailyPreferences() {
   const dialog=dailyDialog('Customize Today'),session=dailySession();
-  for(const [key,label] of [['agenda','Upcoming activities'],['routine','Priority progress'],['diary','Diary'],['sidenote','Quick notes']]){
+  for(const [key,label] of [['health','Food & movement'],['agenda','Upcoming activities'],['routine','Priority progress'],['diary','Diary'],['sidenote','Quick notes']]){
     const row=planningNode('label','daily-check'),check=planningInput('checkbox','',()=>{});check.checked=session.sections[key]!==false;
     check.onchange=()=>{session.sections[key]=check.checked;saveDailyDraft();renderCardsOnly({force:true});};row.append(check,planningNode('span','',label));dialog.append(row);
     if(['diary','sidenote'].includes(key)){
