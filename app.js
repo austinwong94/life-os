@@ -4228,11 +4228,13 @@ function getPlannerTaskEditDraft(item) {
 
 function renderPlannerLinkedEditItem(item) {
   const draft = getPlannerTaskEditDraft(item);
+  const boardId = state.activeBoardId, today = getTodayKey();
   const row = document.createElement("div");
   row.className = "planner-linked-item is-editing";
 
   const form = document.createElement("form");
   form.className = "planner-linked-edit-form";
+  const current = () => row.isConnected && !form.closest('[hidden],[inert]') && state.activeBoardId === boardId && plannerTaskEditDraft === draft && editingPlannerTaskKey === draft.key;
 
   const dateInput = document.createElement("input");
   dateInput.type = "date";
@@ -4240,6 +4242,7 @@ function renderPlannerLinkedEditItem(item) {
   dateInput.value = draft.dateKey;
   dateInput.setAttribute("aria-label", "Task date");
   dateInput.addEventListener("input", () => {
+    if (!current()) return;
     draft.dateKey = normalizeDateKey(dateInput.value);
   });
 
@@ -4249,6 +4252,7 @@ function renderPlannerLinkedEditItem(item) {
   titleInput.value = draft.title;
   titleInput.setAttribute("aria-label", "Task name");
   titleInput.addEventListener("input", () => {
+    if (!current()) return;
     draft.title = titleInput.value;
   });
 
@@ -4265,13 +4269,16 @@ function renderPlannerLinkedEditItem(item) {
   cancel.title = "Cancel edit";
   cancel.setAttribute("aria-label", "Cancel planner task edit");
   cancel.innerHTML = ICONS.x;
-  cancel.addEventListener("click", cancelPlannerTaskEdit);
+  cancel.addEventListener("click", () => { if (current()) cancelPlannerTaskEdit(); });
 
-  form.append(planningOptionalDate(dateInput,"Clear task date",()=>{draft.dateKey="";}), titleInput, save, cancel);
+  const schedule = planningNode('div', 'planner-edit-schedule');
+  schedule.append(planningField('Planned day', planningOptionalDate(dateInput,"Clear task date",()=>{if(current())draft.dateKey="";})), planningCaptureDates(dateInput,today,current));
+  form.append(schedule, titleInput, save, cancel);
   appendTaskEditFields(form, draft);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const saved = updatePlannerTask(item, titleInput.value, dateInput.value, draft);
+    if (!current()) return;
+    const saved = updatePlannerTask(item, draft.title, draft.dateKey, draft);
     if (!saved) return;
     editingPlannerTaskKey = "";
     plannerTaskEditDraft = null;

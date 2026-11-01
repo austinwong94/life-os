@@ -149,8 +149,14 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .workspace-task-list .planner-linked-item.is-editing { grid-template-columns: minmax(0,1fr); }
 .planner-linked-edit-form { grid-template-columns: minmax(0,1fr) 44px 44px; }
 .planner-linked-edit-form > .planning-optional-date { grid-column: 1 / -1; }
+.planner-linked-edit-form > .planner-edit-schedule { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 10px; align-items: end; min-width: 0; }
+.planner-edit-schedule > .planning-field > span { font-size: 12px; font-weight: 500; }
+@media(max-width:700px) { .planner-linked-edit-form > .planner-edit-schedule { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
 .planner-linked-edit-form > input, .planner-linked-edit-form > button, .planner-linked-edit-form .planner-linked-edit-date { min-height: 44px; border-radius: 6px; font-size: 16px; font-weight: 400; }
 .planner-linked-edit-form > button { width: 44px; }
+.planner-linked-edit-form > .planner-linked-edit-save { background: var(--action-fill,var(--action)); color: var(--action-on,#fff); border-color: var(--action); }
+.planner-linked-edit-form > .planner-linked-edit-cancel { background: var(--surface,#fff); color: var(--ink); border-color: var(--line); }
+.planner-linked-edit-form > button svg { width: 18px; height: 18px; stroke-width: 1.8; }
 .calendar-toolbar .planning-tabs { margin: 0; }
 .calendar-period { justify-content: start; margin-bottom: 4px; }
 .calendar-period h3 { flex: 1; text-align: center; }
