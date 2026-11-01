@@ -12,7 +12,7 @@
   function context(card,date,node){
     const boardId=state.activeBoardId,cardId=card.id;
     return ()=>{
-      if(state.activeBoardId!==boardId || node && !node.isConnected)throw Error('This view changed. Reopen the original food day.');
+      if(state.activeBoardId!==boardId || node && (!node.isConnected || node.closest('dialog')?.open===false))throw Error('This view changed. Reopen the original food day.');
       const live=D.resolve(board(),cardId,'food',state.syncConflicts);
       if(live.activeFoodDate!==date)throw Error('The selected food day changed. Reopen it before saving.');
       return live;
@@ -146,6 +146,16 @@
     const planned=document.createElement('input');planned.type='time';planned.value=draft.plannedTime;
     const windowSelect=planningSelect([15,30,60,90,120,180].map(n=>[String(n),'± '+n+' min']),String(draft.windowMinutes),()=>{});
     const picker=planningSelect([['','Choose food'],...card.foodLibrary.map(f=>[f.id,f.name])],'',()=>{}),items=planningNode('div','food-routine-items');
+    const preview=planningNode('section','food-routine-preview'),totals=planningNode('div'),basis=planningNode('p','food-routine-preview-basis');preview.setAttribute('aria-label','Usual meal nutrition preview');totals.setAttribute('aria-live','polite');totals.setAttribute('aria-atomic','true');preview.append(planningNode('h3','','Per meal'),totals,basis);
+    const updateTotals=()=>{
+      totals.replaceChildren();delete preview.dataset.ready;
+      if(!draft.items.length){basis.textContent='No foods selected.';return false;}
+      if(!D.validItems(draft.items) || draft.items.some(item=>item.servingGrams<1)){basis.textContent='Nutrition basis or portions need review.';return false;}
+      const values=getFoodMealTotals(card,{items:draft.items});
+      if(!FOOD_NUTRIENT_KEYS.every(key=>Number.isFinite(values[key]) && values[key]>=0)){basis.textContent='Nutrition totals need review.';return false;}
+      totals.append(renderFoodMealSummary(values));preview.dataset.ready='true';basis.textContent=draft.items.some(item=>/default|generic/i.test(item.source))?'Saved nutrition · includes estimates':'Saved nutrition';return true;
+    };
+    items.addEventListener('input',updateTotals);items.addEventListener('change',updateTotals);
     const draw=()=>{
       items.replaceChildren();
       for(const item of draft.items){
@@ -154,12 +164,13 @@
         const quantity=document.createElement('input');quantity.type='number';quantity.min='0';quantity.step='any';quantity.inputMode='decimal';quantity.value=item.amount;quantity.required=true;quantity.setAttribute('aria-label',item.name+' portion');quantity.oninput=()=>{item.amount=quantity.value===''?'':Number(quantity.value);};
         const unit=planningSelect([['g','g'],['serving',item.servingUnit]],item.unit,value=>{try{const amount=D.convertPortion(item.amount,item.unit,value,item.servingGrams);item.amount=amount;item.unit=value;quantity.value=amount;status.textContent='';}catch(error){unit.value=item.unit;status.textContent=error.message;}});unit.setAttribute('aria-label',item.name+' unit');
         const remove=planningButton('',()=>{draft.items=draft.items.filter(i=>i!==item);draw();},'trash-2');remove.title='Remove '+item.name+' from usual meal';remove.setAttribute('aria-label',remove.title);
-        row.append(heading,quantity,unit,remove,portions(item,{input:quantity,unit,onApply:(amount,nextUnit)=>{item.amount=amount;item.unit=nextUnit;status.textContent='';},onError:error=>status.textContent=error.message}));items.append(row);
+        row.append(heading,quantity,unit,remove,portions(item,{input:quantity,unit,onApply:(amount,nextUnit)=>{live();item.amount=amount;item.unit=nextUnit;status.textContent='';updateTotals();},onError:error=>status.textContent=error.message}));items.append(row);
         if(FOOD_NUTRIENT_KEYS.every(key=>item[key]===0)){const label=planningNode('label','food-zero-confirm'),check=document.createElement('input');check.type='checkbox';check.checked=item.zeroNutritionConfirmed===true;check.onchange=()=>item.zeroNutritionConfirmed=check.checked;label.append(check,planningNode('span','','Zero nutrition checked for '+item.name));row.append(label);}
-      }
+      }updateTotals();if(!draft.items.length)addFoods.open=true;
     };
+    const addFoods=planningNode('details','food-routine-add-foods');addFoods.open=draft.items.length===0;addFoods.append(planningNode('summary','','Add foods'));
     const addFood=id=>{
-      try{const current=live(),food=current.foodLibrary.find(f=>f.id===id);if(!food)throw Error('Choose a food first.');const index=draft.items.findIndex(item=>item.foodId===id);if(index>=0){items.children[index]?.querySelector('.food-tap-portions button')?.focus();return;}draft.items.push({id:createId(),foodId:food.id,amount:food.servingUnit==='100g'?100:1,unit:food.servingUnit==='100g'?'g':'serving',...createFoodItemSnapshot(food)});draw();status.textContent='';}catch(error){status.textContent=error.message;}
+      try{const current=live();if(!addFoods.open)throw Error('Open Add foods before choosing a food.');const food=current.foodLibrary.find(f=>f.id===id);if(!food)throw Error('Choose a food first.');const index=draft.items.findIndex(item=>item.foodId===id);if(index>=0){items.children[index]?.querySelector('.food-tap-portions button')?.focus();return;}draft.items.push({id:createId(),foodId:food.id,amount:food.servingUnit==='100g'?100:1,unit:food.servingUnit==='100g'?'g':'serving',...createFoodItemSnapshot(food)});draw();status.textContent='';}catch(error){status.textContent=error.message;}
     };
     const add=planningButton('Add food',()=>addFood(picker.value),'plus');
     const foodPick=planningNode('div','food-routine-pick');foodPick.append(planningField('Food',picker),add);
@@ -167,7 +178,7 @@
     const names=planningNode('div','food-quick-choices');names.setAttribute('role','group');names.setAttribute('aria-label','Usual meal names');for(const label of ['Breakfast','Lunch','Dinner','Snack','Protein shake','Coffee'])names.append(planningButton(label,()=>{name.value=label;}));
     const save=planningButton('Save usual meal',null,'check');save.type='submit';save.classList.add('is-primary');
     const buttons=planningNode('div','daily-actions');buttons.append(planningButton('Cancel',()=>dialog.close()),save);
-    form.append(planningField('Meal name',name),names,quickFoods,foodPick,items,planningField('Entry type',kind),planningField('Planned time (optional)',planned),planningField('Your timing window',windowSelect),status,buttons);
+    addFoods.append(quickFoods,foodPick);form.append(planningField('Meal name',name),names,preview,addFoods,items,planningField('Entry type',kind),planningField('Planned time (optional)',planned),planningField('Your timing window',windowSelect),status,buttons);
     if(original){
       const confirm=planningNode('div','food-routine-archive');confirm.hidden=true;confirm.append(planningNode('p','','Archive this usual meal? Its recorded meals stay unchanged.'));
       const archive=planningButton('Archive usual meal',()=>confirm.hidden=false,'archive');
@@ -176,7 +187,7 @@
       },'archive'));form.append(archive,confirm);
     }
     form.onsubmit=event=>{
-      event.preventDefault();try{const current=live(),tx=D.saveRoutine(board(),current.id,before,{...draft,name:name.value.trim(),kind:kind.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value)},{conflicts:state.syncConflicts});commit(tx);dialog.close();renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
+      event.preventDefault();try{const current=live();if(!updateTotals())throw Error('Review the portions and saved nutrition basis before saving.');const tx=D.saveRoutine(board(),current.id,before,{...draft,name:name.value.trim(),kind:kind.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value)},{conflicts:state.syncConflicts});commit(tx);dialog.close();renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
     };
     dialog.append(form);draw();names.querySelector('button')?.focus();
   }

@@ -447,6 +447,7 @@ const FOOD_NUTRIENT_META = {
   fat: { label: "Fat", short: "F", unit: "g", decimals: 1 },
   fiber: { label: "Fiber", short: "Fi", unit: "g", decimals: 1 }
 };
+const FOOD_DECIMAL_FORMAT = new Intl.NumberFormat('en-US', {useGrouping:false,maximumFractionDigits:1});
 const DEFAULT_FOOD_TARGETS = {
   calories: 2200,
   protein: 150,
@@ -6330,7 +6331,7 @@ function formatFoodNumber(value, key) {
   const number = Number(value) || 0;
   const decimals = FOOD_NUTRIENT_META[key]?.decimals ?? 1;
   if (decimals === 0) return String(Math.round(number));
-  return number.toFixed(decimals).replace(/\.?0+$/, "");
+  return Number.isFinite(number) ? FOOD_DECIMAL_FORMAT.format(number) : String(number);
 }
 
 function renderChecklist(card) {
