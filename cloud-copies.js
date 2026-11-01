@@ -63,6 +63,22 @@
     const records=(snapshot.boards || []).flatMap(cards).filter(card=>!card.preservedCloudSnapshot);
     return {boards:(snapshot.boards || []).length,diary:records.reduce((n,c)=>n+Object.keys(c.diaryEntries || {}).length,0),notes:records.reduce((n,c)=>n+Object.values(c.sideNoteEntries || {}).reduce((m,e)=>m+(e.notes || []).length,0),0),tasks:records.reduce((n,c)=>n+(c.plannerTasks || c.items || []).length,0)};
   }
+  function compareBoards(device,cloud) {
+    const index=snapshot=>{
+      if(!Array.isArray(snapshot?.boards) || snapshot.deletedBoardIds!==undefined && (!snapshot.deletedBoardIds || typeof snapshot.deletedBoardIds!=='object' || Array.isArray(snapshot.deletedBoardIds)))throw Error('These board copies cannot be compared safely.');
+      const rows=new Map();
+      for(const board of snapshot.boards){
+        if(!board || typeof board.id!=='string' || !board.id || rows.has(board.id) || !Array.isArray(board.cards) || board.archivedCards!==undefined && !Array.isArray(board.archivedCards))throw Error('These board identities cannot be compared safely.');
+        const n=counts({boards:[board]}),summary={name:typeof board.name==='string'?board.name:'Unnamed board',cards:cards(board).filter(c=>!c.preservedCloudSnapshot).length,diary:n.diary,notes:n.notes};
+        rows.set(board.id,{summary,record:records({boards:[board]}).boards[0]});
+      }
+      return rows;
+    };
+    const a=index(device),b=index(cloud),deleted=(snapshot,id)=>Object.hasOwn(snapshot.deletedBoardIds || {},id) && Number.isFinite(snapshot.deletedBoardIds[id]) && snapshot.deletedBoardIds[id]>0;
+    return [...new Set([...a.keys(),...b.keys()])].map(id=>({id,device:a.get(id)?.summary || null,cloud:b.get(id)?.summary || null,
+      status:!a.has(id)?'cloud-only':!b.has(id)?'device-only':equal(a.get(id).record,b.get(id).record)?'same':'different',
+      deviceDeletion:deleted(device,id),cloudDeletion:deleted(cloud,id)}));
+  }
   function preserve(current,remote,{ownerId,cloudUpdatedAt,digest,now}) {
     if(!ownerId || !digest || !cloudUpdatedAt || !Number.isSafeInteger(now) || !current.boards?.length || !remote.boards?.length)throw new Error('Both complete copies and their owner must be verified first.');
     if([current,remote].some(s=>s.cloudOwnerId && s.cloudOwnerId!==ownerId))throw new Error('The copies belong to different accounts. Nothing was replaced.');
@@ -77,7 +93,7 @@
     next.cloudOwnerId=ownerId;
     return next;
   }
-  const api={canonical,equal,records,changedBoardIds,counts,retained,preserve,encodeBase,decodeBase};
+  const api={canonical,equal,records,changedBoardIds,counts,compareBoards,retained,preserve,encodeBase,decodeBase};
   if(typeof module==='object' && module.exports)module.exports=api;
   else root.LifeCloudCopies=api;
 })(typeof window==='object'?window:globalThis);
@@ -90,31 +106,47 @@ async function reviewCloudCopies(session,row) {
   const modal=document.createElement('div');modal.className='modal-backdrop';modal.id='cloudCopiesReview';
   const dialog=document.createElement('section');dialog.className='recovery-dialog';dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-labelledby','cloudCopiesTitle');
   const header=document.createElement('header');header.className='modal-header';
-  const title=document.createElement('h2');title.id='cloudCopiesTitle';title.textContent='Compare device and cloud';header.append(title);
+  const title=document.createElement('h2');title.id='cloudCopiesTitle';title.tabIndex=-1;title.textContent='Compare device and cloud';header.append(title);
   const body=document.createElement('div');body.className='recovery-body';
-  const explanation=document.createElement('p');explanation.textContent='No shared sync history is available. Keep your current device records active and preserve the entire older cloud copy in Recovery. Old tasks and deleted boards will not be reopened. If this is not your latest device, cancel and open the device with your newest writing.';body.append(explanation);
+  const explanation=document.createElement('p');explanation.textContent='Device and cloud contain different saved versions with no shared sync history. Neither is assumed newer. Keeping this device makes its records active in cloud and retains the complete other copy in Recovery. Cloud-only records are not merged into your active boards.';body.append(explanation);
   for(const [label,snapshot] of [['This device',current],['Cloud copy',row.state]]) {
     const line=document.createElement('p'),n=LifeCloudCopies.counts(snapshot);
-    line.textContent=label+': '+n.boards+' boards, '+n.diary+' diary dates. Last record change: '+formatRecordDateTime(snapshot.updatedAt)+'.';body.append(line);
+    line.textContent=label+': '+n.boards+' boards, '+n.diary+' diary dates. Recorded change time: '+formatRecordDateTime(snapshot.updatedAt)+'.';body.append(line);
   }
+  let comparisonIssue='';
+  try{
+    const rows=LifeCloudCopies.compareBoards(current,row.state),table=document.createElement('table');table.className='cloud-copy-comparison';
+    const caption=document.createElement('caption');caption.textContent='Boards in each copy';table.append(caption);
+    const head=document.createElement('thead'),headers=document.createElement('tr');for(const label of ['Board','This device','Cloud']){const th=document.createElement('th');th.scope='col';th.textContent=label;headers.append(th);}head.append(headers);table.append(head);
+    const tbody=document.createElement('tbody'),labels={'same':'Same saved version','different':'Different saved versions','device-only':'Only on this device','cloud-only':'Only in cloud'};
+    for(const item of rows){
+      const tr=document.createElement('tr'),name=document.createElement('th');name.scope='row';const title=document.createElement('strong');title.textContent=item.device?.name || item.cloud?.name;name.append(title);
+      const status=document.createElement('small');status.textContent=labels[item.status];name.append(status);
+      if(item.device && item.cloud && item.device.name!==item.cloud.name){const renamed=document.createElement('small');renamed.textContent='Cloud name: '+item.cloud.name;name.append(renamed);}
+      for(const [flag,label]of [[item.deviceDeletion,'Deletion recorded on device'],[item.cloudDeletion,'Deletion recorded in cloud']])if(flag){const receipt=document.createElement('small');receipt.textContent=label;name.append(receipt);}tr.append(name);
+      for(const version of [item.device,item.cloud]){const cell=document.createElement('td');if(version){for(const text of [version.cards+' cards',version.diary+' diary dates',version.notes+' notes']){const line=document.createElement('span');line.textContent=text;cell.append(line);}}else cell.textContent='Not in this copy';tr.append(cell);}tbody.append(tr);
+    }table.append(tbody);body.append(table);
+    const note=document.createElement('p');note.className='cloud-comparison-note';note.textContent='Counts and timestamps do not prove which copy is current. Saved differences can include layout or metadata changes. Matching uses board identity, not its name.';body.append(note);
+  }catch{comparisonIssue='The board comparison could not be validated. Both copies remain available for download; no upload is permitted.';}
   const downloads=document.createElement('div');downloads.className='recovery-row';
   for(const [label,snapshot] of [['Download device backup',current],['Download cloud backup',row.state]]) {
     const button=document.createElement('button');button.type='button';button.className='secondary-action';button.textContent=label;
     button.onclick=()=>downloadTextFile('life-os-'+(snapshot===current?'device':'cloud')+'-before-sync.json',JSON.stringify(snapshot,null,2),'application/json');downloads.append(button);
   }
   body.append(downloads);
-  const message=document.createElement('p');message.className='conflict-message';message.setAttribute('role','status');body.append(message);
+  const message=document.createElement('p');message.className='conflict-message';message.setAttribute('role','status');message.textContent=comparisonIssue;body.append(message);
   const actions=document.createElement('div');actions.className='recovery-row';
   const cancel=document.createElement('button');cancel.type='button';cancel.className='secondary-action';cancel.textContent='Cancel comparison';
-  const keep=document.createElement('button');keep.type='button';keep.className='primary-action';keep.textContent='Keep device + preserve cloud';actions.append(cancel,keep);body.append(actions);dialog.append(header,body);modal.append(dialog);document.body.append(modal);syncModalOpenState();cancel.focus();
+  const keep=document.createElement('button');keep.type='button';keep.className='primary-action';keep.textContent='Keep device + preserve cloud';keep.disabled=Boolean(comparisonIssue);actions.append(cancel,keep);body.append(actions);dialog.append(header,body);modal.append(dialog);document.body.append(modal);syncModalOpenState();title.focus({preventScroll:true});
   return new Promise(resolve=>{
     const finish=result=>{modal.remove();syncModalOpenState();resolve(result);};
     cancel.onclick=()=>finish({allowed:false,conflict:true});
     modal.addEventListener('keydown',event=>{
-      if(event.key==='Escape' && !keep.disabled){event.stopPropagation();cancel.click();}
+      if(event.key==='Escape' && !cancel.disabled){event.stopPropagation();cancel.click();}
       if(event.key==='Tab'){const nodes=[...dialog.querySelectorAll('button:not(:disabled)')],first=nodes[0],last=nodes.at(-1);if(event.shiftKey && document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first.focus();}}
     });
     keep.onclick=async()=>{
+      if(keep.disabled)return;
       keep.disabled=true;cancel.disabled=true;
       try {
         const verifiedSession=await ensureCloudSession();

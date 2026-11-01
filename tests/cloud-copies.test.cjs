@@ -89,3 +89,19 @@ test('diagnostics tolerate JSONB object ordering but do not ignore card order, s
  const ordered=structuredClone(a);ordered.boards[0].cards=[{id:'one'},{id:'two'}];const reversed=structuredClone(ordered);reversed.boards[0].cards.reverse();assert.deepEqual(copies.changedBoardIds(reversed,ordered),['a']);
  for(const invalid of [null,{}, {boards:[{cards:[]}]},{boards:[{id:'same'},{id:'same'}]},{boards:[],deletedBoardIds:[]},{boards:[],deletedBoardIds:'not receipts'}])assert.throws(()=>copies.changedBoardIds(invalid,a),/cannot be compared/);
 });
+test('comparison matches only board IDs and reports presence without inferring which copy is newer',()=>{
+ const device={boards:[{id:'device',name:'Same name',cards:[],archivedCards:[]}]},cloud={boards:[{id:'cloud',name:'Same name',cards:[],archivedCards:[]}],updatedAt:999999};const before=JSON.stringify([device,cloud]),rows=copies.compareBoards(device,cloud);
+ assert.deepEqual(rows.map(r=>r.status),['device-only','cloud-only']);assert.equal(rows[0].device.name,rows[1].cloud.name);assert.equal(JSON.stringify([device,cloud]),before);rows[0].device.name='Changed output';assert.equal(device.boards[0].name,'Same name');assert(!Object.hasOwn(rows[0],'newer'));
+});
+test('equal record counts never turn different full diary content into the same saved version',()=>{
+ const device=structuredClone(current),cloud=structuredClone(current);cloud.boards[0].cards[0].diaryEntries['2026-10-13'].thoughts='A different full thought\nSecond line';const row=copies.compareBoards(device,cloud)[0];assert.equal(row.status,'different');assert.deepEqual(row.device,row.cloud);assert.equal(copies.compareBoards(device,structuredClone(device))[0].status,'same');
+});
+test('comparison retains exact notes and diary counts but excludes preserved recovery snapshot cards',()=>{
+ const a=structuredClone(current);a.boards[0].cards.push({id:'notes',sideNoteEntries:{today:{notes:[{text:'One'},{text:'Two'}]}}});const preserved=copies.preserve(a,remote,options),row=copies.compareBoards(preserved,a)[0];assert.equal(row.device.cards,3);assert.equal(row.device.diary,1);assert.equal(row.device.notes,2);assert.deepEqual(row.device,row.cloud);assert.equal(row.status,'different');assert.deepEqual(copies.retained(preserved)[0].state,remote);
+});
+test('comparison ignores valid derived countdown movement but keeps checkbox history layout and deletion evidence',()=>{
+ const a={boards:[{id:'constructor',name:'First',cards:[{id:'routine',type:'routine',timerMode:'daily',targetAt:'2026-11-01T16:00:00Z',duration:100,remaining:100,runningSince:null,items:[{done:false}],history:[]}],archivedCards:[]}]},b=structuredClone(a);b.boards[0].cards[0].remaining=95;assert.equal(copies.compareBoards(a,b)[0].status,'same');b.boards[0].cards[0].items[0].done=true;assert.equal(copies.compareBoards(a,b)[0].status,'different');b.boards=[];b.deletedBoardIds=JSON.parse('{"constructor":100}');const row=copies.compareBoards(a,b)[0];assert.equal(row.status,'device-only');assert.equal(row.cloudDeletion,true);assert.equal(row.deviceDeletion,false);
+});
+test('malformed comparison identities fail without altering either complete original snapshot',()=>{
+ for(const bad of [null,{}, {boards:[{id:'x',cards:null}]},{boards:[{id:'x',cards:[]},{id:'x',cards:[]}]},{boards:[{id:'x',cards:[],archivedCards:{}}]},{boards:[],deletedBoardIds:[]}]){const before=JSON.stringify(bad);assert.throws(()=>copies.compareBoards(bad,current),/compared/);assert.equal(JSON.stringify(bad),before);}
+});

@@ -14271,7 +14271,7 @@ async function getCloudSavePlan(session, options = {}) {
   if (!baseline) {
     saveCloudRecoveryPoint("cloud-copy-for-review",row.state);
     cloudConflictPending=true;
-    renderCloudStatus("Device and cloud differ with no shared sync history. Choose Save cloud to compare both copies and preserve the older cloud records without replacing your current writing.");
+    renderCloudStatus("Device and cloud differ with no shared sync history. Compare both copies before choosing which records should be active. Neither copy is assumed newer.");
     if (options.manual) return reviewCloudCopies(session,row);
     return {allowed:false,conflict:true};
   }
@@ -14337,7 +14337,7 @@ async function pushCloudState(options = {}) {
       if (state.cloudOwnerId && state.cloudOwnerId !== session.user.id) throw new Error("This local copy belongs to another account. Load your cloud copy before saving.");
       syncActiveBoard({touchBoard: false});
       const plan = await getCloudSavePlan(session, options);
-      if (!plan.allowed) {setSaveStatus("Changes need review", "error"); return;}
+      if (!plan.allowed) {setSaveStatus(cloudReviewStatusLabel(), "error"); return;}
       if (plan.noop) {
         cloudSyncRetry.reset();
         if (options.manual && !clearRestoreSyncPause()) throw new Error('Cloud is current, but the restore safety setting could not be updated. Automatic sync remains paused.');
@@ -14463,7 +14463,7 @@ function saveState(options = {}) {
     if(error.name==='QuotaExceededError' && typeof scheduleRecoveryVault==='function')scheduleRecoveryVault();
   }
   if (!lastLocalSaveOk) setSaveStatus("Not saved on device - "+deviceSaveFailureReason(), "error");
-  else if (cloudConflictPending) setSaveStatus("Changes need review", "error");
+  else if (cloudConflictPending) setSaveStatus(cloudReviewStatusLabel(), "error");
   else if (isRestoreSyncPaused()) setSaveStatus('Saved on device - cloud paused', 'local');
   else if (touched || !options.quiet) setSaveStatus(cloudSaveEnabled ? "Saved on device, syncing" : "Saved on device", cloudSaveEnabled ? "saving" : "local");
   if (!options.skipCloud && touched && !cloudConflictPending) queueCloudSave({silent: options.quiet});

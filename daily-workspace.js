@@ -184,7 +184,7 @@ function openSaveDetails() {
     add('Last device write',deviceSavedAt?formatRecordDateTime(deviceSavedAt):'No write recorded in this tab yet');
     add('Pending device copies',pending===undefined?'Unable to read':String(pending));
     const signedIn=Boolean(cloudSession?.user?.id);
-    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '')?'Sign-in needed':cloudConflictPending?'Paused - review conflicting changes':isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled (not a save receipt)':'Sync paused');
+    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '')?'Sign-in needed':cloudConflictPending?(state.syncConflicts?.length?'Paused - review conflicting changes':'Paused - compare device and cloud copies'):isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled (not a save receipt)':'Sync paused');
     add('Last known cloud version',getKnownCloudUpdatedAt()?formatRecordDateTime(getKnownCloudUpdatedAt()):'No cloud version confirmed');
     if(signedIn && cloudMergeBase?.ownerId===cloudSession.user.id){
       let count;try{count=String(LifeCloudCopies.changedBoardIds(getStateForStorage(),cloudMergeBase.state).length);}catch{count='Unable to compare';}
@@ -211,7 +211,7 @@ function openSaveDetails() {
     const saved=await retryDeviceSave();
     if(saved){
       lastDeviceSaveError=null;
-      setSaveStatus(cloudConflictPending?'Changes need review':isRestoreSyncPaused()?'Saved on device - cloud paused':navigator.onLine?'Saved on device':'Offline - saved on device',cloudConflictPending?'error':'local');
+      setSaveStatus(cloudConflictPending?cloudReviewStatusLabel():isRestoreSyncPaused()?'Saved on device - cloud paused':navigator.onLine?'Saved on device':'Offline - saved on device',cloudConflictPending?'error':'local');
       renderCloudStatus('Device save confirmed. This action is not a verified cloud save receipt.');
       if(cloudSaveEnabled && !PREVIEW_MODE && !cloudConflictPending && !isRestoreSyncPaused())queueCloudSave({silent:true});
     }

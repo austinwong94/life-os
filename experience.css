@@ -3,6 +3,13 @@
 body { background: #f5f6f6; }
 button, input, textarea, select { letter-spacing: 0; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid #167564; outline-offset: 3px; }
+.cloud-copy-comparison{width:100%;table-layout:fixed;border-collapse:collapse;margin:18px 0;font-size:13px;line-height:1.5}
+.cloud-copy-comparison caption{text-align:left;font-size:14px;font-weight:600;padding-bottom:10px}
+.cloud-copy-comparison th,.cloud-copy-comparison td{padding:10px 8px;border-bottom:1px solid var(--line,#d8dfe5);text-align:left;vertical-align:top;overflow-wrap:anywhere;font-weight:400}
+.cloud-copy-comparison thead th{font-weight:600}.cloud-copy-comparison th strong{font-weight:600}.cloud-copy-comparison small,.cloud-copy-comparison td span{display:block;margin-top:3px}
+.cloud-copy-comparison small,.cloud-comparison-note{color:var(--muted,#53615c);font-size:12px}.cloud-comparison-note{line-height:1.6}
+#cloudCopiesReview .recovery-row>button{min-width:0;min-height:44px;height:auto;padding:10px 12px;border-radius:6px;font-size:14px;line-height:1.4;white-space:normal;overflow-wrap:anywhere}
+#cloudCopiesTitle:focus-visible{outline:2px solid var(--action,#2d53ce);outline-offset:4px;border-radius:2px}
 .workspace { padding: 24px 28px 60px; min-width: 0; }
 .workspace-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin-bottom: 16px; }
 .board-kicker-row { align-items: center; gap: 12px; }

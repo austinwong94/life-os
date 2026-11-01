@@ -178,6 +178,10 @@ function reconcileRecord(current, incoming) {
   return incoming;
 }
 
+function cloudReviewStatusLabel() {
+  return state.syncConflicts?.length?'Changes need review':'Compare device and cloud';
+}
+
 function setSaveStatus(message, kind = "local") {
   const label = document.getElementById("savedState");
   const header = document.getElementById("headerSaveStatus");
