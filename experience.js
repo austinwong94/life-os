@@ -370,7 +370,7 @@ function getConflictLabel(conflict) {
   const labels={name:'Name',title:'Title',description:'Notes',thoughts:'Diary thoughts',sentence:'One sentence',text:'Note',note:'Notes',quoteAuthor:'Author',targetAt:'Countdown target',duration:'Countdown duration',remaining:'Countdown remaining',runningSince:'Countdown start'};
   const date=segments.find(part=>/^\d{4}-\d{2}-\d{2}$/.test(part)) || task?.dateKey;
   if (conflict.kind==='health-record') {
-    const types={'food-item':'Logged food','food-definition':'Food library','food-target':'Nutrition target','fitness-exercise':'Exercise','fitness-part':'Workout','body-metrics':'Body measurements'};
+    const types={'food-item':'Logged food','food-definition':'Food library','food-target':'Nutrition target','food-water':'Water check-in','fitness-exercise':'Exercise','fitness-part':'Workout','body-metrics':'Body measurements'};
     const meal=card?.foodEntries?.[segments[5]]?.meals?.find(meal=>meal.id===segments[7]);
     return [board?.name || 'Saved board',card?.title,date || (segments[4]==='foodTargets'?segments[5]:''),meal?.name,types[conflict.recordType]].filter(Boolean).join(' / ');
   }
@@ -599,11 +599,13 @@ function renderPlannerConflictForm(conflict,onSaved) {
 
 function renderHealthVersion(record,conflict) {
   const content=document.createElement('div');content.className='planner-conflict-version health-conflict-version';
-  const title=document.createElement('p');title.className='planner-conflict-title';title.textContent=record.name || (conflict.recordType==='body-metrics'?'Body measurements':conflict.recordType==='food-target'?'Daily target':getFitnessPartMeta(conflict.segments[7]).label);
+  const title=document.createElement('p');title.className='planner-conflict-title';title.textContent=record.name || (conflict.recordType==='food-water'?'Water check-in':conflict.recordType==='body-metrics'?'Body measurements':conflict.recordType==='food-target'?'Daily target':getFitnessPartMeta(conflict.segments[7]).label);
   const values=document.createElement('dl');
   const add=(label,value)=>{const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=label;dd.textContent=value;values.append(dt,dd);};
   const number=(value,unit='')=>value===''?'Not recorded':String(value)+(unit?' '+unit:'');
-  if (['food-item','food-definition','food-target'].includes(conflict.recordType)) {
+  if(conflict.recordType==='food-water'){
+    add('Amount',number(record.amountMl,'mL'));add('Drank at',record.drankTime || 'Time not recorded');add('Recorded',new Date(record.recordedAt).toISOString());add('Removed',record.removedAt?new Date(record.removedAt).toISOString():'No');
+  } else if (['food-item','food-definition','food-target'].includes(conflict.recordType)) {
     const totals=conflict.recordType==='food-item'?calculateFoodItem({foodLibrary:[]},record):record;
     if (conflict.recordType==='food-item') {
       add('Amount',number(record.amount,record.unit==='g'?'g':record.amount===1?'serving':'servings'));

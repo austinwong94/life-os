@@ -6040,6 +6040,7 @@ function renderFoodItem(card, dateKey, meal, item) {
   unitField.append(unit);
   controls.append(amountField, unitField);
   row.append(top, controls);
+  if (window.LifeFoodDailyUI) row.append(LifeFoodDailyUI.itemPortions(card, dateKey, meal, item, amount, unit, row));
   return row;
 }
 
@@ -13407,6 +13408,8 @@ function renderReadableFood(card) {
     return `<div class="entry">
       <div class="entry-head"><strong>${escapeHtml(formatReadableDateKey(dateKey))}</strong><span>${escapeHtml(getFoodStatusLabel(totals, target))}</span></div>
       ${renderReadableFoodTotals("Daily total", totals)}
+      ${LifeFoodDaily.waterSummary(entry).records.length?renderReadableKeyValues('Water recorded',LifeFoodDaily.waterSummary(entry).records.map(record=>[record.drankTime || 'Time not recorded',record.amountMl+' mL'])):''}
+      ${LifeFoodDaily.waterSummary(entry).needsReview?'<p class="text">Some original water records need review; displayed amounts are incomplete.</p>':''}
       ${entry.meals.map((meal) => renderReadableFoodMeal(card, meal)).join("")}
     </div>`;
   }).join("")}

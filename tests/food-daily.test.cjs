@@ -21,6 +21,39 @@ test('drinks and snacks contribute nutrition and recording days without inflatin
 test('zero nutrition requires explicit confirmation rather than treating an unfinished custom food as measured zero',()=>{const zero={...item,calories:0,protein:0,carbs:0,fat:0,fiber:0};assert.equal(D.validItems([zero]),false);assert.equal(D.validItems([{...zero,zeroNutritionConfirmed:true}]),true);});
 test('pinning an already recorded meal does not count it twice or rewrite it, and remains reusable on another day',()=>{const b=fixture();b.cards[0].foodEntries['2026-11-01'].meals[0].items=[structuredClone(item)];const r={...structuredClone(routine),origin:{date:'2026-11-01',mealId:'manual'}},before=structuredClone(b.cards[0].foodEntries);D.saveRoutine(b,'food',routine,r,{now:2});assert.throws(()=>D.log(b,'food',b.cards[0].foodRoutines.breakfast,'2026-11-01','2026-11-01','09:00'),/Already logged/);assert.deepEqual(b.cards[0].foodEntries,before);D.log(b,'food',b.cards[0].foodRoutines.breakfast,'2026-11-02','2026-11-02','09:00',{now:3});assert.equal(b.cards[0].foodEntries['2026-11-02'].meals.length,1);});
 const portions=meal=>meal.items.map(({id,amount,unit})=>({id,amount,unit}));
+const drink=(id='water-one',amountMl=250)=>({id,amountMl,drankTime:'11:00',recordedAt:100,removedAt:0});
+test('water taps preserve original meals other dates and calorie progress without treating water as food',()=>{
+  const b=fixture(),before=structuredClone(b),tx=D.logWater(b,'food','2026-11-01',drink(),{today:'2026-11-01'});assert.equal(D.waterSummary(b.cards[0].foodEntries['2026-11-01']).totalMl,250);assert.deepEqual(b.cards[0].foodEntries['2026-11-01'].meals,before.cards[0].foodEntries['2026-11-01'].meals);assert.equal(D.progress(b.cards[0],'2026-11-01').at(-1).entries,0);D.restore(b,tx);assert.deepEqual(b,before);
+});
+test('water retries are idempotent per action ID while deliberately separate drinks remain separate',()=>{
+  const b=fixture();D.logWater(b,'food','2026-11-01',drink(),{today:'2026-11-01'});assert.equal(D.logWater(b,'food','2026-11-01',drink(),{today:'2026-11-01'}),null);assert.throws(()=>D.logWater(b,'food','2026-11-01',drink('water-one',500),{today:'2026-11-01'}),/identity/);D.logWater(b,'food','2026-11-01',{...drink('water-two',350),drankTime:'14:00',recordedAt:101},{today:'2026-11-01'});assert.equal(D.waterSummary(b.cards[0].foodEntries['2026-11-01']).totalMl,600);
+});
+test('water removals retain tombstones and refuse stale repeats while Undo restores the exact original',()=>{
+  const b=fixture();D.logWater(b,'food','2026-11-01',drink(),{today:'2026-11-01'});const before=structuredClone(b),tx=D.removeWater(b,'food','2026-11-01',drink(),{now:101});assert.equal(b.cards[0].foodEntries['2026-11-01'].water['water-one'].removedAt,101);assert.equal(D.waterSummary(b.cards[0].foodEntries['2026-11-01']).totalMl,0);assert.throws(()=>D.removeWater(b,'food','2026-11-01',drink(),{now:102}),/changed/);assert.throws(()=>D.logWater(b,'food','2026-11-01',drink(),{today:'2026-11-01'}),/identity/);D.restore(b,tx);assert.deepEqual(b,before);
+});
+test('invalid future malformed and conflicting water targets cannot alter stored records',()=>{
+  for(const patch of [{amountMl:0},{amountMl:Infinity},{amountMl:100001},{drankTime:'25:00'},{recordedAt:0},{id:'__proto__'},{removedAt:2}]){const b=fixture(),before=structuredClone(b);assert.throws(()=>D.logWater(b,'food','2026-11-01',{...drink(),...patch},{today:'2026-11-01'}));assert.deepEqual(b,before);}
+  const b=fixture(),before=structuredClone(b);assert.throws(()=>D.logWater(b,'food','2026-11-02',drink(),{today:'2026-11-01'}));assert.deepEqual(b,before);b.cards[0].foodEntries['2026-11-01'].water={original:{unexpected:'Keep this'}};const malformed=structuredClone(b);assert(D.waterSummary(b.cards[0].foodEntries['2026-11-01']).needsReview);assert.throws(()=>D.logWater(b,'food','2026-11-01',drink(),{today:'2026-11-01'}));assert.deepEqual(b,malformed);
+});
+test('independent water taps from separate tabs merge without duplicates or replacing meal and diary records',()=>{
+  const base={boards:[fixture()]},l=structuredClone(base),r=structuredClone(base);D.logWater(l.boards[0],'food','2026-11-01',drink('left-drink'),{today:'2026-11-01'});D.logWater(r.boards[0],'food','2026-11-01',drink('right-drink',500),{today:'2026-11-01'});const result=M.merge(base,l,r);assert.equal(result.conflicts.length,0);assert.equal(D.waterSummary(result.boards[0].cards[0].foodEntries['2026-11-01']).totalMl,750);assert.deepEqual(result.boards[0].cards[0].foodEntries['2026-11-01'].meals,base.boards[0].cards[0].foodEntries['2026-11-01'].meals);
+});
+test('water ID collisions retain complete competing drink versions rather than mixing amount and time',()=>{
+  const base={boards:[fixture()]},l=structuredClone(base),r=structuredClone(base);D.logWater(l.boards[0],'food','2026-11-01',drink(),{today:'2026-11-01'});D.logWater(r.boards[0],'food','2026-11-01',{...drink('water-one',500),drankTime:'14:00'},{today:'2026-11-01'});const result=M.merge(base,l,r),conflict=result.conflicts[0];assert.equal(conflict.recordType,'food-water');assert.deepEqual(conflict.local,drink());assert.equal(conflict.remote.amountMl,500);assert.equal(conflict.remote.drankTime,'14:00');
+  const snapshot={...l,boards:result.boards,syncConflicts:M.registerConflicts(result.conflicts,{},()=> 'water-review')},review=snapshot.syncConflicts[0];assert(M.inspectHealthConflict(snapshot,review).editable);const next=M.resolveHealthConflict(snapshot,review,review.local,review.remote,101);assert.equal(D.waterSummary(next.boards[0].cards[0].foodEntries['2026-11-01']).totalMl,500);assert.equal(next.syncConflicts.length,0);assert.equal(M.inspectHealthConflict(snapshot,{...review,remote:{...review.remote,amountMl:0}}).editable,false);
+});
+test('quick portions use saved units rather than guessing from a food name',()=>{
+  const before=structuredClone(item);assert.deepEqual(D.portionChoices({...item,name:'Protein powder',servingUnit:'egg'}).map(p=>p.label),['1 egg','2 eggs','3 eggs']);assert.deepEqual(item,before);
+  assert.deepEqual(D.portionChoices({...item,servingUnit:'scoop',servingGrams:37}).map(({amount,unit})=>({amount,unit})),[1,2,3].map(amount=>({amount,unit:'serving'})));
+  assert.deepEqual(D.portionChoices({...item,servingUnit:'100g'}),[50,100,150].map(amount=>({amount,unit:'g',label:amount+' g'})));
+});
+test('quick portions preserve custom units and refuse unknown invalid bases',()=>{
+  assert.equal(D.portionChoices({...item,servingUnit:'large mug'}).at(-1).label,'3 × large mug');
+  for(const value of [null,{}, {...item,servingUnit:''},{...item,servingGrams:0},{...item,servingGrams:0.5},{...item,servingGrams:Infinity}])assert.deepEqual(D.portionChoices(value),[]);
+});
+test('scoop shortcuts retain the individual saved label and exact nutrition basis',()=>{
+  for(const servingGrams of [25,32,37]){const b=fixture();b.cards[0].foodRoutines.breakfast.items=[{...structuredClone(item),servingUnit:'scoop',servingGrams,protein:21.7}];const tx=D.log(b,'food',b.cards[0].foodRoutines.breakfast,'2026-11-01','2026-11-01','',{now:100}),meal=tx.after.meals.at(-1),choice=D.portionChoices(meal.items[0])[2];const edited=D.editMeal(b,'food','2026-11-01',meal.id,meal,[{id:meal.items[0].id,amount:choice.amount,unit:choice.unit}],{today:'2026-11-01',now:101});assert.equal(edited.after.meals.at(-1).items[0].servingGrams,servingGrams);assert.equal(edited.after.meals.at(-1).items[0].protein,21.7);assert.equal(D.convertPortion(choice.amount,'serving','g',servingGrams),3*servingGrams);}
+});
 const change=(b,meal,patch=portions(meal),options={})=>D.editMeal(b,'food','2026-11-01',meal.id,meal,patch,{today:'2026-11-01',now:101,...options});
 test('gram and serving changes preserve food mass including small and fractional serving sizes',()=>{
   assert.equal(D.convertPortion(150,'g','serving',100),1.5);

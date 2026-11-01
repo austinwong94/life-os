@@ -7,6 +7,36 @@
   const time=value=>typeof value==='string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
   const stamp=value=>Number.isSafeInteger(value) && value>=0 && Number.isFinite(new Date(value).getTime());
   const keys=['calories','protein','carbs','fat','fiber'];
+  function portionChoices(item){
+    if(!item || typeof item.servingUnit!=='string' || !item.servingUnit.trim() || !Number.isFinite(item.servingGrams) || item.servingGrams<1)return [];
+    const label=item.servingUnit.trim(),grams=/^100\s*g$/i.test(label);
+    const plurals={egg:'eggs',scoop:'scoops',can:'cans',cup:'cups',portion:'portions',serving:'servings'};
+    return (grams?[50,100,150]:[1,2,3]).map(amount=>({amount,unit:grams?'g':'serving',label:grams?amount+' g':amount===1?'1 '+label:plurals[label.toLowerCase()]?amount+' '+plurals[label.toLowerCase()]:amount+' × '+label}));
+  }
+  function validWater(record){return record && safe(record.id) && Number.isFinite(record.amountMl) && record.amountMl>0 && record.amountMl<=100000 && (record.drankTime==='' || time(record.drankTime)) && stamp(record.recordedAt) && record.recordedAt>0 && stamp(record.removedAt);}
+  function waterSummary(entry){
+    const water=entry?.water;
+    if(water===undefined)return {records:[],totalMl:0,needsReview:false};
+    if(!water || typeof water!=='object' || Array.isArray(water))return {records:[],totalMl:0,needsReview:true};
+    const entries=Object.entries(water),needsReview=entries.some(([id,record])=>!validWater(record) || record.id!==id);
+    const records=entries.filter(([id,record])=>validWater(record) && record.id===id && !record.removedAt).map(([,record])=>copy(record)).sort((a,b)=>a.recordedAt-b.recordedAt || a.id.localeCompare(b.id));
+    const totalMl=records.reduce((sum,record)=>sum+record.amountMl,0);
+    return {records,totalMl,needsReview:needsReview || !Number.isFinite(totalMl)};
+  }
+  function logWater(board,cardId,date,record,{today,conflicts=[]}={}){
+    const card=resolve(board,cardId,'food',conflicts),before=card.foodEntries?.[date] ?? null;
+    if(!day(date) || !day(today) || date>today || !validWater(record) || record.removedAt || before && !Array.isArray(before.meals) || waterSummary(before).needsReview)throw Error('Choose today or a past date, a positive amount up to 100,000 mL and a valid time. Existing water records are kept.');
+    for(const entry of Object.values(card.foodEntries || {}))if(entry?.water && Object.hasOwn(entry.water,record.id)){if(entry===before && equal(entry.water[record.id],record))return null;throw Error('This drink identity already exists. Reopen the current day.');}
+    const after={...copy(before || {}),meals:copy(before?.meals || []),water:{...copy(before?.water || {}),[record.id]:copy(record)},updatedAt:record.recordedAt};
+    const hadContainer=Boolean(card.foodEntries);card.foodEntries ||= {};card.foodEntries[date]=after;
+    return {kind:'day',boardId:board.id,cardId,key:date,before:copy(before),after:copy(after),hadContainer};
+  }
+  function removeWater(board,cardId,date,expected,{now=Date.now(),conflicts=[]}={}){
+    const card=resolve(board,cardId,'food',conflicts),entry=card.foodEntries?.[date];
+    if(!day(date) || !validWater(expected) || expected.removedAt || !stamp(now) || !now || waterSummary(entry).needsReview || !equal(entry?.water?.[expected.id],expected))throw Error('This drink changed or was removed. Reopen its current record.');
+    const before=copy(entry),after={...copy(entry),water:{...copy(entry.water),[expected.id]:{...copy(expected),removedAt:now}},updatedAt:now};card.foodEntries[date]=after;
+    return {kind:'day',boardId:board.id,cardId,key:date,before,after:copy(after)};
+  }
   function validItems(items){
     return Array.isArray(items) && items.length>0 && new Set(items.map(i=>i?.id)).size===items.length && items.every(i=>i && safe(i.id) && typeof i.foodId==='string' && i.foodId.trim() && typeof i.name==='string' && i.name.trim() && typeof i.servingUnit==='string' && i.servingUnit.trim() && Number.isFinite(i.servingGrams) && i.servingGrams>0 && typeof i.source==='string' && Number.isFinite(i.amount) && i.amount>0 && ['g','serving'].includes(i.unit) && keys.every(k=>Number.isFinite(i[k]) && i[k]>=0) && (keys.some(k=>i[k]>0) || i.zeroNutritionConfirmed===true));
   }
@@ -106,6 +136,6 @@
       return {date:key,entries:meals.length,meals:meals.filter(m=>!m.kind || m.kind==='meal').length,snacks:meals.filter(m=>m.kind==='snack').length,drinks:meals.filter(m=>m.kind==='drink').length,timed:meals.filter(m=>validTiming(m.timing) && m.timing.eatenTime).length,onTime:meals.filter(m=>timingStatus(m.timing)==='Within your window').length};
     });
   }
-  const api=Object.freeze({copy,equal,day,time,validItems,validTiming,validRoutine,resolve,routines,saveRoutine,log,setTiming,convertPortion,editMeal,restore,timingStatus,progress});
+  const api=Object.freeze({copy,equal,day,time,portionChoices,validWater,waterSummary,logWater,removeWater,validItems,validTiming,validRoutine,resolve,routines,saveRoutine,log,setTiming,convertPortion,editMeal,restore,timingStatus,progress});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeFoodDaily=api;
 })(typeof globalThis==='undefined'?window:globalThis);

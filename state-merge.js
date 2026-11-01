@@ -83,6 +83,7 @@
     if (path.length===6 && path[4]==='foodRoutines') return 'food-routine';
     if (path.length===6 && path[4]==='foodTargets' && (path[5]==='default' || /^\d{4}-(0[1-9]|1[0-2])$/.test(path[5]))) return 'food-target';
     if (!validTaskDate(path[5])) return null;
+    if (path.length===8 && path[4]==='foodEntries' && path[6]==='water') return 'food-water';
     if (path.length===9 && path[4]==='foodEntries' && path[6]==='meals' && path[8]==='timing') return 'food-timing';
     if (path.length===10 && path[4]==='foodEntries' && path[6]==='meals' && path[8]==='items') return 'food-item';
     if (path[4]!=='fitnessEntries') return null;
@@ -379,6 +380,10 @@
     const number=(key,optional=false)=>optional && record[key]==='' || typeof record[key]==='number' && Number.isFinite(record[key]) && record[key]>=0;
     const strings=keys=>keys.every(key=>typeof record[key]==='string');
     const nutrition=()=>['calories','protein','carbs','fat','fiber'].every(key=>number(key));
+    if(type==='food-water'){
+      const daily=root.LifeFoodDaily || (typeof require==='function'?require('./food-daily.js'):null);
+      return record.id===segments.at(-1) && Boolean(daily?.validWater(record));
+    }
     if(type==='food-routine' || type==='food-timing'){
       const daily=root.LifeFoodDaily || (typeof require==='function'?require('./food-daily.js'):null);
       return type==='food-routine'?record.id===segments.at(-1) && Boolean(daily?.validRoutine(record)):Boolean(daily?.validTiming(record));

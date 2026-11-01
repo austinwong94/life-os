@@ -41,6 +41,23 @@
 .food-recorded-dialog .daily-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px}.food-recorded-dialog .daily-actions .planning-button{flex:0 1 auto}
 .food-recorded-basis>summary{display:flex;align-items:center;min-height:44px;font-size:12px;color:var(--muted);cursor:pointer}.food-recorded-basis p{font-size:12px;line-height:1.5;color:var(--muted)}.food-recorded-basis:not([open])>p{display:none}
 .food-recorded-dialog>.daily-form>.daily-message:empty{display:none}
+.food-tap-portions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px;min-width:0;margin:6px 0}
+.food-tap-portions .planning-button,.food-routine-item .food-tap-portions .planning-button{box-sizing:border-box;width:auto;height:auto;min-width:44px;min-height:44px;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface,#fff);color:var(--ink);font:500 12px/1.4 system-ui,sans-serif;letter-spacing:0;white-space:normal;overflow-wrap:anywhere;max-width:100%}
+.food-tap-portions>.planning-button[aria-pressed=true]{border-color:var(--action);color:var(--action);background:var(--action-soft,var(--surface,#fff));box-shadow:inset 0 0 0 1px var(--action)}
+.food-tap-portions .planning-button:disabled{opacity:.45;cursor:default}
+.food-tap-portions svg{width:18px;height:18px;flex:none}
+.food-tap-portions .food-portion-decrease{font-size:20px;line-height:1}
+.food-tap-steps{display:flex;gap:6px;flex:none}
+.food-portion-basis{grid-column:1/-1;color:var(--muted);font:12px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}
+.food-quick-choices{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.food-quick-choices>.planning-button{flex:0 1 auto;max-width:100%;overflow-wrap:anywhere;font-size:12px;font-weight:500;letter-spacing:0}
+.food-quick-choices svg{width:16px;height:16px;flex:none}
+.food-water{min-width:0;margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.food-water-total{font:500 12px/1.5 system-ui,sans-serif;color:var(--muted);text-align:end;overflow-wrap:anywhere}
+.food-water-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.food-water-actions>.planning-button{flex:0 1 auto;max-width:100%}
+.food-water-history>summary{display:flex;align-items:center;min-height:44px;font:500 12px/1.5 system-ui,sans-serif;color:var(--muted);cursor:pointer}.food-water-history:not([open])>.food-water-record{display:none}
+.food-water-record{display:flex;align-items:center;justify-content:space-between;gap:8px;border-top:1px solid var(--line);font:13px/1.5 system-ui,sans-serif}.food-water-record>.planning-button{padding:10px;width:44px;height:44px;justify-content:center}
+.food-water-dialog .planning-field{min-width:0}.food-water-dialog :is(input,select){box-sizing:border-box;min-width:0;width:100%;max-width:100%;height:44px;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:8px;color:var(--ink);background:var(--surface,#fff);font:16px/1.5 system-ui,sans-serif;letter-spacing:0}.food-water-dialog .planning-button{min-height:44px;min-width:44px}
 @media(max-width:700px){
  .food-routine-item{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px}.food-routine-item-name{grid-column:1/-1}.food-routine-dialog :is(input,select),.food-weight-dialog :is(input,select),.food-time-form :is(input,select){font-size:16px}
  .food-time-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.food-time-form>.planning-field:nth-child(3){grid-column:1/-1}

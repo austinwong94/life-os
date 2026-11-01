@@ -41,6 +41,59 @@
     const matches=(card.foodEntries?.[date]?.meals || []).filter(meal=>meal?.id===expected.id);
     if(matches.length!==1 || !D.equal(matches[0],expected))throw Error('This recorded meal changed or was removed. Reopen its current record.');
   }
+  function portions(item,{input,unit,onApply,onError=message}){
+    const root=planningNode('div','food-tap-portions');root.setAttribute('role','group');root.setAttribute('aria-label',item.name+' quick portions');
+    const choices=D.portionChoices(item),buttons=[];
+    const apply=(amount,nextUnit)=>{
+      if(!root.isConnected)return;
+      try{onApply(amount,nextUnit);input.value=amount;unit.value=nextUnit;refresh();}catch(error){onError(error);}
+    };
+    const minus=planningButton('-',()=>{const amount=Number(input.value),step=unit.value==='g'?25:1;if(amount>step)apply(amount-step,unit.value);});minus.classList.add('food-portion-decrease');minus.setAttribute('aria-label','Decrease '+item.name+' portion');minus.title=minus.getAttribute('aria-label');
+    const plus=planningButton('',()=>{const amount=Number(input.value),step=unit.value==='g'?25:1;if(input.value!=='' && Number.isFinite(amount) && amount>0 && Number.isFinite(amount+step))apply(amount+step,unit.value);},'plus');plus.setAttribute('aria-label','Increase '+item.name+' portion');plus.title=plus.getAttribute('aria-label');
+    for(const choice of choices){const button=planningButton(choice.label,()=>apply(choice.amount,choice.unit));button.setAttribute('aria-label',item.name+': '+choice.label);buttons.push([button,choice]);root.append(button);}
+    if(choices.length){const steps=planningNode('div','food-tap-steps');steps.append(minus,plus);root.append(steps);}
+    function refresh(){const amount=Number(input.value),valid=input.value!=='' && Number.isFinite(amount) && amount>0;for(const [button,choice] of buttons)button.setAttribute('aria-pressed',String(valid && unit.value===choice.unit && amount===choice.amount));minus.disabled=!valid || amount<=(unit.value==='g'?25:1);plus.disabled=!valid || !Number.isFinite(amount+(unit.value==='g'?25:1));}
+    input.addEventListener('input',refresh);unit.addEventListener('change',refresh);refresh();
+    return root;
+  }
+  function portionBasis(item){const basis=/^100\s*g$/i.test(item.servingUnit)?item.servingUnit+' food':'1 '+item.servingUnit+' = '+item.servingGrams+' g '+(/^scoop$/i.test(item.servingUnit)?'powder':'food');return 'Saved basis: '+basis+' · '+item.protein+' g protein · '+item.calories+' kcal'+(/default|generic/i.test(item.source || '')?' · Estimate: check your product label.':'');}
+  function itemPortions(card,date,meal,item,input,unit,node){
+    const live=context(card,date,node);let expected=D.copy(meal);
+    // Manual typing uses the existing editor; refresh only after its own input handler.
+    input.addEventListener('input',()=>{try{const current=live();expected=D.copy(current.foodEntries?.[date]?.meals?.find(m=>m.id===meal.id));}catch{}});
+    return portions(item,{input,unit,onApply:(amount,nextUnit)=>{
+      const current=live();requireRecordedMeal(current,date,expected);
+      const tx=D.editMeal(board(),current.id,date,meal.id,expected,expected.items.map(i=>({id:i.id,amount:i.id===item.id?amount:i.amount,unit:i.id===item.id?nextUnit:i.unit})),{today:getTodayKey(),conflicts:state.syncConflicts});
+      if(tx){commit(tx);renderCardsOnly({force:true});undo(tx,'Portion updated.');}
+    }});
+  }
+  function water(card,date){
+    const section=planningNode('section','food-water');section.setAttribute('aria-label','Water check-ins');const live=context(card,date,section),summary=D.waterSummary(card.foodEntries?.[date]),notice=planningNode('p','daily-message');notice.setAttribute('role','status');
+    const head=planningNode('div','food-daily-head');head.append(planningNode('h3','','Water'),planningNode('span','food-water-total',summary.needsReview?'Records need review':summary.totalMl+' mL · '+summary.records.length+' drink'+(summary.records.length===1?'':'s')));section.append(head);
+    const add=(amountMl,drankTime)=>{
+      const current=live(),now=new Date(),record={id:createId(),amountMl,drankTime:drankTime ?? (date===getTodayKey()?String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'):''),recordedAt:now.getTime(),removedAt:0};
+      const tx=D.logWater(board(),current.id,date,record,{today:getTodayKey(),conflicts:state.syncConflicts});if(tx){commit(tx);renderCardsOnly({force:true});undo(tx,'Water recorded.');}return tx;
+    };
+    const actions=planningNode('div','food-water-actions'),amounts=[250,350,500],last=summary.records.at(-1)?.amountMl;if(last && !amounts.includes(last))amounts.push(last);
+    for(const amount of amounts){const button=planningButton(amount+' mL',()=>{try{add(amount);}catch(error){notice.textContent=error.message;message(error);}},'plus');button.setAttribute('aria-label','Log '+amount+' mL water');button.disabled=date>getTodayKey() || summary.needsReview;actions.append(button);}
+    const custom=planningButton('Custom',()=>{
+      try{live();const dialog=dailyDialog('Record water');dialog.classList.add('food-water-dialog');const check=context(card,date,dialog),form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
+        const amount=document.createElement('input');amount.type='number';amount.inputMode='decimal';amount.min='0.01';amount.max='100000';amount.step='any';amount.required=true;
+        const drank=document.createElement('input');drank.type='time';const now=new Date();drank.value=date===getTodayKey()?String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'):'';
+        const save=planningButton('Record drink',null,'check');save.type='submit';save.classList.add('is-primary');const buttons=planningNode('div','daily-actions');buttons.append(planningButton('Cancel',()=>dialog.close()),save);
+        form.append(planningNode('p','daily-muted',formatReadableDateKey(date)),planningField('Water (mL)',amount),planningField('Drank at (optional)',drank),status,buttons);form.onsubmit=event=>{event.preventDefault();try{check();add(Number(amount.value),drank.value);dialog.close();}catch(error){status.textContent=error.message;}};dialog.append(form);amount.focus();
+      }catch(error){notice.textContent=error.message;}
+    });custom.disabled=date>getTodayKey() || summary.needsReview;actions.append(custom);section.append(actions,notice);
+    if(summary.needsReview)notice.textContent='Original water records are kept. Review their format before adding more.';
+    if(summary.records.length){const history=planningNode('details','food-water-history');history.append(planningNode('summary','','Drink history ('+summary.records.length+')'));for(const record of summary.records){
+      const row=planningNode('div','food-water-record');row.append(planningNode('span','',record.amountMl+' mL · '+(record.drankTime || 'Time not recorded')));
+      const remove=planningButton('',()=>{
+        try{live();const dialog=dailyDialog('Remove water entry'),check=context(card,date,dialog),status=planningNode('p','daily-message');status.setAttribute('role','status');dialog.append(planningNode('p','',record.amountMl+' mL · '+(record.drankTime || 'Time not recorded')+' · '+formatReadableDateKey(date)),status,planningButton('Keep drink',()=>dialog.close()),planningButton('Remove drink',()=>{try{check();const current=live(),tx=D.removeWater(board(),current.id,date,record,{conflicts:state.syncConflicts});commit(tx);dialog.close();renderCardsOnly({force:true});undo(tx,'Drink removed.');}catch(error){status.textContent=error.message;}},'trash-2'));
+        }catch(error){notice.textContent=error.message;}
+      },'trash-2');remove.setAttribute('aria-label','Remove '+record.amountMl+' mL water at '+(record.drankTime || 'unknown time'));remove.title=remove.getAttribute('aria-label');row.append(remove);history.append(row);
+    }section.append(history);}
+    return section;
+  }
   function render(card,date){
     const section=planningNode('section','food-daily');section.setAttribute('aria-label','Daily eating');
     const live=context(card,date,section),head=planningNode('div','food-daily-head'),title=planningNode('h3','','Usual meals'),notice=planningNode('p','food-daily-message daily-message');notice.setAttribute('role','status');
@@ -70,7 +123,7 @@
       const edit=planningButton('',()=>{try{openRoutine(live(),date,routine);}catch(e){message(e);}},'pencil');edit.title='Edit usual meal '+routine.name;edit.setAttribute('aria-label',edit.title);
       row.append(label,edit);if(record){const timeButton=planningButton('',()=>{try{openRecorded(live(),date,record);}catch(e){message(e);}},'chevron-right');timeButton.title='Open recorded meal '+routine.name;timeButton.setAttribute('aria-label',timeButton.title);row.append(timeButton);}list.append(row);
     }
-    section.append(list,notice);
+    section.append(list,notice,water(card,date));
     if(date>getTodayKey())notice.textContent='Future date. Usual meals have not been recorded as eaten.';
     else if(Object.values(card.foodRoutines || {}).some(r=>!D.validRoutine(r)))notice.textContent='Some usual meals need review. Their original records are kept.';
     const actions=planningNode('div','food-daily-actions');actions.append(planningButton('Weight',()=>{try{openWeight(live(),date);}catch(e){message(e);}},'bar-chart'),planningButton('Food library',()=>{try{library(live());}catch(e){message(e);}},'utensils'));
@@ -97,21 +150,24 @@
       items.replaceChildren();
       for(const item of draft.items){
         const row=planningNode('div','food-routine-item'),heading=planningNode('div','food-routine-item-name');
-        heading.append(planningNode('strong','',item.name),planningNode('small','',item.calories+' kcal per '+item.servingUnit+' ('+item.servingGrams+' g)'),planningNode('small','',item.source));
+        heading.append(planningNode('strong','',item.name),planningNode('small','',portionBasis(item)),planningNode('small','',item.source));
         const quantity=document.createElement('input');quantity.type='number';quantity.min='0';quantity.step='any';quantity.inputMode='decimal';quantity.value=item.amount;quantity.required=true;quantity.setAttribute('aria-label',item.name+' portion');quantity.oninput=()=>{item.amount=quantity.value===''?'':Number(quantity.value);};
         const unit=planningSelect([['g','g'],['serving',item.servingUnit]],item.unit,value=>{try{const amount=D.convertPortion(item.amount,item.unit,value,item.servingGrams);item.amount=amount;item.unit=value;quantity.value=amount;status.textContent='';}catch(error){unit.value=item.unit;status.textContent=error.message;}});unit.setAttribute('aria-label',item.name+' unit');
         const remove=planningButton('',()=>{draft.items=draft.items.filter(i=>i!==item);draw();},'trash-2');remove.title='Remove '+item.name+' from usual meal';remove.setAttribute('aria-label',remove.title);
-        row.append(heading,quantity,unit,remove);items.append(row);
+        row.append(heading,quantity,unit,remove,portions(item,{input:quantity,unit,onApply:(amount,nextUnit)=>{item.amount=amount;item.unit=nextUnit;status.textContent='';},onError:error=>status.textContent=error.message}));items.append(row);
         if(FOOD_NUTRIENT_KEYS.every(key=>item[key]===0)){const label=planningNode('label','food-zero-confirm'),check=document.createElement('input');check.type='checkbox';check.checked=item.zeroNutritionConfirmed===true;check.onchange=()=>item.zeroNutritionConfirmed=check.checked;label.append(check,planningNode('span','','Zero nutrition checked for '+item.name));row.append(label);}
       }
     };
-    const add=planningButton('Add food',()=>{
-      try{const current=live(),food=current.foodLibrary.find(f=>f.id===picker.value);if(!food)throw Error('Choose a food first.');draft.items.push({id:createId(),foodId:food.id,amount:food.servingUnit==='100g'?100:1,unit:food.servingUnit==='100g'?'g':'serving',...createFoodItemSnapshot(food)});draw();status.textContent='';}catch(error){status.textContent=error.message;}
-    },'plus');
+    const addFood=id=>{
+      try{const current=live(),food=current.foodLibrary.find(f=>f.id===id);if(!food)throw Error('Choose a food first.');const index=draft.items.findIndex(item=>item.foodId===id);if(index>=0){items.children[index]?.querySelector('.food-tap-portions button')?.focus();return;}draft.items.push({id:createId(),foodId:food.id,amount:food.servingUnit==='100g'?100:1,unit:food.servingUnit==='100g'?'g':'serving',...createFoodItemSnapshot(food)});draw();status.textContent='';}catch(error){status.textContent=error.message;}
+    };
+    const add=planningButton('Add food',()=>addFood(picker.value),'plus');
     const foodPick=planningNode('div','food-routine-pick');foodPick.append(planningField('Food',picker),add);
+    const quickFoods=planningNode('div','food-quick-choices');quickFoods.setAttribute('role','group');quickFoods.setAttribute('aria-label','Quick add foods');for(const food of card.foodLibrary.slice(0,9)){const button=planningButton(food.name,()=>addFood(food.id),'plus');button.setAttribute('aria-label','Quick add '+food.name);quickFoods.append(button);}
+    const names=planningNode('div','food-quick-choices');names.setAttribute('role','group');names.setAttribute('aria-label','Usual meal names');for(const label of ['Breakfast','Lunch','Dinner','Snack','Protein shake','Coffee'])names.append(planningButton(label,()=>{name.value=label;}));
     const save=planningButton('Save usual meal',null,'check');save.type='submit';save.classList.add('is-primary');
     const buttons=planningNode('div','daily-actions');buttons.append(planningButton('Cancel',()=>dialog.close()),save);
-    form.append(planningField('Meal name',name),planningField('Entry type',kind),planningField('Planned time (optional)',planned),planningField('Your timing window',windowSelect),foodPick,items,status,buttons);
+    form.append(planningField('Meal name',name),names,quickFoods,foodPick,items,planningField('Entry type',kind),planningField('Planned time (optional)',planned),planningField('Your timing window',windowSelect),status,buttons);
     if(original){
       const confirm=planningNode('div','food-routine-archive');confirm.hidden=true;confirm.append(planningNode('p','','Archive this usual meal? Its recorded meals stay unchanged.'));
       const archive=planningButton('Archive usual meal',()=>confirm.hidden=false,'archive');
@@ -122,7 +178,7 @@
     form.onsubmit=event=>{
       event.preventDefault();try{const current=live(),tx=D.saveRoutine(board(),current.id,before,{...draft,name:name.value.trim(),kind:kind.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value)},{conflicts:state.syncConflicts});commit(tx);dialog.close();renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
     };
-    dialog.append(form);draw();name.focus();
+    dialog.append(form);draw();names.querySelector('button')?.focus();
   }
   function openRecorded(card,date,meal){
     requireRecordedMeal(card,date,meal);
@@ -137,7 +193,7 @@
       const input=document.createElement('input');input.type='number';input.inputMode='decimal';input.min='0';input.step='any';input.required=true;input.value=item.amount;input.setAttribute('aria-label',item.name+' portion');
       input.oninput=()=>{item.amount=input.value===''?'':Number(input.value);updateTotals();};label.append(input);
       const unit=planningSelect([['g','g'],['serving',item.servingUnit]],item.unit,value=>{try{const amount=D.convertPortion(item.amount,item.unit,value,item.servingGrams);item.amount=amount;item.unit=value;input.value=amount;status.textContent='';updateTotals();}catch(error){unit.value=item.unit;status.textContent=error.message;}});unit.setAttribute('aria-label',item.name+' unit');
-      row.append(label,planningField('Unit',unit));unit.setAttribute('aria-label',item.name+' unit');items.append(row);
+      row.append(label,planningField('Unit',unit),portions(item,{input,unit,onApply:(amount,nextUnit)=>{item.amount=amount;item.unit=nextUnit;status.textContent='';updateTotals();},onError:error=>status.textContent=error.message}),planningNode('small','food-portion-basis',portionBasis(item)));unit.setAttribute('aria-label',item.name+' unit');items.append(row);
     }
     const eaten=document.createElement('input');eaten.type='time';eaten.value=meal.timing?.eatenTime || '';
     const kind=planningSelect([['meal','Meal'],['snack','Snack'],['drink','Drink']],meal.kind || 'meal',()=>{});
@@ -149,7 +205,7 @@
     form.append(heading,totals,items,timing,status,actions,more,basis);form.onsubmit=event=>{
       event.preventDefault();try{const current=live(),tx=D.editMeal(board(),current.id,date,meal.id,expected,draft.items.map(i=>({id:i.id,amount:i.amount,unit:i.unit})),{today:getTodayKey(),conflicts:state.syncConflicts,eatenTime:eaten.value,kind:kind.value});if(tx)commit(tx);dialog.close();if(tx){renderCardsOnly({force:true});undo(tx,'Recorded meal updated.');}}catch(error){status.textContent=error.message;}
     };
-    dialog.append(form);updateTotals();form.querySelector('input')?.focus();
+    dialog.append(form);updateTotals();items.querySelector('.food-tap-portions button')?.focus();
   }
   function times(card,date,meal){
     const details=planningNode('details','food-time-panel'),summary=planningNode('summary');
@@ -197,5 +253,5 @@
     };
     dialog.append(form);choose();if(sourceId)input.focus();else source.focus();
   }
-  window.LifeFoodDailyUI=Object.freeze({render,times,bindDetails});
+  window.LifeFoodDailyUI=Object.freeze({render,times,bindDetails,portions,itemPortions});
 })();
