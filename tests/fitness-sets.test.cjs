@@ -16,6 +16,45 @@ test('checked measurements are canonical and cannot be edited or removed without
 test('reopening and correcting preserves original complete measurements and recording history',()=>{const b=enable();edit(b,{reps:'10',weightKg:'15'});action(b,'completed');action(b,'reopened');edit(b,{reps:'11',weightKg:'17.25'});action(b,'completed');const row=exercise(b).setLog.rows[0];assert.deepEqual(row.history.map(event=>event.action),['completed','reopened','completed']);assert.equal(row.history[0].weightKg,15);assert.equal(row.history[2].weightKg,17.25);assert(sets.validLog(exercise(b).setLog));});
 test('removal is reversible and retains raw draft values, original identity and history',()=>{const b=enable();edit(b,{reps:'9',weightKg:'23.755'});const id=exercise(b).setLog.rows[0].id;action(b,'removed');assert.equal(sets.stats(exercise(b)).rows.length,0);assert.equal(exercise(b).setLog.rows[0].weightKg,'23.755');action(b,'restored');assert.equal(sets.stats(exercise(b)).rows[0].id,id);assert.deepEqual(exercise(b).setLog.rows[0].history.map(event=>event.action),['removed','restored']);});
 test('new sets are blank rather than copies of earlier results or completed flags',()=>{const b=enable();edit(b,{reps:'10',weightKg:'12'});action(b,'completed');apply(b,{type:'add'});const [first,second]=exercise(b).setLog.rows;assert.notEqual(first.id,second.id);assert.equal(first.done,true);assert.equal(second.done,false);assert.equal(second.reps,'');assert.equal(second.weightKg,'');assert.equal(second.history.length,0);});
+function repeat(b,source=exercise(b).setLog.rows.filter(row=>row.done && !row.removedAt).at(-1),extra={}){return apply(b,{type:'repeat',rowId:source?.id,expected:sets.copy(source)},extra);}
+test('explicit repeat creates a pure unchecked draft with load and reps only, retaining every original value',()=>{
+  const b=enable();edit(b,{reps:'10',weightKg:'22.75',rpe:'8'});action(b,'completed');exercise(b).setLog.rows[0].extension={keep:'Original set note'};const original=sets.copy(exercise(b)),snapshot=JSON.stringify(b),source=original.setLog.rows[0];
+  const after=sets.change(b,{...ref,logId:original.setLog.id},{type:'repeat',rowId:source.id,expected:source},options());assert.equal(JSON.stringify(b),snapshot);assert.deepEqual(after.setLog.rows[0],source);const {setLog,...summary}=after;assert.deepEqual(summary,before());assert.deepEqual(setLog.rows[1],{id:setLog.rows[1].id,reps:10,weightKg:22.75,rpe:'',done:false,removedAt:0,history:[]});assert.notEqual(setLog.rows[1].id,source.id);assert.equal(sets.stats(after).completed,1);assert(sets.validLog(setLog));
+});
+test('repeat uses the last checked active set, never the heaviest set, later draft or removed row',()=>{
+  const b=enable();edit(b,{reps:'8',weightKg:'30'});action(b,'completed');apply(b,{type:'add'});let row=exercise(b).setLog.rows[1];apply(b,{type:'edit',rowId:row.id,expected:sets.copy(row),values:{reps:'12',weightKg:'20'}});row=exercise(b).setLog.rows[1];apply(b,{type:'completed',rowId:row.id,expected:sets.copy(row)});apply(b,{type:'add'});row=exercise(b).setLog.rows[2];apply(b,{type:'removed',rowId:row.id,expected:sets.copy(row)});apply(b,{type:'add'});const result=repeat(b),last=result.setLog.rows.at(-1);assert.equal(last.reps,12);assert.equal(last.weightKg,20);assert.equal(last.done,false);assert.equal(sets.stats(result).completed,2);
+});
+test('repeat preserves explicit zero and two-decimal loads but never copies subjective effort or completion events',()=>{
+  for(const weight of ['0','0.07','123.45']){const b=enable();edit(b,{reps:'12',weightKg:weight,rpe:'9'});action(b,'completed');const result=repeat(b),row=result.setLog.rows.at(-1);assert.equal(row.weightKg,Number(weight));assert.equal(row.rpe,'');assert.deepEqual(row.history,[]);assert.equal(row.done,false);}
+});
+test('missing stale reopened removed or no-longer-latest checked repeat sources are refused atomically',()=>{
+  for(const kind of ['none','stale','reopened','removed','later']){
+    const b=enable();edit(b,{reps:'10',weightKg:'20'});action(b,'completed');const source=sets.copy(exercise(b).setLog.rows[0]);
+    if(kind==='none')source.id='missing';if(kind==='stale')source.weightKg=999;
+    if(['reopened','removed'].includes(kind))action(b,'reopened');if(kind==='removed')action(b,'removed');
+    if(kind==='later'){apply(b,{type:'add'});let row=exercise(b).setLog.rows[1];apply(b,{type:'edit',rowId:row.id,expected:sets.copy(row),values:{reps:'8',weightKg:'18'}});row=exercise(b).setLog.rows[1];apply(b,{type:'completed',rowId:row.id,expected:sets.copy(row)});}
+    const snapshot=JSON.stringify(b);assert.throws(()=>repeat(b,source),/last checked set changed/);assert.equal(JSON.stringify(b),snapshot);
+  }
+  const empty=enable(),snapshot=JSON.stringify(empty);assert.throws(()=>repeat(empty),/last checked set changed/);assert.equal(JSON.stringify(empty),snapshot);
+});
+test('repeat refuses wrong board source day part log conflicts and duplicate identities without touching records',()=>{
+  for(const kind of ['board','day','part','log','archive','duplicate','conflict','schema']){
+    const b=enable();edit(b,{reps:'10',weightKg:'20'});action(b,'completed');const source=sets.copy(exercise(b).setLog.rows[0]),target={...ref,logId:exercise(b).setLog.id};
+    if(kind==='board')target.boardId='other';if(kind==='day')target.date='2026-10-29';if(kind==='part')target.partKey='back';if(kind==='log')target.logId='new-log';if(kind==='archive')b.cards[0].archivedAt=1;if(kind==='duplicate')b.cards.push(sets.copy(b.cards[0]));if(kind==='schema')exercise(b).setLog.version=999;
+    const snapshot=JSON.stringify(b);assert.throws(()=>sets.change(b,target,{type:'repeat',rowId:source.id,expected:source},{...options(),conflicts:kind==='conflict'?[{segments:['boards','board','cards','gym']}]:[]}));assert.equal(JSON.stringify(b),snapshot);
+  }
+});
+test('repeat is bounded by all retained sets and refuses generated ID collisions without partial append',()=>{
+  const b=enable();edit(b,{reps:'10',weightKg:'20'});action(b,'completed');const snapshot=JSON.stringify(b);assert.throws(()=>repeat(b,undefined,{createId:()=>exercise(b).setLog.rows[0].id}),/unique/);assert.equal(JSON.stringify(b),snapshot);
+  for(let i=1;i<200;i++)apply(b,{type:'add'});const full=JSON.stringify(b);assert.throws(()=>repeat(b),/200/);assert.equal(JSON.stringify(b),full);
+});
+test('a repeated draft stays out of completed history and reports until explicitly checked',()=>{
+  const history=require('../exercise-history.js'),b=enable();edit(b,{reps:'10',weightKg:'22.75'});action(b,'completed');const source=sets.copy(exercise(b).setLog.rows[0]);repeat(b);
+  const result=history.history(b.cards[0],{partKey:'chest',name:'Bench press'},{through:'2026-10-31'});assert.equal(result.completedSets,1);assert.equal(result.rows[0].sets[1].done,false);const draft=exercise(b).setLog.rows[1];apply(b,{type:'completed',rowId:draft.id,expected:sets.copy(draft)});assert.equal(sets.stats(exercise(b)).completed,2);assert.equal(exercise(b).setLog.rows[1].history.length,1);assert.deepEqual(exercise(b).setLog.rows[0],source);
+});
+test('parallel repeated drafts retain complete conflicting versions rather than combining two workouts',()=>{
+  const b=enable();edit(b,{reps:'10',weightKg:'20'});action(b,'completed');const local=sets.copy(b),remote=sets.copy(b);repeat(local);repeat(remote);const result=merge.merge({boards:[b]},{boards:[local]},{boards:[remote]});assert.equal(result.conflicts.length,1);assert.deepEqual(result.conflicts[0].local.setLog,exercise(local).setLog);assert.deepEqual(result.conflicts[0].remote.setLog,exercise(remote).setLog);
+});
 test('stale row edits fail without overwriting a newer full row',()=>{const b=enable(),old=sets.copy(exercise(b).setLog.rows[0]);edit(b,{weightKg:'10'});const original=JSON.stringify(b);assert.throws(()=>apply(b,{type:'edit',rowId:old.id,expected:old,values:{reps:'12'}}),/changed elsewhere/);assert.equal(JSON.stringify(b),original);});
 test('board, card, day, part, exercise and log identities all protect the exact target',()=>{for(const altered of [{boardId:'other'},{cardId:'other'},{date:'2026-02-30'},{partKey:'running'},{exerciseId:'missing'},{logId:'other'}]){const b=enable(),original=JSON.stringify(b);assert.throws(()=>sets.change(b,{...ref,logId:exercise(b).setLog.id,...altered},{type:'add'},options()));assert.equal(JSON.stringify(b),original);}const b=enable();b.cards.push(sets.copy(b.cards[0]));assert.throws(()=>sets.change(b,{...ref,logId:exercise(b).setLog.id},{type:'add'},options()),/changed or moved/);});
 test('archived sources, duplicate exercises and unresolved record conflicts refuse edits',()=>{for(const kind of ['archive','duplicate','conflict']){const b=enable();if(kind==='archive')b.cards[0].archivedAt=1;if(kind==='duplicate')b.cards[0].fitnessEntries['2026-10-31'].parts.chest.exercises.push(sets.copy(exercise(b)));const original=JSON.stringify(b);assert.throws(()=>sets.change(b,{...ref,logId:exercise(b).setLog.id},{type:'add'},{...options(),conflicts:kind==='conflict'?[{segments:['boards','board','cards','gym']}]:[]}));assert.equal(JSON.stringify(b),original);}});

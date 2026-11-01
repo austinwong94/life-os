@@ -60,9 +60,15 @@
     }
     if(!validLog(live.setLog) || live.setLog.id!==ref.logId)throw new Error('This set log changed or is not supported. Its original data is retained.');
     const log=after.setLog,used=new Set([live.id,log.id,...log.rows.map(row=>row.id),...log.rows.flatMap(row=>row.history.map(event=>event.id))]);
-    if(command.type==='add'){
+    if(command.type==='add' || command.type==='repeat'){
       if(log.rows.length>=200)throw new Error('This exercise has reached 200 retained sets. Start another exercise entry.');
-      log.rows.push({id:nextId(createId,used),reps:'',weightKg:'',rpe:'',done:false,removedAt:0,history:[]});
+      let reps='',weightKg='';
+      if(command.type==='repeat'){
+        const source=log.rows.filter(row=>row.done && !row.removedAt).at(-1);
+        if(!source || source.id!==command.rowId || !equal(source,command.expected))throw new Error('The last checked set changed. Reopen the workout before repeating it.');
+        reps=source.reps;weightKg=source.weightKg;
+      }
+      log.rows.push({id:nextId(createId,used),reps,weightKg,rpe:'',done:false,removedAt:0,history:[]});
     }else{
       const row=log.rows.find(row=>row.id===command.rowId);
       if(!row || !equal(row,command.expected))throw new Error('This set changed elsewhere. Reopen the workout before updating it.');

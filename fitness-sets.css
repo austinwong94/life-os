@@ -12,7 +12,7 @@
 .fitness-set-tick input{width:20px;height:20px;min-height:0;accent-color:var(--card-accent,var(--action))}
 .fitness-set-remove{display:grid;place-items:center;width:44px;min-width:44px;height:44px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--muted)}
 .fitness-set-remove svg{width:16px;height:16px}
-.fitness-set-actions{display:flex;gap:8px;padding-block:10px}
+.fitness-set-actions{display:flex;flex-wrap:wrap;gap:8px;padding-block:10px}
 .fitness-set-actions button,.fitness-set-restore{min-height:44px;font-size:13px}
 .fitness-set-disclosure{border-bottom:1px solid var(--line);min-width:0}
 .fitness-set-disclosure>summary{display:flex;align-items:center;min-height:44px;font-size:13px;cursor:pointer;list-style:none}

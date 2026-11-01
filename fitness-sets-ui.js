@@ -59,7 +59,14 @@ function renderFitnessSetLog(card,date,partKey,exercise){
     effortFields.append(field('Set '+number+' RPE','rpe',{step:'0.5',min:1,max:10,help:'Rate of perceived exertion (optional)'}));
   });
   const add=planningButton('Add set',()=>{if(applyFitnessSetChange(ref,{type:'add'},message))rerender();},'plus');add.id=prefix+'-add';add.disabled=exercise.setLog.rows.length>=200;
-  const actions=planningNode('div','fitness-set-actions');actions.append(add);wrapper.append(actions,effort);
+  const actions=planningNode('div','fitness-set-actions');actions.append(add);
+  const lastChecked=stats.rows.filter(row=>row.done).at(-1);
+  if(lastChecked){
+    const expected=LifeFitnessSets.copy(lastChecked);
+    const repeat=planningButton('Repeat checked set',()=>{if(applyFitnessSetChange(ref,{type:'repeat',rowId:expected.id,expected},message))rerender();},'rotate-ccw');
+    repeat.id=prefix+'-repeat';repeat.title='New unchecked draft: last checked weight and reps; effort left blank';repeat.disabled=exercise.setLog.rows.length>=200;actions.append(repeat);
+  }
+  wrapper.append(actions,effort);
   const removed=exercise.setLog.rows.filter(row=>row.removedAt);
   if(removed.length){
     const details=fitnessSetDisclosure(prefix+'-removed','Removed sets ('+removed.length+')');
