@@ -3137,7 +3137,7 @@ function renderCardsOnly(options = {}) {
     : null;
   const taskFocus=elements.boardGrid.contains(document.activeElement)?captureTaskControlFocus():null;
   const healthFocus = elements.boardGrid.contains(document.activeElement)
-    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button, .health-part-picker > summary, .fitness-set-row input[type=checkbox], .fitness-set-actions button, .fitness-set-disclosure > summary, .fitness-set-restore, .workout-rest button, .workout-rest select, .health-lift-history > summary, .health-lift-history select, .health-lift-history button, .food-nav button, .food-nav input, .fitness-nav button, .fitness-nav input")?.id : "";
+    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .food-time-panel > summary, .fitness-parts button, .health-part-picker > summary, .fitness-set-row input[type=checkbox], .fitness-set-actions button, .fitness-set-disclosure > summary, .fitness-set-restore, .workout-rest button, .workout-rest select, .health-lift-history > summary, .health-lift-history select, .health-lift-history button, .food-nav button, .food-nav input, .fitness-nav button, .fitness-nav input")?.id : "";
   closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();

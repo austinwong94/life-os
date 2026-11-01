@@ -4,10 +4,12 @@
   const board=()=>({id:state.activeBoardId,cards:state.cards});
   const message=error=>setSaveStatus(error.message || String(error),'error');
   function reveal(node){for(let parent=node;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS'){parent.open=true;if(parent.dataset.dailyDetailsKey)detailStates.set(parent.dataset.dailyDetailsKey,true);}}
-  function bindDetails(card,date,node){
-    const key=JSON.stringify([state.activeBoardId,card.id,date]);node.dataset.dailyDetailsKey=key;node.open=detailStates.get(key) ?? !D.routines(card).length;let known=node.open;
-    node.addEventListener('click',event=>{const summary=event.target.closest?.('summary');if(summary?.parentElement!==node)return;event.preventDefault();node.open=!node.open;known=node.open;detailStates.set(key,node.open);});
-    node.addEventListener('toggle',()=>{if(node.isConnected && node.open!==known){known=node.open;detailStates.set(key,node.open);}});
+  function bindDetails(card,date,node,options={}){
+    const boardId=state.activeBoardId,mode=state.ui.workspaceMode,key=JSON.stringify(options.detailId?[boardId,card.id,date,options.detailId]:[boardId,card.id,date]);
+    const current=()=>node.isConnected && state.activeBoardId===boardId && state.ui.workspaceMode===mode;
+    node.dataset.dailyDetailsKey=key;node.open=detailStates.get(key) ?? (options.defaultOpen ?? !D.routines(card).length);let known=node.open;
+    node.addEventListener('click',event=>{const summary=event.target.closest?.('summary');if(summary?.parentElement!==node)return;event.preventDefault();if(!current())return;node.open=!node.open;known=node.open;detailStates.set(key,node.open);});
+    node.addEventListener('toggle',()=>{if(current() && node.open!==known){known=node.open;detailStates.set(key,node.open);}});
   }
   function context(card,date,node){
     const boardId=state.activeBoardId,cardId=card.id;
@@ -271,7 +273,7 @@
     form.onsubmit=event=>{
       event.preventDefault();try{const current=live();if(date>getTodayKey())throw Error('Record eating on today or a past date.');const tx=D.setTiming(board(),current.id,date,meal.id,expected,{...(expected.timing || {}),eatenTime:eaten.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value),recordedAt:Date.now()},{conflicts:state.syncConflicts,kind:kind.value});commit(tx);expected=D.copy(tx.after.meals.find(item=>item.id===meal.id));Object.assign(initial,{eaten:eaten.value,planned:planned.value,window:windowSelect.value,kind:kind.value});updateDraft();status.textContent='Meal time saved.';renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
     };
-    details.append(form);return details;
+    details.append(form);bindDetails(card,date,details,{detailId:['meal-time',meal.id],defaultOpen:false});summary.id='food-time-summary-'+encodeURIComponent(details.dataset.dailyDetailsKey);return details;
   }
   function openWeight(card,date){
     const dialog=dailyDialog('Record weight');dialog.classList.add('food-weight-dialog');const live=context(card,date,dialog);
