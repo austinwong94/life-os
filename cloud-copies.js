@@ -143,7 +143,7 @@ async function reviewCloudCopies(session,row) {
     cancel.onclick=()=>finish({allowed:false,conflict:true});
     modal.addEventListener('keydown',event=>{
       if(event.key==='Escape' && !cancel.disabled){event.stopPropagation();cancel.click();}
-      if(event.key==='Tab'){const nodes=[...dialog.querySelectorAll('button:not(:disabled)')],first=nodes[0],last=nodes.at(-1);if(event.shiftKey && document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first.focus();}}
+      if(event.key==='Tab'){const nodes=[...dialog.querySelectorAll('button:not(:disabled)')],first=nodes[0],last=nodes.at(-1);if(event.shiftKey && (document.activeElement===first || document.activeElement===title)){event.preventDefault();last.focus();}else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first.focus();}}
     });
     keep.onclick=async()=>{
       if(keep.disabled)return;
