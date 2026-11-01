@@ -259,13 +259,13 @@
     const kind=planningSelect([['meal','Meal'],['snack','Snack'],['drink','Drink']],meal.kind || 'meal',()=>{});
     const save=planningButton('Save time',null,'check');save.type='submit';
     const initial={eaten:eaten.value,planned:planned.value,window:windowSelect.value,kind:kind.value};
-    const changed=()=>eaten.value!==initial.eaten || planned.value!==initial.planned || windowSelect.value!==initial.window || kind.value!==initial.kind;
+    const changed=()=>eaten.validity.badInput || planned.validity.badInput || eaten.value!==initial.eaten || planned.value!==initial.planned || windowSelect.value!==initial.window || kind.value!==initial.kind;
     healthDateDrafts.set(form,{boardId:state.activeBoardId,mode:state.ui.workspaceMode,changed});
     const draftNotice=planningNode('p','food-time-draft');draftNotice.setAttribute('aria-live','polite');
     const updateDraft=()=>{draftNotice.textContent=changed()?'Meal-time changes not saved.':'';if(!changed()){const notice=details.closest('.food-tracker')?.querySelector('.health-date-message');if(notice?.textContent===HEALTH_DATE_DRAFT_NOTICE)notice.textContent='';}};
-    form.addEventListener('input',updateDraft);form.addEventListener('change',updateDraft);
+    form.addEventListener('input',updateDraft);form.addEventListener('change',updateDraft);form.addEventListener('keyup',updateDraft);form.addEventListener('focusout',updateDraft);
     const formBoardId=state.activeBoardId;
-    const cancel=planningButton('',()=>{if(!form.isConnected || !details.open || !form.getClientRects().length || state.activeBoardId!==formBoardId)return;eaten.value=initial.eaten;planned.value=initial.planned;windowSelect.value=initial.window;kind.value=initial.kind;status.textContent='';draftNotice.textContent='';const notice=details.closest('.food-tracker')?.querySelector('.health-date-message');if(notice?.textContent===HEALTH_DATE_DRAFT_NOTICE){notice.textContent='';if(lastLocalSaveOk!==false)setSaveStatus('Meal-time changes cancelled.','notice');}},'x');cancel.title='Cancel meal-time changes';cancel.setAttribute('aria-label',cancel.title);
+    const cancel=planningButton('',()=>{if(!form.isConnected || !details.open || !form.getClientRects().length || state.activeBoardId!==formBoardId)return;form.reset();eaten.value=initial.eaten;planned.value=initial.planned;windowSelect.value=initial.window;kind.value=initial.kind;status.textContent='';draftNotice.textContent='';const notice=details.closest('.food-tracker')?.querySelector('.health-date-message');if(notice?.textContent===HEALTH_DATE_DRAFT_NOTICE){notice.textContent='';if(lastLocalSaveOk!==false)setSaveStatus('Meal-time changes cancelled.','notice');}},'x');cancel.title='Cancel meal-time changes';cancel.setAttribute('aria-label',cancel.title);
     const actions=planningNode('div','food-time-actions');actions.append(save,cancel);
     form.append(planningField('Eaten at',eaten),planningField('Planned time',planned),planningField('Timing window',windowSelect),planningField('Entry type',kind),draftNotice,actions,status);
     form.onsubmit=event=>{
