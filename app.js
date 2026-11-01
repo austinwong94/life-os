@@ -1145,6 +1145,8 @@ const defaultState = {
   boards: []
 };
 
+const healthDateDrafts = new WeakMap();
+const HEALTH_DATE_DRAFT_NOTICE='Save or cancel the meal-time changes before changing day.';
 let state = loadState();
 let localMergeBase = JSON.parse(JSON.stringify(state));
 let cloudMergeBase = null;
@@ -3135,7 +3137,7 @@ function renderCardsOnly(options = {}) {
     : null;
   const taskFocus=elements.boardGrid.contains(document.activeElement)?captureTaskControlFocus():null;
   const healthFocus = elements.boardGrid.contains(document.activeElement)
-    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button, .health-part-picker > summary, .fitness-set-row input[type=checkbox], .fitness-set-actions button, .fitness-set-disclosure > summary, .fitness-set-restore, .workout-rest button, .workout-rest select, .health-lift-history > summary, .health-lift-history select, .health-lift-history button")?.id : "";
+    ? document.activeElement?.closest?.(".food-meal-tabs [role=tab], .fitness-parts button, .health-part-picker > summary, .fitness-set-row input[type=checkbox], .fitness-set-actions button, .fitness-set-disclosure > summary, .fitness-set-restore, .workout-rest button, .workout-rest select, .health-lift-history > summary, .health-lift-history select, .health-lift-history button, .food-nav button, .food-nav input, .fitness-nav button, .fitness-nav input")?.id : "";
   closeCardActionMenus();
   const scrollSnapshot = options.preserveScroll === false ? null : captureScrollPosition();
   settleExpiredTimers();
@@ -4732,6 +4734,37 @@ function ensureFitnessStrengthExercise(part, meta) {
   part.exercises.push(normalizeFitnessExercise({ name: meta.defaults?.[0] || "Exercise", sets: 3, reps: "8-12", weightKg: "", rpe: 7 }));
 }
 
+function renderHealthDateNav(card, dateKey, entry, type) {
+  const boardId=state.activeBoardId,mode=state.ui.workspaceMode,field=type==='food'?'activeFoodDate':'activeFitnessDate';
+  const prefix='health-date-'+encodeURIComponent(JSON.stringify([boardId,card.id,type]));
+  const nav=planningNode('div',type==='food'?'food-nav':'fitness-nav'),notice=planningNode('p','health-date-message');notice.setAttribute('role','status');
+  const dateInput=document.createElement('input');dateInput.id=prefix+'-date';dateInput.type='date';dateInput.value=dateKey;dateInput.setAttribute('aria-label',type==='food'?'Food log date':'Workout date');
+  const select=date=>{
+    try{
+      if(!nav.isConnected || !nav.getClientRects().length || state.activeBoardId!==boardId || state.ui.workspaceMode!==mode)throw Error('This view changed. Reopen the original health log.');
+      const current=LifeFoodDaily.resolve({id:boardId,cards:state.cards},card.id,type,state.syncConflicts);
+      if(current[field]!==dateKey)throw Error('The selected day changed. Reopen its current view.');
+      if(!normalizeDateKey(date))throw Error('Choose a valid date.');
+      if(current[field]===date)return;
+      if(document.querySelector('dialog[open]'))throw Error('Finish or cancel the open form before changing day.');
+      for(const form of nav.parentElement.querySelectorAll('form'))if(healthDateDrafts.get(form)?.()){
+        for(let parent=form.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
+        form.querySelector('input')?.focus();throw Error(HEALTH_DATE_DRAFT_NOTICE);
+      }
+      if(lastLocalSaveOk===false)throw Error('Device save needs attention. Keep this view open and save your writing before changing day.');
+      current[field]=date;
+      try{if(!saveState({quiet:true}))throw Error('Not saved');}catch{current[field]=dateKey;syncActiveBoard({touchBoard:false});throw Error('The day change was not saved. Your original day is kept. Check saving details, then retry.');}
+      renderCardsOnly({force:true});
+    }catch(error){dateInput.value=dateKey;notice.textContent=error.message;setSaveStatus(error.message,lastLocalSaveOk===false?'error':'notice');}
+  };
+  const previous=planningButton('',()=>select(getTodayKey(addDays(dateKeyToLocalDate(dateKey),-1))),'chevron-left');previous.id=prefix+'-previous';previous.title='Previous day';previous.setAttribute('aria-label','Previous day');
+  const next=planningButton('',()=>select(getTodayKey(addDays(dateKeyToLocalDate(dateKey),1))),'chevron-right');next.id=prefix+'-next';next.title='Next day';next.setAttribute('aria-label','Next day');
+  dateInput.addEventListener('change',()=>select(dateInput.value));
+  const today=planningButton('Today',()=>select(getTodayKey()),'calendar');today.id=prefix+'-today';today.classList.add('health-date-today');today.title='Go to today';today.setAttribute('aria-label',type==='food'?'Food log: go to today':'Workout log: go to today');
+  const status=planningNode('span','health-save-status',entry.updatedAt?'Saved '+formatRecordDate(entry.updatedAt):type==='food'?'No meals yet':'No workout yet');
+  const footer=planningNode('div','health-date-footer');footer.append(today,status);nav.append(previous,dateInput,next,footer,notice);return nav;
+}
+
 function renderFitnessLog(card) {
   normalizeFitnessCard(card);
   const dateKey = getActiveFitnessDate(card);
@@ -4740,40 +4773,7 @@ function renderFitnessLog(card) {
   const wrapper = document.createElement("div");
   wrapper.className = "fitness-log";
 
-  const nav = document.createElement("div");
-  nav.className = "fitness-nav";
-  const previous = document.createElement("button");
-  previous.type = "button";
-  previous.innerHTML = ICONS["chevron-left"];
-  previous.title = "Previous day";
-  previous.addEventListener("click", () => {
-    card.activeFitnessDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), -1));
-    saveState();
-    renderCardsOnly({ force: true });
-  });
-  const dateInput = document.createElement("input");
-  dateInput.type = "date";
-  dateInput.value = dateKey;
-  dateInput.setAttribute("aria-label", "Workout date");
-  dateInput.addEventListener("change", () => {
-    card.activeFitnessDate = normalizeDateKey(dateInput.value) || getTodayKey();
-    getFitnessEntry(card, card.activeFitnessDate);
-    saveState();
-    renderCardsOnly({ force: true });
-  });
-  const next = document.createElement("button");
-  next.type = "button";
-  next.innerHTML = ICONS["chevron-right"];
-  next.title = "Next day";
-  next.addEventListener("click", () => {
-    card.activeFitnessDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), 1));
-    saveState();
-    renderCardsOnly({ force: true });
-  });
-  const status = document.createElement("span");
-  status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "No workout yet";
-  status.className = "health-save-status";
-  nav.append(previous, dateInput, next, status);
+  const nav = renderHealthDateNav(card,dateKey,entry,'fitness');
 
   const parts = document.createElement("div");
   parts.className = "fitness-parts";
@@ -5556,41 +5556,7 @@ function renderFoodTracker(card) {
 }
 
 function renderFoodDateNav(card, dateKey, entry) {
-  const nav = document.createElement("div");
-  nav.className = "food-nav";
-  const previous = document.createElement("button");
-  previous.type = "button";
-  previous.innerHTML = ICONS["chevron-left"];
-  previous.title = "Previous day";
-  previous.addEventListener("click", () => {
-    card.activeFoodDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), -1));
-    saveState();
-    renderCardsOnly({ force: true });
-  });
-  const dateInput = document.createElement("input");
-  dateInput.type = "date";
-  dateInput.value = dateKey;
-  dateInput.setAttribute("aria-label", "Food log date");
-  dateInput.addEventListener("change", () => {
-    card.activeFoodDate = normalizeDateKey(dateInput.value) || getTodayKey();
-    getFoodEntry(card, card.activeFoodDate);
-    saveState();
-    renderCardsOnly({ force: true });
-  });
-  const next = document.createElement("button");
-  next.type = "button";
-  next.innerHTML = ICONS["chevron-right"];
-  next.title = "Next day";
-  next.addEventListener("click", () => {
-    card.activeFoodDate = getTodayKey(addDays(dateKeyToLocalDate(dateKey), 1));
-    saveState();
-    renderCardsOnly({ force: true });
-  });
-  const status = document.createElement("span");
-  status.className = "health-save-status";
-  status.textContent = entry.updatedAt ? `Saved ${formatRecordDate(entry.updatedAt)}` : "No meals yet";
-  nav.append(previous, dateInput, next, status);
-  return nav;
+  return renderHealthDateNav(card,dateKey,entry,'food');
 }
 
 function renderFoodTotalSummary(card, totals, target, dateKey) {

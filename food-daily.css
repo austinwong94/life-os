@@ -55,6 +55,9 @@
 .food-detailed-entry:not([open])>:not(summary){display:none}
 .food-time-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:end;min-width:0}
 .food-time-form .planning-field{min-width:0;font-size:12px}.food-time-form p{grid-column:1/-1;margin:0}.food-time-form .planning-button{justify-self:start}
+.food-time-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;grid-column:1/-1}
+.food-time-actions>button:last-child{width:44px;padding:10px;justify-content:center}
+.food-time-actions svg{width:18px;height:18px;flex:none}
 .food-recorded-dialog .daily-form{min-width:0}
 .food-recorded-heading{padding-top:4px}.food-recorded-heading h3{margin:0;font:600 14px/1.5 system-ui,sans-serif;letter-spacing:0;overflow-wrap:anywhere}.food-recorded-heading p{margin:4px 0 0;color:var(--muted);font-size:12px}
 .food-recorded-item{display:grid;grid-template-columns:minmax(0,1fr) 110px;align-items:end;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}

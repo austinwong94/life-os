@@ -258,7 +258,12 @@
     const windowSelect=planningSelect([15,30,60,90,120,180].map(n=>[String(n),'± '+n+' min']),String(current?.windowMinutes || 60),()=>{});
     const kind=planningSelect([['meal','Meal'],['snack','Snack'],['drink','Drink']],meal.kind || 'meal',()=>{});
     const save=planningButton('Save time',null,'check');save.type='submit';
-    form.append(planningField('Eaten at',eaten),planningField('Planned time',planned),planningField('Timing window',windowSelect),planningField('Entry type',kind),save,status);
+    const initial={eaten:eaten.value,planned:planned.value,window:windowSelect.value,kind:kind.value};
+    healthDateDrafts.set(form,()=>eaten.value!==initial.eaten || planned.value!==initial.planned || windowSelect.value!==initial.window || kind.value!==initial.kind);
+    const formBoardId=state.activeBoardId;
+    const cancel=planningButton('',()=>{if(!form.isConnected || !details.open || !form.getClientRects().length || state.activeBoardId!==formBoardId)return;eaten.value=initial.eaten;planned.value=initial.planned;windowSelect.value=initial.window;kind.value=initial.kind;status.textContent='';const notice=details.closest('.food-tracker')?.querySelector('.health-date-message');if(notice?.textContent===HEALTH_DATE_DRAFT_NOTICE){notice.textContent='';if(lastLocalSaveOk!==false)setSaveStatus('Meal-time changes cancelled.','notice');}},'x');cancel.title='Cancel meal-time changes';cancel.setAttribute('aria-label',cancel.title);
+    const actions=planningNode('div','food-time-actions');actions.append(save,cancel);
+    form.append(planningField('Eaten at',eaten),planningField('Planned time',planned),planningField('Timing window',windowSelect),planningField('Entry type',kind),actions,status);
     form.onsubmit=event=>{
       event.preventDefault();try{const current=live();if(date>getTodayKey())throw Error('Record eating on today or a past date.');const tx=D.setTiming(board(),current.id,date,meal.id,expected,{...(meal.timing || {}),eatenTime:eaten.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value),recordedAt:Date.now()},{conflicts:state.syncConflicts,kind:kind.value});commit(tx);renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
     };
