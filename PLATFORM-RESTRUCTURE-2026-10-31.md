@@ -278,6 +278,8 @@ Controls wrap at narrow widths and retain 44px targets. The action tooltip disti
 
 The first hosted run `41257554569` was held by the Properties preflight's ten-minute job limit, during its WebKit suite, with no failed assertion in that job's log. The preflight now has a twenty-minute budget for dependency setup and the complete 130-case suite in each engine. No cases, assertions or deployment prerequisites were removed, skipped or relaxed. Public application files and the accepted local candidate are unchanged by this CI-only adjustment. A fresh complete hosted run is required before publication.
 
+The next run `41258440450` passed that Properties preflight but stopped in WebKit backup recovery: the localhost developer source watcher made fetches during a backup download, producing access-control page errors. Restore tests now explicitly disable that unrelated live-reload watcher, as other frozen-artifact suites already do, and assert that no developer-source requests occur. They also refuse non-local test targets. All original page-error and complete-record comparisons remain strict. All 19 recovery workflows pass locally in both engines against the same unchanged application artifact. No restore implementation, existing record, production fetch permission or application CSP was changed. Full hosted acceptance remains required.
+
 Nutrition should stay meal-first: choose a meal, add a familiar food, enter a clearly stated quantity/unit, then collapse the details. Keep the saved monthly targets and snapshot nutrition values. Do not silently update old meals when a library food changes.
 
 ## App Access And Privacy

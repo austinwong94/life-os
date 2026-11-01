@@ -1,7 +1,10 @@
 const engines = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const URL = process.env.TEST_URL || 'http://127.0.0.1:5180/';
+const targetUrl = new URL(process.env.TEST_URL || 'http://127.0.0.1:5180/');
+assert(['127.0.0.1','localhost'].includes(targetUrl.hostname));
+// Frozen-release recovery checks must not start the developer source watcher.
+targetUrl.searchParams.set('liveReload','0');
 const OUT = process.env.TEST_OUTPUT || 'test-results';
 fs.mkdirSync(OUT, {recursive:true});
 const results = [];
@@ -11,10 +14,11 @@ const results = [];
     if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context = await browser.newContext({viewport:{width:1280,height:900},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*', route => route.fulfill({status:503,body:'No live accounts in tests'}));
-    const p = await context.newPage(), errors = [], alerts = [];
+    const p = await context.newPage(), errors = [], alerts = [], devRequests = [];
+    context.on('request',request=>{if(new URL(request.url()).searchParams.has('lifeOsDev'))devRequests.push(request.url());});
     p.setDefaultTimeout(7000); p.on('pageerror', error => errors.push(error.stack));
     p.on('dialog', async dialog => {alerts.push(dialog.message()); await dialog.accept();});
-    try {await p.goto(URL); await fn(p, context, alerts); assert.deepEqual(errors, []); results.push({name,pass:true});}
+    try {await p.goto(targetUrl.href); await fn(p, context, alerts); assert.deepEqual(errors, []); assert.deepEqual(devRequests, []); results.push({name,pass:true});}
     catch (error) {results.push({name,pass:false,error:error.stack,pageErrors:errors}); await p.screenshot({path:OUT+'/restore-failure-'+results.length+'.png'}).catch(()=>{});}
     console.log(JSON.stringify(results.at(-1))); await context.close();
   }
@@ -145,7 +149,7 @@ const results = [];
   });
   await run('another tab editing during review blocks replacement until refreshed and reconfirmed', async (p,context) => {
     const backup=await seed(p); await open(p,backup);
-    const q=await context.newPage(); await q.goto(URL);
+    const q=await context.newPage(); await q.goto(targetUrl.href);
     await q.evaluate(async()=>{switchBoard('work');state.board.name='New work title';saveState({skipCloud:true});await flushDeviceWrites();});
     await confirm(p); await p.getByText(/Records changed while this review was open/).waitFor();
     assert.equal(await p.evaluate(()=>state.boards.find(board=>board.id==='work').name),'New work title');
@@ -268,7 +272,7 @@ const results = [];
     try{
       const target=await targetBrowser.newContext({viewport:{width:390,height:844},timezoneId:'Asia/Kuala_Lumpur'}),errors=[],alerts=[];
       await target.route('https://**/*',r=>r.fulfill({status:503,body:'No cloud or private accounts in recovery drill'}));
-      const page=targetPage=await target.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('dialog',async d=>{alerts.push(d.message());await d.accept();});await page.clock.setFixedTime(instant);await page.goto(URL);
+      const page=targetPage=await target.newPage();page.setDefaultTimeout(10000);page.on('pageerror',e=>errors.push(e.message));page.on('dialog',async d=>{alerts.push(d.message());await d.accept();});await page.clock.setFixedTime(instant);await page.goto(targetUrl.href);
       await page.evaluate(()=>flushDeviceWrites());assert.equal(await page.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY)),null);const before=await page.evaluate(()=>getStateForStorage().boards);
       await page.locator('#importDataFile').setInputFiles(file);await page.getByRole('dialog',{name:'Review backup restore'}).waitFor();await page.waitForFunction(()=>!document.querySelector('.restore-consent input').disabled);
       assert.equal(await page.getByRole('button',{name:'Restore on this device',exact:true}).isDisabled(),true);assert.match(await page.locator('.restore-recovery-note').innerText(),/not automatically merged/);
