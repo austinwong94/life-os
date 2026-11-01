@@ -37,6 +37,10 @@
     const target=elements.boardGrid.querySelector('.task-card[data-id="'+CSS.escape(card.id)+'"] .food-time-panel');
     if(target){reveal(target);target.scrollIntoView({block:'center'});target.querySelector('input')?.focus();}
   }
+  function requireRecordedMeal(card,date,expected){
+    const matches=(card.foodEntries?.[date]?.meals || []).filter(meal=>meal?.id===expected.id);
+    if(matches.length!==1 || !D.equal(matches[0],expected))throw Error('This recorded meal changed or was removed. Reopen its current record.');
+  }
   function render(card,date){
     const section=planningNode('section','food-daily');section.setAttribute('aria-label','Daily eating');
     const live=context(card,date,section),head=planningNode('div','food-daily-head'),title=planningNode('h3','','Usual meals'),notice=planningNode('p','food-daily-message daily-message');notice.setAttribute('role','status');
@@ -121,6 +125,7 @@
     dialog.append(form);draw();name.focus();
   }
   function openRecorded(card,date,meal){
+    requireRecordedMeal(card,date,meal);
     const dialog=dailyDialog('Edit recorded meal');dialog.classList.add('food-recorded-dialog');
     const live=context(card,date,dialog),expected=D.copy(meal),draft=D.copy(meal),form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
     const heading=planningNode('div','food-recorded-heading');heading.append(planningNode('h3','',meal.name),planningNode('p','',formatReadableDateKey(date)));
@@ -139,7 +144,7 @@
     const timing=planningNode('div','food-recorded-time');timing.append(planningField('Eaten at',eaten),planningField('Entry type',kind));
     const save=planningButton('Save recorded meal',null,'check');save.type='submit';save.classList.add('is-primary');
     const actions=planningNode('div','daily-actions');actions.append(planningButton('Cancel',()=>dialog.close()),save);
-    const more=planningButton('Meal details',()=>{try{const current=live();if(!D.equal(draft.items,expected.items) || eaten.value!==(expected.timing?.eatenTime || '') || kind.value!==(expected.kind || 'meal'))throw Error('Save or cancel these changes before opening meal details.');dialog.close();openDetails(current,meal.id);}catch(error){status.textContent=error.message;}},'utensils');
+    const more=planningButton('Meal details',()=>{try{const current=live();if(!D.equal(draft.items,expected.items) || eaten.value!==(expected.timing?.eatenTime || '') || kind.value!==(expected.kind || 'meal'))throw Error('Save or cancel these changes before opening meal details.');requireRecordedMeal(current,date,expected);dialog.close();openDetails(current,meal.id);}catch(error){status.textContent=error.message;}},'utensils');
     const basis=planningNode('details','food-recorded-basis');basis.append(planningNode('summary','','Nutrition basis'));for(const item of meal.items || [])basis.append(planningNode('p','',item.name+' · '+item.calories+' kcal per '+item.servingUnit+' ('+item.servingGrams+' g) · '+item.source));
     form.append(heading,totals,items,timing,status,actions,more,basis);form.onsubmit=event=>{
       event.preventDefault();try{const current=live(),tx=D.editMeal(board(),current.id,date,meal.id,expected,draft.items.map(i=>({id:i.id,amount:i.amount,unit:i.unit})),{today:getTodayKey(),conflicts:state.syncConflicts,eatenTime:eaten.value,kind:kind.value});if(tx)commit(tx);dialog.close();if(tx){renderCardsOnly({force:true});undo(tx,'Recorded meal updated.');}}catch(error){status.textContent=error.message;}
