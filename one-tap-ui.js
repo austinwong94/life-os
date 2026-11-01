@@ -208,6 +208,7 @@
     const movement=card('movement','dumbbell',model.movement.length?model.movement.join(', '):'No movement recorded'),moveActions=node('div','trial-actions');for(const value of ['Gym','Walk','Stretch'])moveActions.append(writeButton(root,ref,value,'movement',{value}));movement.append(moveActions);
     const reflection=node('details','trial-reflection');reflection.append(node('summary','','Add a thought or an actual time (optional)'));disclosure(reflection,'thoughtOpen',boardId,s);
     const noteDraft=(s.notes ||= {})[ref.day] ||= {text:'',time:'',targetId:''};
+    const detailStatus=node('p','trial-status');detailStatus.setAttribute('role','status');detailStatus.hidden=true;reflection.append(detailStatus);
     const noteForm=node('form','trial-form'),thought=node('textarea');thought.rows=3;thought.value=noteDraft.text;thought.maxLength=12000;thought.id='oneTapThought';thought.oninput=()=>{noteDraft.text=thought.value;keep(boardId,s);};
     const options=[['','Day reflection'],...model.facts.slice().reverse().map(e=>[e.id,T.describe(e)])],target=planningSelect(options,noteDraft.targetId,v=>{noteDraft.targetId=v;keep(boardId,s);});
     const actual=planningInput('time',noteDraft.time,v=>{noteDraft.time=v;keep(boardId,s);});noteForm.append(planningField('About',target),planningField('Your thought',thought),planningField('Actual time (optional for an entry)',actual));
@@ -216,8 +217,21 @@
     const journal=node('details','trial-journal'),entryCount=model.rows.filter(e=>!['preference','shortcut'].includes(e.kind)).length;journal.append(node('summary','','Journal - '+entryCount+(entryCount===1?' entry':' entries')));disclosure(journal,'journalOpen',boardId,s);
     const rows=model.rows.filter(e=>!['preference','shortcut'].includes(e.kind)).slice().reverse(),limit=s.historyLimit || 20;
     if(!rows.length)journal.append(node('p','trial-empty','No trial entries on this day.'));
+    const actualTimes=new Map();for(const e of model.rows)if(e.kind==='note' && e.data.targetId && e.data.time)actualTimes.set(e.data.targetId,e.data.time);
     for(const e of rows.slice(0,limit)){
-      const row=node('div','trial-journal-row'),content=node('div');content.append(node('strong','',T.describe(e)),node('time','','Recorded '+formatRecordDateTime(e.recordedAt)));if(e.kind==='note' && e.data.targetId){const related=model.facts.find(f=>f.id===e.data.targetId);if(related)content.append(node('small','','About: '+T.describe(related)));}row.append(content,writeButton(root,ref,'Undo '+T.describe(e),'undo',{targetId:e.id},'rotate-ccw',{date:e.date}));journal.append(row);
+      const row=node('div','trial-journal-row'),content=node('div');content.append(node('strong','',T.describe(e)),node('time','','Recorded '+formatRecordDateTime(e.recordedAt)));if(actualTimes.has(e.id))content.append(node('small','trial-actual-time','Actual time: '+actualTimes.get(e.id)));if(e.kind==='note' && e.data.targetId){const related=model.facts.find(f=>f.id===e.data.targetId);if(related)content.append(node('small','','About: '+T.describe(related)));}
+      const actions=node('div','trial-entry-actions');
+      if(T.types.includes(e.kind)){
+        const detail=planningIcon('Add details for '+T.describe(e),()=>{
+          if(!current(root,ref) || !journal.open || s.busy || s.pending || ref.day>today || s.notes?.[ref.day]!==noteDraft)return;
+          try{if(!T.summary(original(boardId).oneTapExperiment,ref.day).facts.some(live=>live.id===e.id && T.equal(live,e)))return;}catch{return;}
+          const occupied=Boolean(noteDraft.text || noteDraft.time) && noteDraft.targetId!==e.id;
+          if(!occupied){noteDraft.targetId=e.id;target.value=e.id;}
+          detailStatus.hidden=!occupied;detailStatus.textContent=occupied?'Your unfinished thought is kept. Save it before choosing another entry.':'';
+          s.thoughtOpen=true;reflection.open=true;keep(boardId,s);const summary=reflection.querySelector('summary');summary.focus({preventScroll:true});reflection.scrollIntoView({block:'start',behavior:'instant'});
+        },'pencil');detail.dataset.trialWrite='';detail.disabled=s.busy || Boolean(s.pending) || ref.day>today;actions.append(detail);
+      }
+      const undo=writeButton(root,ref,'Undo '+T.describe(e),'undo',{targetId:e.id},'rotate-ccw',{date:e.date});undo.title='Undo '+T.describe(e);actions.append(undo);row.append(content,actions);journal.append(row);
     }if(rows.length>limit)journal.append(planningButton('Show more entries',()=>{if(!current(root,ref))return;s.historyLimit=limit+20;keep(boardId,s);redraw(boardId);},'plus'));root.append(journal);
     const feedback=node('section','trial-feedback');feedback.setAttribute('aria-label','Experiment feedback');feedback.append(node('h3','','How did recording feel?'));
     for(const value of ['Easier','About the same','More effort']){const button=writeButton(root,ref,value,'feedback',{value});button.setAttribute('aria-pressed',String(model.feedback===value));if(model.feedback===value)button.disabled=true;feedback.append(button);}root.append(feedback);

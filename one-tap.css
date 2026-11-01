@@ -65,7 +65,11 @@
 .trial-form textarea{resize:vertical;min-height:100px}.trial-form .planning-field>span{font-size:12px;font-weight:500}
 .trial-reflection,.trial-journal{margin-top:20px;border-top:1px solid var(--line)}
 .trial-reflection>.trial-form{max-width:720px}.trial-journal-row{display:flex;gap:14px;justify-content:space-between;align-items:start;padding:14px 0;border-top:1px solid var(--line)}
-.trial-journal-row>div{display:grid;gap:4px;flex:1}.trial-journal-row strong{font-size:13px;font-weight:500;white-space:pre-wrap;overflow-wrap:anywhere}.trial-journal-row time,.trial-journal-row small{font-size:12px;color:var(--muted)}
+.trial-journal-row>div{display:grid;gap:4px;flex:1}.trial-journal-row strong{font-size:13px;font-weight:500;white-space:pre-wrap;overflow-wrap:anywhere}.trial-journal-row time,.trial-journal-row small{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.trial-journal-row>.trial-entry-actions{display:flex;gap:4px;flex:0 0 auto;align-items:start}
+.trial-entry-actions>.planning-button{width:44px;min-width:44px;min-height:44px;flex:none;padding:10px}
+.trial-entry-actions>.planning-button>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.trial-entry-actions svg{width:18px;height:18px}.trial-reflection{scroll-margin-top:20px}.trial-reflection>[role=status]{font-size:13px;margin:0 0 8px}
 .trial-journal-row>.planning-button{width:44px;flex:none;padding:10px}.trial-journal-row>.planning-button>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 .trial-journal-row>.planning-button svg{width:18px;height:18px}
 .trial-empty{font-size:13px;color:var(--muted)}
