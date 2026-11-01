@@ -31,6 +31,13 @@
     return Boolean(safe(log) && log.version===1 && id(log.id) && time(log.createdAt) && time(log.updatedAt) && Array.isArray(log.rows) && log.rows.length<=200 &&
       log.rows.every(validRow) && new Set(log.rows.map(row=>row.id)).size===log.rows.length);
   }
+  const emptyDraft=row=>validRow(row) && !row.done && !row.removedAt && !row.history.length && ['reps','weightKg','rpe'].every(key=>row[key]==='');
+  function summaryDraft(exercise){
+    if(!safe(exercise) || Object.hasOwn(exercise,'setLog'))return null;
+    const number=value=>typeof value==='number'?value:typeof value==='string' && /^(?:\d+(?:\.\d+)?)$/.test(value)?Number(value):NaN;
+    const values={reps:number(exercise.reps),weightKg:number(exercise.weightKg),rpe:''};
+    return complete(values)?{reps:values.reps,weightKg:values.weightKg}:null;
+  }
   function stats(exercise){
     if(!Object.hasOwn(exercise || {},'setLog'))return {mode:'summary',completed:0,summary:Number(exercise?.sets)||0,rows:[]};
     if(!validLog(exercise.setLog))return {mode:'unrecognized',completed:0,summary:0,rows:[]};
@@ -49,7 +56,7 @@
     return matches[0];
   }
   function nextId(createId,used){const value=createId();if(!id(value) || used.has(value))throw new Error('A unique set identity could not be created. Retry.');used.add(value);return value;}
-  function change(board,ref,command,{now=Date.now(),createId=()=>crypto.randomUUID(),conflicts=[]}={}){
+  function change(board,ref,command,{now=Date.now(),createId=()=>crypto.randomUUID(),conflicts=[],today}={}){
     if(!time(now))throw new Error('The recording time is not valid. Nothing was changed.');
     const live=resolve(board,ref,conflicts),after=copy(live);
     if(command.type==='enable'){
@@ -72,7 +79,22 @@
     }else{
       const row=log.rows.find(row=>row.id===command.rowId);
       if(!row || !equal(row,command.expected))throw new Error('This set changed elsewhere. Reopen the workout before updating it.');
-      if(command.type==='edit'){
+      if(command.type==='copy-previous'){
+        const source=command.source;
+        if(!emptyDraft(row) || !day(today) || ref.date>today || !safe(source) || Object.keys(source).some(key=>!['date','exerciseId','setId','expectedExercise'].includes(key)) || !day(source.date) || source.date>=ref.date || source.date>today || !id(source.exerciseId) || !id(source.setId) || typeof live.name!=='string' || !live.name.trim() || live.name!==command.expectedName)throw new Error('Choose a blank new set and an earlier recorded workout. Existing measurements are kept.');
+        const previous=resolve(board,{...ref,date:source.date,exerciseId:source.exerciseId},conflicts);
+        const name=value=>typeof value==='string'?value.trim().toLocaleLowerCase():'';
+        const named=board.cards.find(card=>card.id===ref.cardId).fitnessEntries[source.date].parts[ref.partKey].exercises.filter(exercise=>name(exercise?.name)===name(live.name));
+        if(named.length!==1 || named[0].id!==source.exerciseId || name(previous.name)!==name(live.name) || !equal(previous,source.expectedExercise))throw new Error('The past workout changed or needs review. Reopen its current record.');
+        let values;
+        if(Object.hasOwn(previous,'setLog')){
+          if(!validLog(previous.setLog))throw new Error('The past workout changed or needs review. Reopen its current record.');
+          const checked=previous.setLog.rows.find(set=>set.id===source.setId);
+          if(!checked?.done || checked.removedAt || !complete(checked))throw new Error('Choose a checked set from the earlier workout. Nothing was copied.');
+          values=checked;
+        }else {values=source.setId==='summary'?summaryDraft(previous):null;if(!values)throw new Error('This summary has no exact weight and reps to copy. Enter your actual values.');}
+        row.weightKg=values.weightKg;row.reps=values.reps;
+      }else if(command.type==='edit'){
         if(row.done || row.removedAt || !safe(command.values) || Object.keys(command.values).some(key=>!['reps','weightKg','rpe'].includes(key)))throw new Error('Uncheck this set before editing its measurements.');
         Object.assign(row,copy(command.values));if(!draft(row))throw new Error('This draft is not a supported numeric entry. Nothing was changed.');
       }else{
@@ -93,6 +115,6 @@
     if(!validLog(log))throw new Error('The updated set log is not valid. Nothing was changed.');
     return after;
   }
-  const api=Object.freeze({validLog,stats,change,copy});
+  const api=Object.freeze({validLog,stats,emptyDraft,summaryDraft,change,copy});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeFitnessSets=api;
 })(typeof globalThis==='undefined'?window:globalThis);

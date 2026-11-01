@@ -27,4 +27,9 @@
 .fitness-set-start{margin-block:4px 12px;min-height:44px;font-size:13px}
 .fitness-set-report-row{font-size:13px;line-height:1.5;white-space:pre-wrap}
 .fitness-previous{white-space:pre-line}
+.fitness-past-dialog h3{font:600 15px/1.5 system-ui,sans-serif;letter-spacing:0;margin:0;overflow-wrap:anywhere}.fitness-past-date,.fitness-past-note{font:13px/1.5 system-ui,sans-serif;color:var(--muted);margin:0;overflow-wrap:anywhere}
+.fitness-past-dialog .planning-field select{box-sizing:border-box;width:100%;max-width:100%;min-width:0;height:44px;min-height:44px;padding:8px;border:1px solid var(--line);border-radius:6px;color:var(--ink);background:var(--surface,#fff);font:16px/1.5 system-ui,sans-serif;letter-spacing:0}
+.fitness-past-choices{min-width:0;margin:0;padding:0;border:0}.fitness-past-choices legend{font:500 12px/1.5 system-ui,sans-serif;color:var(--muted);padding:0 0 6px}
+.fitness-past-choice{display:flex;align-items:center;gap:12px;min-height:44px;box-sizing:border-box;padding:10px 0;border-bottom:1px solid var(--line);font:500 14px/1.5 system-ui,sans-serif;text-transform:none;letter-spacing:0;cursor:pointer;overflow-wrap:anywhere}
+.fitness-past-dialog .fitness-past-choice input[type=radio]{box-sizing:border-box;width:20px;height:20px;min-width:20px;min-height:20px;max-width:20px;padding:0;flex:none;accent-color:var(--action)}.fitness-past-dialog .planning-button{min-width:44px;min-height:44px;white-space:normal;font-size:13px}
 @media(max-width:980px){.fitness-set-log input[type=number]{font-size:16px}}

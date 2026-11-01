@@ -4,15 +4,53 @@ function fitnessSetDisclosure(key,label,initial=false){
   details.open=fitnessSetDisclosures.get(key) ?? initial;
   summary.addEventListener('click',event=>{event.preventDefault();details.open=!details.open;fitnessSetDisclosures.set(key,details.open);});details.append(summary);return details;
 }
-function applyFitnessSetChange(ref,command,message){
+function applyFitnessSetChange(ref,command,message,{rollbackOnFailure=false}={}){
+  let rollback=null;
   try{
-    const after=LifeFitnessSets.change({id:state.activeBoardId,cards:state.cards},ref,command,{createId,conflicts:state.syncConflicts});
+    const after=LifeFitnessSets.change({id:state.activeBoardId,cards:state.cards},ref,command,{createId,conflicts:state.syncConflicts,today:getTodayKey()});
     const target=fitnessExerciseTarget({id:ref.cardId},ref.date,ref.partKey,ref.exerciseId,ref.boardId);
     if(!target)throw new Error('This exercise moved. Reopen the workout.');
+    const before=rollbackOnFailure?LifeFitnessSets.copy(target.card.fitnessEntries[ref.date]):null;
+    if(rollbackOnFailure)rollback={card:target.card,before};
     const saved=updateFitnessEntry(target.card,ref.date,entry=>{entry.parts[ref.partKey].exercises[target.index]=after;});
+    if(saved===false && rollbackOnFailure)throw new Error('Not saved. Your original set is kept. Keep this form open and retry.');
     message.textContent=saved===false?'Not saved on this device yet. Keep this tab open and retry saving.':'';
     return after;
-  }catch(error){message.textContent=error.message;return null;}
+  }catch(error){if(rollback){rollback.card.fitnessEntries[ref.date]=rollback.before;syncActiveBoard({touchBoard:false});}message.textContent=error.message;return null;}
+}
+function fitnessPreviousSource(card,date,partKey,exercise){
+  if(date>getTodayKey())return null;
+  if((state.syncConflicts || []).some(conflict=>{const p=conflict.segments || [];return p[0]==='boards' && p[1]===state.activeBoardId && ['cards','archivedCards'].includes(p[2]) && p[3]===card.id;}))return null;
+  const result=LifeExerciseHistory.history(card,{partKey,name:exercise.name},{through:getTodayKey()});
+  for(const row of result.rows.filter(row=>row.date<date && !row.future)){
+    if(['ambiguous','unrecognized'].includes(row.mode))return null;
+    const source=card.fitnessEntries[row.date].parts[partKey].exercises.find(item=>typeof item?.name==='string' && item.name.trim().toLocaleLowerCase()===exercise.name.trim().toLocaleLowerCase());
+    if(!source)return null;
+    const summary=row.mode==='summary'?LifeFitnessSets.summaryDraft(source):null;
+    if(summary)return {date:row.date,exercise:LifeFitnessSets.copy(source),summary};
+    if(row.mode==='sets' && row.completed)return {date:row.date,exercise:LifeFitnessSets.copy(source)};
+  }
+  return null;
+}
+function openFitnessPastSet(ref,exercise,source,prefix){
+  const dialog=dailyDialog('Use a past set');dialog.classList.add('fitness-past-dialog');
+  const expectedName=exercise.name,targets=exercise.setLog.rows.filter(LifeFitnessSets.emptyDraft).map(LifeFitnessSets.copy),checked=source.summary?[{id:'summary',...source.summary}]:source.exercise.setLog.rows.filter(row=>row.done && !row.removedAt);
+  const form=planningNode('form','daily-form'),message=planningNode('p','fitness-set-message');message.setAttribute('role','status');
+  form.append(planningNode('h3','',expectedName),planningNode('p','fitness-past-date',getFitnessPartMeta(ref.partKey).label+' · '+formatReadableDateKey(source.date)+' → '+formatReadableDateKey(ref.date)));
+  const target=planningSelect([...(targets.length===1?[]:[['','Choose a blank set']]),...targets.map(row=>[row.id,'Set '+(exercise.setLog.rows.findIndex(item=>item.id===row.id)+1)])],targets.length===1?targets[0].id:'',()=>{});form.append(planningField('New set',target));
+  const list=planningNode('fieldset','fitness-past-choices');list.append(planningNode('legend','',source.summary?'Saved summary · not individually checked':'Recorded sets'));let selected=null;
+  for(const row of checked){const label=planningNode('label','fitness-past-choice'),radio=document.createElement('input');radio.type='radio';radio.name='past-set';radio.value=row.id;const text=(source.summary?'Saved summary':'Set '+(source.exercise.setLog.rows.indexOf(row)+1))+' · '+row.weightKg+' kg × '+row.reps+' reps';radio.setAttribute('aria-label',text);radio.onchange=()=>{selected=row;};label.append(radio,planningNode('span','',text));list.append(label);}
+  form.append(list,planningNode('p','fitness-past-note','Weight and reps only. This stays unchecked; effort is left blank.'),message);
+  const actions=planningNode('div','daily-actions'),use=planningButton('Use as draft',null,'check');use.type='submit';use.classList.add('is-primary');actions.append(planningButton('Cancel',()=>dialog.close()),use);form.append(actions);
+  form.onsubmit=event=>{
+    event.preventDefault();if(!dialog.open || !dialog.isConnected)return;
+    const card=state.cards.find(card=>card.id===ref.cardId);
+    if(state.activeBoardId!==ref.boardId || card?.activeFitnessDate!==ref.date){message.textContent='The board or day changed. Reopen the original workout. Nothing was copied.';return;}
+    const expected=targets.find(row=>row.id===target.value);if(!expected || !selected){message.textContent='Choose a blank new set and a recorded set.';return;}
+    const after=applyFitnessSetChange(ref,{type:'copy-previous',rowId:expected.id,expected,expectedName,source:{date:source.date,exerciseId:source.exercise.id,setId:selected.id,expectedExercise:source.exercise}},message,{rollbackOnFailure:true});
+    if(after){dialog.close();renderCardsOnly({force:true});document.getElementById(prefix+'-tick-'+encodeURIComponent(expected.id))?.focus();}
+  };
+  dialog.append(form);
 }
 function openFitnessSetLog(card,date,partKey,exercise){
   const ref={boardId:state.activeBoardId,cardId:card.id,date,partKey,exerciseId:exercise.id},expected=LifeFitnessSets.copy(exercise);
@@ -66,6 +104,8 @@ function renderFitnessSetLog(card,date,partKey,exercise){
     const repeat=planningButton('Repeat checked set',()=>{if(applyFitnessSetChange(ref,{type:'repeat',rowId:expected.id,expected},message))rerender();},'rotate-ccw');
     repeat.id=prefix+'-repeat';repeat.title='New unchecked draft: last checked weight and reps; effort left blank';repeat.disabled=exercise.setLog.rows.length>=200;actions.append(repeat);
   }
+  const previous=stats.rows.some(LifeFitnessSets.emptyDraft)?fitnessPreviousSource(card,date,partKey,exercise):null;
+  if(previous){const past=planningButton('Use past set',()=>{if(!wrapper.isConnected)return;openFitnessPastSet(ref,exercise,previous,prefix);},'calendar');past.id=prefix+'-past';past.title='Choose a recorded past weight and reps for a blank set';actions.append(past);}
   wrapper.append(actions,effort);
   const removed=exercise.setLog.rows.filter(row=>row.removedAt);
   if(removed.length){
