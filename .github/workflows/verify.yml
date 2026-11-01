@@ -272,6 +272,15 @@ jobs:
         run: npm run test:meal-reuse
         env:
           TEST_OUTPUT: test-results/meal-reuse
+      - name: Check usual meals, timing and original weight records in Chromium
+        run: npm run test:food-daily
+        env:
+          TEST_OUTPUT: test-results/food-daily-chromium
+      - name: Check usual meals, timing and original weight records in WebKit
+        run: npm run test:food-daily
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/food-daily-webkit
       - name: Check meal reuse and original nutrition preservation in WebKit
         run: npm run test:meal-reuse
         env:

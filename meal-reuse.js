@@ -14,7 +14,7 @@
       new Set(meal.items.map(item=>item?.id)).size===meal.items.length && meal.items.every(item=>item && id(item.id) && id(item.foodId) &&
         typeof item.name==='string' && item.name.trim() && typeof item.servingUnit==='string' && item.servingUnit.trim() &&
         ['g','serving'].includes(item.unit) && Number.isFinite(item.amount) && item.amount>=0 && Number.isFinite(item.servingGrams) && item.servingGrams>0 &&
-        nutrients.every(key=>Number.isFinite(item[key]) && item[key]>=0) && nutrients.some(key=>item[key]>0));
+        nutrients.every(key=>Number.isFinite(item[key]) && item[key]>=0) && (nutrients.some(key=>item[key]>0) || item.zeroNutritionConfirmed===true));
   }
   function sources(card){
     if(card?.type!=='food' || card.archivedAt)return [];
@@ -34,7 +34,9 @@
     if(!source?.usable)throw new Error('This meal needs its portions or nutrition basis reviewed. The original is unchanged.');
     const before=card.foodEntries?.[targetDate] ?? null;
     if(before && !Array.isArray(before.meals))throw new Error('The destination day needs review. Nothing was changed.');
-    const meal=copy(source.meal);meal.id=createId();meal.items=meal.items.map(item=>({...item,id:createId()}));
+    const meal=copy(source.meal);delete meal.routineId;
+    if(meal.timing)meal.timing={...meal.timing,eatenTime:'',recordedAt:0};
+    meal.id=createId();meal.items=meal.items.map(item=>({...item,id:createId()}));
     const names=new Set((before?.meals || []).map(row=>String(row.name || '').toLowerCase())),base=meal.name;
     for(let n=2;names.has(meal.name.toLowerCase());n++)meal.name=base+' '+n;
     return {boardId:board.id,cardId,sourceDate,source:source.meal,targetDate,before:copy(before),meal};
@@ -46,6 +48,7 @@
     const current=sources(card).find(row=>row.date===command.sourceDate && row.meal.id===command.source.id);
     if(!current?.usable || !equal(current.meal,command.source) || !equal(card.foodEntries?.[command.targetDate] ?? null,command.before))throw new Error('The source meal or destination day changed. Reopen the preview before adding it.');
     const original=copy(command.source),meal=command.meal;
+    delete original.routineId;if(original.timing)original.timing={...original.timing,eatenTime:'',recordedAt:0};
     if(!validMeal(meal) || meal.items.length!==original.items.length || !id(meal.name))throw new Error('The meal preview is invalid. Nothing was added.');
     original.id=meal.id;original.name=meal.name;original.items.forEach((item,i)=>item.id=meal.items[i].id);
     if(!equal(original,meal))throw new Error('The meal preview changed. Nothing was added.');

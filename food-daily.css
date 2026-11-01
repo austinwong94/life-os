@@ -1,0 +1,38 @@
+.food-daily{margin:4px 0 16px;padding:12px 0;border-block:1px solid var(--line);min-width:0}
+.food-daily-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.food-daily h3{font:600 14px/1.5 system-ui,sans-serif;letter-spacing:0;margin:0}
+.food-daily :is(p,small),.food-weight-recent{font:12px/1.5 system-ui,sans-serif;letter-spacing:0;color:var(--muted);overflow-wrap:anywhere}
+.food-daily-progress{margin:8px 0}
+.food-daily-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:12px 0}
+.food-daily-week span{display:grid;place-items:center;min-height:28px;font:12px/1.5 system-ui,sans-serif;color:var(--muted);border-bottom:3px solid var(--line)}
+.food-daily-week .is-recorded{color:var(--action);border-color:var(--action);font-weight:600}
+.food-usual-row{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;align-items:center;gap:6px;border-top:1px solid var(--line);padding:10px 0}
+.food-usual-row>label{display:flex;align-items:start;gap:10px;min-width:0;min-height:44px;cursor:pointer;font:13px/1.5 system-ui,sans-serif;letter-spacing:0;text-transform:none}
+.food-usual-check input[type=checkbox]{flex:none;width:22px;height:22px;margin:6px 0;accent-color:var(--action)}
+.food-usual-copy{min-width:0;overflow-wrap:anywhere}.food-usual-copy strong{font-size:13px;font-weight:600}.food-usual-copy small{display:block;margin-top:3px}
+.food-daily .planning-button,.food-time-panel .planning-button{box-sizing:border-box;min-height:44px;min-width:44px;font-size:12px;font-weight:500;white-space:normal;letter-spacing:0}
+.food-usual-row>.planning-button{width:44px;height:44px;padding:10px;justify-content:center}
+.food-daily svg{width:18px;height:18px;flex:none}
+.food-daily-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.food-usual-archive{margin-top:12px}.food-usual-archive>summary{min-height:44px;display:flex;align-items:center;font-size:12px;color:var(--muted);cursor:pointer}.food-usual-archive:not([open])>.planning-button{display:none}
+.food-routine-dialog .daily-form,.food-weight-dialog .daily-form{min-width:0}
+.food-routine-pick{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
+.food-routine-dialog .planning-field,.food-weight-dialog .planning-field{min-width:0;max-width:100%;overflow-x:clip}
+.food-routine-dialog :is(input,select),.food-weight-dialog :is(input,select),.food-time-form :is(input,select){box-sizing:border-box;min-width:0;width:100%;max-width:100%;height:44px;min-height:44px;border:1px solid var(--line);border-radius:6px;padding:8px;color:var(--ink);background:var(--surface,#fff);font:14px/1.5 system-ui,sans-serif;letter-spacing:0}
+.food-routine-dialog button,.food-weight-dialog button{box-sizing:border-box;min-height:44px;min-width:44px;white-space:normal}
+.food-routine-item{display:grid;grid-template-columns:minmax(0,1fr) 80px 100px 44px;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--line)}
+.food-routine-item-name{min-width:0;overflow-wrap:anywhere;font:13px/1.5 system-ui,sans-serif}.food-routine-item-name small{display:block;font-size:12px;color:var(--muted)}
+.food-routine-item .planning-button{padding:10px;justify-content:center;width:44px;height:44px}.food-routine-item svg{width:18px;height:18px}
+.food-zero-confirm{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:12px;min-height:44px}.food-routine-dialog .food-zero-confirm input{width:22px;height:22px;min-height:22px;flex:none}
+.food-routine-archive[hidden]{display:none}.food-routine-archive{border-top:1px solid var(--line);padding-top:12px}
+.food-time-panel{margin:8px 0 12px;font-size:12px;min-width:0}.food-time-panel>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}
+.food-time-panel:not([open])>.food-time-form{display:none}
+.food-detailed-entry>summary{display:flex;align-items:center;min-height:44px;font:500 13px/1.5 system-ui,sans-serif;cursor:pointer;color:var(--muted)}
+.food-detailed-entry:not([open])>:not(summary){display:none}
+.food-time-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:end;min-width:0}
+.food-time-form .planning-field{min-width:0;font-size:12px}.food-time-form p{grid-column:1/-1;margin:0}.food-time-form .planning-button{justify-self:start}
+@media(max-width:700px){
+ .food-routine-item{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px}.food-routine-item-name{grid-column:1/-1}.food-routine-dialog :is(input,select),.food-weight-dialog :is(input,select),.food-time-form :is(input,select){font-size:16px}
+ .food-time-form{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.food-time-form>.planning-field:nth-child(3){grid-column:1/-1}
+ .food-daily-head{align-items:start}.food-daily-head>.planning-button{max-width:160px}
+}

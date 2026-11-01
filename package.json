@@ -21,6 +21,7 @@
     "test:workout-rest": "node tests/workout-rest.cjs",
     "test:exercise-history": "node tests/exercise-history.cjs",
     "test:meal-reuse": "node tests/meal-reuse.cjs",
+    "test:food-daily": "node tests/food-daily.cjs",
     "test:exercise-reuse": "node tests/exercise-reuse.cjs",
     "test:appearance": "node tests/appearance.cjs",
     "test:responsive": "node tests/responsive.cjs",

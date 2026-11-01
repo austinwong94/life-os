@@ -21,6 +21,8 @@
 })(typeof window==='undefined'?globalThis:window);
 
 const healthSessions=new Map();
+function readHealthView(boardId){try{const value=sessionStorage.getItem(LifeStorageScope.key('life-os-health-view:'+boardId));return ['workout','food','history'].includes(value)?value:'workout';}catch{return 'workout';}}
+function saveHealthView(boardId,value){try{sessionStorage.setItem(LifeStorageScope.key('life-os-health-view:'+boardId),value);}catch{/* The current view still works when optional tab preferences cannot be saved. */}}
 function openHealthLogComposer(type) {
   if(draftTouched || editingCardId){
     openCardComposer();
@@ -31,13 +33,13 @@ function openHealthLogComposer(type) {
 }
 function renderHealthWorkspace() {
   const root=elements.boardGrid,boardId=state.activeBoardId;
-  if(!healthSessions.has(state.activeBoardId))healthSessions.set(state.activeBoardId,{view:'workout',sources:{fitness:'',food:''},partPickers:new Map()});
+  if(!healthSessions.has(state.activeBoardId))healthSessions.set(state.activeBoardId,{view:readHealthView(state.activeBoardId),sources:{fitness:'',food:''},partPickers:new Map()});
   const session=healthSessions.get(state.activeBoardId),head=planningNode('header','health-workspace-head');
   head.append(planningNode('h1','', 'Health'),planningButton('Reports',openReportsModal,'bar-chart'));
   root.append(head);
   const tabs=planningNode('nav','health-workspace-tabs');tabs.setAttribute('aria-label','Health views');
   for(const [key,label] of [['workout','Workout'],['food','Food'],['history','Training history']]){
-    const button=planningButton(label,()=>{if(isProtectedTextEditActive())document.activeElement?.blur();session.view=key;renderCardsOnly({force:true});});
+    const button=planningButton(label,()=>{if(isProtectedTextEditActive())document.activeElement?.blur();session.view=key;saveHealthView(boardId,key);renderCardsOnly({force:true});});
     button.setAttribute('aria-pressed',String(session.view===key));tabs.append(button);
   }
   root.append(tabs);
@@ -46,7 +48,7 @@ function renderHealthWorkspace() {
   const days=new Set(workouts.filter(row=>row.date>=start && row.date<=today).map(row=>row.date));
   const summary=planningNode('div','health-week-summary');
   summary.append(planningNode('strong','',String(days.size)),planningNode('span','',(days.size===1?'day':'days')+' with workout entries in the last 7 days'));
-  root.append(summary);
+  if(session.view!=='food')root.append(summary);
   if(session.view==='history') {
     root.append(renderExerciseHistory(cards,session));
     const list=planningNode('section','health-history');list.setAttribute('aria-label','Training history');root.append(list);

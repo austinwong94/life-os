@@ -3,7 +3,7 @@ if (window.top !== window.self) {
   throw new Error("Life OS must be opened directly, not inside another website.");
 }
 // Older cached HTML may omit modules introduced by a newer deployment.
-if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeExerciseReuse','LifeFitnessSets','LifeFitnessSetsUI','LifeExerciseHistory','LifeExerciseHistoryUI','LifeWorkoutRest','LifeWorkoutRestUI','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeHealth','LifeMomentum'].some(name=>!globalThis[name])){
+if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeFoodDaily','LifeFoodDailyUI','LifeExerciseReuse','LifeFitnessSets','LifeFitnessSetsUI','LifeExerciseHistory','LifeExerciseHistoryUI','LifeWorkoutRest','LifeWorkoutRestUI','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeHealth','LifeMomentum'].some(name=>!globalThis[name])){
   window.LifeStartupBlocked=true;
   const shell=document.getElementById('appShell');if(shell)shell.hidden=true;
   const panel=document.createElement('section');panel.setAttribute('aria-label','Website startup');
@@ -5404,7 +5404,7 @@ function hasFoodItemSnapshot(item = {}) {
     normalizeLabel(item.name || "") &&
     normalizeLabel(item.servingUnit || "") &&
     Number(item.servingGrams) > 0 &&
-    FOOD_NUTRIENT_KEYS.some((key) => Number(item[key]) > 0)
+    (FOOD_NUTRIENT_KEYS.some((key) => Number(item[key]) > 0) || item.zeroNutritionConfirmed === true)
   );
 }
 
@@ -5536,14 +5536,10 @@ function renderFoodTracker(card) {
   const wrapper = document.createElement("div");
   wrapper.className = "food-tracker";
 
-  wrapper.append(
-    renderFoodDateNav(card, dateKey, entry),
-    renderFoodTotalSummary(card, totals, target, dateKey),
-    renderFoodTargetEditor(card, dateKey, target),
-    renderFoodAddPanel(card, dateKey, entry),
-    renderFoodMeals(card, dateKey, entry),
-    renderFoodLibraryEditor(card)
-  );
+  const detail=document.createElement('details');detail.className='food-detailed-entry';
+  const summary=document.createElement('summary');summary.textContent='Meal details & other foods';detail.append(summary,renderFoodTargetEditor(card,dateKey,target),renderFoodAddPanel(card,dateKey,entry),renderFoodMeals(card,dateKey,entry),renderFoodLibraryEditor(card));
+  LifeFoodDailyUI.bindDetails(card,dateKey,detail);
+  wrapper.append(renderFoodDateNav(card,dateKey,entry),LifeFoodDailyUI.render(card,dateKey),renderFoodTotalSummary(card,totals,target,dateKey),detail);
   return wrapper;
 }
 
@@ -5662,7 +5658,7 @@ function renderFoodAddPanel(card, dateKey, entry) {
   const mealHead = document.createElement("div");
   mealHead.className = "food-add-head";
   const mealLabel = document.createElement("div");
-  mealLabel.innerHTML = `<strong>Meals</strong><span>${entry.meals.length} total</span>`;
+  mealLabel.innerHTML = `<strong>Meals</strong><span>${entry.meals.filter(meal=>meal.items.some(item=>Number(item.amount)>0)).length} recorded</span>`;
   const addMeal = document.createElement("button");
   addMeal.type = "button";
   addMeal.className = "food-add-meal";
@@ -5965,7 +5961,7 @@ function renderFoodMeal(card, dateKey, meal) {
     meal.items.forEach((item) => items.append(renderFoodItem(card, dateKey, meal, item)));
   }
   mealDetails.append(mealSummary, items);
-  section.append(header, renderFoodChoices(card, dateKey, meal), mealDetails);
+  section.append(header, LifeFoodDailyUI.times(card, dateKey, meal), renderFoodChoices(card, dateKey, meal), mealDetails);
   return section;
 }
 
@@ -8672,6 +8668,12 @@ function renderFoodReport(range) {
   documentNode.append(summary);
   documentNode.append(createFoodTargetProgressSection(days, totals));
   documentNode.append(createFoodMealPatternSection(days));
+  const timingSection=document.createElement('section');timingSection.className='report-section';
+  const timingHeading=document.createElement('h3');timingHeading.textContent='Recorded meal times';timingSection.append(timingHeading);
+  let timedMeals=0;
+  for(const day of days)for(const meal of day.meals){if(!meal.timing?.eatenTime)continue;timedMeals++;const line=document.createElement('p');line.textContent=formatReadableDateKey(day.dateKey)+' · '+meal.name+' · '+meal.timing.eatenTime+' · '+LifeFoodDaily.timingStatus(meal.timing);timingSection.append(line);}
+  if(!timedMeals){const empty=document.createElement('p');empty.textContent='No meal times recorded in this period.';timingSection.append(empty);}
+  documentNode.append(timingSection);
   documentNode.append(createFoodRecentDaysSection(days));
   return documentNode;
 }
@@ -8709,6 +8711,7 @@ function collectFoodReportDays(range, sourceId = '') {
           dateRecord.meals.push({
             cardTitle: card.title,
             name: meal.name,
+            timing: LifeStateMerge.copy(meal.timing),
             totals: getFoodMealTotals(card, meal),
             itemCount: meal.items.length
           });
@@ -13397,7 +13400,7 @@ function renderReadableFood(card) {
   const entries = sortDateEntries(Object.entries(card.foodEntries || {}))
     .map(([dateKey, rawEntry]) => [dateKey, normalizeFoodEntry(rawEntry)])
     .filter(([, entry]) => entry.meals.some((meal) => meal.items.length) || entry.updatedAt);
-  if (!entries.length) return `<section class="block"><h5>Food tracker</h5><p class="text">No meals saved.</p></section>`;
+  if (!entries.length && !LifeFoodDaily.routines(card).length) return `<section class="block"><h5>Food tracker</h5><p class="text">No meals saved.</p></section>`;
   return `<section class="block"><h5>Food tracker</h5>${entries.map(([dateKey, entry]) => {
     const totals = getFoodEntryTotals(card, entry);
     const target = getFoodTarget(card, dateKey);
@@ -13409,6 +13412,7 @@ function renderReadableFood(card) {
   }).join("")}
   ${renderReadableFoodTargets(card)}
   ${renderReadableFoodLibrary(card)}
+  ${LifeFoodDaily.routines(card).length?`<h6>Usual meals</h6>${LifeFoodDaily.routines(card).map(r=>renderReadableFoodMeal(card,r)).join('')}`:''}
   </section>`;
 }
 
@@ -13422,6 +13426,7 @@ function renderReadableFoodTotals(label, totals) {
 function renderReadableFoodMeal(card, meal) {
   const totals = getFoodMealTotals(card, meal);
   return `<div class="entry"><div class="entry-head"><strong>${escapeHtml(meal.name || "Meal")}</strong><span>${escapeHtml(formatFoodNumber(totals.calories, "calories"))} kcal</span></div>
+    ${meal.timing?.eatenTime?`<p class="text">Eaten ${escapeHtml(meal.timing.eatenTime)} · ${escapeHtml(LifeFoodDaily.timingStatus(meal.timing))}</p>`:''}
     <ul class="clean">${(meal.items || []).map((item) => {
       const food = getFoodForLoggedItem(card, item);
       const itemTotals = calculateFoodItem(card, item);

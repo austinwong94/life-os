@@ -80,8 +80,10 @@
     if (!Array.isArray(path) || path[0]!=='boards' || !['cards','archivedCards'].includes(path[2]) ||
         path.some(key=>typeof key!=='string' || !key || unsafeKeys.has(key))) return null;
     if (path.length===6 && path[4]==='foodLibrary') return 'food-definition';
+    if (path.length===6 && path[4]==='foodRoutines') return 'food-routine';
     if (path.length===6 && path[4]==='foodTargets' && (path[5]==='default' || /^\d{4}-(0[1-9]|1[0-2])$/.test(path[5]))) return 'food-target';
     if (!validTaskDate(path[5])) return null;
+    if (path.length===9 && path[4]==='foodEntries' && path[6]==='meals' && path[8]==='timing') return 'food-timing';
     if (path.length===10 && path[4]==='foodEntries' && path[6]==='meals' && path[8]==='items') return 'food-item';
     if (path[4]!=='fitnessEntries') return null;
     if (path.length===7 && path[6]==='metrics') return 'body-metrics';
@@ -356,6 +358,7 @@
     if (!cardCollection || !keyed(cardCollection.value)) return null;
     const card=cardCollection.value.find(card=>card.id===segments[3]);
     if (!card || card.type!==(recordType.startsWith('food-')?'food':'fitness')) return null;
+    if(recordType==='food-timing'){const location=locate(snapshot,segments);return location?{...location,card,recordType}:null;}
     const parent=locate(snapshot,segments.slice(0,-1));
     if (!parent) return null;
     const key=segments.at(-1);
@@ -376,6 +379,10 @@
     const number=(key,optional=false)=>optional && record[key]==='' || typeof record[key]==='number' && Number.isFinite(record[key]) && record[key]>=0;
     const strings=keys=>keys.every(key=>typeof record[key]==='string');
     const nutrition=()=>['calories','protein','carbs','fat','fiber'].every(key=>number(key));
+    if(type==='food-routine' || type==='food-timing'){
+      const daily=root.LifeFoodDaily || (typeof require==='function'?require('./food-daily.js'):null);
+      return type==='food-routine'?record.id===segments.at(-1) && Boolean(daily?.validRoutine(record)):Boolean(daily?.validTiming(record));
+    }
     if (type==='food-target') return nutrition();
     if (type==='food-item' || type==='food-definition') {
       if (record.id!==segments.at(-1) || !strings(['name','servingUnit','source']) || !record.name.trim() || !record.servingUnit.trim() ||
