@@ -6,18 +6,6 @@ concurrency:
   group: life-os-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  native-time-diagnostics:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps webkit
-      - run: node tests/native-time-diagnostics.cjs
   property-ui-preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 20
