@@ -4,6 +4,7 @@
 .properties-heading p{margin:0;color:var(--muted,#52655e);font-size:13px}
 .properties-heading button{flex-shrink:0}
 .properties-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.properties-actions>.planning-button{min-height:44px;min-width:44px;white-space:normal}
 .properties-status{font-size:13px;line-height:1.5;margin:0 0 12px;padding:10px 0;border-bottom:1px solid #dce5df;color:#52655e}
 #propertyOperationsFrame{display:block;width:100%;height:calc(100dvh - 190px);min-height:560px;border:1px solid #dce5df;border-radius:6px;background:#fff}
 .properties-workspace[hidden],#propertyOperationsFrame[hidden]{display:none}

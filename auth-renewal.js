@@ -10,7 +10,8 @@
     if(error?.name==='AuthRenewalReceiptError')return {kind:'recovery',retry:false,message:'Your Life OS sign-in renewal needs recovery. Existing credentials and records were kept. No separate Properties login is required.'};
     if(/account changed|signed out during|not the owner/.test(message))return {kind:'account',retry:false,message:'The Life OS account changed. Properties is locked to protect the original account\'s records. Reconnect that account; unfinished forms are kept.'};
     if(error?.retryable || error?.name==='AbortError' || error instanceof TypeError || /temporarily unavailable|timed out/.test(message))return {kind:'connection',retry:true,message:'Your saved Life OS connection is temporarily unavailable. Retrying does not require a separate Properties login. Your records are kept.'};
-    if(!signedIn || /Cloud session expired|session expired or was revoked|Invalid Refresh Token|refresh_token_not_found|refresh_token_already_used/.test(message))return {kind:'signin',retry:false,message:'Your Life OS session needs reconnection. Sign in to your existing Life OS account once; Properties uses that same login. Your records are kept.'};
+    if(!signedIn)return {kind:'signin',retry:false,message:'This browser is not signed in to Life OS. Sign in to your existing account here; Properties uses the same login. No Supabase dashboard login is needed. Your records are kept.'};
+    if(/Cloud session expired|session expired or was revoked|Invalid Refresh Token|refresh_token_not_found|refresh_token_already_used/.test(message))return {kind:'signin',retry:false,message:'Your Life OS sign-in has expired. Reconnect your existing account; no separate Properties login is needed. Your records are kept.'};
     return {kind:'connection',retry:false,message:'Your Life OS sign-in is saved, but Properties could not verify the connection. Retry connection. Your records are kept.'};
   }
   async function digest(token){

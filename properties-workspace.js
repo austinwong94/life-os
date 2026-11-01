@@ -4,13 +4,21 @@
   const button=planningButton('Properties',()=>setWorkspaceMode('properties'),'calendar');button.id='propertiesModeButton';
   document.querySelector('.workspace-modes').append(button);
   let frame=null,owner=null,opening=false,history=null,retryTimer=null,retryAttempt=0,wasVisible=false,frameTimer=null;
+  let observedToken=loadCloudSession()?.access_token || '';
   const root=planningNode('section','properties-workspace');root.hidden=true;root.setAttribute('aria-label','Properties');elements.boardGrid.after(root);
   const heading=planningNode('header','properties-heading'),title=planningNode('div');title.append(planningNode('h1','','Properties'),planningNode('p','','Sunrise Villa & Windmill Villa'));
   const status=planningNode('p','properties-status','Sign in to Life OS to open your property records.');status.setAttribute('role','status');
   const retry=planningButton('Open properties',()=>open(),'arrow-right'),archive=planningButton('Migration history',()=>openHistory(),'archive');
-  const reconnect=planningButton('Reconnect Life OS',()=>openSettingsModal(),'cloud');reconnect.hidden=true;
+  const reconnect=planningButton('Sign in to Life OS',openAccountSettings,'cloud');reconnect.hidden=true;
   const repair=planningButton('Recover save space',()=>window.open('storage-repair.html'+location.search,'_blank','noopener,noreferrer'),'archive');repair.hidden=true;
   function retryLabel(label){retry.querySelector('span').textContent=label;retry.setAttribute('aria-label',label);}
+  function accountLabel(){const label=loadCloudSession()?.access_token?'Reconnect Life OS':'Sign in to Life OS';reconnect.querySelector('span').textContent=label;reconnect.setAttribute('aria-label',label);}
+  function openAccountSettings(){
+    openSettingsModal();
+    const panel=elements.cloudPanel;panel.tabIndex=-1;panel.scrollIntoView({block:'start'});
+    const github=elements.cloudGithubButton;
+    (github.getClientRects().length && !github.disabled?github:panel).focus({preventScroll:true});
+  }
   const actions=planningNode('div','properties-actions');actions.append(archive,repair,reconnect,retry);heading.append(title,actions);root.append(heading,status);
   function cancelRetry(){clearTimeout(retryTimer);retryTimer=null;}
   function watchFrame(){
@@ -67,7 +75,7 @@
     // The bridge sends access credentials only; the iframe is still same-origin.
     return {access_token:current.access_token,expires_at:current.expires_at,user:{id:current.user.id,email:current.user.email}};
   }
-  window.LifePropertiesHost=Object.freeze({get url(){return SUPABASE_CONFIG.url;},get key(){return SUPABASE_CONFIG.anonKey;},accepts,session,account(child){if(accepts(child))openSettingsModal();},state(child,kind){
+  window.LifePropertiesHost=Object.freeze({get url(){return SUPABASE_CONFIG.url;},get key(){return SUPABASE_CONFIG.anonKey;},accepts,session,account(child){if(accepts(child))openAccountSettings();},state(child,kind){
     if(!accepts(child) || loadCloudSession()?.user?.id!==owner)return;
     if(['busy','standby'].includes(kind)){clearTimeout(frameTimer);root.dataset.connection=kind;retry.hidden=true;status.textContent='Your Life OS account is connected. Properties can safely switch editing between tabs below.';}
   }});
@@ -100,6 +108,7 @@
       const failure=LifeAuthRenewal.describeFailure(error,{signedIn:Boolean(loadCloudSession()?.access_token)});
       root.dataset.connection=failure.kind;status.textContent=failure.message;retry.hidden=false;retryLabel(frame?'Reconnect properties':'Retry connection');
       reconnect.hidden=!['signin','account'].includes(failure.kind);repair.hidden=failure.kind!=='storage';
+      accountLabel();if(!frame && !reconnect.hidden)retry.hidden=true;
       renderCloudStatus(normalizeCloudError(error.message || failure.message));
       if(failure.retry && retryAttempt<3 && state.ui.workspaceMode==='properties' && navigator.onLine!==false){
         const delay=[5000,15000,45000][retryAttempt++];retryTimer=setTimeout(()=>{retryTimer=null;void open();},delay);
@@ -111,22 +120,30 @@
     if(history && loadCloudSession()?.user?.id!==history.owner)clearHistory();
     const visible=state.ui.workspaceMode==='properties';root.hidden=!visible;elements.boardGrid.hidden=visible;button.setAttribute('aria-pressed',String(visible));
     if(!visible)cancelRetry();
-    if(visible && !frame && (!wasVisible || !root.dataset.connection))void open();
+    if(visible && (!frame && (!wasVisible || !root.dataset.connection) || frame?.hidden && loadCloudSession()?.access_token && loadCloudSession()?.user?.id===owner))void open();
     wasVisible=visible;
     // Keep the embedded operations document mounted across navigation. Changing
     // sections must not reconstruct an unfinished booking/payment form.
-    if(frame && !PREVIEW_MODE && loadCloudSession()?.user?.id!==owner){frame.hidden=true;frame.inert=true;retry.hidden=false;retryLabel('Reconnect properties');status.textContent='The Life OS account changed. Property records are locked. Keep this tab open if it contains unsaved changes.';}
+    if(frame && !PREVIEW_MODE && loadCloudSession()?.user?.id!==owner){frame.hidden=true;frame.inert=true;root.dataset.connection='account';retry.hidden=false;retryLabel('Reconnect properties');accountLabel();reconnect.hidden=false;status.textContent='The Life OS account changed. Property records are locked. Keep this tab open if it contains unsaved changes.';}
   };
   window.addEventListener('storage',event=>{if(event.key===CLOUD_SESSION_KEY){retryAttempt=0;window.renderPropertiesWorkspace();if(!root.hidden)void open();}});
   window.addEventListener('online',()=>{if(!root.hidden){retryAttempt=0;void open();}});
   // Same-tab sign-out does not emit a storage event. Lock the mounted view even
   // while it is hidden and preserve its pending draft rather than clearing it.
   window.setInterval(()=>{
-    const currentOwner=loadCloudSession()?.user?.id;
+    const current=loadCloudSession(),currentOwner=current?.user?.id,currentToken=current?.access_token || '';
     if((frame && currentOwner!==owner) || (history && currentOwner!==history.owner))window.renderPropertiesWorkspace();
     else if(frame && currentOwner===owner && root.dataset.connection==='loading-error' && frame.contentWindow?.PropertyOperations){
       clearTimeout(frameTimer);root.dataset.connection='connected';retry.hidden=true;
       status.textContent='Bookings and documents use your Life OS cloud account. Original copies are available in Migration history.';
+    }
+    // Same-tab sign-in and renewal do not emit a storage event. Wait for Life
+    // OS to adopt a shared session, then verify before mounting or unlocking.
+    if(!opening && currentToken!==observedToken && (!currentToken || cloudSession?.access_token===currentToken)){
+      observedToken=currentToken;
+      if(!PREVIEW_MODE && currentToken && !root.hidden && (!frame || currentOwner===owner) && ['signin','account','connection','storage','recovery'].includes(root.dataset.connection)){
+        retryAttempt=0;void open();
+      }
     }
   },1000);
   window.addEventListener('beforeunload',event=>{if(frame?.contentWindow?.PropertyOperations?.pending()){event.preventDefault();event.returnValue='';}});

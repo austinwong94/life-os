@@ -10,6 +10,15 @@ test('Properties distinguishes saved-session storage and network failures from a
  assert.equal(R.describeFailure(new Error('The cloud account changed or signed out.'),{signedIn:true}).kind,'account');
  assert.equal(R.describeFailure(new Error('Unexpected internal failure'),{signedIn:true}).kind,'connection');
 });
+test('a browser without a session is identified as signed out rather than expired or already saved',()=>{
+ const result=R.describeFailure(new Error('Sign in to cloud sync first.'),{signedIn:false});assert.equal(result.kind,'signin');assert.equal(result.retry,false);assert.match(result.message,/This browser is not signed in/);assert.match(result.message,/existing account/);assert.match(result.message,/No Supabase dashboard login is needed/);assert.doesNotMatch(result.message,/expired|needs reconnection|sign-in is saved/);
+});
+test('expired existing sessions request reconnection without claiming this browser was never signed in',()=>{
+ for(const message of ['Cloud session expired.','Cloud session expired or was revoked.','Invalid Refresh Token','refresh_token_not_found','refresh_token_already_used']){const result=R.describeFailure(new Error(message),{signedIn:true});assert.equal(result.kind,'signin');assert.match(result.message,/sign-in has expired/);assert.match(result.message,/no separate Properties login/);assert.doesNotMatch(result.message,/This browser is not signed in/);}
+});
+test('missing credentials do not turn network storage recovery or owner failures into a new-login instruction',()=>{
+ for(const signedIn of [true,false])for(const [error,kind]of [[new TypeError('Private internal URL'),'connection'],[{name:'AuthRenewalStorageError'},'storage'],[{name:'AuthRenewalReceiptError'},'recovery'],[new Error('The account changed.'),'account']]){const result=R.describeFailure(error,{signedIn});assert.equal(result.kind,kind);assert.doesNotMatch(result.message,/Private internal|This browser is not signed in/);}
+});
 test('credential shape checks reject malformed storage while retaining legacy access-only sessions',()=>{
  assert.equal(R.hasIdentity({access_token:'synthetic-access',user:{id:'owner'}}),true);
  assert.equal(R.hasIdentity({access_token:'synthetic-access',refresh_token:'synthetic-refresh',user:{id:'owner'}}),true);
