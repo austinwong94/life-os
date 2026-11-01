@@ -64,12 +64,18 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
    tx.oncomplete=()=>resolve({keys:keys.result,values:values.result});tx.onabort=()=>reject(tx.error);
   });}finally{db.close();}
  });
- await run('session fast-path refuses another tab sign-out before its storage event arrives',async(p,q,context,requests)=>{
-  await q.evaluate(()=>signOutCloud());await assert.rejects(ensure(p),/changed|signed out/);
+ await run('session fast-path refuses another tab sign-out before its application storage handler runs',async(p,q,context,requests)=>{
+  await q.evaluate(()=>signOutCloud());
+  // Wait for browser storage propagation, not the held application listener.
+  await p.waitForFunction(()=>localStorage.getItem(CLOUD_SESSION_KEY)===null);
+  assert(await p.evaluate(()=>holdSessionEvents && cloudSession?.access_token==='synthetic-original-access'));
+  await assert.rejects(ensure(p),/changed|signed out/);
   assert.equal(await p.evaluate(()=>loadCloudSession()),null);assert.equal(requests.length,0);
  });
  await run('session fast-path refuses a different stored owner and does not remove that sign-in',async(p,q,context,requests)=>{
   const raw=await q.evaluate(()=>{const raw=JSON.stringify({user:{id:'other-owner'},access_token:'synthetic-other-access',expires_at:Date.now()+3600000});localStorage.setItem(CLOUD_SESSION_KEY,raw);return raw;});
+  await p.waitForFunction(raw=>localStorage.getItem(CLOUD_SESSION_KEY)===raw,raw);
+  assert(await p.evaluate(()=>holdSessionEvents && cloudSession?.access_token==='synthetic-original-access'));
   await assert.rejects(ensure(p),/changed|owner/);assert.equal(await q.evaluate(()=>localStorage.getItem(CLOUD_SESSION_KEY)),raw);assert.equal(requests.length,0);
  });
  await run('session fast-path checks the recorded data owner even when cache and storage agree',async(p,q,context,requests)=>{
@@ -98,7 +104,9 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
   }
  });
  await run('a newer same-owner session is adopted without replaying cached credentials',async(p,q,context,requests)=>{
-  await q.evaluate(()=>saveCloudSession({...cloudSession,access_token:'synthetic-new-access',refresh_token:'synthetic-new-refresh',expires_at:Date.now()+3600000}));
+  const raw=await q.evaluate(()=>{saveCloudSession({...cloudSession,access_token:'synthetic-new-access',refresh_token:'synthetic-new-refresh',expires_at:Date.now()+3600000});return localStorage.getItem(CLOUD_SESSION_KEY);});
+  await p.waitForFunction(raw=>localStorage.getItem(CLOUD_SESSION_KEY)===raw,raw);
+  assert(await p.evaluate(()=>holdSessionEvents && cloudSession?.access_token==='synthetic-original-access'));
   assert.equal(await ensure(p),'synthetic-new-access');assert.equal(requests.length,0);
  });
  await run('a stale storage view cannot exchange a token already renewed in another tab',async(p,q,context)=>{
