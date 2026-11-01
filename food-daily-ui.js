@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const D=LifeFoodDaily,weightSources=new Map(),detailStates=new Map();
+  const D=LifeFoodDaily,weightSources=new Map(),detailStates=new Map(),reviewStates=new Map();
   const board=()=>({id:state.activeBoardId,cards:state.cards});
   const message=error=>setSaveStatus(error.message || String(error),'error');
   function reveal(node){for(let parent=node;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS'){parent.open=true;if(parent.dataset.dailyDetailsKey)detailStates.set(parent.dataset.dailyDetailsKey,true);}}
@@ -94,6 +94,36 @@
     }section.append(history);}
     return section;
   }
+  function weekReview(card,days){
+    const details=planningNode('details','food-week-review'),summary=planningNode('summary'),boardId=state.activeBoardId;
+    const key=JSON.stringify([boardId,card.id,days.at(-1)?.date]);details.open=reviewStates.get(key)===true;
+    summary.append(planningNode('span','','Last 7 days'),planningNode('small','',days.length?formatReadableDateKey(days[0].date)+' – '+formatReadableDateKey(days.at(-1).date):''));details.append(summary);
+    summary.addEventListener('click',event=>{event.preventDefault();if(!details.isConnected || state.activeBoardId!==boardId)return;details.open=!details.open;reviewStates.set(key,details.open);if(details.open)fill();});
+    const content=planningNode('section','food-week-days');content.setAttribute('aria-label','Seven-day food review');details.append(content);
+    function fill(){
+      content.replaceChildren();let current;
+      try{current=D.resolve(board(),card.id,'food',state.syncConflicts);}catch{content.append(planningNode('p','','This log needs review. Nutrition comparisons are paused; original records are kept.'));return;}
+      for(const day of [...days].reverse()){
+        const row=planningNode('article','food-week-day');row.dataset.date=day.date;row.setAttribute('aria-label',formatReadableDateKey(day.date));
+        const heading=planningNode('div','food-week-day-heading');heading.append(planningNode('h4','',formatReadableDateKey(day.date)));row.append(heading);
+        const entry=current.foodEntries?.[day.date],meals=Array.isArray(entry?.meals)?entry.meals:[],recorded=meals.filter(meal=>!Array.isArray(meal?.items) || meal.items.length);
+        // Never substitute an edited library value or sum ambiguous snapshots.
+        const review=entry!==undefined && (!entry || typeof entry!=='object' || Array.isArray(entry) || !Array.isArray(entry.meals)) || new Set(meals.map(meal=>meal?.id)).size!==meals.length || recorded.some(meal=>!meal || typeof meal.id!=='string' || !meal.id.trim() || !D.validItems(meal.items) || meal.items.some(item=>item.servingGrams<1));
+        const totals=!review && recorded.length?getFoodEntryTotals(current,{meals:recorded}):null;
+        if(review || totals && !FOOD_NUTRIENT_KEYS.every(name=>Number.isFinite(totals[name])))row.append(planningNode('p','food-week-notice','Food records need review.'));
+        else if(totals){
+          heading.append(planningNode('span','',recorded.length+' food entr'+(recorded.length===1?'y':'ies')));row.append(renderFoodMealSummary(totals));
+          const timed=recorded.filter(meal=>D.validTiming(meal.timing) && meal.timing.eatenTime).length;
+          row.append(planningNode('p','food-week-timing',timed+' of '+recorded.length+' with meal time'));
+          if(recorded.some(meal=>meal.items.some(item=>/default|generic/i.test(item.source))))row.append(planningNode('p','food-week-notice','Saved nutrition · includes estimates'));
+        }else row.append(planningNode('p','food-week-notice','No food logged.'));
+        const water=D.waterSummary(entry);row.append(planningNode('p','food-week-water',water.needsReview?'Water records need review.':water.records.length?'Water · '+water.totalMl+' mL · '+water.records.length+' drink'+(water.records.length===1?'':'s'):'Water not recorded.'));
+        content.append(row);
+      }
+    }
+    if(details.open)fill();
+    return details;
+  }
   function render(card,date){
     const section=planningNode('section','food-daily');section.setAttribute('aria-label','Daily eating');
     const live=context(card,date,section),head=planningNode('div','food-daily-head'),title=planningNode('h3','','Usual meals'),notice=planningNode('p','food-daily-message daily-message');notice.setAttribute('role','status');
@@ -103,7 +133,7 @@
     const progress=planningNode('p','food-daily-progress',counts+' recorded · '+logged+' of the last 7 days logged');
     section.append(progress);
     const week=planningNode('div','food-daily-week');week.setAttribute('aria-label','Food recording in the seven days ending '+end);
-    for(const row of days){const item=planningNode('span',row.entries?'is-recorded':'');item.textContent=dateKeyToLocalDate(row.date).toLocaleDateString(undefined,{weekday:'narrow'});item.title=formatReadableDateKey(row.date)+' · '+row.entries+' entries recorded';item.setAttribute('aria-label',item.title);week.append(item);}section.append(week);
+    for(const row of days){const item=planningNode('span',row.entries?'is-recorded':'');item.textContent=dateKeyToLocalDate(row.date).toLocaleDateString(undefined,{weekday:'narrow'});item.title=formatReadableDateKey(row.date)+' · '+row.entries+' entries recorded';item.setAttribute('aria-label',item.title);week.append(item);}section.append(week,weekReview(card,days));
     const list=planningNode('div','food-usual-list'),routines=D.routines(card);
     if(!routines.length)list.append(planningNode('p','food-daily-empty','No active usual meals.'));
     for(const routine of routines){

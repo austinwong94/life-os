@@ -6,6 +6,21 @@
 .food-daily-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:12px 0}
 .food-daily-week span{display:grid;place-items:center;min-height:28px;font:12px/1.5 system-ui,sans-serif;color:var(--muted);border-bottom:3px solid var(--line)}
 .food-daily-week .is-recorded{color:var(--action);border-color:var(--action);font-weight:600}
+.food-week-review{min-width:0;margin:8px 0 12px}
+.food-week-review>summary{min-height:44px;padding:8px 0;cursor:pointer;font:500 13px/1.5 system-ui,sans-serif;color:var(--ink);overflow-wrap:anywhere}
+.food-week-review>summary small{display:block;margin:4px 0 0 16px;font-weight:400}
+.food-week-review:not([open])>.food-week-days{display:none}
+.food-week-days{min-width:0}
+.food-week-day{min-width:0;padding:12px 0;border-top:1px solid var(--line)}
+.food-week-day-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 12px;margin-bottom:8px}
+.food-week-day-heading h4{margin:0;font:600 13px/1.5 system-ui,sans-serif;letter-spacing:0;overflow-wrap:anywhere}
+.food-week-day-heading>span{font:12px/1.5 system-ui,sans-serif;color:var(--muted)}
+.food-week-day .food-meal-summary{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.food-week-day .food-meal-summary>span{border:0;border-radius:0;padding:0;background:none}
+.food-week-day .food-meal-summary>span:first-child{grid-column:1/-1;display:flex;justify-content:space-between;gap:8px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.food-week-day .food-meal-summary :is(strong,small){font:500 12px/1.5 system-ui,sans-serif;white-space:normal;overflow-wrap:anywhere;color:var(--ink)}
+.food-week-day .food-meal-summary strong{font-weight:400;color:var(--muted)}
+.food-week-day p{margin:6px 0 0}
 .food-usual-row{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;align-items:center;gap:6px;border-top:1px solid var(--line);padding:10px 0}
 .food-usual-row>label{display:flex;align-items:start;gap:10px;min-width:0;min-height:44px;cursor:pointer;font:13px/1.5 system-ui,sans-serif;letter-spacing:0;text-transform:none}
 .food-usual-check input[type=checkbox]{flex:none;width:22px;height:22px;margin:6px 0;accent-color:var(--action)}
