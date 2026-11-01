@@ -97,6 +97,8 @@ table{font-size:13px}
 .property-more>summary{display:flex;align-items:center;justify-content:center;min-height:44px;box-sizing:border-box;padding:8px;cursor:pointer;list-style:none;border-radius:5px;text-align:center;line-height:1.4;overflow-wrap:anywhere}
 .property-more>summary::-webkit-details-marker{display:none}
 .property-more>summary::after{content:'⌄';margin-left:6px}
+.property-more-compact{display:none}
+@media(max-width:600px){.property-more-label{display:none}.property-more-compact{display:inline}}
 .property-more[data-current=true]>summary,.property-more[open]>summary{color:var(--accent-ink);background:var(--accent-soft);font-weight:600}
 .property-more-options{position:absolute;right:0;top:calc(100% + 6px);width:240px;max-width:calc(100vw - 32px);padding:6px;border:1px solid var(--line);border-radius:6px;background:#fff;box-shadow:0 8px 24px rgb(20 40 35 / 10%);z-index:20}
 .property-integrated #appShell .property-more-options .nav-button{display:flex;width:100%;justify-content:flex-start;min-height:44px;border-radius:4px;color:var(--ink);padding:10px 12px;white-space:normal;text-align:left}
@@ -417,6 +419,36 @@ table{font-size:13px}
   .property-integrated #documentsView .document-type-choice button{font-size:12px}
 }
 @media print{#documentsView :is(.document-action-bar,.document-editor-tools,.workspace-toolbar,.document-mobile-switch){display:none!important}}
+
+/* Saved originals share the responsive Finance list/table pattern. */
+.property-integrated #documentsView [hidden]{display:none!important}
+.property-integrated #documentsView .document-archive{border:0;border-radius:0;box-shadow:none;padding:0;background:transparent}
+.property-integrated #documentsView .document-archive .booking-toolbar{grid-template-columns:minmax(0,1fr) 180px auto;padding:0;gap:12px;align-items:end}
+.document-archive-layout{display:flex;gap:4px}
+.property-integrated #documentsView .document-archive :is(input,select,button){min-height:44px;min-width:44px;font:500 13px/1.5 system-ui,sans-serif;letter-spacing:0}
+.document-archive-layout [aria-pressed=true]{color:var(--accent-ink);background:var(--accent-soft);border-color:var(--accent)}
+#documentArchiveStatus{margin:12px 0;font:13px/1.5 system-ui,sans-serif;color:var(--muted);overflow-wrap:anywhere}
+#documentArchiveResults{min-width:0;max-width:100%;overflow-x:auto}
+#documentsView #documentArchiveResults[data-layout=table] table{min-width:1080px;width:100%;font-size:13px}
+#documentsView #documentArchiveResults td{white-space:normal;overflow-wrap:anywhere;min-width:0}
+#documentsView #documentArchiveResults td.actions{display:flex;flex-wrap:wrap;gap:6px}
+#documentsView #documentArchiveResults td.actions .small-action{margin:0}
+#documentsView #documentArchiveResults[data-layout=list]{overflow:visible}
+#documentsView #documentArchiveResults[data-layout=list] table{display:block;min-width:0;width:100%;background:transparent}
+#documentArchiveResults[data-layout=list] thead{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+#documentArchiveResults[data-layout=list] tbody{display:block;width:100%}
+#documentArchiveResults[data-layout=list] tr{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px 16px;padding:16px 0;border-top:1px solid var(--line)}
+#documentsView #documentArchiveResults[data-layout=list] td{display:block;padding:0;border:0;font:13px/1.5 system-ui,sans-serif;letter-spacing:0}
+#documentArchiveResults[data-layout=list] td::before{content:attr(data-document-label);display:block;font:500 11px/1.5 system-ui,sans-serif;color:var(--muted);margin-bottom:3px}
+#documentArchiveResults[data-layout=list] [data-document-field=code]{grid-column:1;grid-row:1;font-weight:600}
+#documentArchiveResults[data-layout=list] [data-document-field=amount]{grid-column:2;grid-row:1;text-align:right}
+#documentsView #documentArchiveResults[data-layout=list] td.actions{display:flex;grid-column:1/-1;justify-content:flex-start;gap:8px}
+#documentArchiveResults[data-layout=list] td.empty-row{grid-column:1/-1}
+@media(max-width:700px){
+  .property-integrated #documentsView .document-archive .booking-toolbar{grid-template-columns:minmax(0,1fr) auto}
+  .property-integrated #documentsView .document-archive .booking-toolbar>label:first-child{grid-column:1/-1}
+  .property-integrated #documentsView .document-archive :is(input,select){font-size:16px}
+}
 
 /* Booking capture shares the workspace's typography and one scrolling body. */
 .property-integrated #bookingWorkspace{box-sizing:border-box;width:min(780px,calc(100vw - 24px));max-width:780px;max-height:calc(100dvh - 24px);padding:0;overflow:hidden;border-radius:8px;background:#fff}

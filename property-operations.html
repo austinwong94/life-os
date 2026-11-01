@@ -1229,8 +1229,13 @@
                   <option>Official Receipt</option>
                 </select>
               </label>
+              <div class="document-archive-layout" role="group" aria-label="Document layout">
+                <button type="button" class="ghost-button" data-document-layout="list">List</button>
+                <button type="button" class="ghost-button" data-document-layout="table">Table</button>
+              </div>
             </div>
-            <div class="table-scroll">
+            <p id="documentArchiveStatus" role="status"></p>
+            <div class="table-scroll" id="documentArchiveResults">
               <table>
                 <thead>
                   <tr>

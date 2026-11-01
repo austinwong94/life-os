@@ -6337,15 +6337,22 @@ function duplicateCurrentDocument() {
   fillDocumentForm(copy);
 }
 
-function openSavedDocument(id) {
-  if (!confirmDocumentReplacement()) return;
-  const doc = documents.find((item) => item.id === id);
-  if (doc) fillDocumentForm(doc);
+function openSavedDocument(id, available = () => true) {
+  const source=documents.filter(item=>item.id===id);
+  if(source.length!==1 || !available())return false;
+  const expected=JSON.stringify(source[0]);
+  if (!confirmDocumentReplacement() || !available()) return false;
+  const doc = LifePropertyBookingList.unchanged(documents,id,expected);
+  if (!doc)return false;
+  fillDocumentForm(doc);return true;
 }
 
-function duplicateSavedDocument(id) {
-  if (!confirmDocumentReplacement()) return;
-  const doc = documents.find((item) => item.id === id);
+function duplicateSavedDocument(id, available = () => true) {
+  const source=documents.filter(item=>item.id===id);
+  if(source.length!==1 || !available())return;
+  const expected=JSON.stringify(source[0]);
+  if (!confirmDocumentReplacement() || !available()) return;
+  const doc = LifePropertyBookingList.unchanged(documents,id,expected);
   if (!doc) return;
   fillDocumentForm(
     normalizeDocument({
@@ -6359,10 +6366,13 @@ function duplicateSavedDocument(id) {
   );
 }
 
-function createBalanceInvoiceFromReceipt(id) {
-  if (!confirmDocumentReplacement()) return;
-  const receipt = documents.find((item) => item.id === id);
-  if (!receipt) return;
+function createBalanceInvoiceFromReceipt(id, available = () => true) {
+  const source=documents.filter(item=>item.id===id);
+  if(source.length!==1 || !available())return;
+  const expected=JSON.stringify(source[0]);
+  if (!confirmDocumentReplacement() || !available()) return;
+  const receipt = LifePropertyBookingList.unchanged(documents,id,expected);
+  if (!receipt || receipt.type!=='Official Receipt') return;
   const linkedBooking = bookings.find(booking => booking.id === receipt.bookingId);
   const received = linkedBooking ? Number(linkedBooking.paid || 0) : paymentTotalFor(receipt) + Number(receipt.previouslyReceived || 0);
   if (linkedBooking && received < paymentTotalFor(receipt)) { setDocumentFeedback("Reconcile this receipt with the booking payment history before creating a balance invoice."); return; }
@@ -6385,9 +6395,13 @@ function createBalanceInvoiceFromReceipt(id) {
   );
 }
 
-function deleteSavedDocument(id) {
-  const doc = documents.find((item) => item.id === id);
+function deleteSavedDocument(id, available = () => true) {
+  const source=documents.filter(item=>item.id===id);
+  if(source.length!==1 || !available())return;
+  const doc=source[0],expected=JSON.stringify(doc);
+  if(documentHasUnsavedChanges && els.documentId.value===id){document.querySelector('#documentArchiveStatus').textContent='This document has unfinished changes. Save it or discard the draft before deleting the saved document.';return;}
   if (!window.confirm(`Delete ${doc?.code || "this document"}?`)) return;
+  if(!available() || !LifePropertyBookingList.unchanged(documents,id,expected))return;
   createRecoverySnapshot("Before document deleted");
   documents = documents.filter((item) => item.id !== id);
   saveDocuments();
@@ -6535,19 +6549,36 @@ function printDocumentPreview() {
   frame.srcdoc = html;
 }
 
+let documentArchiveSignature='',documentArchiveRevision=0,documentArchiveChoice='';
+const documentArchiveMedia=window.matchMedia('(max-width:900px)');
+function syncDocumentArchiveLayout() {
+  const layout=LifePropertyBookingList.layout(documentArchiveChoice,documentArchiveMedia.matches);
+  document.querySelector('#documentArchiveResults').dataset.layout=layout;
+  document.querySelectorAll('[data-document-layout]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.documentLayout===layout)));
+}
+documentArchiveMedia.addEventListener('change',()=>{if(!documentArchiveChoice)syncDocumentArchiveLayout();});
+document.querySelectorAll('[data-document-layout]').forEach(button=>button.addEventListener('click',()=>{if(!bookingWorkspaceAvailable())return;documentArchiveChoice=button.dataset.documentLayout;syncDocumentArchiveLayout();}));
+
 function renderDocumentArchive() {
   if (!els.documentArchiveRows) return;
+  syncDocumentArchiveLayout();
   const count = document.querySelector("#documentArchiveCount");
   if (count) count.textContent = documents.length;
   const search = els.documentSearch?.value.trim().toLowerCase() || "";
   const type = els.documentTypeFilter?.value || "All";
   const filtered = documents
     .filter((doc) => {
-      const haystack = `${doc.code} ${doc.type} ${doc.issuer} ${doc.guestName} ${doc.guestContact} ${doc.billTo} ${doc.billAddress} ${doc.propertyName} ${doc.linkedReceiptCode} ${doc.checkIn} ${doc.checkOut}`.toLowerCase();
+      const haystack = `${doc.code} ${doc.type} ${doc.issuer} ${doc.guestName} ${doc.guestContact} ${doc.billTo} ${doc.billAddress} ${doc.propertyName} ${doc.linkedReceiptCode} ${doc.date} ${doc.checkIn} ${doc.checkOut}`.toLowerCase();
       if (type !== "All" && doc.type !== type) return false;
       return !search || haystack.includes(search);
     })
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  const status=document.querySelector('#documentArchiveStatus');
+  status.textContent=filtered.length+' of '+documents.length+' saved documents \u00b7 All properties';
+  const signature=JSON.stringify([cloudUser?.id,activeVillaKey(),documents,filtered]);
+  if(signature===documentArchiveSignature)return;
+  documentArchiveSignature=signature;const revision=++documentArchiveRevision,owner=cloudUser?.id,villa=activeVillaKey();
+  const counts=new Map();for(const doc of documents)counts.set(doc.id,(counts.get(doc.id)||0)+1);
   els.documentArchiveRows.innerHTML = filtered.length
     ? filtered
         .map(
@@ -6557,27 +6588,48 @@ function renderDocumentArchive() {
             const canCreateBalanceInvoice = doc.type === "Official Receipt" && receiptBalance > 0;
             return `
             <tr>
-              <td><strong>${escapeHtml(doc.code)}</strong><br><span class="table-muted">${shortDate(doc.date)}</span></td>
-              <td>${escapeHtml(doc.type)}</td>
-              <td>${escapeHtml(issuers[doc.issuer]?.code || doc.issuer)}</td>
-              <td>${escapeHtml(doc.guestName || "-")}</td>
-              <td>${escapeHtml(doc.billTo || "-")}</td>
-              <td>${shortDate(doc.checkIn)}<br><span class="table-muted">${doc.nights} night${doc.nights === 1 ? "" : "s"}</span></td>
-              <td class="money-cell"><strong>${money(amountDue)}</strong><br><span class="table-muted">${doc.type === "Official Receipt" ? "Received" : "Amount due"}</span>${doc.type === "Official Receipt" ? `<br><span class="${receiptBalance > 0 ? "balance-due" : "table-muted"}">Balance ${money(receiptBalance)}</span>` : ""}</td>
-              <td><span class="doc-status ${documentStatusClass(doc.status)}">${escapeHtml(doc.status)}</span></td>
+              <td data-document-field="code"><strong>${escapeHtml(doc.code)}</strong><br><span class="table-muted">${shortDate(doc.date)}</span>${counts.get(doc.id)!==1?'<br><span class="balance-due">Identity needs review</span>':''}</td>
+              <td data-document-field="type">${escapeHtml(doc.type)}</td>
+              <td data-document-field="issuer">${escapeHtml(issuers[doc.issuer]?.code || doc.issuer)}</td>
+              <td data-document-field="guest">${escapeHtml(doc.guestName || "-")}</td>
+              <td data-document-field="bill">${escapeHtml(doc.billTo || "-")}</td>
+              <td data-document-field="stay">${shortDate(doc.checkIn)}<br><span class="table-muted">${doc.nights} night${doc.nights === 1 ? "" : "s"}</span><br><span class="table-muted">${escapeHtml(doc.propertyName || "-")}</span></td>
+              <td class="money-cell" data-document-field="amount"><strong>${money(amountDue)}</strong><br><span class="table-muted">${doc.type === "Official Receipt" ? "Received" : "Amount due"}</span>${doc.type === "Official Receipt" ? `<br><span class="${receiptBalance > 0 ? "balance-due" : "table-muted"}">Balance ${money(receiptBalance)}</span>` : ""}</td>
+              <td data-document-field="status"><span class="doc-status ${documentStatusClass(doc.status)}">${escapeHtml(doc.status)}</span></td>
               <td class="actions">
-                <button class="small-action" type="button" data-open-document="${doc.id}">Open</button>
-                <button class="small-action" type="button" data-duplicate-document="${doc.id}">Duplicate</button>
-                ${canCreateBalanceInvoice ? `<button class="small-action" type="button" data-balance-invoice-document="${doc.id}">Balance Invoice</button>` : ""}
-                <button class="small-action" type="button" data-print-document="${doc.id}">Print</button>
-                <button class="small-action danger" type="button" data-delete-document="${doc.id}">Delete</button>
+                <button class="small-action" type="button" data-open-document="${escapeHtml(doc.id)}">Open</button>
+                <button class="small-action" type="button" data-duplicate-document="${escapeHtml(doc.id)}">Duplicate</button>
+                ${canCreateBalanceInvoice ? `<button class="small-action" type="button" data-balance-invoice-document="${escapeHtml(doc.id)}">Balance Invoice</button>` : ""}
+                <button class="small-action" type="button" data-print-document="${escapeHtml(doc.id)}">Print</button>
+                <button class="small-action danger" type="button" data-delete-document="${escapeHtml(doc.id)}">Delete</button>
               </td>
             </tr>
           `;
           },
         )
         .join("")
-    : `<tr><td colspan="9" class="empty-row">No saved documents yet.</td></tr>`;
+    : `<tr><td colspan="9" class="empty-row">${documents.length?'No documents match these filters.':'No saved documents yet.'}</td></tr>`;
+  [...els.documentArchiveRows.querySelectorAll('tr')].forEach((row,index)=>{
+    const source=filtered[index];if(!source)return;const expected=JSON.stringify(source);
+    const labels={type:'Type',issuer:'Issuer',guest:'Guest',bill:'Bill to',stay:'Stay & property',status:'Status'};
+    for(const cell of row.querySelectorAll('[data-document-field]'))if(labels[cell.dataset.documentField])cell.dataset.documentLabel=labels[cell.dataset.documentField];
+    const available=()=>{
+      if(!bookingWorkspaceAvailable() || cloudUser.id!==owner || activeVillaKey()!==villa || activeView!=='documents' || document.querySelector('.document-archive').hidden || !row.isConnected || revision!==documentArchiveRevision)return false;
+      if(!LifePropertyBookingList.unchanged(documents,source.id,expected)){renderDocumentArchive();status.textContent='This document changed. Choose it again from the refreshed list.';return false;}
+      return true;
+    };
+    for(const button of row.querySelectorAll('button')){
+      button.disabled=typeof source.id!=='string' || !source.id.trim() || counts.get(source.id)!==1;
+      button.onclick=()=>{
+        if(!available())return;
+        if(button.hasAttribute('data-open-document'))openSavedDocument(source.id,available);
+        else if(button.hasAttribute('data-duplicate-document'))duplicateSavedDocument(source.id,available);
+        else if(button.hasAttribute('data-delete-document'))deleteSavedDocument(source.id,available);
+        else if(button.hasAttribute('data-balance-invoice-document'))createBalanceInvoiceFromReceipt(source.id,available);
+        else if(button.hasAttribute('data-print-document') && openSavedDocument(source.id,available))printDocumentPreview();
+      };
+    }
+  });
 }
 
 function renderTaxPlan() {
@@ -9795,22 +9847,6 @@ window.addEventListener("afterprint", () => {
   control?.addEventListener("change", renderDocumentArchive);
 });
 
-els.documentArchiveRows?.addEventListener("click", (event) => {
-  const openId = event.target.dataset.openDocument;
-  const duplicateId = event.target.dataset.duplicateDocument;
-  const deleteId = event.target.dataset.deleteDocument;
-  const printId = event.target.dataset.printDocument;
-  const balanceInvoiceId = event.target.dataset.balanceInvoiceDocument;
-  if (openId) openSavedDocument(openId);
-  if (duplicateId) duplicateSavedDocument(duplicateId);
-  if (deleteId) deleteSavedDocument(deleteId);
-  if (balanceInvoiceId) createBalanceInvoiceFromReceipt(balanceInvoiceId);
-  if (printId) {
-    openSavedDocument(printId);
-    printDocumentPreview();
-  }
-});
-
 [els.taxYearInput, els.sdnStartInput, els.enterpriseExpenseInput, els.sdnExpenseInput, els.salaryInput, els.personalReliefInput].forEach((control) => {
   control?.addEventListener("input", () => {
     taxPlan = {
@@ -10418,7 +10454,10 @@ function updatePropertyNavigation() {
   const more=document.getElementById('propertyMore');if(!more)return;
   const secondary=['messages','documents','tax','guide'].includes(activeView);
   more.dataset.current=String(secondary);
-  more.querySelector('summary').textContent=secondary?({messages:'Messages',documents:'Documents',tax:'Tax plan',guide:'Settings'})[activeView]+' · More':'More';
+  const label=secondary?({messages:'Messages',documents:'Documents',tax:'Tax plan',guide:'Settings'})[activeView]+' · More':'More';
+  const summary=more.querySelector('summary'),full=document.createElement('span'),compact=document.createElement('span');
+  full.className='property-more-label';full.textContent=label;compact.className='property-more-compact';compact.textContent='More';
+  summary.replaceChildren(full,compact);summary.setAttribute('aria-label',secondary?label+' property sections':'More property sections');
 }
 
 function initializePropertyNavigation() {
