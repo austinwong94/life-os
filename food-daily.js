@@ -56,6 +56,29 @@
     const before=copy(entry);matches[0].timing=copy(timing);if(kind!==undefined)matches[0].kind=kind;entry.updatedAt=now;
     return {kind:'day',boardId:board.id,cardId,key:date,before,after:copy(entry)};
   }
+  function convertPortion(amount,from,to,servingGrams){
+    if(!Number.isFinite(amount) || amount<=0 || !['g','serving'].includes(from) || !['g','serving'].includes(to) || !Number.isFinite(servingGrams) || servingGrams<=0)throw Error('Enter a positive portion before changing units.');
+    if(servingGrams<1)throw Error('This serving basis needs review. Keep its original unit.');
+    const result=from===to?amount:from==='g'?amount/servingGrams:amount*servingGrams;
+    if(!Number.isFinite(result) || result<=0)throw Error('This portion is too large or too small. Keep its original unit.');
+    return result;
+  }
+  function editMeal(board,cardId,date,mealId,expected,portions,{today,now=Date.now(),conflicts=[],eatenTime,kind}={}){
+    const card=resolve(board,cardId,'food',conflicts),entry=card.foodEntries?.[date],matches=(entry?.meals || []).filter(m=>m.id===mealId);
+    if(!day(date) || !day(today) || date>today || !stamp(now) || !now || matches.length!==1 || !equal(matches[0],expected))throw Error('This recorded meal changed or the date is invalid. Reopen it before saving.');
+    if(!Array.isArray(expected.items) || !Array.isArray(portions) || portions.length!==expected.items.length || !portions.length || new Set(expected.items.map(i=>i?.id)).size!==expected.items.length || new Set(portions.map(i=>i?.id)).size!==portions.length || portions.some(p=>!p || Object.keys(p).some(k=>!['id','amount','unit'].includes(k)) || !expected.items.some(i=>i.id===p.id)))throw Error('The recorded foods changed. Reopen this meal before saving.');
+    const next=copy(expected);next.items=next.items.map(item=>{const portion=portions.find(p=>p.id===item.id);return {...item,amount:portion.amount,unit:portion.unit};});
+    if(!validItems(next.items) || kind!==undefined && !['meal','snack','drink'].includes(kind) || eatenTime!==undefined && eatenTime!=='' && !time(eatenTime))throw Error('Enter positive portions and a valid meal time.');
+    if(kind!==undefined && kind!==(next.kind || 'meal'))next.kind=kind;
+    if(eatenTime!==undefined && eatenTime!==(next.timing?.eatenTime || '')){
+      if(next.timing && !validTiming(next.timing))throw Error('This meal time needs review. Its original record is unchanged.');
+      next.timing={...(next.timing || {plannedTime:'',windowMinutes:60}),eatenTime,recordedAt:next.timing?.recordedAt || now};
+    }
+    if(equal(next,expected))return null;
+    const before=copy(entry),after={...copy(entry),meals:entry.meals.map(meal=>meal.id===mealId?next:copy(meal)),updatedAt:now};
+    card.foodEntries[date]=after;
+    return {kind:'day',boardId:board.id,cardId,key:date,before,after:copy(after),mealId};
+  }
   function restore(board,tx,{conflicts=[]}={}){
     if(board?.id!==tx.boardId)throw Error('The board changed. Undo was not applied.');
     if(tx.kind==='routine'?!safe(tx.key):tx.kind==='day'?!day(tx.key):true)throw Error('Invalid undo target. Nothing was changed.');
@@ -83,6 +106,6 @@
       return {date:key,entries:meals.length,meals:meals.filter(m=>!m.kind || m.kind==='meal').length,snacks:meals.filter(m=>m.kind==='snack').length,drinks:meals.filter(m=>m.kind==='drink').length,timed:meals.filter(m=>validTiming(m.timing) && m.timing.eatenTime).length,onTime:meals.filter(m=>timingStatus(m.timing)==='Within your window').length};
     });
   }
-  const api=Object.freeze({copy,equal,day,time,validItems,validTiming,validRoutine,resolve,routines,saveRoutine,log,setTiming,restore,timingStatus,progress});
+  const api=Object.freeze({copy,equal,day,time,validItems,validTiming,validRoutine,resolve,routines,saveRoutine,log,setTiming,convertPortion,editMeal,restore,timingStatus,progress});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeFoodDaily=api;
 })(typeof globalThis==='undefined'?window:globalThis);

@@ -23,14 +23,19 @@
     D.restore(board(),tx);syncActiveBoard({touchBoard:false});
     throw Error('Not saved. Your existing records are unchanged. Keep this form open and retry.');
   }
-  function undo(tx){
-    showUndoToast({message:'Meal recorded.',onUndo:()=>{
+  function undo(tx,label='Meal recorded.'){
+    showUndoToast({message:label,onUndo:()=>{
       try{const reverse=D.restore(board(),tx,{conflicts:state.syncConflicts});if(!saveState({quiet:true})){D.restore(board(),reverse);syncActiveBoard({touchBoard:false});throw Error('Undo was not saved. Your meal is kept.');}clearUndoToast();renderCardsOnly({force:true});}catch(error){clearUndoToast();message(error);}
     }});
   }
   function library(card){
     const root=[...elements.boardGrid.querySelectorAll('.task-card')].find(n=>n.dataset.id===card.id),details=root?.querySelector('.food-library-panel');
     if(details){reveal(details);details.scrollIntoView({block:'start'});details.querySelector('summary')?.focus({preventScroll:true});}
+  }
+  function openDetails(card,mealId){
+    card.activeFoodMealId=mealId;renderCardsOnly({force:true});
+    const target=elements.boardGrid.querySelector('.task-card[data-id="'+CSS.escape(card.id)+'"] .food-time-panel');
+    if(target){reveal(target);target.scrollIntoView({block:'center'});target.querySelector('input')?.focus();}
   }
   function render(card,date){
     const section=planningNode('section','food-daily');section.setAttribute('aria-label','Daily eating');
@@ -59,7 +64,7 @@
         }catch(error){checkbox.checked=Boolean(record);notice.textContent=error.message;message(error);}
       };
       const edit=planningButton('',()=>{try{openRoutine(live(),date,routine);}catch(e){message(e);}},'pencil');edit.title='Edit usual meal '+routine.name;edit.setAttribute('aria-label',edit.title);
-      row.append(label,edit);if(record){const timeButton=planningButton('',()=>{try{const current=live();current.activeFoodMealId=record.id;renderCardsOnly({force:true});const target=elements.boardGrid.querySelector('.task-card[data-id="'+CSS.escape(current.id)+'"] .food-time-panel');if(target){reveal(target);target.scrollIntoView({block:'center'});target.querySelector('input')?.focus();}}catch(e){message(e);}},'chevron-right');timeButton.title='Open recorded meal '+routine.name;timeButton.setAttribute('aria-label',timeButton.title);row.append(timeButton);}list.append(row);
+      row.append(label,edit);if(record){const timeButton=planningButton('',()=>{try{openRecorded(live(),date,record);}catch(e){message(e);}},'chevron-right');timeButton.title='Open recorded meal '+routine.name;timeButton.setAttribute('aria-label',timeButton.title);row.append(timeButton);}list.append(row);
     }
     section.append(list,notice);
     if(date>getTodayKey())notice.textContent='Future date. Usual meals have not been recorded as eaten.';
@@ -89,8 +94,8 @@
       for(const item of draft.items){
         const row=planningNode('div','food-routine-item'),heading=planningNode('div','food-routine-item-name');
         heading.append(planningNode('strong','',item.name),planningNode('small','',item.calories+' kcal per '+item.servingUnit+' ('+item.servingGrams+' g)'),planningNode('small','',item.source));
-        const quantity=document.createElement('input');quantity.type='number';quantity.min='0.01';quantity.step='0.01';quantity.inputMode='decimal';quantity.value=item.amount;quantity.required=true;quantity.setAttribute('aria-label',item.name+' portion');quantity.oninput=()=>{item.amount=quantity.value===''?'':Number(quantity.value);};
-        const unit=planningSelect([['g','g'],['serving',item.servingUnit]],item.unit,value=>item.unit=value);unit.setAttribute('aria-label',item.name+' unit');
+        const quantity=document.createElement('input');quantity.type='number';quantity.min='0';quantity.step='any';quantity.inputMode='decimal';quantity.value=item.amount;quantity.required=true;quantity.setAttribute('aria-label',item.name+' portion');quantity.oninput=()=>{item.amount=quantity.value===''?'':Number(quantity.value);};
+        const unit=planningSelect([['g','g'],['serving',item.servingUnit]],item.unit,value=>{try{const amount=D.convertPortion(item.amount,item.unit,value,item.servingGrams);item.amount=amount;item.unit=value;quantity.value=amount;status.textContent='';}catch(error){unit.value=item.unit;status.textContent=error.message;}});unit.setAttribute('aria-label',item.name+' unit');
         const remove=planningButton('',()=>{draft.items=draft.items.filter(i=>i!==item);draw();},'trash-2');remove.title='Remove '+item.name+' from usual meal';remove.setAttribute('aria-label',remove.title);
         row.append(heading,quantity,unit,remove);items.append(row);
         if(FOOD_NUTRIENT_KEYS.every(key=>item[key]===0)){const label=planningNode('label','food-zero-confirm'),check=document.createElement('input');check.type='checkbox';check.checked=item.zeroNutritionConfirmed===true;check.onchange=()=>item.zeroNutritionConfirmed=check.checked;label.append(check,planningNode('span','','Zero nutrition checked for '+item.name));row.append(label);}
@@ -114,6 +119,32 @@
       event.preventDefault();try{const current=live(),tx=D.saveRoutine(board(),current.id,before,{...draft,name:name.value.trim(),kind:kind.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value)},{conflicts:state.syncConflicts});commit(tx);dialog.close();renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
     };
     dialog.append(form);draw();name.focus();
+  }
+  function openRecorded(card,date,meal){
+    const dialog=dailyDialog('Edit recorded meal');dialog.classList.add('food-recorded-dialog');
+    const live=context(card,date,dialog),expected=D.copy(meal),draft=D.copy(meal),form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
+    const heading=planningNode('div','food-recorded-heading');heading.append(planningNode('h3','',meal.name),planningNode('p','',formatReadableDateKey(date)));
+    const totals=planningNode('div','food-recorded-totals');totals.setAttribute('aria-live','polite');
+    const updateTotals=()=>{totals.replaceChildren(renderFoodMealSummary(getFoodMealTotals(card,draft)));};
+    const items=planningNode('div','food-recorded-items');
+    for(const item of draft.items || []){
+      const row=planningNode('div','food-recorded-item'),label=planningNode('label','food-recorded-portion');label.append(planningNode('span','',item.name));
+      const input=document.createElement('input');input.type='number';input.inputMode='decimal';input.min='0';input.step='any';input.required=true;input.value=item.amount;input.setAttribute('aria-label',item.name+' portion');
+      input.oninput=()=>{item.amount=input.value===''?'':Number(input.value);updateTotals();};label.append(input);
+      const unit=planningSelect([['g','g'],['serving',item.servingUnit]],item.unit,value=>{try{const amount=D.convertPortion(item.amount,item.unit,value,item.servingGrams);item.amount=amount;item.unit=value;input.value=amount;status.textContent='';updateTotals();}catch(error){unit.value=item.unit;status.textContent=error.message;}});unit.setAttribute('aria-label',item.name+' unit');
+      row.append(label,planningField('Unit',unit));unit.setAttribute('aria-label',item.name+' unit');items.append(row);
+    }
+    const eaten=document.createElement('input');eaten.type='time';eaten.value=meal.timing?.eatenTime || '';
+    const kind=planningSelect([['meal','Meal'],['snack','Snack'],['drink','Drink']],meal.kind || 'meal',()=>{});
+    const timing=planningNode('div','food-recorded-time');timing.append(planningField('Eaten at',eaten),planningField('Entry type',kind));
+    const save=planningButton('Save recorded meal',null,'check');save.type='submit';save.classList.add('is-primary');
+    const actions=planningNode('div','daily-actions');actions.append(planningButton('Cancel',()=>dialog.close()),save);
+    const more=planningButton('Meal details',()=>{try{const current=live();if(!D.equal(draft.items,expected.items) || eaten.value!==(expected.timing?.eatenTime || '') || kind.value!==(expected.kind || 'meal'))throw Error('Save or cancel these changes before opening meal details.');dialog.close();openDetails(current,meal.id);}catch(error){status.textContent=error.message;}},'utensils');
+    const basis=planningNode('details','food-recorded-basis');basis.append(planningNode('summary','','Nutrition basis'));for(const item of meal.items || [])basis.append(planningNode('p','',item.name+' · '+item.calories+' kcal per '+item.servingUnit+' ('+item.servingGrams+' g) · '+item.source));
+    form.append(heading,totals,items,timing,status,actions,more,basis);form.onsubmit=event=>{
+      event.preventDefault();try{const current=live(),tx=D.editMeal(board(),current.id,date,meal.id,expected,draft.items.map(i=>({id:i.id,amount:i.amount,unit:i.unit})),{today:getTodayKey(),conflicts:state.syncConflicts,eatenTime:eaten.value,kind:kind.value});if(tx)commit(tx);dialog.close();if(tx){renderCardsOnly({force:true});undo(tx,'Recorded meal updated.');}}catch(error){status.textContent=error.message;}
+    };
+    dialog.append(form);updateTotals();form.querySelector('input')?.focus();
   }
   function times(card,date,meal){
     const details=planningNode('details','food-time-panel'),summary=planningNode('summary');

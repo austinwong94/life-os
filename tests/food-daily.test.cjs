@@ -20,3 +20,35 @@ test('reusing a previous meal preserves its source but clears historical eating 
 test('drinks and snacks contribute nutrition and recording days without inflating the meal count',()=>{const b=fixture();b.cards[0].foodRoutines.breakfast.kind='drink';D.log(b,'food',b.cards[0].foodRoutines.breakfast,'2026-11-01','2026-11-01','09:00',{now:100});const p=D.progress(b.cards[0],'2026-11-01').at(-1);assert.equal(p.entries,1);assert.equal(p.meals,0);assert.equal(p.drinks,1);assert.equal(p.onTime,1);assert.equal(D.validRoutine({...routine,kind:'unknown'}),false);});
 test('zero nutrition requires explicit confirmation rather than treating an unfinished custom food as measured zero',()=>{const zero={...item,calories:0,protein:0,carbs:0,fat:0,fiber:0};assert.equal(D.validItems([zero]),false);assert.equal(D.validItems([{...zero,zeroNutritionConfirmed:true}]),true);});
 test('pinning an already recorded meal does not count it twice or rewrite it, and remains reusable on another day',()=>{const b=fixture();b.cards[0].foodEntries['2026-11-01'].meals[0].items=[structuredClone(item)];const r={...structuredClone(routine),origin:{date:'2026-11-01',mealId:'manual'}},before=structuredClone(b.cards[0].foodEntries);D.saveRoutine(b,'food',routine,r,{now:2});assert.throws(()=>D.log(b,'food',b.cards[0].foodRoutines.breakfast,'2026-11-01','2026-11-01','09:00'),/Already logged/);assert.deepEqual(b.cards[0].foodEntries,before);D.log(b,'food',b.cards[0].foodRoutines.breakfast,'2026-11-02','2026-11-02','09:00',{now:3});assert.equal(b.cards[0].foodEntries['2026-11-02'].meals.length,1);});
+const portions=meal=>meal.items.map(({id,amount,unit})=>({id,amount,unit}));
+const change=(b,meal,patch=portions(meal),options={})=>D.editMeal(b,'food','2026-11-01',meal.id,meal,patch,{today:'2026-11-01',now:101,...options});
+test('gram and serving changes preserve food mass including small and fractional serving sizes',()=>{
+  assert.equal(D.convertPortion(150,'g','serving',100),1.5);
+  assert.equal(D.convertPortion(1.5,'serving','g',100),150);
+  assert.equal(D.convertPortion(0.25,'serving','g',2),0.5);
+  assert.equal(D.convertPortion(175.5,'g','g',100),175.5);
+  for(const args of [[0,'g','serving',100],['','g','serving',100],[NaN,'g','serving',100],[1,'kg','g',100],[1,'g','serving',0],[1,'g','serving',0.5],[Number.MAX_VALUE,'serving','g',100]])assert.throws(()=>D.convertPortion(...args));
+});
+test('editing consumed portions keeps original food snapshots identities timestamps routines and other records',()=>{
+  const b=fixture(),tx=log(b),meal=tx.after.meals.at(-1);meal.customMeal={keep:true};b.cards[0].foodEntries['2026-11-01'].meals.at(-1).customMeal={keep:true};const before=structuredClone(b);
+  const edited=change(b,meal,[{id:meal.items[0].id,amount:3.25,unit:'serving'}],{eatenTime:'09:45',kind:'snack'}),next=edited.after.meals.at(-1);
+  assert.equal(next.items[0].amount,3.25);assert.deepEqual({...next.items[0],amount:meal.items[0].amount},meal.items[0]);assert.equal(next.timing.recordedAt,100);assert.equal(next.timing.eatenTime,'09:45');assert.equal(next.kind,'snack');assert.deepEqual(next.customMeal,{keep:true});assert.equal(next.routineId,meal.routineId);assert.deepEqual(b.cards[0].foodRoutines,before.cards[0].foodRoutines);assert.deepEqual(b.cards[0].foodTargets,before.cards[0].foodTargets);assert.deepEqual(edited.after.meals[0],before.cards[0].foodEntries['2026-11-01'].meals[0]);D.restore(b,edited);assert.deepEqual(b,before);
+});
+test('no-op recorded edits do not stage timestamps or invent time metadata',()=>{
+  const b=fixture(),tx=log(b),before=structuredClone(b);assert.equal(change(b,tx.after.meals.at(-1),undefined,{kind:'meal',eatenTime:'09:20'}),null);assert.deepEqual(b,before);
+  const manual=b.cards[0].foodEntries['2026-11-01'].meals[0];manual.items=[structuredClone(item)];assert.equal(change(b,structuredClone(manual),undefined,{eatenTime:'',kind:'meal'}),null);assert.equal(manual.timing,undefined);
+});
+test('a past recorded portion correction keeps the original date and does not invent an eating time',()=>{
+  const b=fixture(),tx=D.log(b,'food',routine,'2026-10-31','2026-11-01','',{now:100}),meal=tx.after.meals.at(-1);D.editMeal(b,'food','2026-10-31',meal.id,meal,[{id:meal.items[0].id,amount:3,unit:'serving'}],{today:'2026-11-01',now:101,eatenTime:''});assert.equal(b.cards[0].foodEntries['2026-10-31'].meals.at(-1).timing.eatenTime,'');assert.equal(b.cards[0].foodEntries['2026-11-01'].meals.length,1);
+});
+test('recorded edit rejects removed duplicated stale future conflicting or invalid targets before mutation',()=>{
+  for(const alter of [b=>b.cards[0].foodEntries['2026-11-01'].meals.pop(),b=>b.cards[0].foodEntries['2026-11-01'].meals.push(structuredClone(b.cards[0].foodEntries['2026-11-01'].meals.at(-1))),b=>b.cards[0].foodEntries['2026-11-01'].meals.at(-1).name='Newer name',b=>b.cards[0].archivedAt=1]){const b=fixture(),meal=log(b).after.meals.at(-1);alter(b);const before=structuredClone(b);assert.throws(()=>change(b,meal));assert.deepEqual(b,before);}
+  for(const patch of [[],[{id:'other',amount:1,unit:'g'}],[{amount:0,unit:'g'}],[{amount:-1,unit:'g'}],[{amount:Infinity,unit:'g'}],[{amount:1,unit:'kg'}],[{amount:1,unit:'g',calories:999}]]){const b=fixture(),meal=log(b).after.meals.at(-1),before=structuredClone(b),p=patch.map(i=>({id:meal.items[0].id,...i}));assert.throws(()=>change(b,meal,p));assert.deepEqual(b,before);}
+  for(const opts of [{today:'2026-10-31'},{eatenTime:'25:00'},{kind:'unknown'},{conflicts:[{segments:['boards','board','cards','food','foodEntries']}]},{now:0}]){const b=fixture(),meal=log(b).after.meals.at(-1),before=structuredClone(b);assert.throws(()=>change(b,meal,undefined,opts));assert.deepEqual(b,before);}
+});
+test('unrelated new meals survive a captured correction and later changes block Undo',()=>{
+  const b=fixture(),meal=log(b).after.meals.at(-1);b.cards[0].foodEntries['2026-11-01'].meals.push({id:'different',name:'Other meal',items:[structuredClone(item)]});const tx=change(b,meal,[{id:meal.items[0].id,amount:3,unit:'serving'}]);assert.equal(tx.after.meals.at(-1).id,'different');b.cards[0].foodEntries['2026-11-01'].meals.at(-1).name='Later edit';const before=structuredClone(b);assert.throws(()=>D.restore(b,tx));assert.deepEqual(b,before);
+});
+test('two-device portion edits remain whole food-item versions instead of combining incompatible units and amounts',()=>{
+  const b=fixture(),meal=log(b).after.meals.at(-1),base={boards:[b]},l=structuredClone(base),r=structuredClone(base);change(l.boards[0],meal,[{id:meal.items[0].id,amount:3,unit:'serving'}]);change(r.boards[0],meal,[{id:meal.items[0].id,amount:100,unit:'g'}]);const result=M.merge(base,l,r);assert.equal(result.conflicts[0].recordType,'food-item');assert.equal(result.boards[0].cards[0].foodEntries['2026-11-01'].meals.at(-1).items[0].unit,'serving');assert.equal(result.boards[0].cards[0].foodEntries['2026-11-01'].meals.at(-1).items[0].amount,3);
+});
