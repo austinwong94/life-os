@@ -1,5 +1,17 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),M=require('../momentum.js');
 const base={start:'2026-10-12',today:'2026-10-16'};
+test('daily capacity counts only explicit valid estimates without mutating them',()=>{
+  const values=['15',30,''],before=JSON.stringify(values),summary=M.capacity(values,'60');assert.deepEqual(summary,{total:45,estimated:2,missing:1,invalid:0,available:60,invalidBudget:false,remaining:null,overBy:0});assert.equal(JSON.stringify(values),before);
+});
+test('complete time estimates show exact unallocated or overcommitted minutes, not task completion',()=>{
+  assert.deepEqual(M.capacity([15,30],60),{total:45,estimated:2,missing:0,invalid:0,available:60,invalidBudget:false,remaining:15,overBy:0});assert.equal(M.capacity([30,60],60).overBy,30);assert.equal(M.capacity([30,60],60).remaining,-30);assert.equal(M.capacity([60,''],30).overBy,30);assert.equal(M.capacity([60,''],30).remaining,null);
+});
+test('missing budgets and blank estimates remain unreported instead of invented availability',()=>{
+  for(const budget of ['',null,undefined]){const summary=M.capacity(['',null,undefined],budget);assert.equal(summary.total,0);assert.equal(summary.missing,3);assert.equal(summary.available,null);assert.equal(summary.invalidBudget,false);assert.equal(summary.remaining,null);}assert.equal(M.capacity([],60).estimated,0);
+});
+test('invalid typed or imported values cannot become negative time or plausible availability',()=>{
+  const summary=M.capacity([true,{},[],0,-5,1.5,1441,Infinity,'bad'],false);assert.equal(summary.invalid,9);assert.equal(summary.total,0);assert.equal(summary.invalidBudget,true);assert.equal(summary.remaining,null);assert.equal(M.capacity([1440],'1440').remaining,0);
+});
 test('momentum validates dates, crosses month/year boundaries, and handles leap days',()=>{
   assert.equal(M.valid('2026-02-30'),false);assert.equal(M.shift('2026-12-31',1),'2027-01-01');assert.equal(M.shift('2028-02-28',1),'2028-02-29');
   assert.throws(()=>M.summarize({...base,start:'bad'}));

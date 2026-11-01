@@ -295,8 +295,8 @@ function renderDailyHome() {
   const records=dailyRecords().filter(e=>e.kind==='focus' && e.date===day),original=records.slice().sort((a,b)=>a.recordedAt-b.recordedAt)[0];
   if(original && !LifeStateMerge.equal(original.taskKeys,focusIds))focus.append(planningNode('small','daily-muted','Plan revised. Your original choices remain in the weekly review.'));
   const plans=latestDailyRecord('focus',day)?.plans || {},budget=latestDailyRecord('focus',day)?.budgetMinutes;
-  const minutes=visible.reduce((sum,t)=>sum+(Number(plans[dailyFocusKey(t)]?.minutes || t.estimatedMinutes)||0),0);
-  if(minutes)focus.append(planningNode('small','daily-capacity',`${minutes} minutes estimated${budget?' / '+budget+' available':''}${budget && minutes>budget?' · Consider a lighter plan':''}`));
+  const capacity=LifeMomentum.capacity(visible.map(t=>{const plan=plans[dailyFocusKey(t)];return plan && Object.hasOwn(plan,'minutes')?plan.minutes:t.estimatedMinutes || '';}),budget);
+  if(visible.length)focus.append(planningNode('small','daily-capacity',dailyCapacityText(capacity)));
   const suggestions=planningNode('div','daily-suggestion-slot');focus.append(suggestions);renderDailySuggestions(suggestions,all,focusIds,session.light);
   const overview=planningNode('div','daily-actions daily-focus-footer');
   overview.append(planningButton('All tasks ('+all.length+')',()=>{planningSession().view='all';planningSession().area='*';planningSession().search='';savePlanningSession();setWorkspaceMode('tasks');}),
@@ -348,6 +348,25 @@ function openDailyPreferences() {
     }
   }
 }
+function dailyCapacityText(capacity){
+  const parts=[];
+  if(capacity.estimated)parts.push(capacity.total+' minutes estimated'+(capacity.available!==null?' / '+capacity.available+' available':''));
+  else if(capacity.available!==null)parts.push(capacity.available+' minutes available');
+  if(capacity.missing)parts.push(capacity.missing+' step'+(capacity.missing===1?'':'s')+' without an estimate');
+  if(capacity.invalid || capacity.invalidBudget)parts.push('Check your time estimates');
+  if(capacity.overBy)parts.push(capacity.overBy+' minutes over your available time');
+  else if(capacity.remaining!==null && capacity.estimated)parts.push(capacity.remaining+' minutes unallocated');
+  return parts.join(' · ');
+}
+function dailyMinuteChoices(input,values,label,canApply){
+  const root=planningNode('div','daily-minute-choices');root.setAttribute('role','group');root.setAttribute('aria-label',label);
+  const buttons=[];
+  const apply=value=>{if(!root.isConnected || !input.isConnected || root.closest('dialog')?.open===false || !canApply())return;input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));};
+  for(const value of values){const button=planningButton(value+' min',()=>apply(String(value)));button.setAttribute('aria-label',label+': '+value+' minutes');buttons.push([button,value]);root.append(button);}
+  const clear=planningButton('',()=>apply(''),'x');clear.setAttribute('aria-label','Clear '+label.toLowerCase());clear.title=clear.getAttribute('aria-label');root.append(clear);
+  const refresh=()=>{for(const [button,value] of buttons)button.setAttribute('aria-pressed',String(input.value!=='' && Number(input.value)===value));clear.disabled=input.value==='';};
+  input.addEventListener('input',refresh);refresh();return root;
+}
 function openDailyFocus() {
   const dialog=dailyDialog('Choose up to three next steps'),day=getTodayKey(),boardId=state.activeBoardId,items=getWorkspaceTaskItems().filter(item=>item.sourceKind!=='card' || item.editable),session=dailySession();
   const baseline=LifeStateMerge.copy(latestDailyRecord('focus',day) || null);
@@ -357,9 +376,13 @@ function openDailyFocus() {
     if(slot){const current=getWorkspaceTaskItems();slot.replaceChildren();renderDailySuggestions(slot,current,dailyFocusKeys(day,current),dailySession().light);}
   },{once:true});
   session.focusDrafts ||= {};const previous=session.focusDrafts[day] || baseline,selected=new Set((previous?.taskKeys || dailyFocusKeys(day,items)).filter(key=>items.some(t=>dailyFocusKey(t)===key))),plans=LifeStateMerge.copy(previous?.plans || {});
-  const keepDraft=()=>{session.focusDrafts[day]={taskKeys:[...selected],plans,budgetMinutes:budget.value,baseFocusId:baseline?.id || null};saveDailyDraft(boardId);};
+  const summary=planningNode('p','daily-plan-capacity');summary.setAttribute('aria-live','polite');summary.setAttribute('aria-atomic','true');
+  const refreshCapacity=()=>{const capacity=LifeMomentum.capacity([...selected].map(key=>plans[key]?.minutes),budget.value);summary.textContent=(selected.size?selected.size+' next step'+(selected.size===1?'':'s'):'No next steps selected')+(dailyCapacityText(capacity)?' · '+dailyCapacityText(capacity):'');};
+  const keepDraft=()=>{session.focusDrafts[day]={taskKeys:[...selected],plans,budgetMinutes:budget.value,baseFocusId:baseline?.id || null};saveDailyDraft(boardId);refreshCapacity();};
   const budget=planningInput('number',previous?.budgetMinutes || '',()=>keepDraft());budget.min=1;budget.max=1440;budget.step=1;
-  dialog.append(planningField('Available minutes (optional)',budget));
+  dialog.classList.add('daily-focus-dialog');
+  const canApply=()=>{if(boardId===state.activeBoardId && day===getTodayKey())return true;message.textContent='The board or day changed. Reopen Choose on the original board. Your draft is kept.';return false;};
+  dialog.append(planningField('Available minutes (optional)',budget),dailyMinuteChoices(budget,[30,60,120,240],'Available time',canApply),summary);
   const message=planningNode('p','daily-message');message.setAttribute('role','status');
   if(session.focusDrafts[day] && session.focusDrafts[day].baseFocusId!==(baseline?.id || null)){
     const current=dailyFocusKeys(day,items).map(key=>items.find(item=>dailyFocusKey(item)===key)?.title || 'Task no longer available');
@@ -369,14 +392,16 @@ function openDailyFocus() {
   const list=planningNode('div','daily-focus-options');dialog.append(list);
   items.filter(t=>!t.done || selected.has(dailyFocusKey(t))).forEach(t=>{
     const key=dailyFocusKey(t),row=planningNode('label','daily-check'),check=planningInput('checkbox','',()=>{});check.checked=selected.has(key);check.setAttribute('aria-label',t.title);row.dataset.search=[t.title,t.sourceTitle,t.group].filter(Boolean).join(' ').toLocaleLowerCase();
-    check.onchange=()=>{if(check.checked && selected.size>=3){check.checked=false;message.textContent='Three selected. Uncheck one to choose another.';return;}check.checked?selected.add(key):selected.delete(key);message.textContent='';keepDraft();};
+    check.onchange=()=>{if(check.checked && selected.size>=3){check.checked=false;message.textContent='Three selected. Uncheck one to choose another.';return;}check.checked?selected.add(key):selected.delete(key);refreshChoice();message.textContent='';keepDraft();};
     const copy=planningNode('span','',t.title);if(t.sourceKind==='card')copy.append(planningNode('small','daily-task-source',t.sourceLabel+' · '+t.sourceTitle));row.append(check,copy);
     const wrapper=planningNode('div','daily-choice');wrapper.dataset.search=row.dataset.search;
     const more=planningNode('details','daily-step-plan');more.append(planningNode('summary','','Plan this step'));
     const plan=plans[key] ||= {nextAction:t.nextAction || '',minutes:t.estimatedMinutes || '',startTime:t.startTime || ''};
     const minutes=planningInput('number',plan.minutes,value=>{plan.minutes=value;keepDraft();});minutes.min=1;minutes.max=1440;minutes.step=1;
-    more.append(planningField('Next action: '+t.title,planningInput('text',plan.nextAction,value=>{plan.nextAction=value;keepDraft();})),planningField('Estimated minutes: '+t.title,minutes),planningField('Start time: '+t.title,planningInput('time',plan.startTime,value=>{plan.startTime=value;keepDraft();})));
-    wrapper.append(row,more);list.append(wrapper);
+    const quick=dailyMinuteChoices(minutes,[5,15,30,60],'Estimate for '+t.title,canApply);
+    const refreshChoice=()=>{quick.hidden=!check.checked;more.hidden=!check.checked;};
+    more.append(planningField('Estimated minutes: '+t.title,minutes),planningField('Next action: '+t.title,planningInput('text',plan.nextAction,value=>{plan.nextAction=value;keepDraft();})),planningField('Start time: '+t.title,planningInput('time',plan.startTime,value=>{plan.startTime=value;keepDraft();})));
+    wrapper.append(row,quick,more);refreshChoice();list.append(wrapper);
   });search.oninput=()=>list.querySelectorAll('.daily-choice').forEach(row=>row.hidden=!row.dataset.search.includes(search.value.toLocaleLowerCase()));
   dialog.append(message,planningButton('Keep next steps',()=>{
     if(boardId!==state.activeBoardId || day!==getTodayKey()){message.textContent='The board or day changed. Your draft is kept on its original board; reopen Choose there.';return;}
@@ -386,7 +411,7 @@ function openDailyFocus() {
     const validMinutes=value=>value==='' || Number.isInteger(Number(value)) && Number(value)>0 && Number(value)<=1440;
     if(!validMinutes(budget.value) || [...selected].some(key=>!validMinutes(plans[key].minutes))){message.textContent='Use whole minutes between 1 and 1440.';return;}
     if(saveDailyRecord({kind:'focus',date:day,taskKeys:[...selected],plans:Object.fromEntries([...selected].map(key=>[key,plans[key]])),budgetMinutes:budget.value?Number(budget.value):null},message)){delete session.focusDrafts[day];saveDailyDraft();dialog.close();renderCardsOnly({force:true});}
-  },'check'));
+  },'check'));refreshCapacity();
 }
 function dailySuggestionProjection(item) {
   return {key:dailyFocusKey(item),title:item.title,dateKey:item.dateKey || '',deadline:item.deadline || '',priority:item.priority || 'normal',status:item.status || 'todo',done:Boolean(item.done),
