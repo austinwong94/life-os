@@ -1146,7 +1146,7 @@ const defaultState = {
 };
 
 const healthDateDrafts = new WeakMap();
-const HEALTH_DATE_DRAFT_NOTICE='Save or cancel the meal-time changes before changing day.';
+const HEALTH_DATE_DRAFT_NOTICE='Save or cancel the meal-time changes before leaving this log.';
 let state = loadState();
 let localMergeBase = JSON.parse(JSON.stringify(state));
 let cloudMergeBase = null;
@@ -3240,11 +3240,27 @@ function hasUnsubmittedDraftText() {
   return state.cards.some((card) => normalizeLabel(card.dailyDraftText || card.plannerDraftText || card.checklistDraftText || ""));
 }
 
+function findHealthDateDraft(scope=elements.boardGrid) {
+  return [...(scope?.querySelectorAll('form') || [])].find(form=>{const draft=healthDateDrafts.get(form);return form.isConnected && draft?.boardId===state.activeBoardId && draft.mode===state.ui.workspaceMode && draft.changed();});
+}
+
+function canLeaveHealthDateDraft(scope=elements.boardGrid) {
+  const form=findHealthDateDraft(scope);
+  if(!form)return true;
+  for(let parent=form.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
+  const notice=form.closest('.food-tracker')?.querySelector('.health-date-message');
+  if(notice)notice.textContent=HEALTH_DATE_DRAFT_NOTICE;
+  form.querySelector('input')?.focus();
+  setSaveStatus(HEALTH_DATE_DRAFT_NOTICE,lastLocalSaveOk===false?'error':'notice');
+  return false;
+}
+
 function isBackgroundBoardRender(options = {}) {
   return options.reason === "tick" || options.reason === "auto";
 }
 
 function shouldDeferBoardRender(options = {}) {
+  if(findHealthDateDraft())return true;
   if (draggedCardId) return false;
   if (activeBoardPointers.size) return true;
   if (options.force) return false;
@@ -4747,10 +4763,7 @@ function renderHealthDateNav(card, dateKey, entry, type) {
       if(!normalizeDateKey(date))throw Error('Choose a valid date.');
       if(current[field]===date)return;
       if(document.querySelector('dialog[open]'))throw Error('Finish or cancel the open form before changing day.');
-      for(const form of nav.parentElement.querySelectorAll('form'))if(healthDateDrafts.get(form)?.()){
-        for(let parent=form.parentElement;parent;parent=parent.parentElement)if(parent.tagName==='DETAILS')parent.open=true;
-        form.querySelector('input')?.focus();throw Error(HEALTH_DATE_DRAFT_NOTICE);
-      }
+      if(!canLeaveHealthDateDraft())throw Error(HEALTH_DATE_DRAFT_NOTICE);
       if(lastLocalSaveOk===false)throw Error('Device save needs attention. Keep this view open and save your writing before changing day.');
       current[field]=date;
       try{if(!saveState({quiet:true}))throw Error('Not saved');}catch{current[field]=dateKey;syncActiveBoard({touchBoard:false});throw Error('The day change was not saved. Your original day is kept. Check saving details, then retry.');}
@@ -11136,6 +11149,7 @@ function syncActiveBoard(options = {}) {
 }
 
 function switchBoard(boardId) {
+  if(!canLeaveHealthDateDraft()){elements.boardSelect.value=state.activeBoardId;elements.boardQuickSelect.value=state.activeBoardId;return;}
   try {sessionStorage.setItem(LifeStorageScope.key("life-os-active-board"),boardId);} catch {}
   syncActiveBoard();
   applyBoardToState(state, boardId);
@@ -11150,6 +11164,7 @@ function switchBoard(boardId) {
 }
 
 function createBlankBoard() {
+  if(!canLeaveHealthDateDraft())return;
   syncActiveBoard();
   const board = createBoardRecord({
     name: `Board ${state.boards.length + 1}`,
@@ -11168,6 +11183,7 @@ function createBlankBoard() {
 }
 
 function deleteCurrentBoard() {
+  if(!canLeaveHealthDateDraft())return;
   syncActiveBoard();
   if (state.boards.length < 2) return;
   const currentBoard = state.boards.find((board) => board.id === state.activeBoardId);
@@ -11192,6 +11208,7 @@ function deleteCurrentBoard() {
 }
 
 function createBoardFromTemplate(templateId) {
+  if(!canLeaveHealthDateDraft())return;
   const template = boardTemplates.find((item) => item.id === templateId);
   if (!template) return;
   syncActiveBoard();
@@ -12725,7 +12742,7 @@ function readStoredStateSnapshot() {
 
 function isUserEditingCriticalDraft() {
   return Boolean(
-    isProtectedTextEditActive() ||
+    isProtectedTextEditActive() || findHealthDateDraft() ||
       editingCardId ||
       editingPlannerTaskKey ||
       plannerTaskEditDraft ||

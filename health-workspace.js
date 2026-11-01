@@ -135,7 +135,7 @@ function renderHealthWorkspace() {
   root.append(head);
   const tabs=planningNode('nav','health-workspace-tabs');tabs.setAttribute('aria-label','Health views');
   for(const [key,label] of [['workout','Workout'],['food','Food'],['history','Training history']]){
-    const button=planningButton(label,()=>{if(isProtectedTextEditActive())document.activeElement?.blur();session.view=key;saveHealthView(boardId,key);renderCardsOnly({force:true});});
+    const button=planningButton(label,()=>{if(!tabs.isConnected || state.activeBoardId!==boardId || state.ui.workspaceMode!=='health' || !canLeaveHealthDateDraft())return;if(isProtectedTextEditActive())document.activeElement?.blur();session.view=key;saveHealthView(boardId,key);renderCardsOnly({force:true});});
     button.setAttribute('aria-pressed',String(session.view===key));tabs.append(button);
   }
   root.append(tabs);
@@ -160,7 +160,7 @@ function renderHealthWorkspace() {
   const type=session.view==='food'?'food':'fitness',sources=cards.filter(card=>card.type===type);
   if(!sources.length){root.append(planningNode('p','planning-empty',type==='fitness'?'No Fitness Log on this board yet.':'No Food Tracker on this board yet.'),planningButton('Add '+(type==='fitness'?'Fitness Log':'Food Tracker'),()=>openHealthLogComposer(type),'plus'));return;}
   const card=sources.find(card=>card.id===session.sources[type]) || sources[0];session.sources[type]=card.id;
-  if(sources.length>1)root.append(planningField('Log',planningSelect(sources.map(card=>[card.id,card.title]),card.id,id=>{if(isProtectedTextEditActive())document.activeElement?.blur();session.sources[type]=id;renderCardsOnly({force:true});})));
+  if(sources.length>1){const select=planningSelect(sources.map(card=>[card.id,card.title]),card.id,id=>{if(!select.isConnected || state.activeBoardId!==boardId || state.ui.workspaceMode!=='health')return;if(!canLeaveHealthDateDraft()){select.value=card.id;return;}if(isProtectedTextEditActive())document.activeElement?.blur();session.sources[type]=id;renderCardsOnly({force:true});});root.append(planningField('Log',select));}
   if(state.cards.filter(item=>item.id===card.id).length!==1){root.append(planningNode('p','planning-empty','This log has a duplicate identity. Editing is paused to protect both copies.'));return;}
   const editor=planningNode('section','health-workspace-editor task-card');editor.dataset.id=card.id;
   const log=type==='fitness'?renderFitnessLog(card):renderFoodTracker(card);

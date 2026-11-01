@@ -778,6 +778,7 @@ function restoreTabBoardSelection() {
 }
 
 function setWorkspaceMode(mode) {
+  if(!canLeaveHealthDateDraft())return;
   if (isProtectedTextEditActive()) document.activeElement?.blur();
   state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties", "health", "oneTap"].includes(mode) ? mode : "board";
   state.activeFilter = "all"; state.focusFilter = "all"; state.searchQuery = ""; state.activeCategories = [];

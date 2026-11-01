@@ -19,7 +19,7 @@
     };
   }
   function commit(tx){
-    if(saveState({quiet:true}))return;
+    try{if(saveState({quiet:true}))return;}catch{}
     D.restore(board(),tx);syncActiveBoard({touchBoard:false});
     throw Error('Not saved. Your existing records are unchanged. Keep this form open and retry.');
   }
@@ -252,20 +252,24 @@
     const details=planningNode('details','food-time-panel'),summary=planningNode('summary');
     const current=meal.timing;
     summary.textContent=current?.eatenTime?'Eaten '+current.eatenTime+' · '+D.timingStatus(current):'Meal time · not recorded';details.append(summary);
-    const live=context(card,date,details),expected=D.copy(meal),form=planningNode('form','food-time-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
+    const live=context(card,date,details),form=planningNode('form','food-time-form'),status=planningNode('p','daily-message');let expected=D.copy(meal);status.setAttribute('role','status');
     const eaten=document.createElement('input');eaten.type='time';eaten.value=current?.eatenTime || '';
     const planned=document.createElement('input');planned.type='time';planned.value=current?.plannedTime || '';
     const windowSelect=planningSelect([15,30,60,90,120,180].map(n=>[String(n),'± '+n+' min']),String(current?.windowMinutes || 60),()=>{});
     const kind=planningSelect([['meal','Meal'],['snack','Snack'],['drink','Drink']],meal.kind || 'meal',()=>{});
     const save=planningButton('Save time',null,'check');save.type='submit';
     const initial={eaten:eaten.value,planned:planned.value,window:windowSelect.value,kind:kind.value};
-    healthDateDrafts.set(form,()=>eaten.value!==initial.eaten || planned.value!==initial.planned || windowSelect.value!==initial.window || kind.value!==initial.kind);
+    const changed=()=>eaten.value!==initial.eaten || planned.value!==initial.planned || windowSelect.value!==initial.window || kind.value!==initial.kind;
+    healthDateDrafts.set(form,{boardId:state.activeBoardId,mode:state.ui.workspaceMode,changed});
+    const draftNotice=planningNode('p','food-time-draft');draftNotice.setAttribute('aria-live','polite');
+    const updateDraft=()=>{draftNotice.textContent=changed()?'Meal-time changes not saved.':'';if(!changed()){const notice=details.closest('.food-tracker')?.querySelector('.health-date-message');if(notice?.textContent===HEALTH_DATE_DRAFT_NOTICE)notice.textContent='';}};
+    form.addEventListener('input',updateDraft);form.addEventListener('change',updateDraft);
     const formBoardId=state.activeBoardId;
-    const cancel=planningButton('',()=>{if(!form.isConnected || !details.open || !form.getClientRects().length || state.activeBoardId!==formBoardId)return;eaten.value=initial.eaten;planned.value=initial.planned;windowSelect.value=initial.window;kind.value=initial.kind;status.textContent='';const notice=details.closest('.food-tracker')?.querySelector('.health-date-message');if(notice?.textContent===HEALTH_DATE_DRAFT_NOTICE){notice.textContent='';if(lastLocalSaveOk!==false)setSaveStatus('Meal-time changes cancelled.','notice');}},'x');cancel.title='Cancel meal-time changes';cancel.setAttribute('aria-label',cancel.title);
+    const cancel=planningButton('',()=>{if(!form.isConnected || !details.open || !form.getClientRects().length || state.activeBoardId!==formBoardId)return;eaten.value=initial.eaten;planned.value=initial.planned;windowSelect.value=initial.window;kind.value=initial.kind;status.textContent='';draftNotice.textContent='';const notice=details.closest('.food-tracker')?.querySelector('.health-date-message');if(notice?.textContent===HEALTH_DATE_DRAFT_NOTICE){notice.textContent='';if(lastLocalSaveOk!==false)setSaveStatus('Meal-time changes cancelled.','notice');}},'x');cancel.title='Cancel meal-time changes';cancel.setAttribute('aria-label',cancel.title);
     const actions=planningNode('div','food-time-actions');actions.append(save,cancel);
-    form.append(planningField('Eaten at',eaten),planningField('Planned time',planned),planningField('Timing window',windowSelect),planningField('Entry type',kind),actions,status);
+    form.append(planningField('Eaten at',eaten),planningField('Planned time',planned),planningField('Timing window',windowSelect),planningField('Entry type',kind),draftNotice,actions,status);
     form.onsubmit=event=>{
-      event.preventDefault();try{const current=live();if(date>getTodayKey())throw Error('Record eating on today or a past date.');const tx=D.setTiming(board(),current.id,date,meal.id,expected,{...(meal.timing || {}),eatenTime:eaten.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value),recordedAt:Date.now()},{conflicts:state.syncConflicts,kind:kind.value});commit(tx);renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
+      event.preventDefault();try{const current=live();if(date>getTodayKey())throw Error('Record eating on today or a past date.');const tx=D.setTiming(board(),current.id,date,meal.id,expected,{...(expected.timing || {}),eatenTime:eaten.value,plannedTime:planned.value,windowMinutes:Number(windowSelect.value),recordedAt:Date.now()},{conflicts:state.syncConflicts,kind:kind.value});commit(tx);expected=D.copy(tx.after.meals.find(item=>item.id===meal.id));Object.assign(initial,{eaten:eaten.value,planned:planned.value,window:windowSelect.value,kind:kind.value});updateDraft();status.textContent='Meal time saved.';renderCardsOnly({force:true});}catch(error){status.textContent=error.message;}
     };
     details.append(form);return details;
   }
