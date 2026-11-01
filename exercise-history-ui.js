@@ -6,6 +6,36 @@ function openHealthHistoryEntry(ref,session) {
   }
   matches[0].activeFitnessDate=ref.date;session.sources.fitness=ref.cardId;session.view='workout';renderCardsOnly({force:true});return true;
 }
+function renderExerciseTrend(result,view,ref,session,prefix) {
+  const figure=planningNode('figure','health-lift-trend'),heading=planningNode('header','health-lift-trend-head');
+  const title=planningNode('h3','','Last checked set · load (kg)');title.id=prefix+'-trend-title';figure.setAttribute('aria-labelledby',title.id);heading.append(title);figure.append(heading);
+  view.trendRange=['6','12','all'].includes(view.trendRange)?view.trendRange:'6';
+  const model=LifeExerciseHistory.trend(result,{limit:view.trendRange==='all'?0:Number(view.trendRange)});
+  const range=planningSelect([['6','Latest 6 recorded days'],['12','Latest 12 recorded days'],['all','All recorded days']],view.trendRange,value=>{view.trendRange=value;renderCardsOnly({force:true});});range.id=prefix+'-trend-range';heading.append(planningField('Recorded days',range));
+  if(model.paused){figure.append(planningNode('p','health-lift-entry-status','Chart paused · records need review.'));return figure;}
+  if(!model.points.length){figure.append(planningNode('p','health-lift-entry-status','No checked sets to chart.'));return figure;}
+  figure.append(planningNode('figcaption','health-lift-entry-status',model.points.length+' of '+model.total+' recorded days'+(model.reviewDays?' · '+model.reviewDays+' '+(model.reviewDays===1?'entry needs':'entries need')+' review':'')));
+  const plot=planningNode('div','health-lift-trend-grid'),axis=planningNode('div','health-lift-trend-axis');axis.setAttribute('aria-hidden','true');axis.append(planningNode('span','',model.top+' kg'),planningNode('span','','0 kg'));plot.append(axis);
+  const scroll=planningNode('div','health-lift-trend-scroll'),canvas=planningNode('div','health-lift-trend-canvas');canvas.style.setProperty('--trend-count',String(model.points.length));scroll.append(canvas);plot.append(scroll);figure.append(plot);
+  const graph=planningNode('div','health-lift-trend-plot'),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 100 100');svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');
+  const line=document.createElementNS('http://www.w3.org/2000/svg','polyline');line.setAttribute('points',model.points.map((point,index)=>((index+.5)/model.points.length*100)+','+(100-point.weightKg/model.top*100)).join(' '));svg.append(line);graph.append(svg);canvas.append(graph);
+  const dates=planningNode('div','health-lift-trend-dates');canvas.append(dates);
+  for(const [index,point]of model.points.entries()){
+    const dot=planningNode('span','health-lift-trend-dot');dot.style.left=((index+.5)/model.points.length*100)+'%';dot.style.bottom=(point.weightKg/model.top*100)+'%';dot.setAttribute('aria-hidden','true');graph.append(dot);
+    const label=formatReadableDateKey(point.date),button=planningButton('',()=>openHealthHistoryEntry({...ref,date:point.date},session));button.classList.add('health-lift-trend-day');button.id=prefix+'-trend-'+point.date;button.dataset.date=point.date;button.title=label+' · '+point.weightKg+' kg / '+point.reps+' reps';button.setAttribute('aria-label','Open '+button.title);
+    button.replaceChildren(planningNode('span','',dateKeyToLocalDate(point.date).toLocaleDateString(undefined,{day:'numeric',month:'short'})),planningNode('strong','',point.weightKg+' kg'),planningNode('span','',point.reps+' reps'));dates.append(button);
+  }
+  const navigation=planningNode('div','health-lift-trend-nav');navigation.setAttribute('role','group');navigation.setAttribute('aria-label','Chart navigation');heading.append(navigation);
+  const earlier=planningIcon('Earlier recorded days',()=>move(-1),'chevron-left'),later=planningIcon('Later recorded days',()=>move(1),'chevron-right');
+  for(const [button,label,key]of [[earlier,'Earlier recorded days','earlier'],[later,'Later recorded days','later']]){button.id=prefix+'-trend-'+key;button.title=label;button.setAttribute('aria-label',label);navigation.append(button);}
+  view.trendScroll ??= new Map();const key=JSON.stringify([ref.boardId,ref.cardId,view.key,view.trendRange]),saved=view.trendScroll.get(key) || 0;let interacted=false,initialized=false;
+  function sync(){earlier.disabled=scroll.scrollLeft<=1;later.disabled=scroll.scrollLeft+scroll.clientWidth>=scroll.scrollWidth-1;}
+  function move(direction){interacted=true;scroll.scrollLeft+=direction*Math.max(64,scroll.clientWidth*.8);view.trendScroll.set(key,scroll.scrollLeft);sync();}
+  for(const event of ['pointerdown','wheel','focusin','keydown'])scroll.addEventListener(event,()=>{interacted=true;});
+  scroll.addEventListener('scroll',()=>{if(initialized || interacted)view.trendScroll.set(key,scroll.scrollLeft);sync();});earlier.disabled=true;later.disabled=true;
+  requestAnimationFrame(()=>{if(!scroll.isConnected)return;if(!interacted)scroll.scrollLeft=saved;initialized=true;sync();});
+  return figure;
+}
 function renderExerciseHistory(cards,session) {
   session.exerciseHistory ??= {open:false,cardId:'',key:''};
   const view=session.exerciseHistory,boardId=state.activeBoardId,prefix='health-lifts-'+encodeURIComponent(JSON.stringify(boardId));
@@ -36,6 +66,7 @@ function renderExerciseHistory(cards,session) {
     const comparison=planningNode('dl','health-lift-comparison');
     result.latest.forEach((item,index)=>{const group=planningNode('div','');group.append(planningNode('dt','',index?'Previous day - last checked set':'Latest day - last checked set'),planningNode('dd','',measurement(item.set)),planningNode('dd','health-lift-date',formatReadableDateKey(item.date)));comparison.append(group);});details.append(comparison);
   }
+  details.append(renderExerciseTrend(result,view,{boardId,cardId:card.id},session,prefix));
   const list=planningNode('div','health-lift-entries');list.setAttribute('aria-label','Exercise records');details.append(list);
   for(const row of result.rows) {
     const entry=planningNode('article','health-lift-entry'),heading=planningNode('header','health-lift-entry-heading');entry.dataset.date=row.date;entry.dataset.mode=row.mode;

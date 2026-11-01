@@ -52,3 +52,39 @@ test('zero external load remains an explicit valid checked measurement, not miss
 test('malformed non-scalar summaries are not normalized or exposed as mutable derived values',()=>{
   const source=card();source.fitnessEntries['2026-10-29'].parts.chest.exercises[0].weightKg={future:{keep:true}};const before=JSON.stringify(source),result=history.history(source,selected,options);assert.equal(result.rows.at(-1).mode,'unrecognized');assert.equal(Object.hasOwn(result.rows.at(-1),'summary'),false);assert.equal(JSON.stringify(source),before);
 });
+test('trend plots chronological last checked sets with their own reps, not the heaviest set',()=>{
+  const result=history.trend(history.history(card(),selected,options));
+  assert.deepEqual(result,{points:[{date:'2026-10-30',weightKg:15,reps:10},{date:'2026-10-31',weightKg:17.5,reps:10}],total:2,reviewDays:0,paused:false,top:17.5});
+});
+test('trend ranges retain all source days and select the latest six twelve or all without mutation',()=>{
+  const source=card();source.fitnessEntries=Object.fromEntries(Array.from({length:24},(_,i)=>['2026-10-'+String(i+1).padStart(2,'0'),entry([logged([{reps:i+1,weightKg:i,done:true}])])]));
+  const original=JSON.stringify(source),result=history.history(source,selected,options),before=JSON.stringify(result);
+  for(const [limit,length,first]of [[6,6,'2026-10-19'],[12,12,'2026-10-13'],[0,24,'2026-10-01'],[5,6,'2026-10-19'],['all',6,'2026-10-19']]){
+    const model=history.trend(result,{limit});assert.equal(model.points.length,length);assert.equal(model.points[0].date,first);assert.equal(model.points.at(-1).date,'2026-10-24');assert.equal(model.total,24);
+  }
+  assert.equal(JSON.stringify(source),original);assert.equal(JSON.stringify(result),before);assert.equal(result.rows.length,24);
+});
+test('trend excludes future unchecked removed and summary entries without deleting any history',()=>{
+  const source=card();source.fitnessEntries['2026-11-02']=entry([logged([{reps:10,weightKg:99,done:true}])]);source.fitnessEntries['2026-10-28']=entry([logged([{reps:12,weightKg:75},{reps:8,weightKg:80,removedAt:3}])]);
+  const result=history.history(source,selected,options),model=history.trend(result);assert.equal(result.rows.length,5);assert.equal(model.total,2);assert.equal(model.top,17.5);assert(!model.points.some(point=>point.weightKg===99 || point.weightKg===80 || point.weightKg===75));
+});
+test('trend keeps explicit zero load and does not manufacture a positive measurement for its axis',()=>{
+  const source=card();source.fitnessEntries={'2026-10-31':entry([logged([{reps:12,weightKg:0,done:true}])])};
+  const model=history.trend(history.history(source,selected,options));assert.deepEqual(model.points,[{date:'2026-10-31',weightKg:0,reps:12}]);assert.equal(model.top,1);assert.equal(model.total,1);
+});
+test('trend flags unknown and ambiguous records while unresolved versions pause every plotted point',()=>{
+  const source=card();source.fitnessEntries['2026-10-31'].parts.chest.exercises[0].setLog.version=999;source.fitnessEntries['2026-10-30'].parts.chest.exercises.push(summary({id:'duplicate'}));
+  assert.deepEqual(history.trend(history.history(source,selected,options)),{points:[],total:0,reviewDays:2,paused:false,top:1});
+  const paused=history.trend(history.history(card(),selected,{...options,reviewPending:true}));assert.equal(paused.paused,true);assert.deepEqual(paused.points,[]);
+});
+test('duplicate projected dates cannot silently become two points for one recorded day',()=>{
+  const result=history.history(card(),selected,options);result.rows.push({...result.rows[0]});const model=history.trend(result);assert.equal(model.paused,true);assert.equal(model.total,0);assert.deepEqual(model.points,[]);
+});
+test('trend preserves source and muscle-part scope and detached point values',()=>{
+  const source=card();source.fitnessEntries['2026-10-31'].parts.back={active:true,exercises:[logged([{reps:5,weightKg:60,done:true}])]};const before=JSON.stringify(source),result=history.history(source,selected,options),model=history.trend(result);model.points[0].weightKg=999;
+  assert.equal(result.rows[1].latest.weightKg,15);assert.equal(JSON.stringify(source),before);assert.deepEqual(history.trend(history.history(source,{partKey:'back',name:'Bench press'},options)).points,[{date:'2026-10-31',weightKg:60,reps:5}]);
+});
+test('malformed projected measurements are excluded instead of coerced into chart values',()=>{
+  const row=history.history(card(),selected,options).rows[0];
+  for(const value of [null,{},[],{rows:[null,{},undefined]},...['',-1,Infinity,NaN,100001,'17.5'].map(weightKg=>({rows:[{...row,latest:{...row.latest,weightKg}}]})),...[0,-1,1.5,Infinity,100001,'10'].map(reps=>({rows:[{...row,latest:{...row.latest,reps}}]}))])assert.equal(history.trend(value).total,0);
+});

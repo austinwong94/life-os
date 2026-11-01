@@ -46,6 +46,29 @@
 .health-lift-comparison dt,.health-lift-date{font-size:12px;color:var(--muted)}
 .health-lift-comparison dd{margin:4px 0;overflow-wrap:anywhere}
 .health-lift-entry{border-top:1px solid var(--line);padding:12px 0;min-width:0}
+.health-lift-trend{margin:16px 0;padding:14px 0;border-block:1px solid var(--line);min-width:0;max-width:100%}
+.health-lift-trend-head{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,240px) auto;gap:12px;align-items:end}
+.health-lift-trend-head h3{font:600 14px/1.5 system-ui,sans-serif;letter-spacing:0;margin:0;align-self:center}
+.health-lift-trend-head .planning-field{min-width:0;margin:0}
+.health-lift-trend-head select{box-sizing:border-box;width:100%;min-width:0;height:44px;min-height:44px;font-size:14px}
+.health-lift-trend-nav{display:flex;gap:6px}
+.health-lift-trend-nav .planning-button{width:44px;height:44px;min-width:44px;min-height:44px;padding:10px;justify-content:center}
+.health-lift-trend-nav svg{width:18px;height:18px;flex:none}
+.health-lift-trend>figcaption{margin:10px 0}
+.health-lift-trend-grid{display:grid;grid-template-columns:52px minmax(0,1fr);gap:4px;min-width:0}
+.health-lift-trend-axis{display:flex;flex-direction:column;justify-content:space-between;height:130px;padding:7px 0;box-sizing:border-box;font:11px/1.5 system-ui,sans-serif;color:var(--muted);overflow-wrap:anywhere}
+.health-lift-trend-scroll{min-width:0;max-width:100%;overflow-x:auto;scrollbar-width:thin;overscroll-behavior-inline:contain}
+.health-lift-trend-canvas{min-width:calc(var(--trend-count)*64px)}
+.health-lift-trend-plot{position:relative;height:114px;margin:8px 0;border-bottom:1px solid var(--line)}
+.health-lift-trend-plot>svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.health-lift-trend-plot polyline{fill:none;stroke:var(--action);stroke-width:2;vector-effect:non-scaling-stroke}
+.health-lift-trend-dot{position:absolute;width:7px;height:7px;border-radius:50%;background:var(--action);transform:translate(-50%,50%);pointer-events:none}
+.health-lift-trend-dates{display:grid;grid-template-columns:repeat(var(--trend-count),minmax(0,1fr));padding:6px 0}
+.health-lift-trend-day.planning-button{display:flex;flex-direction:column;justify-content:center;gap:4px;box-sizing:border-box;min-width:44px;min-height:88px;width:100%;border:0;border-radius:0;background:transparent;padding:6px 4px;font:12px/1.5 system-ui,sans-serif;letter-spacing:0;text-align:center;white-space:normal;overflow-wrap:anywhere}
+.health-lift-trend-day>strong{font-size:12px;font-weight:600}
+.health-lift-trend-day>span{font-size:11px;color:var(--muted)}
+.health-lift-trend-day.planning-button:hover{background:var(--action-soft)}
+@media(max-width:700px){.health-lift-trend-head{grid-template-columns:minmax(0,1fr) auto}.health-lift-trend-head h3{grid-column:1/-1}.health-lift-trend-head select{font-size:16px}}
 .health-lift-entry-heading{display:flex;align-items:center;flex-wrap:wrap;justify-content:space-between;gap:4px 12px}
 .health-lift-open.planning-button{border:0;background:none;border-radius:0;min-height:44px;min-width:44px;padding:8px 0;font-size:14px;text-align:left;white-space:normal;max-width:100%;overflow-wrap:anywhere}
 .health-lift-open svg{flex:none;width:18px;height:18px}

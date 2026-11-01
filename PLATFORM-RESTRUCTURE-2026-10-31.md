@@ -214,6 +214,8 @@ Eleven focused unit cases and fourteen new browser workflows cover complete-fiel
 
 The final local build `226ddf8bb0a36e1e` passes all 569 unit tests and all 130 Properties workflows in each browser engine. Both engines tested identical public files. Desktop and phone screenshots were inspected. Hosted gates, deployment and all 80 public-file fingerprints remain required before live acceptance.
 
+Release `226ddf8bb0a36e1e` is accepted live. Run `41252652142` passed all three hosted gates and deployment for source commit `bded606a0671de6d4397aa5e1a14166192f01782`. All 80 public fingerprints, the canonical root and app manifest match the frozen artifact. The checker made no private requests and wrote no records. Desktop and phone screenshots show the tested build with labelled synthetic cost records. Physical-phone operation and real signed-in cross-device use remain unverified.
+
 ## Training And Nutrition
 
 The dedicated Health view reuses the same Fitness Log and Food Tracker cards. It does not create a second workout history, food library, target table or duplicate report source. Workout and Food remember their source selections independently, including boards with multiple logs. Empty views open the requested card type without discarding an unfinished composer draft. Phone inputs use roomier rows and native numeric/date controls. The previous-performance hint uses an earlier dated entry from the same card, muscle part and exact normalized exercise name; ambiguous matches are not guessed. History opens the original dated log. The workout-part chooser retains its open state and keyboard focus during background redraws.
@@ -254,6 +256,16 @@ This is a read-only projection, not a new workout store or migration. Viewing, s
 
 For progress, show comparable evidence: load and reps for the same movement, logged training days, distance/duration for cardio, and user-chosen consistency targets. Do not equate more load or volume with better health or claim estimated energy expenditure is measured. Keep body metrics optional and secondary to recording the workout.
 
+### Follow-up: Recorded Lift Trend (1 November)
+
+Exercise history now includes a compact, read-only load chart for the same source log, muscle part and exact normalized exercise name. Each plotted day uses its last checked, non-removed set, with that set's reps printed beside its load. The line is not a personal-best, heaviest-set, estimated one-rep-max, goal score or health rating. Days are equally spaced recorded-day categories, not an elapsed-time axis. A zero-kg set remains explicitly zero; a positive axis bound is only plotting scale, not a fabricated measurement.
+
+Choose the latest six, twelve or all qualifying recorded days. There is no record cap: the complete original dated entries remain below, including old summaries, drafts, removed sets and future dates. Horizontal scrolling and labelled 44px arrow buttons keep long chart histories reachable on phones and portrait screens. Each labelled day opens its exact original workout; captured wrong-board, missing or ambiguous targets remain refused. Full date, load and reps are available in each button's accessible name. Chart navigation, range and scroll position are page-local, not another device or cloud record.
+
+Future entries, unchecked/removed sets, legacy summaries and unrecognized/ambiguous records are not plotted as completed exercise. Review-needed days remain explicit in the full history, and a chart with qualifying points also displays the review count. Unresolved versions pause the chart and comparison rather than choosing a winner. All existing measured records, unknown fields, diary and food entries remain in their original stores. No migration, automatic conversion, database, authentication, backend-job or new service change is involved.
+
+This increment extends the exercise-history suite to 21 pure cases and 14 browser workflows per engine. The first local checks caught native WebKit select sizing; the corrected control has an explicit 44px height. Responsive assertions wait for the application's resize redraw before checking mounted cells. The complete local unit suite contains 577 checks. Local/hosted final acceptance and full live fingerprints are recorded separately; synthetic browser tests do not certify a physical phone or real signed-in cross-device operation.
+
 Nutrition should stay meal-first: choose a meal, add a familiar food, enter a clearly stated quantity/unit, then collapse the details. Keep the saved monthly targets and snapshot nutrition values. Do not silently update old meals when a library food changes.
 
 ## App Access And Privacy
@@ -285,7 +297,7 @@ This routine is a design recommendation, not evidence that the application can g
 | Compact expense entry with original-draft, receipt-read and stale-record protection | Live as `7c64029d06bbdccd`; 553 units, 100 Properties workflows per engine, all hosted gates and 80-file live acceptance passed |
 | Responsive original expense List/Table, scoped totals and captured-action safety | Live as `e1cee8331637dcf7`; 558 units, 108 Properties workflows per engine, all hosted gates and 80-file live acceptance passed |
 | Clearer original collection/Cash Plan report hierarchy and native optional detail | Live as `9c45598ae6284bb8`; 558 units, 116 Properties workflows per engine, all hosted gates and 80-file live acceptance passed |
-| Mounted fixed/annual/one-off cost drafts, original-target guards and safe receipt replacement | Implemented; 569 units and 130 Properties workflows per engine pass; hosted/live acceptance in progress |
+| Mounted fixed/annual/one-off cost drafts, original-target guards and safe receipt replacement | Live as `226ddf8bb0a36e1e`; 569 units, 130 Properties workflows per engine, all hosted gates and 80-file live acceptance passed |
 | Health workspace sharing existing workout/food sources | Implemented; nine dedicated browser workflows cover navigation, writing, multiple sources, empty views and target integrity |
 | Previous exercise reference and original dated history | Implemented; tested with synthetic records |
 | Stable-ID strength editing/removal and correctly sized textareas | Implemented; reordered, ambiguous and wrong-board targets plus delayed scroll/box-model regressions tested |
@@ -295,7 +307,8 @@ This routine is a design recommendation, not evidence that the application can g
 | Opt-in individual sets, completion history and reporting | Implemented; 19 focused unit cases and ten browser workflows per engine; full hosted acceptance required |
 | Optional temporary rest timer in Health, Workout | Implemented; nine unit cases and seven browser workflows per engine; hosted acceptance required |
 | Read-only dated exercise comparison and full set history | Implemented; thirteen pure cases and eight browser workflows per engine; hosted acceptance required |
-| Dedicated routine templates and lift-trend charts | Later work; not included in this increment |
+| Read-only recorded lift trend with load/reps and original-day navigation | Implemented; 21 pure history/chart cases and 14 browser workflows per engine; hosted/live acceptance required |
+| Dedicated routine templates | Later work; not included in this increment |
 | Habit targets and optional gentle follow-up | Design backlog; reuse existing weekly records before adding another store |
 | Incremental record persistence and smaller domain modules | Architectural backlog; must not be enabled as an unverified migration |
 | Offline shell and push notifications | Not enabled |

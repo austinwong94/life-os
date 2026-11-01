@@ -48,6 +48,16 @@
       completedSets:reviewPending?null:measured.reduce((sum,row)=>sum+row.completed,0),
       latest:reviewPending?[]:measured.slice(0,2).map(row=>({date:row.date,set:{...row.latest}}))};
   }
-  const api=Object.freeze({choices,history,validDay});
+  function trend(result,{limit=6}={}) {
+    const size=[0,6,12].includes(limit)?limit:6,rows=Array.isArray(result?.rows)?result.rows:[];
+    const reviewDays=rows.filter(row=>row && !row.future && ['ambiguous','unrecognized'].includes(row.mode)).length;
+    if(result?.reviewPending)return {points:[],total:0,reviewDays,paused:true,top:1};
+    const points=rows.filter(row=>row?.mode==='sets' && !row.future && row.completed>0 && validDay(row.date) && row.latest?.done===true && !row.latest.removedAt && typeof row.latest.weightKg==='number' && Number.isFinite(row.latest.weightKg) && row.latest.weightKg>=0 && row.latest.weightKg<=100000 && Number.isSafeInteger(row.latest.reps) && row.latest.reps>0 && row.latest.reps<=100000)
+      .map(row=>({date:row.date,weightKg:row.latest.weightKg,reps:row.latest.reps})).sort((a,b)=>a.date.localeCompare(b.date));
+    if(new Set(points.map(point=>point.date)).size!==points.length)return {points:[],total:0,reviewDays,paused:true,top:1};
+    const shown=size?points.slice(-size):points;
+    return {points:shown,total:points.length,reviewDays,paused:false,top:shown.reduce((max,point)=>Math.max(max,point.weightKg),1)};
+  }
+  const api=Object.freeze({choices,history,trend,validDay});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeExerciseHistory=api;
 })(typeof globalThis==='undefined'?window:globalThis);
