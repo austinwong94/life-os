@@ -227,20 +227,26 @@ function openSaveDetails() {
   dialog.append(feedback,actions);
 }
 function openDailyCapture() {
-  const session=dailySession(),draft=session.capture ||= {kind:'task',text:'',date:getTodayKey(),area:''};
+  const boardId=state.activeBoardId,today=getTodayKey(),session=dailySession(),draft=session.capture ||= {kind:'task',text:'',date:today,area:''};
   const dialog=dailyDialog('Capture'),form=planningNode('form','daily-form'),message=planningNode('p','daily-message');message.setAttribute('role','status');
-  const kind=planningSelect([['task','Task'],['note','Quick note'],['experience','Experience to try']],draft.kind,value=>{draft.kind=value;saveDailyDraft();});
-  const text=planningNode('textarea');text.rows=3;text.required=true;text.value=draft.text;text.oninput=()=>{draft.text=text.value;message.textContent=saveDailyDraft()?'Draft kept in this tab':'Draft only in memory - storage unavailable';};
-  const date=planningInput('date',draft.date,value=>{draft.date=value;saveDailyDraft();});
+  dialog.classList.add('daily-capture-dialog');
+  const editable=()=>dialog.open && dialog.isConnected && session.capture===draft;
+  const current=()=>editable() && state.activeBoardId===boardId && dailySession()===session;
+  const kind=planningSelect([['task','Task'],['note','Quick note'],['experience','Experience to try']],draft.kind,value=>{if(!editable())return;draft.kind=value;dateChoices.hidden=value==='note';saveDailyDraft(boardId);});
+  const text=planningNode('textarea');text.rows=3;text.required=true;text.value=draft.text;text.oninput=()=>{if(!editable())return;draft.text=text.value;const kept=saveDailyDraft(boardId);message.dataset.state=kept?'kept':'error';message.textContent=kept?'Draft kept in this tab':'Draft only in memory - storage unavailable';};
+  const date=planningInput('date',draft.date,value=>{if(!editable())return;draft.date=value;saveDailyDraft(boardId);});
   date.setAttribute('aria-label','Date (optional for tasks)');
-  form.append(planningField('Capture as',kind),planningField('What is on your mind?',text),planningField('Date (optional for tasks)',planningOptionalDate(date,'Clear capture date',()=>{draft.date='';saveDailyDraft();})),
-    planningField('Area',planningSelect(taskAreaOptions(draft.area),draft.area,value=>{draft.area=value;saveDailyDraft();})));
+  const dateChoices=planningCaptureDates(date,today,current);dateChoices.hidden=draft.kind==='note';
+  const dateField=planningNode('div','planning-date-field');dateField.append(planningField('Date (optional for tasks)',planningOptionalDate(date,'Clear capture date',()=>{if(!editable())return;draft.date='';saveDailyDraft(boardId);})),dateChoices);
+  form.append(planningField('Capture as',kind),planningField('What is on your mind?',text),dateField,
+    planningField('Area',planningSelect(taskAreaOptions(draft.area),draft.area,value=>{if(!editable())return;draft.area=value;saveDailyDraft(boardId);})));
   const save=planningButton('Save capture',null,'check');save.type='submit';save.classList.add('is-primary');
   form.append(message,save,planningButton('Add a card instead',()=>{dialog.close();openCardComposer();},'layout-grid'));
   form.onsubmit=event=>{
-    event.preventDefault();if(!draft.text.trim() || (draft.date && !LifePlanner.validDate(draft.date)))return;
+    event.preventDefault();delete message.dataset.state;if(!current() || getTodayKey()!==today){message.textContent='The board or day changed. Reopen this capture on the original board. Your draft is kept.';return;}
+    if(!draft.text.trim() || (draft.date && !LifePlanner.validDate(draft.date)))return;
     if(draft.pendingKind && draft.pendingKind!==draft.kind){message.textContent='Retry the original capture type before changing it.';return;}
-    draft.pendingId ||= createId();draft.pendingKind=draft.kind;saveDailyDraft();
+    draft.pendingId ||= createId();draft.pendingKind=draft.kind;saveDailyDraft(boardId);
     if(draft.kind==='note'){
       if(draft.pendingTarget && draft.pendingTarget.date!==(draft.date || getTodayKey())){message.textContent='Retry the original note date before changing it.';return;}
       let card=draft.pendingTarget?resolveLiveCard({id:draft.pendingTarget.cardId}):state.cards.find(c=>c.type==='sidenote' && c.id===session.cardChoices?.sidenote) || state.cards.find(c=>c.type==='sidenote');
@@ -256,8 +262,8 @@ function openDailyCapture() {
       task ||= LifePlanner.add(source,draft.date,draft.text,draft.pendingId);
       LifePlanner.change(source,task.id,{title:draft.text.trim(),dateKey:draft.date,area:draft.area,intent:draft.kind==='experience'?'experience':'task',status:'todo'});LifePlanner.project(source);draft.pendingBase=LifeStateMerge.copy(task);
     }
-    saveDailyDraft();if(!saveState()){message.textContent='Not saved. Your draft is kept; please retry.';return;}
-    delete session.capture;saveDailyDraft();dialog.close();renderCardsOnly({force:true});
+    saveDailyDraft(boardId);if(!saveState()){message.textContent='Not saved. Your draft is kept; please retry.';return;}
+    delete session.capture;saveDailyDraft(boardId);dialog.close();renderCardsOnly({force:true});
   };dialog.append(form);text.focus();
 }
 function renderDailyHome() {

@@ -4,6 +4,24 @@ const P=require('../planner-store.js');
 const W=require('../planning.js');
 const M=require('../state-merge.js');
 const draft={title:'Culturely meeting',area:'Culturely',startDate:'2026-09-10',endDate:'2026-09-10',startTime:'14:00',endTime:'15:00',allDay:false,notes:'Private notes\nSecond line'};
+test('capture date choices use explicit local calendar days and return independent choices',()=>{
+  const expected=[['Today','2026-11-01'],['Tomorrow','2026-11-02'],['In 7 days','2026-11-08']];
+  const result=W.captureDateChoices('2026-11-01');assert.deepEqual(result,expected);result[0][1]='Changed';result.push(['Other','']);assert.deepEqual(W.captureDateChoices('2026-11-01'),expected);
+});
+test('capture date choices cross month year and leap-day boundaries without guessed week starts',()=>{
+  assert.deepEqual(W.captureDateChoices('2028-02-28'),[['Today','2028-02-28'],['Tomorrow','2028-02-29'],['In 7 days','2028-03-06']]);
+  assert.deepEqual(W.captureDateChoices('2026-12-31'),[['Today','2026-12-31'],['Tomorrow','2027-01-01'],['In 7 days','2027-01-07']]);
+});
+test('invalid capture anchors are refused and dates outside the supported range are not offered',()=>{
+  for(const day of ['',null,undefined,'2026-02-30','2026-13-01','2026-11-01T12:00:00Z',{}])assert.throws(()=>W.captureDateChoices(day),/valid local day/);
+  assert.deepEqual(W.captureDateChoices('9999-12-31'),[['Today','9999-12-31']]);
+});
+test('capture date presets follow calendar days through daylight-saving transitions',()=>{
+  const {execFileSync}=require('node:child_process');
+  const script='require('+JSON.stringify(require.resolve('../planner-store.js'))+');const w=require('+JSON.stringify(require.resolve('../planning.js'))+');console.log(JSON.stringify([w.captureDateChoices("2026-03-07"),w.captureDateChoices("2026-10-31")]));';
+  const rows=JSON.parse(execFileSync(process.execPath,['-e',script],{encoding:'utf8',env:{...process.env,TZ:'America/New_York'}}));
+  assert.deepEqual(rows[0],[['Today','2026-03-07'],['Tomorrow','2026-03-08'],['In 7 days','2026-03-14']]);assert.deepEqual(rows[1],[['Today','2026-10-31'],['Tomorrow','2026-11-01'],['In 7 days','2026-11-07']]);
+});
 test('undated capture is not fabricated as an overdue task and completion history stays visible',()=>{
   const card={id:'source',plannerEntries:{}},task=P.add(card,'','Idea','id');
   assert.ok(task);assert.equal(P.forDay(card,'2026-09-10').length,0);

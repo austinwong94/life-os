@@ -3,6 +3,10 @@
   const areas = ["Culturely", "MascotRun", "Sunrise Villa", "Lovely Paradise", "Fitness", "Personal"];
   const dateKey = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,"0")}-${String(date.getDate()).padStart(2,"0")}`;
   const shift = (day, count) => { const date = new Date(day+"T12:00:00"); date.setDate(date.getDate()+count); return dateKey(date); };
+  function captureDateChoices(today) {
+    if(!LifePlanner.validDate(today))throw new Error('A valid local day is required.');
+    return [['Today',today],['Tomorrow',shift(today,1)],['In 7 days',shift(today,7)]].filter(([,day])=>LifePlanner.validDate(day));
+  }
   function localInput(iso) {
     const date = new Date(iso);
     return Number.isFinite(date.getTime()) ? dateKey(date)+"T"+String(date.getHours()).padStart(2,"0")+":"+String(date.getMinutes()).padStart(2,"0") : "";
@@ -48,7 +52,7 @@
     url.search = new URLSearchParams({action:"TEMPLATE",text:activity.title,dates,location:activity.location || "",details:[activity.notes,activity.url].filter(Boolean).join("\n")}).toString();
     return url.href;
   }
-  const api = {areas,dateKey,shift,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink};
+  const api = {areas,dateKey,shift,captureDateChoices,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink};
   root.LifePlanning = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -92,6 +96,16 @@ function planningOptionalDate(input,label,onClear) {
     // WebKit can otherwise keep stale segments after the value becomes empty.
     input.type="text";input.value="";input.type="date";onClear();
   },"x"));return group;
+}
+function planningCaptureDates(input,today,canApply) {
+  const root=planningNode('div','planning-date-choices');root.setAttribute('role','group');root.setAttribute('aria-label','Quick dates');
+  for(const [label,value] of LifePlanning.captureDateChoices(today)){
+    const button=planningButton(label,()=>{
+      if(!root.isConnected || !input.isConnected || root.hidden || root.closest('details')?.open===false || root.closest('dialog')?.open===false || getTodayKey()!==today || !canApply())return;
+      input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));
+    });button.title=formatReadableDateKey(value);root.append(button);
+  }
+  return root;
 }
 function planningSelect(options, value, onChange) {
   const select = document.createElement("select");
@@ -415,24 +429,26 @@ function renderTasksWorkspace(root) {
   root.append(results); renderTaskResults(results);
 }
 function renderTaskCapture() {
-  const session = planningSession();
+  const session = planningSession(),boardId=state.activeBoardId,today=getTodayKey();
   const draft = session.capture ||= {title:"",area:session.lastArea || "",dateKey:session.view==="today"?session.day:""};
   const form = planningNode("form","task-capture");
-  const title = planningInput("text",draft.title,value=>{draft.title=value;savePlanningSession();}); title.placeholder="Add a task";title.required=true;title.setAttribute("aria-label","New task");
+  const current=()=>form.isConnected && state.activeBoardId===boardId && state.ui.workspaceMode==='tasks' && planningSession()===session && session.capture===draft;
+  const title = planningInput("text",draft.title,value=>{if(!current())return;draft.title=value;savePlanningSession();}); title.placeholder="Add a task";title.required=true;title.setAttribute("aria-label","New task");
   const add = planningIcon("Add task",null,"plus"); add.type="submit";add.classList.add("is-primary","task-capture-submit");
   const main = planningNode("div","task-capture-main");main.append(title);
   const options = planningNode("div","task-capture-options");
   const details=planningNode('details','task-capture-details'),summary=planningNode('summary');summary.setAttribute('aria-label','Task area and date');
   const updateSummary=()=>{summary.textContent=(draft.area || 'Unsorted')+' · '+(draft.dateKey?formatPlannerOriginDate(draft.dateKey):'No date');};
   details.open=Boolean(session.captureOptionsExpanded);details.append(summary,options);updateSummary();
-  summary.addEventListener('click',event=>{event.preventDefault();details.open=!details.open;session.captureOptionsExpanded=details.open;savePlanningSession();});
-  details.addEventListener('toggle',()=>{if(!details.isConnected)return;session.captureOptionsExpanded=details.open;savePlanningSession();});
-  const date=planningInput("date",draft.dateKey,value=>{draft.dateKey=value;updateSummary();savePlanningSession();});date.setAttribute("aria-label","Planned day (optional)");
-  options.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{draft.area=value;updateSummary();savePlanningSession();})),
-    planningField("Planned day (optional)",planningOptionalDate(date,"Clear planned day",()=>{draft.dateKey="";updateSummary();savePlanningSession();})));
+  summary.addEventListener('click',event=>{event.preventDefault();if(!current())return;details.open=!details.open;session.captureOptionsExpanded=details.open;savePlanningSession();});
+  details.addEventListener('toggle',()=>{if(!current())return;session.captureOptionsExpanded=details.open;savePlanningSession();});
+  const date=planningInput("date",draft.dateKey,value=>{if(!current())return;draft.dateKey=value;updateSummary();savePlanningSession();});date.setAttribute("aria-label","Planned day (optional)");
+  const dateField=planningNode('div','planning-date-field');dateField.append(planningField("Planned day (optional)",planningOptionalDate(date,"Clear planned day",()=>{if(!current())return;draft.dateKey="";updateSummary();savePlanningSession();})),planningCaptureDates(date,today,current));
+  options.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{if(!current())return;draft.area=value;updateSummary();savePlanningSession();})),dateField);
   const status=planningNode("p","planning-message");status.setAttribute("role","status");form.append(main,details,add,status);
   form.onsubmit = event => {
     event.preventDefault();
+    if(!current() || getTodayKey()!==today){status.textContent='The board, view or day changed. Reopen this capture. Your draft is kept.';return;}
     if (!title.value.trim() || (draft.dateKey && !LifePlanner.validDate(draft.dateKey))) return;
     draft.pendingTaskId ||= createId();
     const source = getPlannerSourceCards().find(card=>LifePlanner.ensure(card).some(task=>task.id===draft.pendingTaskId)) || getPlannerWriteSourceCard({category:draft.area || "Unsorted"},draft.dateKey);

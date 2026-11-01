@@ -63,6 +63,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .task-capture-details { grid-column: 1 / -1; grid-row: 2; }
 .task-capture-details > summary { color: var(--muted); font-size: 12px; cursor: pointer; min-height: 44px; padding: 12px 4px; box-sizing: border-box; overflow-wrap: anywhere; }
 .task-capture-details .task-capture-options { margin: 0 0 6px; }
+.planning-date-field { display: grid; gap: 6px; min-width: 0; align-content: start; }
+.planning-date-choices { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.planning-date-choices[hidden] { display: none; }
+.planning-date-choices .planning-button { flex: 1 1 76px; min-width: 44px; min-height: 44px; padding: 8px 6px; font-size: 13px; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; letter-spacing: 0; }
+.daily-capture-dialog .daily-message[data-state=kept] { color: var(--muted); }
 .task-capture .planning-optional-date button { background: transparent; color: var(--muted); border-color: transparent; }
 @media (min-width: 701px) and (hover: hover) and (pointer: fine) {
   .task-workspace .task-capture { grid-template-columns: minmax(0,1fr) 36px; }
