@@ -42,6 +42,14 @@
 .trial-foods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
 .trial-foods>.planning-button{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;min-height:62px;padding:9px 10px;white-space:normal;text-align:left;overflow-wrap:anywhere}
 .trial-foods strong{font-size:12px;font-weight:600}.trial-foods span{font-size:12px;color:var(--muted)}
+.trial-recent-foods{margin-top:16px;padding-top:12px;border-top:1px solid var(--line)}
+.trial-recent-foods h4{font-size:13px;font-weight:600;margin:0 0 10px}.trial-recent-foods>.planning-button{margin-top:10px;font-size:12px}
+.trial-common-foods{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.trial-common-foods>.planning-button{justify-content:flex-start;white-space:normal;text-align:left;overflow-wrap:anywhere;padding:8px 9px;font-size:12px}
+.trial-portion-choices{display:grid;grid-template-columns:repeat(3,minmax(44px,1fr));gap:6px}
+.trial-portion-choices>.planning-button{white-space:normal;padding:8px 4px;font-size:13px}
+.trial-common-foods>.planning-button,.trial-portion-choices>.planning-button{transition:none}
+.one-tap-workspace .trial-common-foods [aria-pressed=true],.one-tap-workspace .trial-portion-choices [aria-pressed=true]{background:var(--action-fill,var(--action));border-color:var(--action);color:var(--action-on,#fff)}
 .trial-food-setup{margin-top:12px;border-top:1px solid var(--line)}
 .trial-food-setup>summary,.trial-reflection>summary,.trial-journal>summary{cursor:pointer;padding:13px 0;color:var(--ink);font-size:13px;font-weight:550}
 .trial-form{display:grid;gap:12px;padding:8px 0 14px;min-width:0}

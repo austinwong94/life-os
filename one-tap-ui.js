@@ -147,12 +147,32 @@
     const stepActions=node('div','trial-actions');for(const value of ['Started something','Finished a small step'])stepActions.append(writeButton(root,ref,value,'step',{value},value==='Started something'?'play':'check'));step.append(stepActions);
     const water=card('water','plus',model.waterMl+' mL recorded'),waterActions=node('div','trial-actions');for(const ml of [250,350,500])waterActions.append(writeButton(root,ref,ml+' mL','water',{ml}));water.append(waterActions);
     const food=card('food','utensils',model.foodEntries+' food entr'+(model.foodEntries===1?'y':'ies')+' - no nutrition totals in this trial'),foods=node('div','trial-foods');
-    for(const f of [...model.shortcuts.slice().reverse(),...T.foods()]){
-      const button=writeButton(root,ref,f.name+' - '+f.amount+' '+f.unit+(f.amount!==1 && f.unit!=='g'?'s':''),'food',{name:f.name,amount:f.amount,unit:f.unit});button.replaceChildren(node('strong','',f.name),node('span','',f.amount+' '+f.unit+(f.amount!==1 && f.unit!=='g'?'s':'')));foods.append(button);
-    }food.append(foods);
+    const portionLabel=f=>f.amount+' '+f.unit+(f.amount!==1 && f.unit!=='g'?'s':''),portionKey=f=>JSON.stringify([f.name,f.amount,f.unit]);
+    const foodButton=f=>{const button=writeButton(root,ref,f.name+' - '+portionLabel(f),'food',{name:f.name,amount:f.amount,unit:f.unit});button.replaceChildren(node('strong','',f.name),node('span','',portionLabel(f)));return button;};
+    const fixedFoods=[...model.shortcuts.slice().reverse(),...T.foods()],fixedKeys=new Set(fixedFoods.map(portionKey));
+    for(const f of fixedFoods)foods.append(foodButton(f));food.append(foods);
+    const recent=T.recentFoods(b.oneTapExperiment,ref.day).filter(f=>!fixedKeys.has(portionKey(f)));
+    if(recent.length){
+      const section=node('section','trial-recent-foods');section.setAttribute('aria-label','Recent food portions');section.append(node('h4','','Recent portions'));
+      const choices=node('div','trial-foods'),limit=Number.isSafeInteger(s.recentLimit) && s.recentLimit>=4?s.recentLimit:4;for(const f of recent.slice(0,limit))choices.append(foodButton(f));section.append(choices);
+      if(recent.length>limit)section.append(planningButton('More recent portions',()=>{if(!current(root,ref) || s.busy || s.pending)return;s.recentLimit=limit+4;keep(boardId,s);redraw(boardId);},'plus'));food.append(section);
+    }
     const setup=node('details','trial-food-setup');setup.append(node('summary','','Custom food / shortcut'));disclosure(setup,'foodSetup',boardId,s);
-    const foodDraft=s.foodDraft ||= {name:'',amount:'',unit:'g',pin:true},form=node('form','trial-form'),name=planningInput('text',foodDraft.name,v=>{foodDraft.name=v;keep(boardId,s);}),amount=planningInput('number',foodDraft.amount,v=>{foodDraft.amount=v;keep(boardId,s);}),unit=planningSelect(T.units.map(v=>[v,v]),foodDraft.unit,v=>{foodDraft.unit=v;keep(boardId,s);});amount.step='any';amount.min='0.01';amount.max='100000';name.required=true;name.maxLength=160;amount.required=true;
-    form.append(planningField('Food name',name),planningField('Amount',amount),planningField('Unit',unit));
+    const foodDraft=s.foodDraft ||= {name:'',amount:'',unit:'g',pin:true},form=node('form','trial-form'),common=node('div','trial-common-foods'),portionChoices=node('div','trial-portion-choices');common.setAttribute('role','group');common.setAttribute('aria-label','Food choices');portionChoices.setAttribute('role','group');portionChoices.setAttribute('aria-label','Portion choices');
+    const canChange=()=>current(root,ref) && setup.open && !s.busy && !s.pending && ref.day<=today && s.foodDraft===foodDraft;
+    const markChoices=()=>{
+      common.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.foodName===foodDraft.name && button.dataset.foodUnit===foodDraft.unit)));
+      portionChoices.querySelectorAll('button').forEach(button=>button.setAttribute('aria-pressed',String(foodDraft.amount!=='' && Number(foodDraft.amount)===Number(button.dataset.amount))));
+    };
+    const name=planningInput('text',foodDraft.name,v=>{foodDraft.name=v;keep(boardId,s);markChoices();}),amount=planningInput('number',foodDraft.amount,v=>{foodDraft.amount=v;keep(boardId,s);markChoices();}),unit=planningSelect(T.units.map(v=>[v,v]),foodDraft.unit,v=>{foodDraft.unit=v;keep(boardId,s);renderPortions();markChoices();});amount.step='any';amount.min='0.01';amount.max='100000';name.required=true;name.maxLength=160;amount.required=true;
+    function renderPortions(){
+      portionChoices.replaceChildren();for(const n of T.portions(foodDraft.unit)){
+        const button=planningButton(portionLabel({amount:n,unit:foodDraft.unit}),()=>{if(!canChange())return;foodDraft.amount=String(n);amount.value=foodDraft.amount;keep(boardId,s);markChoices();});button.dataset.amount=String(n);button.dataset.trialWrite='';button.disabled=s.busy || Boolean(s.pending) || ref.day>today;portionChoices.append(button);
+      }markChoices();
+    }
+    for(const f of T.foods().filter(f=>f.id!=='egg-2')){
+      const button=planningButton(f.name,()=>{if(!canChange())return;Object.assign(foodDraft,{name:f.name,amount:String(f.amount),unit:f.unit});name.value=foodDraft.name;amount.value=foodDraft.amount;unit.value=foodDraft.unit;keep(boardId,s);renderPortions();});button.setAttribute('aria-label','Choose '+f.name);button.dataset.foodName=f.name;button.dataset.foodUnit=f.unit;button.dataset.trialWrite='';common.append(button);
+    }renderPortions();form.append(common,planningField('Food name',name),portionChoices,planningField('Amount',amount),planningField('Unit',unit));
     const pin=node('label','trial-toggle'),pinInput=document.createElement('input');pinInput.type='checkbox';pinInput.checked=foodDraft.pin;pinInput.onchange=()=>{foodDraft.pin=pinInput.checked;keep(boardId,s);};pin.append(pinInput,node('span','','Save as a shortcut instead of logging food'));form.append(pin);
     const submit=planningButton('Keep food',null,'check');submit.type='submit';submit.dataset.trialWrite='';submit.disabled=s.busy || Boolean(s.pending) || ref.day>today;form.append(submit);
     form.onsubmit=e=>{e.preventDefault();if(!current(root,ref))return;save(root,ref,foodDraft.pin?'shortcut':'food',{name:foodDraft.name,amount:Number(foodDraft.amount),unit:foodDraft.unit},{clearDraft:{kind:'food',expected:T.copy(foodDraft)}});};setup.append(form);

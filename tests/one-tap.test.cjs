@@ -55,3 +55,15 @@ test('contradictory copies of one event are atomic and retained instead of combi
 test('observed capture sequence orders same-millisecond taps without inventing a later timestamp',()=>{
   let store=add(undefined,{...event('z','mood',{value:'Happy'}),sequence:1});store=add(store,{...event('a','mood',{value:'Calm'}),sequence:2});assert.equal(T.summary(store,today).mood,'Calm');assert.equal(store.events.a.recordedAt,store.events.z.recordedAt);for(const sequence of [0,-1,1.5,Number.MAX_SAFE_INTEGER+1])assert.throws(()=>add(store,{...event('bad'),sequence}));
 });
+test('portion presets are editable quantities not nutrition conversions and never share mutable arrays',()=>{
+  assert.deepEqual(T.portions('egg'),[1,2,3]);assert.deepEqual(T.portions('scoop'),[1,2,3]);assert.deepEqual(T.portions('g'),[50,100,150,200]);assert.deepEqual(T.portions('unknown'),[]);const p=T.portions('egg');p[0]=99;assert.deepEqual(T.portions('egg'),[1,2,3]);
+});
+test('recent food portions preserve exact names units and decimals without nutrition or invented defaults',()=>{
+  assert.deepEqual(T.recentFoods(undefined,today),[]);let store;for(const [i,p]of [{name:'Labelled powder',amount:1.5,unit:'scoop'},{name:'Labelled powder',amount:37.25,unit:'g'},{name:'Another brand',amount:1.5,unit:'scoop'}].entries())store=add(store,{...event('f'+i,'food',p),sequence:i+1});const before=JSON.stringify(store),recent=T.recentFoods(store,today);assert.deepEqual(recent.map(p=>[p.name,p.amount,p.unit]),[['Another brand',1.5,'scoop'],['Labelled powder',37.25,'g'],['Labelled powder',1.5,'scoop']]);recent[0].amount=99;assert.equal(JSON.stringify(store),before);assert(!Object.hasOwn(T.recentFoods(store,today)[0],'protein'));
+});
+test('recent portions deduplicate only exact snapshots and Undo can reveal an earlier matching portion',()=>{
+  const food={name:'My eggs',amount:3,unit:'egg'};let store=add(undefined,{...event('first','food',food),sequence:1});store=add(store,{...event('other','food',{...food,amount:2}),sequence:2});store=add(store,{...event('repeat','food',food),sequence:3});assert.deepEqual(T.recentFoods(store,today).map(p=>p.amount),[3,2]);store=add(store,{...event('undo','undo',{targetId:'repeat'}),sequence:4});assert.deepEqual(T.recentFoods(store,today).map(p=>p.amount),[2,3]);assert.equal(Object.keys(store.events).length,4);
+});
+test('recent portions exclude later-day and undone foods as well as shortcut-only records',()=>{
+  let store=add(undefined,event('old','food',{name:'Past meal',amount:150,unit:'g'},'2026-10-31'));store=add(store,event('today','food',{name:'Today meal',amount:200,unit:'g'}));store=add(store,event('pin','shortcut',{name:'Shortcut not eaten',amount:2,unit:'egg'}));assert.deepEqual(T.recentFoods(store,'2026-10-31'),[{name:'Past meal',amount:150,unit:'g'}]);store=add(store,event('undo','undo',{targetId:'old'},'2026-10-31'));assert.deepEqual(T.recentFoods(store,'2026-10-31'),[]);assert.throws(()=>T.recentFoods(store,'invalid'));const bad={version:99,events:{}};assert.throws(()=>T.recentFoods(bad,today));assert.deepEqual(bad,{version:99,events:{}});
+});

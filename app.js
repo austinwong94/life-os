@@ -2687,6 +2687,8 @@ function queueBoardRender() {
     boardResizeFrame = null;
     const workbook=window.LifeMoneyWorkbookUI?.active();
     if(workbook?.host.isConnected){workbook.resize?.();return;}
+    // The experiment's responsive grid needs CSS layout, not new form nodes.
+    if(state.ui.workspaceMode==='oneTap' && elements.boardGrid.querySelector('.one-tap-workspace'))return;
     renderCardsOnly();
   });
 }
