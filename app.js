@@ -9106,6 +9106,7 @@ function printCurrentReport() {
 
 function syncModalOpenState() {
   const hasOpenModal =
+    Boolean(document.getElementById("cloudCopiesReview")) ||
     Boolean(document.getElementById("recoveryModal")) ||
     Boolean(document.getElementById("restoreReviewModal")) ||
     Boolean(document.getElementById("noteTaskDialog")) ||
