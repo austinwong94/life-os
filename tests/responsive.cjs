@@ -12,6 +12,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   const context=await browser.newContext({viewport:{width:1206,height:866},timezoneId:'Asia/Kuala_Lumpur'});
   await context.route('https://**/*',route=>route.fulfill({status:503,body:'No external requests in tests'}));
   const page=await context.newPage(),errors=[];page.setDefaultTimeout(6000);page.on('pageerror',error=>errors.push(error.stack));
+  await page.clock.setFixedTime(new Date('2026-11-01T04:00:00Z'));
   try{await page.goto(URL+'?preview=1&liveReload=0');await fn(page,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
   catch(error){results.push({name,pass:false,error:error.stack,pageErrors:errors});await page.screenshot({path:out+'/responsive-failure-'+results.length+'.png'}).catch(()=>{});}
   console.log(JSON.stringify(results.at(-1)));await context.close();
@@ -128,6 +129,15 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   assert.equal(await page.locator('.diary-thoughts').inputValue(),text);
   assert.equal(await page.locator('.diary-feeling-selection').innerText(),'Meh');
   assert.equal(await page.evaluate(()=>getActiveDiaryDate(state.cards.find(c=>c.type==='diary'))),savedDate);
+ });
+ await run('Diary midnight rollover keeps the complete preceding day and records the new feeling on the new day',async page=>{
+  const text='A full evening thought.\nEvery character remains after midnight.';
+  await page.locator('.diary-thoughts').fill(text);await page.locator('.mood-picker').getByRole('button',{name:'Sad',exact:true}).click();await page.evaluate(()=>flushDeviceWrites());
+  assert.equal(await page.locator('.diary-feeling-selection').innerText(),'Sad');assert.equal(await page.evaluate(()=>getActiveDiaryDate(state.cards.find(c=>c.type==='diary'))),'2026-11-01');
+  await page.clock.setFixedTime(new Date('2026-11-01T16:00:01Z'));await page.evaluate(async()=>{resetDiaryCardsToToday();await flushDeviceWrites();renderCardsOnly({force:true});});
+  assert.equal(await page.evaluate(()=>getActiveDiaryDate(state.cards.find(c=>c.type==='diary'))),'2026-11-02');assert.equal(await page.locator('.diary-feeling-selection').innerText(),'Not set');
+  const previous=await page.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.type==='diary').diaryEntries['2026-11-01']));assert.equal(previous.feeling,'Sad');assert.equal(previous.thoughts,text);
+  await page.locator('.mood-picker').getByRole('button',{name:'Calm',exact:true}).click();await page.evaluate(()=>flushDeviceWrites());await page.reload();assert.equal(await page.locator('.diary-feeling-selection').innerText(),'Calm');assert.equal(await page.locator('.diary-thoughts').inputValue(),'');assert.deepEqual(await page.evaluate(()=>state.cards.find(c=>c.type==='diary').diaryEntries['2026-11-01']),previous);assert.equal(await page.evaluate(()=>state.cards.find(c=>c.type==='diary').diaryEntries['2026-11-02'].feeling),'Calm');
  });
  await run('Board picker ignores settled scroll notifications but closes on newly changed scrolling',async page=>{
   await page.evaluate(async()=>{await flushDeviceWrites();const spacer=document.createElement('div');spacer.style.height='2000px';elements.workspace.append(spacer);await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});
