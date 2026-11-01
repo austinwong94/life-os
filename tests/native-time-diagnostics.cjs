@@ -11,5 +11,7 @@ const {webkit}=require('playwright');
     for(const key of keys)await page.keyboard.press(key);
     console.log(JSON.stringify({keys,result:await field.evaluate(n=>({value:n.value,badInput:n.validity.badInput,valid:n.validity.valid,readOnly:n.readOnly,disabled:n.disabled,focused:n===document.activeElement,html:n.outerHTML,events:timeEvents}))}));
   }
+  await field.evaluate(n=>{n.type='number';n.value='';});await field.focus();await page.keyboard.press('-');
+  console.log(JSON.stringify({nativeNumber:await field.evaluate(n=>({type:n.type,value:n.value,badInput:n.validity.badInput,valid:n.validity.valid}))}));
   await browser.close();
 })().catch(error=>{console.error(error);process.exitCode=1;});
