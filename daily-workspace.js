@@ -301,7 +301,7 @@ function renderDailyHome() {
   const overview=planningNode('div','daily-actions daily-focus-footer');
   overview.append(planningButton('All tasks ('+all.length+')',()=>{planningSession().view='all';planningSession().area='*';planningSession().search='';savePlanningSession();setWorkspaceMode('tasks');}),
     planningButton('My board',()=>setWorkspaceMode('board')));focus.append(overview);columns.append(focus);
-  if(session.sections.health!==false)columns.append(renderDailyHealth());
+  if(session.sections.health!==false)context.prepend(renderDailyHealth());
   if(!session.light && session.sections.agenda!==false){
     const agenda=dailySection('Coming up',planningButton('Calendar',()=>setWorkspaceMode('calendar'),'calendar'));
     const items=dailyUpcoming(day);

@@ -263,7 +263,8 @@
   .momentum-outcome h4 { min-height: 0; margin-bottom: 10px; }
   .workspace-navigation { margin-bottom: 16px; }
   .daily-head h2, .momentum-progress-head h2 { font-size: 23px; }
-  .daily-head { gap: 12px; margin-bottom: 14px; }
+  .daily-head { gap: 12px; margin-bottom: 10px; }
+  .momentum-focus-empty { padding: 12px 0; }
   .daily-head .daily-actions { width: 100%; justify-content: flex-start; }
   .daily-head .daily-actions > :last-child { margin-left: auto; }
   .momentum-today-metrics { gap: 10px; }
