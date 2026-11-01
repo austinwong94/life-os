@@ -725,6 +725,7 @@ function initializeExperience() {
   document.getElementById("moneyModeButton").onclick = () => setWorkspaceMode("money");
   document.getElementById("recordsModeButton").onclick = () => setWorkspaceMode("records");
   document.getElementById("healthModeButton").onclick = () => setWorkspaceMode("health");
+  document.getElementById("oneTapModeButton").onclick = () => setWorkspaceMode("oneTap");
   document.getElementById("weeklyReviewButton").onclick = () => {activeReportType = "progress"; openReportsModal();};
   elements.visibilityControl.closest(".field").hidden = true;
   elements.visibilityLabel.textContent = "Personal board";
@@ -774,7 +775,7 @@ function restoreTabBoardSelection() {
 
 function setWorkspaceMode(mode) {
   if (isProtectedTextEditActive()) document.activeElement?.blur();
-  state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties", "health"].includes(mode) ? mode : "board";
+  state.ui.workspaceMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties", "health", "oneTap"].includes(mode) ? mode : "board";
   state.activeFilter = "all"; state.focusFilter = "all"; state.searchQuery = ""; state.activeCategories = [];
   renderCardsOnly({force: true}); renderBoardMeta(); saveState({touch: false, skipCloud: true});
 }

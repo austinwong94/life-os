@@ -53,7 +53,7 @@
   group('Every day',['todayModeButton','tasksModeButton','healthModeButton']);
   group('Your spaces',['boardModeButton','recordsModeButton','moneyModeButton','propertiesModeButton']);
   group('Reflect',['prioritiesModeButton']);
-  const icons={todayModeButton:'calendar',tasksModeButton:'list',healthModeButton:'dumbbell',boardModeButton:'layout-grid',recordsModeButton:'pencil',moneyModeButton:'bar-chart',propertiesModeButton:'calendar',prioritiesModeButton:'bar-chart'};
+  const icons={todayModeButton:'calendar',tasksModeButton:'list',healthModeButton:'dumbbell',oneTapModeButton:'play',boardModeButton:'layout-grid',recordsModeButton:'pencil',moneyModeButton:'bar-chart',propertiesModeButton:'calendar',prioritiesModeButton:'bar-chart'};
   for(const [id,icon] of Object.entries(icons)){
     const button=document.getElementById(id);if(!button)continue;
     const label=button.textContent.trim();button.replaceChildren();button.innerHTML=ICONS[icon] || '';button.append(planningNode('span','',label));button.title=label;
@@ -62,7 +62,7 @@
   modes.hidden=true;
   const capture=document.getElementById('railAddButton');capture.querySelector('small').textContent='Capture';navigation.prepend(capture);
   const review=document.getElementById('weeklyReviewButton');review.title='Weekly review';review.querySelector('span:last-child').textContent='Weekly review';
-  const utilities=group('Tools',[]);utilities.append(review,document.getElementById('railArchiveButton'),document.getElementById('railReportsButton'),document.getElementById('railSettingsButton'));
+  const utilities=group('Tools',['oneTapModeButton']);utilities.append(review,document.getElementById('railArchiveButton'),document.getElementById('railReportsButton'),document.getElementById('railSettingsButton'));
   const more=document.getElementById('mobileMoreButton');tools.append(more);
   more.onclick=()=>{
     const dialog=dailyDialog('More sections');dialog.classList.add('shell-more');
@@ -71,13 +71,13 @@
       ...(document.getElementById('recordsModeButton')?[['Records','pencil',()=>setWorkspaceMode('records')]]:[]),
       ['Money','bar-chart',()=>setWorkspaceMode('money')],['Properties','calendar',()=>setWorkspaceMode('properties')],['Progress','bar-chart',()=>setWorkspaceMode('priorities')]
     ]],['Tools',[
-      ['Capture','plus',openDailyCapture],['Weekly review','bar-chart',openDailyReview],['Archive','archive',openRecordsModal],['Reports','bar-chart',openReportsModal],['Settings','settings',openSettingsModal],['Saving & version','check',openSaveDetails]
+      ['One Tap experiment','play',()=>setWorkspaceMode('oneTap')],['Capture','plus',openDailyCapture],['Weekly review','bar-chart',openDailyReview],['Archive','archive',openRecordsModal],['Reports','bar-chart',openReportsModal],['Settings','settings',openSettingsModal],['Saving & version','check',openSaveDetails]
     ]]];
     for(const [label,items] of groups){const section=planningNode('section','shell-more-group');section.append(planningNode('h3','',label));for(const [text,icon,action] of items)section.append(planningButton(text,()=>{dialog.close();action();},icon));dialog.append(section);}
   };
   const context=planningNode('span','shell-context');document.querySelector('.workspace-navigation').prepend(context);
   document.querySelector('.workspace-header').append(document.getElementById('headerSaveStatus'));
-  const labels={today:'Today',tasks:'Plan',calendar:'Plan / Calendar',board:'My board',money:'Money',priorities:'Progress',records:'Records',properties:'Properties',health:'Health'};
+  const labels={today:'Today',tasks:'Plan',calendar:'Plan / Calendar',board:'My board',money:'Money',priorities:'Progress',records:'Records',properties:'Properties',health:'Health',oneTap:'One Tap experiment'};
   const render=()=>{
     applyAppearance();
     const mode=state.ui.workspaceMode || 'board';context.textContent=labels[mode] || labels.board;

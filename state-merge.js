@@ -102,6 +102,9 @@
       if(l===undefined && equalWithoutDailyClock(b,r,path))return undefined;
       if(r===undefined && equalWithoutDailyClock(b,l,path))return undefined;
       const field = path.at(-1);
+      if(path.length===5 && path[0]==='boards' && path[2]==='oneTapExperiment' && path[3]==='events' && object(l) && object(r)){
+        conflicts.push({kind:'one-tap-event',path:path.join('.'),segments:path,base:copy(b),local:copy(l),remote:copy(r)});return copy(l);
+      }
       // A card's summary view is presentation, not account ownership.
       if(field==='moneyOwner' && path[0]==='boards' && ['cards','archivedCards'].includes(path[2]))return copy(l);
       if(path.length===5 && path[0]==='boards' && path[2]==='money' && ['accounts','entries','budgets'].includes(path[3]) && object(l) && object(r)) {

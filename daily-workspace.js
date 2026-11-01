@@ -137,7 +137,7 @@ function openDailyMore() {
   for(const [label,icon,action] of [
     ['Capture','plus',openDailyCapture],['My board','layout-grid',()=>setWorkspaceMode('board')],['Priorities','check',()=>setWorkspaceMode('priorities')],
     ['Records','pencil',()=>setWorkspaceMode('records')],['Money','bar-chart',()=>setWorkspaceMode('money')],['Weekly review','bar-chart',openDailyReview],['Archive','archive',openRecordsModal],['Reports','bar-chart',openReportsModal],
-    ['Settings','settings',openSettingsModal],['Saving & version','check',openSaveDetails]
+    ['Settings','settings',openSettingsModal],['One Tap experiment','play',()=>setWorkspaceMode('oneTap')],['Saving & version','check',openSaveDetails]
   ])list.append(planningButton(label,()=>{dialog.close();action();},icon));dialog.append(list);
 }
 function initializeDailyWorkspace() {
@@ -171,7 +171,7 @@ function renderDailyNavigation() {
   document.getElementById('mobileHealthButton')?.setAttribute('aria-pressed',String(state.ui.workspaceMode==='health'));
   document.getElementById('mobileProgressButton')?.setAttribute('aria-pressed',String(state.ui.workspaceMode==='priorities'));
   const more=document.getElementById('mobileMoreButton');
-  if(more){const active=['board','records','money','priorities','properties'].includes(state.ui.workspaceMode);more.setAttribute('aria-pressed',String(active));more.dataset.current=String(active);}
+  if(more){const active=['board','records','money','priorities','properties','oneTap'].includes(state.ui.workspaceMode);more.setAttribute('aria-pressed',String(active));more.dataset.current=String(active);}
   document.getElementById('mobileCalendarButton')?.setAttribute('aria-pressed','false');
 }
 function openSaveDetails() {

@@ -264,6 +264,15 @@ jobs:
         run: npm run test:health-interface
         env:
           TEST_OUTPUT: test-results/health-interface
+      - name: Check isolated One Tap experiment in Chromium
+        run: npm run test:one-tap
+        env:
+          TEST_OUTPUT: test-results/one-tap-chromium
+      - name: Check isolated One Tap experiment in WebKit
+        run: npm run test:one-tap
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/one-tap-webkit
       - name: Check the shared Health workspace and installation safety in Chromium
         run: npm run test:health-workspace
         env:

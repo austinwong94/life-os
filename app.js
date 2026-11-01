@@ -3,7 +3,7 @@ if (window.top !== window.self) {
   throw new Error("Life OS must be opened directly, not inside another website.");
 }
 // Older cached HTML may omit modules introduced by a newer deployment.
-if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeFoodDaily','LifeFoodDailyUI','LifeExerciseReuse','LifeFitnessSets','LifeFitnessSetsUI','LifeExerciseHistory','LifeExerciseHistoryUI','LifeWorkoutRest','LifeWorkoutRestUI','LifeSubtasks','LifeMoney','LifeStateMerge','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeHealth','LifeMomentum'].some(name=>!globalThis[name])){
+if(['LifeStorageScope','LifePlanner','LifeTaskRepository','LifeMealReuse','LifeFoodDaily','LifeFoodDailyUI','LifeExerciseReuse','LifeFitnessSets','LifeFitnessSetsUI','LifeExerciseHistory','LifeExerciseHistoryUI','LifeWorkoutRest','LifeWorkoutRestUI','LifeSubtasks','LifeMoney','LifeStateMerge','LifeOneTap','LifeDeviceStore','LifeDeviceCheckpoint','LifeCloudTransport','LifeAuthRenewal','LifeRecoveryVault','LifeCloudCopies','LifeRecords','LifeHealth','LifeMomentum'].some(name=>!globalThis[name])){
   window.LifeStartupBlocked=true;
   const shell=document.getElementById('appShell');if(shell)shell.hidden=true;
   const panel=document.createElement('section');panel.setAttribute('aria-label','Website startup');
@@ -2706,7 +2706,7 @@ function toggleBoardControls() {
 
 function renderBoardControls() {
   const controlsOpen = state.ui.controlsOpen !== false;
-  const todayMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties", "health"].includes(state.ui.workspaceMode);
+  const todayMode = ["today", "tasks", "calendar", "priorities", "money", "records", "properties", "health", "oneTap"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("controls-collapsed", !controlsOpen);
   elements.topControlsToggleButton.hidden = todayMode;
   const controlsLabel = controlsOpen ? "Hide filters" : "Show filters";
@@ -3155,7 +3155,7 @@ function renderCardsOnly(options = {}) {
 
   const visibleCards = filteredByFocus.filter((card) => matchesCategory(card));
   const todayMode = state.ui.workspaceMode === "today";
-  const planningMode = ["tasks", "calendar", "priorities", "money", "records", "properties", "health"].includes(state.ui.workspaceMode);
+  const planningMode = ["tasks", "calendar", "priorities", "money", "records", "properties", "health", "oneTap"].includes(state.ui.workspaceMode);
   elements.workspace.classList.toggle("is-today-view", todayMode);
   elements.workspace.classList.toggle("is-planning-view", planningMode);
   renderBoardControls();
@@ -3171,6 +3171,8 @@ function renderCardsOnly(options = {}) {
   window.renderPropertiesWorkspace?.();
   if (state.ui.workspaceMode === "properties") {
     // Properties keeps its own mounted editor and separate owner-scoped storage.
+  } else if (state.ui.workspaceMode === "oneTap") {
+    window.LifeOneTapUI?.render();
   } else if (state.ui.workspaceMode === "health") {
     renderHealthWorkspace();
   } else if (state.ui.workspaceMode === "records") {
@@ -13104,6 +13106,7 @@ function renderReadableBoard(board, index) {
     ${renderReadableCardGroup("Archived cards", archivedCards, "archived")}
     ${coachingProgramsForBoard(board).map(program => coachingReport(program)).join("")}
     ${dailyReadableRecords(board)}
+    ${window.LifeOneTapUI?.readable(board) || ''}
     ${money?`<div class="money-export" role="region" aria-label="Money records" tabindex="0">${money}</div>`:''}
   </section>`;
 }
