@@ -281,29 +281,54 @@
     if(!logs.length){dialog.append(planningNode('p','','No Fitness Log on this board yet.'),planningButton('Add Fitness Log',()=>{dialog.close();openHealthLogComposer('fitness');},'plus'));return;}
     const key=JSON.stringify([state.activeBoardId,card.id]),selection=logs.length===1?logs[0].id:weightSources.get(key) || '';
     const input=document.createElement('input');input.type='number';input.inputMode='decimal';input.step='0.01';input.min='0.01';input.required=true;
-    let expected=null,sourceId='',dirty=false;
+    const validWeight=value=>/^(?:\d+)(?:\.\d{1,2})?$/.test(String(value)) && Number(value)>0 && Number.isFinite(Number(value));
+    const checkedLog=()=>{
+      live();if(date>getTodayKey())throw Error('Record weight on today or a past date.');
+      const log=D.resolve(board(),sourceId,'fitness',state.syncConflicts),entries=log.fitnessEntries,entry=entries?.[date];
+      if(entries!==undefined && (!entries || typeof entries!=='object' || Array.isArray(entries)) || entry!==undefined && (!entry || typeof entry!=='object' || Array.isArray(entry) || entry.metrics!==undefined && (!entry.metrics || typeof entry.metrics!=='object' || Array.isArray(entry.metrics))))throw Error('This weight history needs review. Original records are kept.');
+      return log;
+    };
+    const weights=log=>Object.entries(log?.fitnessEntries || {}).filter(([d,e])=>D.day(d) && d<=date && validWeight(e?.metrics?.weightKg)).sort(([a],[b])=>b.localeCompare(a));
+    let expected=null,sourceId='',dirty=false,previous=null;
     const source=planningSelect([['','Choose Fitness Log'],...logs.map(c=>[c.id,c.title])],selection,()=>{
-      if(dirty){source.value=sourceId;status.textContent='Save or cancel this weight before changing logs.';return;}choose();
+      if(dirty || input.validity.badInput){source.value=sourceId;status.textContent='Save or cancel this weight before changing logs.';return;}choose();
     });
+    const refresh=()=>{
+      const cents=Math.round(Number(input.value)*100),valid=validWeight(input.value) && !input.validity.badInput && Number.isSafeInteger(cents),available=Boolean(sourceId) && date<=getTodayKey();
+      decrease.disabled=!available || !valid || cents<=10;increase.disabled=!available || !valid || !Number.isSafeInteger(cents+10);usePrevious.disabled=!available || !previous;save.disabled=!available;
+    };
+    const adjust=delta=>{
+      try{checkedLog();const cents=Math.round(Number(input.value)*100);if(!validWeight(input.value) || input.validity.badInput || !Number.isSafeInteger(cents) || !Number.isSafeInteger(cents+delta) || cents+delta<=0)throw Error('Enter a positive weight with up to two decimal places.');input.value=String((cents+delta)/100);dirty=true;status.textContent='';refresh();}catch(error){status.textContent=error.message;}
+    };
+    const decrease=planningButton('',()=>adjust(-10),'minus'),increase=planningButton('',()=>adjust(10),'plus');
+    for(const [button,label] of [[decrease,'Decrease weight by 0.1 kg'],[increase,'Increase weight by 0.1 kg']]){button.setAttribute('aria-label',label);button.title=label;}
+    const usePrevious=planningButton('',()=>{
+      try{const log=checkedLog(),latest=weights(log).find(([d])=>d<date);if(!previous || latest?.[0]!==previous.date || !D.equal(latest?.[1],previous.entry))throw Error('The previous weight changed. Reopen this form before using it.');input.value=String(previous.entry.metrics.weightKg);dirty=true;status.textContent='';refresh();}catch(error){status.textContent=error.message;}
+    },'rotate-ccw');usePrevious.title='Use previous weight as an unsaved starting value';
     const choose=()=>{
       sourceId=source.value;status.textContent='';const log=logs.find(c=>c.id===sourceId);expected=D.copy(log?.fitnessEntries?.[date] ?? null);input.value=expected?.metrics?.weightKg ?? '';weightSources.set(key,sourceId);
-      const records=Object.entries(log?.fitnessEntries || {}).filter(([d,e])=>D.day(d) && d<=date && Number(e?.metrics?.weightKg)>0).sort(([a],[b])=>b.localeCompare(a));
+      const records=weights(log),prior=records.find(([d])=>d<date);previous=prior?{date:prior[0],entry:D.copy(prior[1])}:null;
+      usePrevious.hidden=!previous;usePrevious.querySelector('span').textContent=previous?'Use '+previous.entry.metrics.weightKg+' kg':'';usePrevious.setAttribute('aria-label',previous?'Use '+previous.entry.metrics.weightKg+' kg as starting weight':'Use previous weight');
       recent.textContent=records.slice(0,2).map(([d,e],i)=>(i?'Previous: ':'Latest: ')+e.metrics.weightKg+' kg · '+formatReadableDateKey(d)).join(' · ') || 'No weight recorded in this log yet.';
+      refresh();
     };
-    const recent=planningNode('p','food-weight-recent');input.oninput=()=>dirty=true;
+    const recent=planningNode('p','food-weight-recent');input.oninput=()=>{dirty=true;refresh();};input.addEventListener('keyup',refresh);input.addEventListener('focusout',refresh);
     const save=planningButton('Save weight',null,'check');save.type='submit';save.classList.add('is-primary');
-    form.append(planningNode('p','daily-muted',formatReadableDateKey(date)),planningField('Fitness Log',source),recent,planningField('Weight (kg)',input),status,save);
+    const field=planningNode('div','food-weight-stepper');field.append(decrease,planningField('Weight (kg)',input),increase);
+    const actions=planningNode('div','daily-actions');actions.append(planningButton('Cancel',()=>dialog.close()),save);
+    form.append(planningNode('p','daily-muted',formatReadableDateKey(date)),planningField('Fitness Log',source),recent,usePrevious,field,status,actions);
     form.onsubmit=event=>{
       event.preventDefault();try{
-        live();if(date>getTodayKey() || !/^(?:\d+)(?:\.\d{1,2})?$/.test(input.value) || !(Number(input.value)>0) || !Number.isFinite(Number(input.value)))throw Error('Enter a positive weight with up to two decimal places for today or a past date.');
-        const log=D.resolve(board(),sourceId,'fitness',state.syncConflicts),before=log.fitnessEntries?.[date] ?? null;
+        live();if(date>getTodayKey() || !validWeight(input.value) || input.validity.badInput)throw Error('Enter a positive weight with up to two decimal places for today or a past date.');
+        const log=checkedLog(),before=log.fitnessEntries?.[date] ?? null,hadEntries=Object.hasOwn(log,'fitnessEntries');
         if(!D.equal(before,expected))throw Error('This weight entry changed. Reopen it before saving.');
         const next=normalizeFitnessEntry({...D.copy(before || {}),metrics:{...D.copy(before?.metrics || {}),weightKg:Number(input.value)},updatedAt:Date.now()});log.fitnessEntries ||= {};log.fitnessEntries[date]=next;
-        if(!saveState({quiet:true})){if(before===null)delete log.fitnessEntries[date];else log.fitnessEntries[date]=before;syncActiveBoard({touchBoard:false});throw Error('Not saved. Your previous weight is unchanged. Keep this form open and retry.');}
+        let saved=false;try{saved=saveState({quiet:true});}catch{}
+        if(!saved){if(before===null)delete log.fitnessEntries[date];else log.fitnessEntries[date]=before;if(!hadEntries)delete log.fitnessEntries;syncActiveBoard({touchBoard:false});throw Error('Not saved. Your previous weight is unchanged. Keep this form open and retry.');}
         dialog.close();renderCardsOnly({force:true});
       }catch(error){status.textContent=error.message;}
     };
-    dialog.append(form);choose();if(sourceId)input.focus();else source.focus();
+    dialog.append(form);choose();if(!sourceId)source.focus();else if(previous && !input.value)usePrevious.focus();else input.focus();
   }
   window.LifeFoodDailyUI=Object.freeze({render,times,bindDetails,portions,itemPortions});
 })();
