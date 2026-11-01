@@ -46,7 +46,7 @@
     if(!routines.length)list.append(planningNode('p','food-daily-empty','No active usual meals.'));
     for(const routine of routines){
       const row=planningNode('div','food-usual-row'),label=planningNode('label','food-usual-check'),checkbox=document.createElement('input');checkbox.type='checkbox';
-      const records=(card.foodEntries?.[date]?.meals || []).filter(m=>m.routineId===routine.id),record=records[0];
+      const records=(card.foodEntries?.[date]?.meals || []).filter(m=>m.routineId===routine.id || routine.origin?.date===date && m.id===routine.origin.mealId),record=records[0];
       checkbox.checked=Boolean(record);checkbox.disabled=Boolean(record) || date>getTodayKey();checkbox.setAttribute('aria-label','Log '+routine.name);
       const content=planningNode('span','food-usual-copy');content.append(planningNode('strong','',record?.name || routine.name),planningNode('small','',(record?.items || routine.items).map(i=>i.name+' '+i.amount+' '+(i.unit==='g'?'g':i.servingUnit)).join(' · ')));
       const status=record?(record.timing?.eatenTime?'Recorded '+record.timing.eatenTime+' · '+D.timingStatus(record.timing):'Recorded · time not set'):routine.plannedTime?'Planned '+routine.plannedTime+' · ±'+routine.windowMinutes+' min':'No time target';
@@ -66,7 +66,7 @@
     else if(Object.values(card.foodRoutines || {}).some(r=>!D.validRoutine(r)))notice.textContent='Some usual meals need review. Their original records are kept.';
     const actions=planningNode('div','food-daily-actions');actions.append(planningButton('Weight',()=>{try{openWeight(live(),date);}catch(e){message(e);}},'bar-chart'),planningButton('Food library',()=>{try{library(live());}catch(e){message(e);}},'utensils'));
     const entry=card.foodEntries?.[date],active=entry?.meals?.find(m=>m.id===card.activeFoodMealId);
-    if(active?.items?.length)actions.append(planningButton('Save current meal as usual',()=>{try{openRoutine(live(),date,null,active);}catch(e){message(e);}},'plus'));
+    if(active?.items?.length && !active.routineId && !D.routines(card).some(r=>r.origin?.date===date && r.origin.mealId===active.id))actions.append(planningButton('Save current meal as usual',()=>{try{openRoutine(live(),date,null,active);}catch(e){message(e);}},'plus'));
     section.append(actions);
     const archived=Object.values(card.foodRoutines || {}).filter(r=>D.validRoutine(r) && r.archivedAt);
     if(archived.length){const details=planningNode('details','food-usual-archive');details.append(planningNode('summary','','Archived usual meals ('+archived.length+')'));for(const routine of archived)details.append(planningButton('Restore '+routine.name,()=>{try{const current=live(),tx=D.saveRoutine(board(),current.id,routine,{...D.copy(routine),archivedAt:0},{conflicts:state.syncConflicts});commit(tx);renderCardsOnly({force:true});}catch(error){notice.textContent=error.message;message(error);}},'rotate-ccw'));section.append(details);}
@@ -77,6 +77,7 @@
   function openRoutine(card,date,original=null,source=null){
     const dialog=dailyDialog(original?'Edit usual meal':'Add usual meal');dialog.classList.add('food-routine-dialog');
     const live=context(card,date,dialog),before=D.copy(original),now=Date.now(),draft=original?D.copy(original):{id:createId(),name:source?.name || '',kind:source?.kind || 'meal',items:D.copy(source?.items || []),plannedTime:source?.timing?.plannedTime || '',windowMinutes:source?.timing?.windowMinutes || 60,createdAt:now,updatedAt:now,archivedAt:0};
+    if(source && !original)draft.origin={date,mealId:source.id};
     const form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
     const name=document.createElement('input');name.type='text';name.maxLength=64;name.required=true;name.value=draft.name;
     const kind=planningSelect([['meal','Meal'],['snack','Snack'],['drink','Drink']],draft.kind || 'meal',()=>{});

@@ -14,7 +14,7 @@
     return value && typeof value==='object' && !Array.isArray(value) && (value.eatenTime==='' || time(value.eatenTime)) && (value.plannedTime==='' || time(value.plannedTime)) && Number.isInteger(value.windowMinutes) && value.windowMinutes>=15 && value.windowMinutes<=180 && stamp(value.recordedAt);
   }
   function validRoutine(value){
-    return value && safe(value.id) && typeof value.name==='string' && value.name.trim().length>0 && value.name.length<=64 && (!value.kind || ['meal','snack','drink'].includes(value.kind)) && validItems(value.items) && (value.plannedTime==='' || time(value.plannedTime)) && Number.isInteger(value.windowMinutes) && value.windowMinutes>=15 && value.windowMinutes<=180 && stamp(value.createdAt) && stamp(value.updatedAt) && stamp(value.archivedAt);
+    return value && safe(value.id) && typeof value.name==='string' && value.name.trim().length>0 && value.name.length<=64 && (!value.kind || ['meal','snack','drink'].includes(value.kind)) && (!value.origin || day(value.origin.date) && typeof value.origin.mealId==='string' && value.origin.mealId.trim()) && validItems(value.items) && (value.plannedTime==='' || time(value.plannedTime)) && Number.isInteger(value.windowMinutes) && value.windowMinutes>=15 && value.windowMinutes<=180 && stamp(value.createdAt) && stamp(value.updatedAt) && stamp(value.archivedAt);
   }
   function resolve(board,cardId,type='food',conflicts=[]){
     const matches=(board?.cards || []).filter(c=>c.id===cardId);
@@ -41,7 +41,7 @@
     const before=card.foodEntries?.[date] ?? null;
     if(before && !Array.isArray(before.meals))throw Error('This food day needs review. Nothing was logged.');
     const id='usual-'+date+'-'+routine.id;
-    if((before?.meals || []).some(m=>m.routineId===routine.id || m.id===id))throw Error('Already logged for this day. Open the recorded meal to edit it.');
+    if((before?.meals || []).some(m=>m.routineId===routine.id || m.id===id || routine.origin?.date===date && m.id===routine.origin.mealId))throw Error('Already logged for this day. Open the recorded meal to edit it.');
     const items=copy(routine.items).map((item,i)=>({...item,id:id+'-'+i}));
     const ids=new Set(Object.values(card.foodEntries || {}).flatMap(e=>(e.meals || []).flatMap(m=>[m.id,...(m.items || []).map(i=>i.id)])));
     if([id,...items.map(i=>i.id)].some(key=>ids.has(key)))throw Error('This meal identity needs review. Nothing was logged.');
