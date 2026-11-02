@@ -38,6 +38,21 @@
     for(const key of ['mobility','other']){const part=entry?.parts?.[key];if(part?.active===true && positive(part.durationMinutes))activityEntries++;}
     return {checkedSets,exerciseEntries,activityEntries,review,hasEntry:checkedSets+exerciseEntries+activityEntries>0};
   }
+  function weightSummary(card,date){
+    const empty={needsReview:false,today:null,previous:null},entries=card?.fitnessEntries;
+    if(card?.type!=='fitness' || card.archivedAt || !validDay(date) || entries!==undefined && (!entries || typeof entries!=='object' || Array.isArray(entries)))return {...empty,needsReview:true};
+    const reading=entry=>{
+      if(entry===undefined)return null;
+      if(!entry || typeof entry!=='object' || Array.isArray(entry) || entry.metrics!==undefined && (!entry.metrics || typeof entry.metrics!=='object' || Array.isArray(entry.metrics)))return false;
+      const value=entry.metrics?.weightKg;
+      if(value===undefined || value===null || value==='')return null;
+      return ['string','number'].includes(typeof value) && /^\d+(?:\.\d{1,2})?$/.test(String(value)) && Number(value)>0 && Number.isSafeInteger(Math.round(Number(value)*100))?Number(value):false;
+    };
+    const current=reading(entries?.[date]);
+    if(current===false)return {...empty,needsReview:true};
+    const previous=Object.keys(entries || {}).filter(day=>validDay(day) && day<date).sort().reverse().find(day=>{const n=reading(entries[day]);return n!==null && n!==false;});
+    return {...empty,today:current===null?null:{date,kg:current},previous:previous?{date:previous,kg:reading(entries[previous])}:null};
+  }
   function daily(cards,date,selected={},options={}){
     const available=Array.isArray(cards)?cards:[],food=root.LifeFoodDaily || (typeof require==='function'?require('./food-daily.js'):null);
     const dates=food.progress({},date).map(row=>row.date),result={};
@@ -61,7 +76,7 @@
     }
     return result;
   }
-  const api=Object.freeze({sessions,previous,validDay,trainingDay,daily});
+  const api=Object.freeze({sessions,previous,validDay,trainingDay,weightSummary,daily});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeHealth=api;
 })(typeof window==='undefined'?globalThis:window);
 
@@ -127,6 +142,21 @@ function renderDailyHealth(){
     if(type==='food' && data.status==='ready'){
       const meals=planningNode('section','daily-health-meals');meals.setAttribute('aria-label','Usual meals today');meals.append(planningNode('h3','','Usual meals'),LifeFoodDailyUI.usualMeals(state.cards.find(c=>c.id===data.cardId),date,{compact:true,scope:foodScope,onCreate:()=>button.click()}));section.append(meals);
     }
+  }
+  if(model.fitness.status==='ready'){
+    const cardId=model.fitness.cardId,card=state.cards.find(c=>c.id===cardId),weight=LifeHealth.weightSummary(card,date);
+    const row=planningNode('div','daily-health-row daily-health-weight'),copy=planningNode('div','daily-health-copy');copy.append(planningNode('strong','','Weight'));
+    copy.append(planningNode('span','daily-health-count',weight.needsReview?'Weight record needs review':weight.today?weight.today.kg.toFixed(2)+' kg':'Not recorded today'));
+    if(weight.previous && !weight.needsReview)copy.append(planningNode('small','daily-health-week','Previous: '+weight.previous.kg.toFixed(2)+' kg · '+formatReadableDateKey(weight.previous.date)));
+    const scope=node=>()=>{
+      if(!node.isConnected || node.closest('dialog')?.open===false || state.activeBoardId!==boardId || state.ui.workspaceMode!=='today' || getTodayKey()!==date)throw Error('This day or board changed. Reopen Today.');
+      const fresh=LifeHealth.daily(state.cards,date,session.sources,{boardId,conflicts:state.syncConflicts}).fitness;
+      if(fresh.status!=='ready' || fresh.cardId!==cardId)throw Error('This weight source changed. Reopen Today before recording.');
+      return LifeFoodDaily.resolve({id:boardId,cards:state.cards},cardId,'fitness',state.syncConflicts);
+    };
+    const button=planningButton(weight.today?'Edit weight':'Record weight',()=>{try{LifeFoodDailyUI.openWeight(scope(row)(),date,{scope,fitnessId:cardId,returnFocusId:button.id});}catch(error){fail(error);}},'bar-chart');
+    button.id='today-weight-'+encodeURIComponent(JSON.stringify([boardId,cardId,date]));button.disabled=weight.needsReview;if(button.disabled)button.title='The original weight record needs review.';
+    row.append(copy,button);section.append(row);
   }
   if(model.food.status==='ready'){
     const cardId=model.food.cardId,card=state.cards.find(c=>c.id===cardId);

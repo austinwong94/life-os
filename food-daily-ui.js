@@ -291,13 +291,14 @@
     };
     details.append(form);bindDetails(card,date,details,{detailId:['meal-time',meal.id],defaultOpen:false});summary.id='food-time-summary-'+encodeURIComponent(details.dataset.dailyDetailsKey);return details;
   }
-  function openWeight(card,date){
-    const dialog=dailyDialog('Record weight');dialog.classList.add('food-weight-dialog');const live=context(card,date,dialog);
-    const logs=state.cards.filter(c=>c.type==='fitness' && !c.archivedAt),form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
+  function openWeight(card,date,options={}){
+    const dialog=dailyDialog('Record weight');dialog.classList.add('food-weight-dialog');const live=options.scope?options.scope(dialog):context(card,date,dialog);
+    if(options.returnFocusId)dialog.addEventListener('close',()=>{if(document.querySelector('dialog[open]') || document.activeElement!==document.body && !dialog.contains(document.activeElement))return;document.getElementById(options.returnFocusId)?.focus({preventScroll:true});});
+    const logs=state.cards.filter(c=>c.type==='fitness' && !c.archivedAt && (!options.fitnessId || c.id===options.fitnessId)),form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
     if(!logs.length){dialog.append(planningNode('p','','No Fitness Log on this board yet.'),planningButton('Add Fitness Log',()=>{dialog.close();openHealthLogComposer('fitness');},'plus'));return;}
     const key=JSON.stringify([state.activeBoardId,card.id]),selection=logs.length===1?logs[0].id:weightSources.get(key) || '';
     const input=document.createElement('input');input.type='number';input.inputMode='decimal';input.step='0.01';input.min='0.01';input.required=true;
-    const validWeight=value=>/^(?:\d+)(?:\.\d{1,2})?$/.test(String(value)) && Number(value)>0 && Number.isFinite(Number(value));
+    const validWeight=value=>/^(?:\d+)(?:\.\d{1,2})?$/.test(String(value)) && Number(value)>0 && Number.isSafeInteger(Math.round(Number(value)*100));
     const checkedLog=()=>{
       live();if(date>getTodayKey())throw Error('Record weight on today or a past date.');
       const log=D.resolve(board(),sourceId,'fitness',state.syncConflicts),entries=log.fitnessEntries,entry=entries?.[date];
@@ -332,7 +333,7 @@
     const save=planningButton('Save weight',null,'check');save.type='submit';save.classList.add('is-primary');
     const field=planningNode('div','food-weight-stepper');field.append(decrease,planningField('Weight (kg)',input),increase);
     const actions=planningNode('div','daily-actions');actions.append(planningButton('Cancel',()=>dialog.close()),save);
-    form.append(planningNode('p','daily-muted',formatReadableDateKey(date)),planningField('Fitness Log',source),recent,usePrevious,field,status,actions);
+    form.append(planningNode('p','daily-muted',formatReadableDateKey(date)),options.fitnessId?planningNode('p','daily-muted',logs[0].title):planningField('Fitness Log',source),recent,usePrevious,field,status,actions);
     form.onsubmit=event=>{
       event.preventDefault();try{
         live();if(date>getTodayKey() || !validWeight(input.value) || input.validity.badInput)throw Error('Enter a positive weight with up to two decimal places for today or a past date.');
@@ -346,5 +347,5 @@
     };
     dialog.append(form);choose();if(!sourceId)source.focus();else if(previous && !input.value)usePrevious.focus();else input.focus();
   }
-  window.LifeFoodDailyUI=Object.freeze({render,times,bindDetails,portions,itemPortions,water,usualMeals});
+  window.LifeFoodDailyUI=Object.freeze({render,times,bindDetails,portions,itemPortions,water,usualMeals,openWeight});
 })();

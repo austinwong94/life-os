@@ -15,6 +15,27 @@ test('ambiguous or removed exercise records are not presented as verified previo
 test('malformed history and invalid dates do not crash the health projection or invent a score',()=>{
   const card=workout();card.fitnessEntries['2026-10-29'].parts.chest.exercises=[null,{name:123}];assert.equal(health.previous(card,'2026-10-31','chest','Bench press'),null);assert.equal(health.validDay('2026-02-29'),false);assert.equal(health.validDay('2028-02-29'),true);assert.equal(health.previous(card,'bad','chest','Bench press'),null);assert.equal(Object.hasOwn(health.sessions([card])[0],'score'),false);
 });
+test('weight summary reads exact today and preceding valid measurements without changing the Fitness Log',()=>{
+  const card={id:'gym',type:'fitness',fitnessEntries:{'2026-10-29':{metrics:{weightKg:73}},'2026-10-31':{metrics:{weightKg:'72.35',chestCm:94},notes:'Keep every word'},'2026-11-01':{metrics:{weightKg:71}}}},before=JSON.stringify(card);
+  assert.deepEqual(health.weightSummary(card,'2026-10-31'),{needsReview:false,today:{date:'2026-10-31',kg:72.35},previous:{date:'2026-10-29',kg:73}});assert.equal(JSON.stringify(card),before);
+});
+test('an older weight never becomes today and future or invalid dates never become a preceding measurement',()=>{
+  const card={type:'fitness',fitnessEntries:{'2026-10-29':{metrics:{weightKg:72.3}},'2026-02-30':{metrics:{weightKg:80}},'2026-11-01':{metrics:{weightKg:71}}}},before=JSON.stringify(card);
+  assert.deepEqual(health.weightSummary(card,'2026-10-31'),{needsReview:false,today:null,previous:{date:'2026-10-29',kg:72.3}});assert.equal(JSON.stringify(card),before);assert.equal(health.weightSummary(card,'2026-02-30').needsReview,true);
+});
+test('missing weights stay missing without creating a day or inventing a target or a judgement',()=>{
+  for(const value of [undefined,null,'']){const card={type:'fitness',fitnessEntries:{'2026-10-31':{metrics:{weightKg:value}}}},before=JSON.stringify(card);assert.deepEqual(health.weightSummary(card,'2026-10-31'),{needsReview:false,today:null,previous:null});assert.equal(JSON.stringify(card),before);}
+  assert.deepEqual(health.weightSummary({type:'fitness'},'2026-10-31'),{needsReview:false,today:null,previous:null});
+});
+test('unusable weight values and malformed current-day containers require review while their original bytes remain',()=>{
+  for(const value of [0,-1,true,[],{},'bad','72.345','1e2',' 72.3 ',Number.MAX_SAFE_INTEGER]){const card={type:'fitness',fitnessEntries:{'2026-10-31':{metrics:{weightKg:value}}}},before=JSON.stringify(card);assert.equal(health.weightSummary(card,'2026-10-31').needsReview,true,JSON.stringify(value));assert.equal(JSON.stringify(card),before);}
+  for(const entry of [null,[],5,{metrics:null},{metrics:[]}])assert.equal(health.weightSummary({type:'fitness',fitnessEntries:{'2026-10-31':entry}},'2026-10-31').needsReview,true);
+  for(const fitnessEntries of [null,[],5])assert.equal(health.weightSummary({type:'fitness',fitnessEntries},'2026-10-31').needsReview,true);
+});
+test('weight summary refuses archived and unrelated sources and retains malformed historical records',()=>{
+  const card={type:'fitness',fitnessEntries:{'2026-10-28':{metrics:{weightKg:73}},'2026-10-29':{metrics:{weightKg:'unreviewed'}},'2026-10-31':{metrics:{weightKg:72}}}},before=JSON.stringify(card);
+  assert.equal(health.weightSummary({...card,type:'food'},'2026-10-31').needsReview,true);assert.equal(health.weightSummary({...card,archivedAt:1},'2026-10-31').needsReview,true);assert.equal(health.weightSummary(card,'2026-10-31').previous.kg,73);assert.equal(JSON.stringify(card),before);
+});
 const timing={plannedTime:'',eatenTime:'12:15',windowMinutes:60,recordedAt:1};
 const meal=(id,kind='meal')=>({id,kind,items:[{id:id+'-food',amount:1}],timing});
 const checkedExercise=()=>({id:'checked-lift',setLog:{version:1,id:'sets',createdAt:1,updatedAt:2,rows:[{id:'set',reps:8,weightKg:15,rpe:'',done:true,removedAt:0,history:[{id:'event',at:2,action:'completed',reps:8,weightKg:15,rpe:''}]}]}});
