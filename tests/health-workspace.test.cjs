@@ -39,6 +39,26 @@ test('weight summary refuses archived and unrelated sources and retains malforme
 const timing={plannedTime:'',eatenTime:'12:15',windowMinutes:60,recordedAt:1};
 const meal=(id,kind='meal')=>({id,kind,items:[{id:id+'-food',amount:1}],timing});
 const checkedExercise=()=>({id:'checked-lift',setLog:{version:1,id:'sets',createdAt:1,updatedAt:2,rows:[{id:'set',reps:8,weightKg:15,rpe:'',done:true,removedAt:0,history:[{id:'event',at:2,action:'completed',reps:8,weightKg:15,rpe:''}]}]}});
+test('recent health covers exactly seven dated days and preserves all original source records',()=>{
+  const water={id:'water',amountMl:350,drankTime:'12:00',recordedAt:1,removedAt:0};
+  const cards=[{id:'food',type:'food',foodEntries:{'2026-10-30':{meals:[meal('meal'),meal('coffee','drink')],water:{water}},'2026-11-02':{meals:[meal('future')]}}},{id:'gym',type:'fitness',fitnessEntries:{'2026-10-30':{metrics:{weightKg:72.35},parts:{chest:{active:true,exercises:[checkedExercise()]}}},'2026-11-01':{notes:'Rest day'}}}],before=JSON.stringify(cards);
+  const week=health.recent(cards,'2026-11-01');assert.equal(week.length,7);assert.equal(week[0].date,'2026-10-26');assert.equal(week.at(-1).date,'2026-11-01');
+  const day=week.find(d=>d.date==='2026-10-30');assert.deepEqual(day.food,{status:'ready',entries:2});assert.deepEqual(day.training,{status:'ready',hasEntry:true,checkedSets:1,exerciseEntries:0,activityEntries:0});assert.deepEqual(day.water,{status:'ready',totalMl:350});assert.deepEqual(day.weight,{status:'ready',kg:72.35});assert.equal(JSON.stringify(cards),before);
+});
+test('recent health does not carry weight forward or count blank plans and removed water as progress',()=>{
+  const cards=[{id:'food',type:'food',foodEntries:{'2026-11-01':{meals:[],water:{removed:{id:'removed',amountMl:250,drankTime:'',recordedAt:1,removedAt:2}}}}},{id:'gym',type:'fitness',fitnessEntries:{'2026-10-31':{metrics:{weightKg:72}},'2026-11-01':{parts:{running:{active:true,distanceKm:'',durationMinutes:''}}}}}];
+  const day=health.recent(cards,'2026-11-01').at(-1);assert.equal(day.food.entries,0);assert.equal(day.training.hasEntry,false);assert.equal(day.water.totalMl,0);assert.equal(day.weight.kg,null);assert.equal(Object.hasOwn(day,'score'),false);
+});
+test('recent health requires explicit sources and isolates boards conflicts archives and duplicate identities',()=>{
+  const first={id:'first',type:'food',foodEntries:{}},second={id:'second',type:'food',foodEntries:{'2026-11-01':{meals:[meal('chosen')]}}},options={boardId:'board',conflicts:[{segments:['boards','board','cards','second','foodEntries']}]};
+  assert.equal(health.recent([first,second],'2026-11-01').at(-1).food.status,'choose');assert.equal(health.recent([first,second],'2026-11-01',{food:'second'}).at(-1).food.entries,1);
+  assert.equal(health.recent([first,second],'2026-11-01',{food:'second'},options).at(-1).food.status,'review');assert.equal(health.recent([first,second],'2026-11-01',{food:'second'},{...options,boardId:'other'}).at(-1).food.entries,1);
+  assert.equal(health.recent([first,second,second],'2026-11-01',{food:'second'}).at(-1).food.status,'review');assert.equal(health.recent([{...second,archivedAt:1}],'2026-11-01').at(-1).food.status,'empty');assert.equal(health.recent([first],'2026-11-01',{food:'second'}).at(-1).food.status,'unavailable');
+});
+test('recent health flags malformed water and weights without rewriting them or inventing totals',()=>{
+  const cards=[{id:'food',type:'food',foodEntries:{'2026-11-01':{meals:[],water:{bad:{id:'bad',amountMl:-1}}}}},{id:'gym',type:'fitness',fitnessEntries:{'2026-11-01':{metrics:{weightKg:'keep original'}}}}],before=JSON.stringify(cards),day=health.recent(cards,'2026-11-01').at(-1);
+  assert.deepEqual(day.water,{status:'review'});assert.deepEqual(day.weight,{status:'review'});assert.equal(JSON.stringify(cards),before);assert.deepEqual(health.recent(cards,'2026-02-30'),[]);
+});
 test('Today health counts actual meals separately from snacks and drinks without creating records or goals',()=>{
   const cards=[{id:'food',type:'food',foodEntries:{'2026-10-31':{meals:[meal('breakfast'),meal('coffee','drink'),meal('fruit','snack'),{id:'empty',items:[]}]},'2026-10-30':{meals:[meal('older')]},'2026-11-01':{meals:[meal('future')]}}}],before=JSON.stringify(cards);
   const data=health.daily(cards,'2026-10-31');assert.equal(data.food.status,'ready');assert.equal(data.food.meals,1);assert.equal(data.food.drinks,1);assert.equal(data.food.snacks,1);assert.equal(data.food.recordedDays,2);assert.equal(data.food.lastTime,'12:15');assert.equal(Object.hasOwn(data.food,'target'),false);assert.equal(JSON.stringify(cards),before);

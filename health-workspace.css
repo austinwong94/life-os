@@ -109,3 +109,20 @@
 .daily-health-meals .daily-message:empty{display:none}
 .daily-health-meals .food-usual-check:focus-visible{outline:2px solid var(--action);outline-offset:2px;border-radius:4px}
 .daily-health-meals .food-usual-list.is-empty{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.daily-health-recent{min-width:0;margin-top:12px;border-top:1px solid var(--line);container-type:inline-size}
+.daily-health-recent>summary{box-sizing:border-box;min-height:44px;padding:12px 0;cursor:pointer;font:600 13px/1.5 system-ui,sans-serif;color:var(--ink)}
+.daily-health-recent>summary small{display:inline-block;margin-left:10px;font:400 12px/1.5 system-ui,sans-serif;color:var(--muted)}
+.daily-health-recent:not([open])>.daily-health-days{display:none}
+.daily-health-recent>summary:focus-visible{outline:2px solid var(--action);outline-offset:2px}
+.daily-health-days{list-style:none;margin:0;padding:0;min-width:0}
+.daily-health-day{display:grid;grid-template-columns:88px minmax(0,1fr);gap:12px;border-top:1px solid var(--line);padding:12px 0;min-width:0}
+.daily-health-day>time{font:500 12px/1.5 system-ui,sans-serif;color:var(--ink);overflow-wrap:anywhere}
+.daily-health-day>time>span{display:block}
+.daily-health-day>time[aria-current=date]{color:var(--action);font-weight:650}
+.daily-health-day dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;min-width:0}
+.daily-health-day dl>div{min-width:0;overflow-wrap:anywhere}
+.daily-health-day dt{font:400 11px/1.5 system-ui,sans-serif;color:var(--muted)}
+.daily-health-day dd{margin:3px 0 0;font:400 12px/1.5 system-ui,sans-serif;color:var(--muted);font-variant-numeric:tabular-nums}
+.daily-health-day dd.is-recorded{font-weight:600;color:var(--ink)}
+@container(min-width:560px){.daily-health-day dl{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:700px){.daily-health-day{grid-template-columns:72px minmax(0,1fr);gap:10px}.daily-health-day dl{gap:10px 12px}}

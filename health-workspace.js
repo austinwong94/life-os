@@ -38,20 +38,20 @@
     for(const key of ['mobility','other']){const part=entry?.parts?.[key];if(part?.active===true && positive(part.durationMinutes))activityEntries++;}
     return {checkedSets,exerciseEntries,activityEntries,review,hasEntry:checkedSets+exerciseEntries+activityEntries>0};
   }
-  function weightSummary(card,date){
-    const empty={needsReview:false,today:null,previous:null},entries=card?.fitnessEntries;
-    if(card?.type!=='fitness' || card.archivedAt || !validDay(date) || entries!==undefined && (!entries || typeof entries!=='object' || Array.isArray(entries)))return {...empty,needsReview:true};
-    const reading=entry=>{
+  function weightReading(entry){
       if(entry===undefined)return null;
       if(!entry || typeof entry!=='object' || Array.isArray(entry) || entry.metrics!==undefined && (!entry.metrics || typeof entry.metrics!=='object' || Array.isArray(entry.metrics)))return false;
       const value=entry.metrics?.weightKg;
       if(value===undefined || value===null || value==='')return null;
       return ['string','number'].includes(typeof value) && /^\d+(?:\.\d{1,2})?$/.test(String(value)) && Number(value)>0 && Number.isSafeInteger(Math.round(Number(value)*100))?Number(value):false;
-    };
-    const current=reading(entries?.[date]);
+  }
+  function weightSummary(card,date){
+    const empty={needsReview:false,today:null,previous:null},entries=card?.fitnessEntries;
+    if(card?.type!=='fitness' || card.archivedAt || !validDay(date) || entries!==undefined && (!entries || typeof entries!=='object' || Array.isArray(entries)))return {...empty,needsReview:true};
+    const current=weightReading(entries?.[date]);
     if(current===false)return {...empty,needsReview:true};
-    const previous=Object.keys(entries || {}).filter(day=>validDay(day) && day<date).sort().reverse().find(day=>{const n=reading(entries[day]);return n!==null && n!==false;});
-    return {...empty,today:current===null?null:{date,kg:current},previous:previous?{date:previous,kg:reading(entries[previous])}:null};
+    const previous=Object.keys(entries || {}).filter(day=>validDay(day) && day<date).sort().reverse().find(day=>{const n=weightReading(entries[day]);return n!==null && n!==false;});
+    return {...empty,today:current===null?null:{date,kg:current},previous:previous?{date:previous,kg:weightReading(entries[previous])}:null};
   }
   function daily(cards,date,selected={},options={}){
     const available=Array.isArray(cards)?cards:[],food=root.LifeFoodDaily || (typeof require==='function'?require('./food-daily.js'):null);
@@ -76,7 +76,16 @@
     }
     return result;
   }
-  const api=Object.freeze({sessions,previous,validDay,trainingDay,weightSummary,daily});
+  function recent(cards,date,selected={},options={}){
+    if(!validDay(date))return [];
+    const available=Array.isArray(cards)?cards:[],food=root.LifeFoodDaily || (typeof require==='function'?require('./food-daily.js'):null),model=daily(available,date,selected,options);
+    const source=type=>model[type].status==='ready'?available.find(c=>c.id===model[type].cardId):null,foodCard=source('food'),fitnessCard=source('fitness');
+    return food.progress(foodCard || {},date).map(day=>{
+      const foodStatus=model.food.status,fitnessStatus=model.fitness.status,water=foodStatus==='ready'?food.waterSummary(foodCard.foodEntries?.[day.date]):null,training=fitnessStatus==='ready'?trainingDay(fitnessCard.fitnessEntries?.[day.date]):null,weight=fitnessStatus==='ready'?weightReading(fitnessCard.fitnessEntries?.[day.date]):null;
+      return {date:day.date,food:foodStatus==='ready'?{status:'ready',entries:day.entries}:{status:foodStatus},training:fitnessStatus==='ready'?{status:training.review?'review':'ready',hasEntry:training.hasEntry,checkedSets:training.checkedSets,exerciseEntries:training.exerciseEntries,activityEntries:training.activityEntries}:{status:fitnessStatus},water:water?water.needsReview?{status:'review'}:{status:'ready',totalMl:water.totalMl}:{status:foodStatus},weight:fitnessStatus==='ready'?weight===false?{status:'review'}:{status:'ready',kg:weight}:{status:fitnessStatus}};
+    });
+  }
+  const api=Object.freeze({sessions,previous,validDay,trainingDay,weightSummary,daily,recent});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeHealth=api;
 })(typeof window==='undefined'?globalThis:window);
 
@@ -162,7 +171,28 @@ function renderDailyHealth(){
     const cardId=model.food.cardId,card=state.cards.find(c=>c.id===cardId);
     const water=LifeFoodDailyUI.water(card,date,{compact:true,scope:foodScope});water.classList.add('daily-health-water');section.append(water);
   }
+  if(!dailySession().light && (model.food.sources.length || model.fitness.sources.length))section.append(renderDailyHealthRecent(boardId,date,session));
   return section;
+}
+function renderDailyHealthRecent(boardId,date,session){
+  const days=LifeHealth.recent(state.cards,date,session.sources,{boardId,conflicts:state.syncConflicts}),details=planningNode('details','daily-health-recent'),summary=planningNode('summary');
+  const recorded=days.filter(d=>d.food.status==='ready' && d.food.entries>0 || d.training.status==='ready' && d.training.hasEntry || d.water.status==='ready' && d.water.totalMl>0 || d.weight.status==='ready' && d.weight.kg!==null).length;
+  summary.append(planningNode('span','','Your last 7 days'),planningNode('small','',recorded+' day'+(recorded===1?'':'s')+' with entries'));
+  summary.id='today-health-recent-'+encodeURIComponent(boardId);details.open=Boolean(session.recentOpen);details.append(summary);
+  bindHealthDisclosure(details,()=>Boolean(session.recentOpen),open=>{session.recentOpen=open;});
+  const list=planningNode('ol','daily-health-days');list.setAttribute('aria-label','Health entries over the last seven days');
+  const unavailable={empty:'No log',choose:'Choose a log',unavailable:'Log unavailable',review:'Needs review'};
+  for(const day of days){
+    const item=planningNode('li','daily-health-day'),time=planningNode('time'),local=dateKeyToLocalDate(day.date),metrics=planningNode('dl');time.append(planningNode('span','',local.toLocaleDateString(undefined,{weekday:'short'})),planningNode('span','',local.toLocaleDateString(undefined,{month:'short',day:'numeric'})));time.dateTime=day.date;time.title=formatReadableDateKey(day.date);if(day.date===date)time.setAttribute('aria-current','date');item.dataset.date=day.date;
+    const field=(label,data,value,recorded)=>{const cell=planningNode('div');cell.append(planningNode('dt','',label),planningNode('dd',data.status==='ready' && recorded?'is-recorded':'',data.status==='ready'?value:unavailable[data.status] || 'Needs review'));metrics.append(cell);};
+    field('Food',day.food,day.food.entries?day.food.entries+' entr'+(day.food.entries===1?'y':'ies'):'Not recorded',day.food.entries>0);
+    const training=day.training,parts=[...(training.checkedSets?[training.checkedSets+' set'+(training.checkedSets===1?'':'s')]:[]),...(training.exerciseEntries?[training.exerciseEntries+' exercise entr'+(training.exerciseEntries===1?'y':'ies')]:[]),...(training.activityEntries?[training.activityEntries+' activit'+(training.activityEntries===1?'y':'ies')]:[])];
+    field('Training',training,parts.join(' · ') || 'Not recorded',training.hasEntry);
+    field('Water',day.water,day.water.totalMl?day.water.totalMl+' mL':'Not recorded',day.water.totalMl>0);
+    field('Weight',day.weight,day.weight.kg===null?'Not recorded':day.weight.kg?.toFixed(2)+' kg',day.weight.kg!==null);
+    item.append(time,metrics);list.append(item);
+  }
+  details.append(list);return details;
 }
 function openHealthLogComposer(type) {
   if(draftTouched || editingCardId){
