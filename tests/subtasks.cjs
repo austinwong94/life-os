@@ -65,8 +65,9 @@ const confirm=async(p,action='Complete task')=>{await p.locator('#taskConfirmati
     assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await p.keyboard.press('Escape');await p.locator('#taskConfirmationDialog').waitFor({state:'detached'});
     await p.waitForFunction(label=>document.activeElement?.matches('.planner-linked-check') && document.activeElement.getAttribute('aria-label')===label,"Mark done: Sister's birthday");
-    assert.equal(await check.evaluate(el=>el===document.activeElement),true);
-    await p.evaluate(()=>renderCardsOnly({force:true}));assert.equal(await check.evaluate(el=>el===document.activeElement),true);
+    const focus=()=>p.evaluate(()=>{const ticks=[...document.querySelectorAll('.task-card[data-id="view"] .planner-linked-check')].filter(n=>n.getAttribute('aria-label')==="Mark done: Sister's birthday");return {count:ticks.length,focused:ticks[0]?.isConnected===true && ticks[0]===document.activeElement};});
+    assert.deepEqual(await focus(),{count:1,focused:true});
+    await p.evaluate(()=>renderCardsOnly({force:true}));assert.deepEqual(await focus(),{count:1,focused:true});
     await check.click();await confirm(p);assert.equal(await p.getByRole('checkbox',{name:"Mark open: Sister's birthday",exact:true}).isChecked(),true);
     assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks[0].done),false);
     await p.evaluate(()=>flushDeviceWrites());await p.reload();assert.equal(await p.getByRole('checkbox',{name:"Mark open: Sister's birthday",exact:true}).isChecked(),true);
