@@ -39,6 +39,31 @@ test('weight summary refuses archived and unrelated sources and retains malforme
 const timing={plannedTime:'',eatenTime:'12:15',windowMinutes:60,recordedAt:1};
 const meal=(id,kind='meal')=>({id,kind,items:[{id:id+'-food',amount:1}],timing});
 const checkedExercise=()=>({id:'checked-lift',setLog:{version:1,id:'sets',createdAt:1,updatedAt:2,rows:[{id:'set',reps:8,weightKg:15,rpe:'',done:true,removedAt:0,history:[{id:'event',at:2,action:'completed',reps:8,weightKg:15,rpe:''}]}]}});
+test('weekly workout header counts recorded exercise evidence rather than active plans weight or notes',()=>{
+  const card={id:'gym',type:'fitness',fitnessEntries:{'2026-10-24':{parts:{chest:{active:true,exercises:[checkedExercise()]}}},'2026-10-28':{parts:{running:{active:true,distanceKm:'',durationMinutes:''}}},'2026-10-29':{metrics:{weightKg:72},notes:'Rest day'},'2026-10-30':{parts:{chest:{active:true,exercises:[checkedExercise()]}}},'2026-10-31':{parts:{running:{active:true,distanceKm:5,durationMinutes:30}}},'2026-11-01':{parts:{chest:{active:true,exercises:[checkedExercise()]}}}}},before=JSON.stringify(card);
+  assert.deepEqual(health.trainingWeek([card],'2026-10-31'),{status:'ready',recordedDays:2});assert.equal(JSON.stringify(card),before);
+});
+test('weekly workout header counts a date once across logs and ignores unchecked individual sets',()=>{
+  const exercise=checkedExercise(),blank=structuredClone(exercise);blank.setLog.rows[0].done=false;blank.setLog.rows[0].history=[];const cards=[{id:'one',type:'fitness',fitnessEntries:{'2026-10-30':{parts:{chest:{active:true,exercises:[exercise]}}},'2026-10-31':{parts:{chest:{active:true,exercises:[blank]}}}}},{id:'two',type:'fitness',fitnessEntries:{'2026-10-30':{parts:{chest:{active:true,exercises:[exercise]}}}}}],before=JSON.stringify(cards);
+  assert.deepEqual(health.trainingWeek(cards,'2026-10-31'),{status:'ready',recordedDays:1});assert.equal(JSON.stringify(cards),before);
+});
+test('weekly workout header refuses uncertain containers identities and relevant conflicts without rewriting them',()=>{
+  const card={id:'gym',type:'fitness',fitnessEntries:{}},conflicts=[{segments:['boards','board','cards','gym','fitnessEntries']}];
+  for(const fitnessEntries of [null,[],2,{'2026-10-31':null},{'2026-10-31':{parts:{chest:{active:true,exercises:[{id:'bad',setLog:{version:99}}]}}}}]){const source={...card,fitnessEntries},before=JSON.stringify(source);assert.deepEqual(health.trainingWeek([source],'2026-10-31'),{status:'review',recordedDays:null});assert.equal(JSON.stringify(source),before);}
+  assert.equal(health.trainingWeek([card,card],'2026-10-31').status,'review');assert.equal(health.trainingWeek([card],'2026-10-31',{boardId:'board',conflicts}).status,'review');assert.equal(health.trainingWeek([card],'2026-10-31',{boardId:'other',conflicts}).status,'ready');assert.equal(health.trainingWeek([{...card,archivedAt:1}],'2026-10-31').status,'empty');
+});
+test('weekly workout header distinguishes no log invalid dates and a genuine zero-entry week',()=>{
+  assert.deepEqual(health.trainingWeek([],'2026-10-31'),{status:'empty',recordedDays:null});assert.deepEqual(health.trainingWeek([],'2026-02-30'),{status:'review',recordedDays:null});assert.deepEqual(health.trainingWeek([{id:'gym',type:'fitness'}],'2026-10-31'),{status:'ready',recordedDays:0});
+});
+test('recent health headline counts known dated evidence once without inventing a target',()=>{
+  const cards=[{id:'food',type:'food',foodEntries:{'2026-10-30':{meals:[meal('meal')]}}},{id:'gym',type:'fitness',fitnessEntries:{'2026-10-30':{metrics:{weightKg:72}},'2026-10-31':{parts:{chest:{active:true,exercises:[checkedExercise()]}}}}}],days=health.recent(cards,'2026-10-31'),before=JSON.stringify(days);
+  assert.deepEqual(health.recentSummary(days),{status:'ready',recordedDays:2});assert.equal(JSON.stringify(days),before);assert.equal(health.recentSummary(health.recent([],'2026-10-31')).recordedDays,0);
+});
+test('recent health headline shows unknown progress as attention or source choice rather than zero',()=>{
+  const food={id:'food',type:'food',foodEntries:{}},gym={id:'gym',type:'fitness',fitnessEntries:{'2026-10-31':{metrics:{weightKg:'Original import'}}}},cards=[food,gym],before=JSON.stringify(cards);
+  assert.deepEqual(health.recentSummary(health.recent(cards,'2026-10-31')),{status:'review',recordedDays:null});assert.equal(JSON.stringify(cards),before);
+  assert.deepEqual(health.recentSummary(health.recent([food,{...food,id:'other'}],'2026-10-31')),{status:'choose',recordedDays:null});assert.deepEqual(health.recentSummary(health.recent([food],'2026-10-31',{food:'removed'})),{status:'unavailable',recordedDays:null});assert.equal(health.recentSummary([]).status,'review');
+});
 test('recent health covers exactly seven dated days and preserves all original source records',()=>{
   const water={id:'water',amountMl:350,drankTime:'12:00',recordedAt:1,removedAt:0};
   const cards=[{id:'food',type:'food',foodEntries:{'2026-10-30':{meals:[meal('meal'),meal('coffee','drink')],water:{water}},'2026-11-02':{meals:[meal('future')]}}},{id:'gym',type:'fitness',fitnessEntries:{'2026-10-30':{metrics:{weightKg:72.35},parts:{chest:{active:true,exercises:[checkedExercise()]}}},'2026-11-01':{notes:'Rest day'}}}],before=JSON.stringify(cards);

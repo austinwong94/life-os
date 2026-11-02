@@ -4,7 +4,8 @@
 .health-workspace-tabs .planning-button{border:0;border-radius:0;background:none;padding:10px 0;min-width:44px;min-height:44px;font-size:14px;border-bottom:2px solid transparent}
 .health-workspace-tabs [aria-pressed=true]{border-bottom-color:var(--action);color:var(--action)}
 .health-week-summary{display:flex;align-items:baseline;gap:10px;margin-block:18px;color:var(--muted);font-size:13px}
-.health-week-summary strong{font-size:24px;color:var(--ink);font-variant-numeric:tabular-nums}
+.health-week-summary strong{font-size:20px;color:var(--ink);font-variant-numeric:tabular-nums}
+.health-week-scope{display:block;margin-top:3px;font:400 12px/1.5 system-ui,sans-serif;color:var(--muted)}
 .health-workspace-editor.task-card{max-width:860px;width:100%;padding:0;border:0;border-radius:0;box-shadow:none;background:none;--card-accent:var(--action);--card-soft:var(--action-soft);--card-ink:var(--ink);--card-muted:var(--muted)}
 .health-workspace-editor h2{font-size:16px;margin:0 0 16px}
 .health-date-footer{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}

@@ -85,7 +85,32 @@
       return {date:day.date,food:foodStatus==='ready'?{status:'ready',entries:day.entries}:{status:foodStatus},training:fitnessStatus==='ready'?{status:training.review?'review':'ready',hasEntry:training.hasEntry,checkedSets:training.checkedSets,exerciseEntries:training.exerciseEntries,activityEntries:training.activityEntries}:{status:fitnessStatus},water:water?water.needsReview?{status:'review'}:{status:'ready',totalMl:water.totalMl}:{status:foodStatus},weight:fitnessStatus==='ready'?weight===false?{status:'review'}:{status:'ready',kg:weight}:{status:fitnessStatus}};
     });
   }
-  const api=Object.freeze({sessions,previous,validDay,trainingDay,weightSummary,daily,recent});
+  function trainingWeek(cards,date,options={}){
+    const review={status:'review',recordedDays:null};
+    if(!Array.isArray(cards) || !validDay(date))return review;
+    const sources=cards.filter(c=>c?.type==='fitness' && !c.archivedAt);
+    if(!sources.length)return {status:'empty',recordedDays:null};
+    const food=root.LifeFoodDaily || (typeof require==='function'?require('./food-daily.js'):null),dates=food.progress({},date).map(d=>d.date),recorded=new Set();
+    for(const card of sources){
+      if(typeof card.id!=='string' || !card.id || cards.filter(c=>c?.id===card.id).length!==1)return review;
+      if((options.conflicts || []).some(c=>{const p=c?.segments || [];return p[0]==='boards' && p[1]===options.boardId && ['cards','archivedCards'].includes(p[2]) && p[3]===card.id;}))return review;
+      const entries=card.fitnessEntries;
+      if(entries!==undefined && (!entries || typeof entries!=='object' || Array.isArray(entries)))return review;
+      for(const day of dates){const result=trainingDay(entries?.[day]);if(result.review)return review;if(result.hasEntry)recorded.add(day);}
+    }
+    return {status:'ready',recordedDays:recorded.size};
+  }
+  function recentSummary(days){
+    const review={status:'review',recordedDays:null},statuses=['ready','empty','choose','unavailable','review'];
+    if(!Array.isArray(days) || days.length!==7 || days.some(d=>!validDay(d?.date)) || new Set(days.map(d=>d.date)).size!==7)return review;
+    const cells=days.flatMap(d=>[d.food,d.training,d.water,d.weight]);
+    if(cells.some(c=>!c || !statuses.includes(c.status)) || cells.some(c=>c.status==='review'))return review;
+    for(const status of ['unavailable','choose'])if(cells.some(c=>c.status===status))return {status,recordedDays:null};
+    if(days.some(d=>d.food.status==='ready' && (!Number.isInteger(d.food.entries) || d.food.entries<0) || d.training.status==='ready' && typeof d.training.hasEntry!=='boolean' || d.water.status==='ready' && (!Number.isFinite(d.water.totalMl) || d.water.totalMl<0) || d.weight.status==='ready' && d.weight.kg!==null && (!Number.isFinite(d.weight.kg) || d.weight.kg<=0)))return review;
+    const recordedDays=days.filter(d=>d.food.status==='ready' && d.food.entries>0 || d.training.status==='ready' && d.training.hasEntry || d.water.status==='ready' && d.water.totalMl>0 || d.weight.status==='ready' && d.weight.kg!==null).length;
+    return {status:'ready',recordedDays};
+  }
+  const api=Object.freeze({sessions,previous,validDay,trainingDay,weightSummary,daily,recent,trainingWeek,recentSummary});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeHealth=api;
 })(typeof window==='undefined'?globalThis:window);
 
@@ -176,8 +201,8 @@ function renderDailyHealth(){
 }
 function renderDailyHealthRecent(boardId,date,session){
   const days=LifeHealth.recent(state.cards,date,session.sources,{boardId,conflicts:state.syncConflicts}),details=planningNode('details','daily-health-recent'),summary=planningNode('summary');
-  const recorded=days.filter(d=>d.food.status==='ready' && d.food.entries>0 || d.training.status==='ready' && d.training.hasEntry || d.water.status==='ready' && d.water.totalMl>0 || d.weight.status==='ready' && d.weight.kg!==null).length;
-  summary.append(planningNode('span','','Your last 7 days'),planningNode('small','',recorded+' day'+(recorded===1?'':'s')+' with entries'));
+  const total=LifeHealth.recentSummary(days),caption={review:'Some records need review',choose:'Choose your logs',unavailable:'Log unavailable'}[total.status] || total.recordedDays+' day'+(total.recordedDays===1?'':'s')+' with entries';
+  summary.append(planningNode('span','','Your last 7 days'),planningNode('small','',caption));
   summary.id='today-health-recent-'+encodeURIComponent(boardId);details.open=Boolean(session.recentOpen);details.append(summary);
   bindHealthDisclosure(details,()=>Boolean(session.recentOpen),open=>{session.recentOpen=open;});
   const list=planningNode('ol','daily-health-days');list.setAttribute('aria-label','Health entries over the last seven days');
@@ -214,11 +239,13 @@ function renderHealthWorkspace() {
   }
   root.append(tabs);
   const cards=state.cards.filter(card=>!card.archivedAt),workouts=LifeHealth.sessions(cards),today=getTodayKey();
-  const start=getTodayKey(addDays(dateKeyToLocalDate(today),-6));
-  const days=new Set(workouts.filter(row=>row.date>=start && row.date<=today).map(row=>row.date));
+  const week=LifeHealth.trainingWeek(cards,today,{boardId,conflicts:state.syncConflicts});
   const summary=planningNode('div','health-week-summary');
-  summary.append(planningNode('strong','',String(days.size)),planningNode('span','',(days.size===1?'day':'days')+' with workout entries in the last 7 days'));
-  if(session.view!=='food')root.append(summary);
+  if(week.status==='ready'){
+    const copy=planningNode('span','',(week.recordedDays===1?'day':'days')+' with exercise entries in the last 7 days');copy.append(planningNode('small','health-week-scope','Across this board'));summary.append(planningNode('strong','',String(week.recordedDays)),copy);
+  }
+  else summary.append(planningNode('span','','Workout records need review'));
+  if(session.view!=='food' && week.status!=='empty')root.append(summary);
   if(session.view==='history') {
     root.append(renderExerciseHistory(cards,session));
     const list=planningNode('section','health-history');list.setAttribute('aria-label','Training history');root.append(list);
