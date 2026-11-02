@@ -101,3 +101,11 @@
 .daily-health .daily-health-water{margin-top:0;padding-top:12px;border-top:0}
 .daily-health-water h3{margin:0;font:600 14px/1.5 system-ui,sans-serif;color:var(--ink)}
 .daily-health-water .daily-message:empty{display:none}
+.daily-health-meals{min-width:0;padding:12px 0;border-bottom:1px solid var(--line)}
+.daily-health-meals h3{margin:0;font:600 13px/1.5 system-ui,sans-serif}
+.daily-health-meals .food-usual-row{grid-template-columns:minmax(0,1fr)}
+.daily-health-meals .food-usual-row:first-child{border-top:0}
+.daily-health-meals .food-usual-copy small,.daily-health-meals .food-daily-empty,.daily-health-meals .daily-message{font:12px/1.5 system-ui,sans-serif;color:var(--muted);overflow-wrap:anywhere}
+.daily-health-meals .daily-message:empty{display:none}
+.daily-health-meals .food-usual-check:focus-visible{outline:2px solid var(--action);outline-offset:2px;border-radius:4px}
+.daily-health-meals .food-usual-list.is-empty{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}

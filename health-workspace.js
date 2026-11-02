@@ -81,6 +81,13 @@ function renderDailyHealth(){
     if(state.activeBoardId!==boardId || state.ui.workspaceMode!=='today' || getTodayKey()!==date || !section.isConnected)throw Error('This day or board changed. Reopen Today.');
     return LifeHealth.daily(state.cards,date,session.sources,{boardId,conflicts:state.syncConflicts});
   };
+  const foodScope=node=>()=>{
+    if(!node.isConnected || node.closest('dialog')?.open===false || state.activeBoardId!==boardId || state.ui.workspaceMode!=='today' || getTodayKey()!==date)throw Error('This day or board changed. Reopen Today.');
+    const fresh=LifeHealth.daily(state.cards,date,session.sources,{boardId,conflicts:state.syncConflicts}).food;
+    if(fresh.status!=='ready' || fresh.cardId!==model.food.cardId)throw Error('This food source changed. Reopen Today before recording.');
+    return LifeFoodDaily.resolve({id:boardId,cards:state.cards},model.food.cardId,'food',state.syncConflicts);
+  };
+  section.append(notice);
   for(const [type,title,label,icon]of [['food','Meals','Food log','utensils'],['fitness','Training','Workout log','dumbbell']]){
     const data=model[type],row=planningNode('div','daily-health-row'),copy=planningNode('div','daily-health-copy');copy.append(planningNode('strong','',title));
     let status={empty:'No log on this board',choose:'Choose a log',unavailable:'Previous log unavailable',review:'Log needs review'}[data.status];
@@ -117,16 +124,13 @@ function renderDailyHealth(){
       row.append(planningField(label,select));
     }
     section.append(row);
+    if(type==='food' && data.status==='ready'){
+      const meals=planningNode('section','daily-health-meals');meals.setAttribute('aria-label','Usual meals today');meals.append(planningNode('h3','','Usual meals'),LifeFoodDailyUI.usualMeals(state.cards.find(c=>c.id===data.cardId),date,{compact:true,scope:foodScope,onCreate:()=>button.click()}));section.append(meals);
+    }
   }
-  section.append(notice);
   if(model.food.status==='ready'){
     const cardId=model.food.cardId,card=state.cards.find(c=>c.id===cardId);
-    const water=LifeFoodDailyUI.water(card,date,{compact:true,scope:node=>()=>{
-      if(!node.isConnected || node.closest('dialog')?.open===false || state.activeBoardId!==boardId || state.ui.workspaceMode!=='today' || getTodayKey()!==date)throw Error('This day or board changed. Reopen Today.');
-      const fresh=LifeHealth.daily(state.cards,date,session.sources,{boardId,conflicts:state.syncConflicts}).food;
-      if(fresh.status!=='ready' || fresh.cardId!==cardId)throw Error('This food source changed. Reopen Today before recording.');
-      return LifeFoodDaily.resolve({id:boardId,cards:state.cards},cardId,'food',state.syncConflicts);
-    }});water.classList.add('daily-health-water');section.append(water);
+    const water=LifeFoodDailyUI.water(card,date,{compact:true,scope:foodScope});water.classList.add('daily-health-water');section.append(water);
   }
   return section;
 }
