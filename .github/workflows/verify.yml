@@ -251,8 +251,13 @@ jobs:
           name: synthetic-core-results
           path: test-results/
   verify-features:
+    name: verify-features (${{ matrix.group }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [health, planning, daily]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -267,280 +272,351 @@ jobs:
       - name: Start isolated preview
         run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-server.log 2>&1 &
       - run: npm run test:health-review
+        if: matrix.group == 'health'
         env:
           TEST_OUTPUT: test-results
       - name: Check health-card editing and responsive layouts in Chromium
+        if: matrix.group == 'health'
         run: npm run test:health-interface
         env:
           TEST_OUTPUT: test-results/health-interface
       - name: Check isolated One Tap experiment in Chromium
+        if: matrix.group == 'health'
         run: npm run test:one-tap
         env:
           TEST_OUTPUT: test-results/one-tap-chromium
       - name: Check isolated One Tap experiment in WebKit
+        if: matrix.group == 'health'
         run: npm run test:one-tap
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/one-tap-webkit
       - name: Check the shared Health workspace and installation safety in Chromium
+        if: matrix.group == 'health'
         run: npm run test:health-workspace
         env:
           TEST_OUTPUT: test-results/health-workspace
       - name: Check meal reuse and original nutrition preservation in Chromium
+        if: matrix.group == 'health'
         run: npm run test:meal-reuse
         env:
           TEST_OUTPUT: test-results/meal-reuse
       - name: Check usual meals, timing and original weight records in Chromium
+        if: matrix.group == 'health'
         run: npm run test:food-daily
         env:
           TEST_OUTPUT: test-results/food-daily-chromium
       - name: Check usual meals, timing and original weight records in WebKit
+        if: matrix.group == 'health'
         run: npm run test:food-daily
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/food-daily-webkit
       - name: Check Today food and training shortcuts without modifying original records in Chromium
+        if: matrix.group == 'health'
         run: npm run test:today-health
         env:
           TEST_OUTPUT: test-results/today-health-chromium
       - name: Check Today food and training shortcuts without modifying original records in WebKit
+        if: matrix.group == 'health'
         run: npm run test:today-health
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/today-health-webkit
       - name: Check meal reuse and original nutrition preservation in WebKit
+        if: matrix.group == 'health'
         run: npm run test:meal-reuse
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/meal-reuse-webkit
       - name: Check appearance and preserved board records in Chromium
+        if: matrix.group == 'daily'
         run: npm run test:appearance
         env:
           TEST_OUTPUT: test-results/appearance
       - name: Check exercise-name reuse without copying performance in Chromium
+        if: matrix.group == 'health'
         run: npm run test:exercise-reuse
         env:
           TEST_OUTPUT: test-results/exercise-reuse
       - name: Check exercise-name reuse without copying performance in WebKit
+        if: matrix.group == 'health'
         run: npm run test:exercise-reuse
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/exercise-reuse-webkit
       - name: Check appearance and preserved board records in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:appearance
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/appearance-webkit
       - name: Check health-card editing and responsive layouts in WebKit
+        if: matrix.group == 'health'
         run: npm run test:health-interface
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/health-interface-webkit
       - name: Check the shared Health workspace and installation safety in WebKit
+        if: matrix.group == 'health'
         run: npm run test:health-workspace
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/health-workspace-webkit
       - name: Check individual set logging and preceding-client preservation in Chromium
+        if: matrix.group == 'health'
         run: npm run test:fitness-sets
         env:
           TEST_OUTPUT: test-results/fitness-sets-chromium
       - name: Check individual set logging and preceding-client preservation in WebKit
+        if: matrix.group == 'health'
         run: npm run test:fitness-sets
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/fitness-sets-webkit
       - name: Check temporary workout rest timing and record preservation in Chromium
+        if: matrix.group == 'health'
         run: npm run test:workout-rest
         env:
           TEST_OUTPUT: test-results/workout-rest-chromium
       - name: Check temporary workout rest timing and record preservation in WebKit
+        if: matrix.group == 'health'
         run: npm run test:workout-rest
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/workout-rest-webkit
       - name: Check read-only exercise history and original record preservation in Chromium
+        if: matrix.group == 'health'
         run: npm run test:exercise-history
         env:
           TEST_OUTPUT: test-results/exercise-history-chromium
       - name: Check read-only exercise history and original record preservation in WebKit
+        if: matrix.group == 'health'
         run: npm run test:exercise-history
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/exercise-history-webkit
       - run: npm run test:responsive
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results
       - name: Check WebKit phone and portrait layouts
+        if: matrix.group == 'daily'
         run: npm run test:responsive
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/webkit
       - run: npm run test:conflicts
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results
       - run: npm run test:restore
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results
       - name: Check full-backup recovery and restore safeguards in WebKit
+        if: matrix.group == 'planning'
         run: npm run test:restore
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/restore-webkit
       - run: npm run test:planning
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results
       - run: npm run test:google-calendar
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results/google-calendar
       - name: Check Google connection controls in WebKit
+        if: matrix.group == 'planning'
         run: npm run test:google-calendar
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/google-calendar-webkit
       - name: Check task and calendar flows in WebKit
+        if: matrix.group == 'planning'
         run: npm run test:planning
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/webkit
       - run: npm run test:coaching
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results/coaching
       - run: npm run test:daily
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/daily
       - name: Check daily flows in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:daily
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/daily-webkit
       - name: Check coaching flows in WebKit
+        if: matrix.group == 'planning'
         run: npm run test:coaching
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/coaching-webkit
       - run: npm run test:refinements
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results/refinements
       - run: npm run test:task-sources
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results/task-sources
       - run: npm run test:subtasks
+        if: matrix.group == 'planning'
         env:
           TEST_OUTPUT: test-results/subtasks
       - name: Check subtasks in WebKit
+        if: matrix.group == 'planning'
         run: npm run test:subtasks
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/subtasks-webkit
       - run: npm run test:preview-isolation
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/preview-isolation
       - name: Check preview isolation in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:preview-isolation
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/preview-isolation-webkit
       - name: Check source-card tasks in WebKit
+        if: matrix.group == 'planning'
         run: npm run test:task-sources
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/task-sources-webkit
       - name: Check refinements in WebKit
+        if: matrix.group == 'planning'
         run: npm run test:refinements
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/refinements-webkit
       - run: npm run test:design
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/design
       - run: npm run test:redesign
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/redesign
       - name: Check record writing and navigation in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:redesign
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/redesign-webkit
       - run: npm run test:shell
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/shell
       - run: npm run test:momentum
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/momentum
       - run: npm run test:interface-polish
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/interface-polish
       - run: npm run test:workspace-structure
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/workspace-structure
       - name: Check workspace structure and retained writing in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:workspace-structure
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/workspace-structure-webkit
       - name: Check interface actions, contrast and touch targets in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:interface-polish
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/interface-polish-webkit
       - run: npm run test:daily-support
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/daily-support
       - name: Check live clocks without replacing editors in Chromium
+        if: matrix.group == 'daily'
         run: npm run test:timer-rendering
         env:
           TEST_OUTPUT: test-results/timer-rendering
       - name: Check live clocks without replacing editors in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:timer-rendering
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/timer-rendering-webkit
       - name: Check daily selection, draft guards and weekly reviews in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:daily-support
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/daily-support-webkit
       - name: Check progress summaries and responsive charts in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:momentum
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/momentum-webkit
       - run: npm run test:navigation-saving
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/navigation-saving
       - name: Check navigation during pending saves in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:navigation-saving
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/navigation-saving-webkit
       - name: Check grouped navigation and feature access in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:shell
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/shell-webkit
       - run: npm run test:follow-through
+        if: matrix.group == 'daily'
         env:
           TEST_OUTPUT: test-results/follow-through
       - name: Check follow-through on WebKit
+        if: matrix.group == 'daily'
         run: npm run test:follow-through
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/follow-through-webkit
       - name: Check workspace design in WebKit
+        if: matrix.group == 'daily'
         run: npm run test:design
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/design-webkit
       - uses: actions/upload-artifact@v4
+        if: matrix.group == 'health'
         with:
           name: verified-life-os-site
           path: dist/
           if-no-files-found: error
+      - name: Retain the feature group's accepted manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-feature-manifest-${{ matrix.group }}
+          path: dist/release.json
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: synthetic-feature-results
+          name: synthetic-feature-results-${{ matrix.group }}
           path: test-results/
   verify-properties:
     runs-on: ubuntu-latest
@@ -604,6 +680,18 @@ jobs:
         with:
           name: verified-property-manifest
           path: verification/properties
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-feature-manifest-health
+          path: verification/features/health
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-feature-manifest-planning
+          path: verification/features/planning
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-feature-manifest-daily
+          path: verification/features/daily
       - name: Verify test jobs accepted identical complete release bytes
         run: |
           node <<'NODE'
@@ -613,6 +701,10 @@ jobs:
           const site=JSON.parse(fs.readFileSync('dist/release.json','utf8'));
           assert.deepStrictEqual(site,core,'The test jobs verified different artifacts');
           assert.deepStrictEqual(site,properties,'The property test job verified a different artifact');
+          for(const group of ['health','planning','daily']){
+            const feature=JSON.parse(fs.readFileSync('verification/features/'+group+'/release.json','utf8'));
+            assert.deepStrictEqual(site,feature,'The '+group+' feature group verified a different artifact');
+          }
           assert.match(site.id,/^[a-f0-9]{16}$/);
           assert.deepStrictEqual(fs.readdirSync('dist').sort(),[...Object.keys(site.files),'release.json'].sort(),'Unexpected public artifact files');
           for(const [file,hash] of Object.entries(site.files)){
