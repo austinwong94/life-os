@@ -214,6 +214,15 @@ jobs:
         run: npm run test:cloud-reconnect
         env:
           TEST_OUTPUT: test-results/cloud-reconnect
+      - name: Check read-only startup cloud verification in Chromium
+        run: npm run test:cloud-startup-check
+        env:
+          TEST_OUTPUT: test-results/cloud-startup-check-chromium
+      - name: Check read-only startup cloud verification in WebKit
+        run: npm run test:cloud-startup-check
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/cloud-startup-check-webkit
       - name: Check interrupted cloud saves in WebKit
         run: npm run test:cloud-reconnect
         env:

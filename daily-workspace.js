@@ -184,8 +184,9 @@ function openSaveDetails() {
     add('Last device write',deviceSavedAt?formatRecordDateTime(deviceSavedAt):'No write recorded in this tab yet');
     add('Pending device copies',pending===undefined?'Unable to read':String(pending));
     const signedIn=Boolean(cloudSession?.user?.id);
-    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '')?'Sign-in needed':cloudConflictPending?(state.syncConflicts?.length?'Paused - review conflicting changes':'Paused - compare device and cloud copies'):isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudSaveEnabled?'Automatic sync enabled (not a save receipt)':'Sync paused');
-    add('Last known cloud version',getKnownCloudUpdatedAt()?formatRecordDateTime(getKnownCloudUpdatedAt()):'No cloud version confirmed');
+    add('Cloud',PREVIEW_MODE?'Disabled in preview':!signedIn?'Not signed in':/Cloud session expired|Sign-in failed:|Sign-in could not be saved/.test(cloudStatusMessage || '')?'Sign-in needed':cloudConflictPending?(state.syncConflicts?.length?'Paused - review conflicting changes':'Paused - compare device and cloud copies'):isRestoreSyncPaused()?'Paused after restore':!navigator.onLine?'Offline':cloudPushInFlight?'Syncing':cloudStartupCheck.pending?'Checking saved cloud records (read only)':cloudSaveEnabled?'Automatic sync enabled (not a save receipt)':'Sync paused');
+    if(signedIn && cloudStartupCheck.checkedAt){add('Read-only cloud check',formatRecordDateTime(cloudStartupCheck.checkedAt));add('Result at that time',cloudStartupCheck.message);if(cloudStartupCheck.cloudVersionAt)add('Cloud version checked',formatRecordDateTime(cloudStartupCheck.cloudVersionAt));}
+    add('Last known save/load timestamp',getKnownCloudUpdatedAt()?formatRecordDateTime(getKnownCloudUpdatedAt()):'No saved receipt in this browser');
     if(signedIn && cloudMergeBase?.ownerId===cloudSession.user.id){
       let count;try{count=String(LifeCloudCopies.changedBoardIds(getStateForStorage(),cloudMergeBase.state).length);}catch{count='Unable to compare';}
       add('Boards with record changes',count);

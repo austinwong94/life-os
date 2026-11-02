@@ -53,6 +53,8 @@ let cloudSession = PREVIEW_MODE ? null : loadCloudSession();
 let cloudSaveTimer = null;
 let cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
 let cloudStatusMessage = "";
+let cloudCheckGeneration = 0;
+let cloudStartupCheck = {pending:false,checkedAt:0,result:'',message:''};
 let cloudEmailLinkPending = false;
 let cloudGithubPending = false;
 let cloudGithubAuthorizeUrl = '';
@@ -14106,7 +14108,7 @@ function normalizeCloudSession(result) {
   };
 }
 
-async function ensureCloudSession() {
+async function ensureCloudSession(options = {}) {
   if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   if (!cloudSession?.access_token) throw new Error("Sign in to cloud sync first.");
   const stored=loadCloudSession();
@@ -14119,7 +14121,7 @@ async function ensureCloudSession() {
   }
   if (!navigator.locks?.request) throw new Error('This browser cannot coordinate safe sign-in renewal. Your local records are kept. Use an up-to-date browser over HTTPS.');
   const owner = cloudSession.user?.id;
-  return navigator.locks.request(LifeStorageScope.key('life-os-auth-refresh-v1'), async () => {
+  return navigator.locks.request(LifeStorageScope.key('life-os-auth-refresh-v1'), options.signal?{signal:options.signal}:{}, async () => {
     const current = loadCloudSession();
     if (!LifeAuthRenewal.hasIdentity(current) || current.user.id !== owner) throw new Error('The cloud account changed or signed out during renewal. Your local records are kept.');
     assertCloudSignInOwner(current.user);
@@ -14200,10 +14202,55 @@ async function maintainCloudSession() {
 async function fetchCloudStateRow(session) {
   if (PREVIEW_MODE) throw new Error("Cloud access is disabled in this preview.");
   const rows = await LifeCloudTransport.json(`${SUPABASE_CONFIG.url}/rest/v1/user_states?owner_id=eq.${session.user.id}&select=state,updated_at&limit=1`, {
-    headers: getCloudHeaders(session)
+    headers: getCloudHeaders(session),cache:'no-store'
   },{message:'Cloud check failed.',readError:getCloudResponseError});
   if(!Array.isArray(rows))throw new Error('Cloud response could not be validated. No data was replaced.');
   return rows[0] || null;
+}
+
+async function verifyStartupCloud() {
+  if (PREVIEW_MODE || !cloudSaveEnabled || !cloudSession?.user?.id || cloudStartupCheck.pending || cloudPushInFlight || cloudSyncRetry.status().scheduled || corruptLocalStateDetected || cloudConflictPending || state.syncConflicts?.length || isRestoreSyncPaused() || navigator.onLine===false) return;
+  const ownerId=cloudSession.user.id,generation=cloudCheckGeneration;
+  const before=LifeCloudCopies.records(getStateForStorage());
+  const check={pending:true,checkedAt:0,result:'checking',message:''};cloudStartupCheck=check;
+  const controller=new AbortController();let timer;
+  const deadline=new Promise((resolve,reject)=>{timer=window.setTimeout(()=>{reject(new Error('Cloud check timed out. Your device records are kept.'));controller.abort();},20000);});
+  const current=()=>{
+    if(generation!==cloudCheckGeneration || !cloudSaveEnabled || cloudPushInFlight || !lastLocalSaveOk || corruptLocalStateDetected || cloudConflictPending || state.syncConflicts?.length || isRestoreSyncPaused() || navigator.onLine===false || cloudSession?.user?.id!==ownerId || loadCloudSession()?.user?.id!==ownerId)return false;
+    try{return !LifeDeviceStore.pending().length && LifeCloudCopies.equal(before,LifeCloudCopies.records(getStateForStorage())) && LifeCloudCopies.equal(before,LifeCloudCopies.records(readStoredStateSnapshot()));}catch{return false;}
+  };
+  try {
+    if(!lastLocalSaveOk || LifeDeviceStore.pending().length) {
+      check.result='deferred';check.message='Pending device saving needs attention. No cloud check was made.';
+      return;
+    }
+    setSaveStatus('Saved on device - checking cloud','local');
+    assertCloudSignInOwner(cloudSession.user);
+    const session=await Promise.race([ensureCloudSession({signal:controller.signal}),deadline]);
+    if(!current())return;
+    const row=await Promise.race([fetchCloudStateRow(session),deadline]);
+    if(!current())return;
+    if(row && (!isValidBackup(row.state) || typeof row.updated_at!=='string' || !Number.isFinite(Date.parse(row.updated_at)) || row.state.cloudOwnerId && row.state.cloudOwnerId!==ownerId))throw new Error('Cloud response could not be validated. No records were changed.');
+    const matches=Boolean(row && LifeCloudCopies.equal(before,LifeCloudCopies.records(row.state)));
+    check.cloudVersionAt=row?.updated_at || '';
+    check.result=matches?'matched':row?'different':'missing';
+    check.message=matches?'Saved records match the cloud copy. No records uploaded or replaced.':row?'Device and cloud contain different saved records. Neither copy was uploaded or replaced. Use Save cloud to compare safely.':'No cloud copy was found for this account. Nothing was uploaded. Use Save cloud when ready to start syncing.';
+    setSaveStatus(matches?'Cloud copy matches this device':row?'Device and cloud differ - check sync':'Saved on device - no cloud copy',matches?'saved':row?'error':'local');
+    renderCloudStatus(check.message);
+  } catch(error) {
+    if(!current())return;
+    check.result='failed';check.message=normalizeCloudError(error.message || 'Cloud check failed.')+' This read-only check did not upload or replace any records.';
+    setSaveStatus(lastLocalSaveOk?'Saved on device - cloud check failed':'Not saved - export now','error');
+    renderCloudStatus(check.message);
+  } finally {
+    window.clearTimeout(timer);controller.abort();
+    // A delayed read must never acknowledge writing or a newer save operation.
+    if(check.result==='checking'){
+      check.result='superseded';check.message='A newer save or account/device change superseded this check. No records uploaded or replaced.';
+      if(elements.savedState.textContent==='Saved on device - checking cloud')setSaveStatus('Cloud check superseded - not verified','local');
+    }
+    check.pending=false;check.checkedAt=Date.now();
+  }
 }
 
 function getCloudRowStateUpdatedAt(cloudRow) {
@@ -14311,6 +14358,7 @@ async function writeCloudState(session, payload, savePlan) {
 
 async function pushCloudState(options = {}) {
   if (PREVIEW_MODE || ((!cloudSaveEnabled || isRestoreSyncPaused()) && !options.manual) || corruptLocalStateDetected) return;
+  cloudCheckGeneration++;
   if(options.retryOwnerId && options.retryOwnerId!==cloudSession?.user?.id)return;
   if(options.manual)cloudSyncRetry.reset();
   if(navigator.onLine===false){pauseCloudRetry();return;}
@@ -14378,6 +14426,7 @@ async function pushCloudState(options = {}) {
 }
 
 async function pullCloudState(options = {}) {
+  cloudCheckGeneration++;
   try {
     if (!corruptLocalStateDetected && !await flushDeviceWrites()) return;
     const expected = restoreComparable(localStorage.getItem(STORAGE_KEY));
@@ -14398,6 +14447,7 @@ async function pullCloudState(options = {}) {
 
 function queueCloudSave(options = {}) {
   if (!cloudSaveEnabled || isRestoreSyncPaused() || !cloudSession?.access_token || corruptLocalStateDetected || cloudConflictPending) return;
+  cloudCheckGeneration++;
   window.clearTimeout(cloudSaveTimer);
   if(navigator.onLine===false){pauseCloudRetry();return;}
   if(cloudSyncRetry.status().scheduled)return;
@@ -14434,7 +14484,7 @@ function saveState(options = {}) {
   if (applyingExternalStorageUpdate) return false;
   if (corruptLocalStateDetected) {setSaveStatus("Recovery needed - original protected", "error"); return false;}
   const touched = options.touch !== false;
-  if (touched) touchState();
+  if (touched) {cloudCheckGeneration++;touchState();}
   syncActiveBoard({touchBoard: touched, updatedAt: state.updatedAt});
   const snapshot = getStateForStorage();
   // Idle and page-hide checks still drain pending edits, but unchanged copies

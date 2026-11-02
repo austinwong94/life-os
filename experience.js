@@ -710,7 +710,7 @@ function initializeExperience() {
   cloudMergeBase = loadCloudMergeBase();
   LifeDeviceStore.configure(commitDeviceWrites,{readSnapshot:readStoredStateSnapshot,checkpoint:LifeDeviceCheckpoint.create({name:LifeStorageScope.key('life-os-device-checkpoint-v1')})});
   if(typeof initializeRecoveryVault==='function')initializeRecoveryVault();
-  if (!corruptLocalStateDetected) flushDeviceWrites();
+  const startupDeviceSave = corruptLocalStateDetected ? Promise.resolve(false) : flushDeviceWrites();
   cloudConflictPending = Boolean(state.syncConflicts?.length);
   if (isRestoreSyncPaused()) {cloudSaveEnabled = false; window.clearTimeout(cloudSaveTimer);}
   const status = document.getElementById("headerSaveStatus");
@@ -745,10 +745,11 @@ function initializeExperience() {
   document.getElementById("railTemplatesButton").hidden = true;
   const templates = document.createElement("button"); templates.type = "button"; templates.className = "secondary-action"; templates.textContent = "Browse board templates";
   templates.onclick = () => openTemplateModal(); elements.boardPanel.append(templates);
-  setSaveStatus(corruptLocalStateDetected ? "Recovery needed - original protected" : cloudConflictPending ? "Changes need review" : isRestoreSyncPaused() ? "Restored on device - cloud paused" : cloudSession ? "Saved on device - checking cloud" : "Saved on device", corruptLocalStateDetected || cloudConflictPending ? "error" : "local");
+  setSaveStatus(corruptLocalStateDetected ? "Recovery needed - original protected" : cloudConflictPending ? "Changes need review" : isRestoreSyncPaused() ? "Restored on device - cloud paused" : navigator.onLine===false ? "Offline - saved on device" : "Saved on device", corruptLocalStateDetected || cloudConflictPending ? "error" : "local");
   window.addEventListener("online", resumeCloudSync);
   window.addEventListener("offline", pauseCloudRetry);
   initializeDailyWorkspace();
+  startupDeviceSave.then(saved=>{if(saved)verifyStartupCloud();});
 }
 
 function mountResponsiveComposer() {

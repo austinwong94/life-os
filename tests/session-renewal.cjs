@@ -26,7 +26,9 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
     saveCloudSession({user:{id:owner},access_token:'synthetic-original-access',refresh_token:'synthetic-original-refresh',expires_at:Date.now()+3600000});
     cloudSaveEnabled=false;cloudSessionMaintenancePending=true;window.sessionFixtureKey=CLOUD_SESSION_KEY;window.holdSessionEvents=true;
    },owner);
-   const q=await context.newPage();await q.clock.install({time:new Date('2026-10-17T08:00:00+08:00')});await q.goto(url.href);await q.evaluate(()=>{cloudSaveEnabled=false;cloudSessionMaintenancePending=true;});
+   const q=await context.newPage();await q.clock.install({time:new Date('2026-10-17T08:00:00+08:00')});await q.goto(url.href);await q.evaluate(async()=>{cloudSaveEnabled=false;cloudSessionMaintenancePending=true;await flushDeviceWrites();});
+   // Finish any initial read before measuring the auth operation below.
+   await q.waitForFunction(()=>!cloudStartupCheck.pending);
    const before=await p.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage())));requests.length=0;
    await fn(p,q,context,requests);
    assert.equal(await p.evaluate(()=>JSON.stringify(LifeCloudCopies.records(getStateForStorage()))),before);assert.deepEqual(errors,[]);
@@ -107,7 +109,7 @@ const out=process.env.TEST_OUTPUT || '/private/tmp/life-os-session-renewal',owne
   const raw=await q.evaluate(()=>{saveCloudSession({...cloudSession,access_token:'synthetic-new-access',refresh_token:'synthetic-new-refresh',expires_at:Date.now()+3600000});return localStorage.getItem(CLOUD_SESSION_KEY);});
   await p.waitForFunction(raw=>localStorage.getItem(CLOUD_SESSION_KEY)===raw,raw);
   assert(await p.evaluate(()=>holdSessionEvents && cloudSession?.access_token==='synthetic-original-access'));
-  assert.equal(await ensure(p),'synthetic-new-access');assert.equal(requests.length,0);
+  assert.equal(await ensure(p),'synthetic-new-access');assert.deepEqual(requests,[]);
  });
  await run('a stale storage view cannot exchange a token already renewed in another tab',async(p,q,context)=>{
   let calls=0;

@@ -51,6 +51,7 @@
     "test:readable-export": "node tests/readable-export.cjs",
     "test:version-compatibility": "node tests/version-compatibility.cjs",
     "test:cloud-reconnect": "node tests/cloud-reconnect.cjs",
+    "test:cloud-startup-check": "node tests/cloud-startup-check.cjs",
     "test:release-startup": "node tests/release-startup.cjs",
     "test:startup-repeat": "node tests/startup-repeat.cjs",
     "test:device-concurrency": "node tests/device-concurrency.cjs",
