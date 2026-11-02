@@ -38,3 +38,21 @@ test('known health validation remains in effect alongside extension preservation
  assert.equal(c.normalizeFitnessMetrics({weightKg:'70.25',heightCm:'175'}).bmi,22.9);assert.equal(c.normalizeFitnessPart({type:'cardio'},{intensity:'unknown'}).intensity,'Moderate');
  assert.equal(c.normalizeSideNoteEntry({notes:[{text:'  \n\t ',createdAt:1}]}).notes.length,0);
 });
+
+test('unrecognized fitness metric values survive repeated normalization at their original keys',()=>{
+ const c=fixture();
+ for(const value of ['70 kg','  ',true,false,[],[70],{value:70,unit:'kg'},'<img src=x onerror=alert(1)>']){
+  const original={weightKg:value,heightCm:175,bmi:'Legacy BMI',energy:value,customData:extra},before=JSON.stringify(original),next=c.normalizeFitnessMetrics(original);
+  assert.deepEqual(plain(next.weightKg),value);assert.deepEqual(plain(next.energy),value);assert.equal(next.bmi,'Legacy BMI');
+  assert(c.fitnessMetricNeedsReview(value));assert.equal(c.calculateBMI(value,175),'');assert.equal(JSON.stringify(original),before);
+  assert.deepEqual(plain(c.normalizeFitnessMetrics(next)),plain(next));assert.deepEqual(plain(next.customData),extra);
+ }
+});
+
+test('valid numeric metrics retain precision and BMI calculation without coercing objects or booleans',()=>{
+ const c=fixture();
+ for(const value of [70.25,'70.25',' 70.25 ','7.025e1']){const next=c.normalizeFitnessMetrics({weightKg:value,heightCm:'175'});assert.equal(next.weightKg,70.25);assert.equal(next.bmi,22.9);}
+ for(const value of ['',null,undefined]){assert.equal(c.normalizeFitnessMetrics({weightKg:value}).weightKg,'');assert(!c.fitnessMetricNeedsReview(value));}
+ assert.equal(c.calculateBMI(70,[175]),'');assert.equal(c.calculateBMI(true,175),'');
+ const original={weightKg:70.25,heightCm:175,bmi:{imported:'22.9'}};assert.deepEqual(plain(c.normalizeFitnessMetrics(original).bmi),original.bmi);
+});

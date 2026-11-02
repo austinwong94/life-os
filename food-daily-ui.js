@@ -181,7 +181,13 @@
     const archived=Object.values(card.foodRoutines || {}).filter(r=>D.validRoutine(r) && r.archivedAt);
     if(archived.length){const details=planningNode('details','food-usual-archive');details.append(planningNode('summary','','Archived usual meals ('+archived.length+')'));for(const routine of archived)details.append(planningButton('Restore '+routine.name,()=>{try{const current=live(),tx=D.saveRoutine(board(),current.id,routine,{...D.copy(routine),archivedAt:0},{conflicts:state.syncConflicts});commit(tx);renderCardsOnly({force:true});}catch(error){notice.textContent=error.message;message(error);}},'rotate-ccw'));section.append(details);}
     const fitness=state.cards.filter(c=>c.type==='fitness' && !c.archivedAt),selected=fitness.length===1?fitness[0]:fitness.find(c=>c.id===weightSources.get(JSON.stringify([state.activeBoardId,card.id])));
-    if(selected && state.cards.filter(c=>c.id===selected.id).length===1){const weights=Object.entries(selected.fitnessEntries || {}).filter(([d,e])=>D.day(d) && d<=date && Number(e?.metrics?.weightKg)>0).sort(([a],[b])=>b.localeCompare(a));if(weights.length){let text='Weight: '+weights[0][1].metrics.weightKg+' kg · '+formatReadableDateKey(weights[0][0]);if(weights.length>1){const change=Number(weights[0][1].metrics.weightKg)-Number(weights[1][1].metrics.weightKg);text+=' · '+(change>0?'+':'')+change.toFixed(2)+' kg since '+formatReadableDateKey(weights[1][0]);}section.append(planningNode('p','food-weight-recent',text));}}
+    if(selected && state.cards.filter(c=>c.id===selected.id).length===1){
+      const history=Object.entries(selected.fitnessEntries || {}).filter(([d])=>D.day(d) && d<=date);
+      const review=history.some(([,e])=>fitnessMetricNeedsReview(e?.metrics?.weightKg));
+      const weights=history.filter(([,e])=>fitnessMetricNumber(e?.metrics?.weightKg)>0).sort(([a],[b])=>b.localeCompare(a));
+      if(review)section.append(planningNode('p','food-weight-recent','Weight history needs review. Original values are kept in Fitness Log → Body metrics.'));
+      else if(weights.length){let text='Weight: '+weights[0][1].metrics.weightKg+' kg · '+formatReadableDateKey(weights[0][0]);if(weights.length>1){const change=Number(weights[0][1].metrics.weightKg)-Number(weights[1][1].metrics.weightKg);text+=' · '+(change>0?'+':'')+change.toFixed(2)+' kg since '+formatReadableDateKey(weights[1][0]);}section.append(planningNode('p','food-weight-recent',text));}
+    }
     return section;
   }
   function openRoutine(card,date,original=null,source=null){
@@ -298,7 +304,7 @@
     if(!logs.length){dialog.append(planningNode('p','','No Fitness Log on this board yet.'),planningButton('Add Fitness Log',()=>{dialog.close();openHealthLogComposer('fitness');},'plus'));return;}
     const key=JSON.stringify([state.activeBoardId,card.id]),selection=logs.length===1?logs[0].id:weightSources.get(key) || '';
     const input=document.createElement('input');input.type='number';input.inputMode='decimal';input.step='0.01';input.min='0.01';input.required=true;
-    const validWeight=value=>/^(?:\d+)(?:\.\d{1,2})?$/.test(String(value)) && Number(value)>0 && Number.isSafeInteger(Math.round(Number(value)*100));
+    const validWeight=value=>['string','number'].includes(typeof value) && /^(?:\d+)(?:\.\d{1,2})?$/.test(String(value)) && Number(value)>0 && Number.isSafeInteger(Math.round(Number(value)*100));
     const checkedLog=()=>{
       live();if(date>getTodayKey())throw Error('Record weight on today or a past date.');
       const log=D.resolve(board(),sourceId,'fitness',state.syncConflicts),entries=log.fitnessEntries,entry=entries?.[date];

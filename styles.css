@@ -5702,6 +5702,28 @@ textarea:focus {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.fitness-metric-review {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--card-border, #d9dfe2);
+  border-radius: 6px;
+}
+
+.fitness-metric-review pre,
+.fitness-metric-original {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.fitness-metric-review button {
+  min-height: 44px;
+  white-space: normal;
+}
+
 .fitness-metrics-hint {
   margin: 2px 0 0;
   color: var(--card-muted);

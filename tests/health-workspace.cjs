@@ -237,5 +237,48 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname),'Use isolated l
       await p.getByLabel(label(type),{exact:true}).focus();await p.getByLabel(label(type),{exact:true}).evaluate(n=>window.laterHealthEditor=n);await p.evaluate(async()=>{await flushDeviceWrites();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));});assert(await p.evaluate(()=>laterHealthEditor.isConnected && laterHealthEditor===document.activeElement));
     }
   });
+  async function metricFixture(p,metrics={weightKg:'Imported 72 kg',heightCm:175,bmi:'Imported BMI'}){
+    await p.evaluate(async metrics=>{const card=state.cards.find(c=>c.id==='workout');card.fitnessEntries['2026-10-31']=normalizeFitnessEntry({metrics,notes:'Original session\nEvery line',customData:{keep:true}});card.fitnessMetricsOpen=true;saveState({quiet:true});await flushDeviceWrites();},metrics);await workspace(p,'health');
+  }
+  await run('metric preservation retains original text through full render reload reports and readable export without executing HTML',async p=>{
+    const raw='<img src=x onerror="window.metricExecuted=true">';await metricFixture(p,{weightKg:raw,heightCm:175,bmi:{original:'Keep BMI'},energy:false});
+    const read=()=>p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='workout').fitnessEntries['2026-10-31']));const before=await read();
+    assert.match(await p.locator('.fitness-metrics>summary').innerText(),/3 need review/);assert.equal(await p.locator('.fitness-metric-review pre').first().innerText(),raw);
+    const reports=await p.evaluate(()=>{const entry=state.cards.find(c=>c.id==='workout').fitnessEntries['2026-10-31'],section=createFitnessMetricsTrendSection([{dateKey:'2026-10-31',entry}]);document.body.append(section);const result={text:section.textContent,images:section.querySelectorAll('img').length,readable:renderReadableFitnessMetrics(entry.metrics),executed:window.metricExecuted || false};section.remove();return result;});
+    assert(reports.text.includes(raw));assert.match(reports.text,/needs review/);assert.equal(reports.images,0);assert.equal(reports.executed,false);assert(reports.readable.includes('&lt;img'));assert(reports.readable.includes('needs review'));assert.deepEqual(await read(),before);
+    for(const width of [320,390,768,1080,1440]){await p.setViewportSize({width,height:1000});assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));if([390,1080].includes(width))await p.screenshot({path:out+'/metric-review-'+width+'.png'});}
+    await p.reload();assert.deepEqual(await read(),before);assert.match(await p.locator('.fitness-metrics>summary').innerText(),/3 need review/);
+  });
+  await run('metric preservation review cancel is read-only and explicit replacement persists only the selected measurement',async p=>{
+    await metricFixture(p);const before=await entryCopies(p,'fitness');
+    for(const width of [390,1080]){await p.setViewportSize({width,height:1000});await p.screenshot({path:out+'/metric-original-'+width+'.png'});await p.locator('.fitness-metrics').screenshot({path:out+'/metric-panel-'+width+'.png'});}
+    await p.getByRole('button',{name:'Review Weight',exact:true}).click();const dialog=p.locator('#dailyDialog');assert.equal(await dialog.locator('pre').innerText(),'Imported 72 kg');
+    const input=dialog.getByLabel('Weight (kg)',{exact:true});
+    for(const value of ['', '-1', '72.255']){await input.fill(value);await dialog.locator('form').evaluate(n=>n.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));assert.match(await dialog.locator('[role=status]').innerText(),/Enter a valid/);assert.deepEqual(await entryCopies(p,'fitness'),before);}
+    await input.fill('');await input.pressSequentially('72.25');assert(await input.evaluate(n=>n===document.activeElement));assert.equal(await input.inputValue(),'72.25');
+    for(const width of [320,390,768,1080,1440]){await p.setViewportSize({width,height:1000});assert(await dialog.evaluate(n=>n.scrollWidth<=n.clientWidth+1));assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));if([390,1080].includes(width))await p.screenshot({path:out+'/metric-replacement-dialog-'+width+'.png'});}
+    await dialog.getByRole('button',{name:'Cancel',exact:true}).click();assert.deepEqual(await entryCopies(p,'fitness'),before);
+    await p.getByRole('button',{name:'Review Weight',exact:true}).click();await dialog.getByLabel('Weight (kg)',{exact:true}).fill('72.25');await dialog.getByRole('button',{name:'Save replacement',exact:true}).click();await dialog.waitFor({state:'detached'});await p.evaluate(()=>flushDeviceWrites());const after=await entryCopies(p,'fitness');assert.equal(after['2026-10-31'].metrics.weightKg,72.25);assert.equal(after['2026-10-31'].metrics.bmi,'Imported BMI');assert.equal(after['2026-10-31'].notes,before['2026-10-31'].notes);assert.deepEqual(after['2026-10-31'].customData,{keep:true});await p.reload();assert.deepEqual(await entryCopies(p,'fitness'),after);
+  });
+  await run('metric preservation replacement rolls back storage failures and keeps the complete draft available for retry',async p=>{
+    for(const fail of ['false','throw']){await metricFixture(p);const before=await entryCopies(p,'fitness');await p.getByRole('button',{name:'Review Weight',exact:true}).click();const dialog=p.locator('#dailyDialog');await dialog.getByLabel('Weight (kg)',{exact:true}).fill('72.25');await p.evaluate(fail=>{window.originalMetricSave=saveState;saveState=()=>{if(fail==='throw')throw Error('Synthetic full storage');return false;};},fail);await dialog.getByRole('button',{name:'Save replacement',exact:true}).click();await p.evaluate(()=>{saveState=originalMetricSave;});assert.match(await dialog.locator('[role=status]').innerText(),/original value is unchanged/);assert.equal(await dialog.getByLabel('Weight (kg)',{exact:true}).inputValue(),'72.25');assert.deepEqual(await entryCopies(p,'fitness'),before);await dialog.getByRole('button',{name:'Cancel',exact:true}).click();}
+  });
+  await run('metric preservation stale wrong-board conflicting archived duplicate changed-date and closed callbacks refuse all writes',async p=>{
+    await metricFixture(p);const result=await p.evaluate(()=>{
+      const card=state.cards.find(c=>c.id==='workout'),field=FITNESS_METRIC_FIELDS.find(f=>f.key==='weightKg'),results=[];
+      for(const kind of ['board','view','conflict','archive','duplicate','date','entry','closed']){
+        openFitnessMetricReview(card,'2026-10-31',field);const dialog=document.querySelector('#dailyDialog'),form=dialog.querySelector('form');form.querySelector('input').value='72.25';
+        if(kind==='board')state.activeBoardId='other';if(kind==='view')state.ui.workspaceMode='board';if(kind==='conflict')state.syncConflicts=[{segments:['boards','health-board','cards','workout','fitnessEntries']}];if(kind==='archive')card.archivedAt=1;if(kind==='duplicate')state.cards.push(LifeStateMerge.copy(card));if(kind==='date')card.activeFitnessDate='2026-10-30';if(kind==='entry')card.fitnessEntries['2026-10-31'].notes+='\nNewer writing';if(kind==='closed')dialog.close();
+        const before=JSON.stringify(getStateForStorage());form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));results.push({kind,same:JSON.stringify(getStateForStorage())===before});
+        state.activeBoardId='health-board';state.ui.workspaceMode='health';state.syncConflicts=[];delete card.archivedAt;if(kind==='duplicate')state.cards.pop();card.activeFitnessDate='2026-10-31';dialog.close();dialog.remove();
+      }return results;
+    });assert(result.every(r=>r.same),JSON.stringify(result));
+  });
+  await run('metric preservation BMI original is never auto-replaced until its explicit calculated replacement is saved',async p=>{
+    await metricFixture(p,{weightKg:70.25,heightCm:175,bmi:'Original BMI'});const before=await entryCopies(p,'fitness');assert.equal(before['2026-10-31'].metrics.bmi,'Original BMI');await p.getByRole('button',{name:'Review BMI',exact:true}).click();const dialog=p.locator('#dailyDialog'),input=dialog.getByLabel('BMI',{exact:true});assert.equal(await input.inputValue(),'22.9');assert(await input.evaluate(n=>n.readOnly));assert.deepEqual(await entryCopies(p,'fitness'),before);await dialog.getByRole('button',{name:'Save replacement',exact:true}).click();assert.equal((await entryCopies(p,'fitness'))['2026-10-31'].metrics.bmi,22.9);
+  });
+  await run('metric preservation Food never coerces an imported array into a weight or advertises a numeric trend',async p=>{
+    await metricFixture(p,{weightKg:[72],heightCm:175});const before=await entryCopies(p,'fitness');await p.getByRole('button',{name:'Food',exact:true}).click();assert.match(await p.locator('.food-weight-recent').innerText(),/needs review/);assert.doesNotMatch(await p.locator('.food-weight-recent').innerText(),/72 kg/);await p.getByRole('button',{name:'Weight',exact:true}).click();assert.equal(await p.locator('#dailyDialog').getByRole('button',{name:/Use 72 kg/}).count(),0);await p.locator('#dailyDialog').getByRole('button',{name:'Cancel',exact:true}).click();assert.deepEqual(await entryCopies(p,'fitness'),before);
+  });
   await browser.close();fs.writeFileSync(out+'/results.json',JSON.stringify(results,null,2));if(results.some(row=>!row.pass))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1;});
