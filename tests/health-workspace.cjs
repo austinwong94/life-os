@@ -238,7 +238,7 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname),'Use isolated l
     }
   });
   async function metricFixture(p,metrics={weightKg:'Imported 72 kg',heightCm:175,bmi:'Imported BMI'}){
-    await p.evaluate(async metrics=>{const card=state.cards.find(c=>c.id==='workout');card.fitnessEntries['2026-10-31']=normalizeFitnessEntry({metrics,notes:'Original session\nEvery line',customData:{keep:true}});card.fitnessMetricsOpen=true;saveState({quiet:true});await flushDeviceWrites();},metrics);await workspace(p,'health');
+    await p.evaluate(async metrics=>{const card=state.cards.find(c=>c.id==='workout');card.fitnessEntries['2026-10-31']=normalizeFitnessEntry({metrics,notes:'Original session\nEvery line',customData:{keep:true}});card.fitnessMetricsOpen=true;saveState({quiet:true});await flushDeviceWrites();},metrics);await workspace(p,'health');await p.evaluate(()=>flushDeviceWrites());
   }
   await run('metric preservation retains original text through full render reload reports and readable export without executing HTML',async p=>{
     const raw='<img src=x onerror="window.metricExecuted=true">';await metricFixture(p,{weightKg:raw,heightCm:175,bmi:{original:'Keep BMI'},energy:false});
@@ -251,7 +251,7 @@ assert(['127.0.0.1','localhost'].includes(new URL(url).hostname),'Use isolated l
   });
   await run('metric preservation review cancel is read-only and explicit replacement persists only the selected measurement',async p=>{
     await metricFixture(p);const before=await entryCopies(p,'fitness');
-    for(const width of [390,1080]){await p.setViewportSize({width,height:1000});await p.screenshot({path:out+'/metric-original-'+width+'.png'});await p.locator('.fitness-metrics').screenshot({path:out+'/metric-panel-'+width+'.png'});}
+    for(const width of [390,1080]){await p.setViewportSize({width,height:1000});await p.screenshot({path:out+'/metric-original-'+width+'.png',fullPage:true});}
     await p.getByRole('button',{name:'Review Weight',exact:true}).click();const dialog=p.locator('#dailyDialog');assert.equal(await dialog.locator('pre').innerText(),'Imported 72 kg');
     const input=dialog.getByLabel('Weight (kg)',{exact:true});
     for(const value of ['', '-1', '72.255']){await input.fill(value);await dialog.locator('form').evaluate(n=>n.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true})));assert.match(await dialog.locator('[role=status]').innerText(),/Enter a valid/);assert.deepEqual(await entryCopies(p,'fitness'),before);}
