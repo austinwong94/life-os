@@ -98,3 +98,6 @@
 .daily-health .planning-button{min-height:44px;min-width:44px;font-size:12px;font-weight:500;white-space:normal;max-width:140px}.daily-health .planning-button svg{width:18px;height:18px;flex:none}
 .daily-health-row>.planning-field{grid-column:1/-1;min-width:0;font-size:12px}.daily-health select{min-height:44px;max-width:100%;width:100%;min-width:0;padding:8px;border:1px solid var(--line);border-radius:6px;color:var(--ink);background:var(--surface,#fff);font:16px/1.5 system-ui,sans-serif}
 .daily-health>.daily-message:empty{display:none}.daily-health>.daily-message{margin-top:8px;font-size:12px;line-height:1.5}
+.daily-health .daily-health-water{margin-top:0;padding-top:12px;border-top:0}
+.daily-health-water h3{margin:0;font:600 14px/1.5 system-ui,sans-serif;color:var(--ink)}
+.daily-health-water .daily-message:empty{display:none}

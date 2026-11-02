@@ -118,7 +118,17 @@ function renderDailyHealth(){
     }
     section.append(row);
   }
-  section.append(notice);return section;
+  section.append(notice);
+  if(model.food.status==='ready'){
+    const cardId=model.food.cardId,card=state.cards.find(c=>c.id===cardId);
+    const water=LifeFoodDailyUI.water(card,date,{compact:true,scope:node=>()=>{
+      if(!node.isConnected || node.closest('dialog')?.open===false || state.activeBoardId!==boardId || state.ui.workspaceMode!=='today' || getTodayKey()!==date)throw Error('This day or board changed. Reopen Today.');
+      const fresh=LifeHealth.daily(state.cards,date,session.sources,{boardId,conflicts:state.syncConflicts}).food;
+      if(fresh.status!=='ready' || fresh.cardId!==cardId)throw Error('This food source changed. Reopen Today before recording.');
+      return LifeFoodDaily.resolve({id:boardId,cards:state.cards},cardId,'food',state.syncConflicts);
+    }});water.classList.add('daily-health-water');section.append(water);
+  }
+  return section;
 }
 function openHealthLogComposer(type) {
   if(draftTouched || editingCardId){

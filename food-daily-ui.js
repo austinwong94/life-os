@@ -69,28 +69,37 @@
       if(tx){commit(tx);renderCardsOnly({force:true});undo(tx,'Portion updated.');}
     }});
   }
-  function water(card,date){
-    const section=planningNode('section','food-water');section.setAttribute('aria-label','Water check-ins');const live=context(card,date,section),summary=D.waterSummary(card.foodEntries?.[date]),notice=planningNode('p','daily-message');notice.setAttribute('role','status');
+  function water(card,date,options={}){
+    const mode=state.ui.workspaceMode,prefix='water-'+encodeURIComponent(JSON.stringify([state.activeBoardId,card.id,date,mode]));
+    const scope=node=>{const resolve=options.scope?options.scope(node):context(card,date,node);return ()=>{if(state.ui.workspaceMode!==mode)throw Error('This view changed. Reopen the original water check-in.');return resolve();};};
+    const section=planningNode('section','food-water');section.setAttribute('aria-label','Water check-ins');const live=scope(section),summary=D.waterSummary(card.foodEntries?.[date]),notice=planningNode('p','daily-message');notice.setAttribute('role','status');
     const head=planningNode('div','food-daily-head');head.append(planningNode('h3','','Water'),planningNode('span','food-water-total',summary.needsReview?'Records need review':summary.totalMl+' mL · '+summary.records.length+' drink'+(summary.records.length===1?'':'s')));section.append(head);
-    const add=(amountMl,drankTime)=>{
-      const current=live(),now=new Date(),record={id:createId(),amountMl,drankTime:drankTime ?? (date===getTodayKey()?String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'):''),recordedAt:now.getTime(),removedAt:0};
-      const tx=D.logWater(board(),current.id,date,record,{today:getTodayKey(),conflicts:state.syncConflicts});if(tx){commit(tx);renderCardsOnly({force:true});undo(tx,'Water recorded.');}return tx;
+    const add=(amountMl,drankTime,resolve=live)=>{
+      const current=resolve(),now=new Date(),record={id:createId(),amountMl,drankTime:drankTime ?? (date===getTodayKey()?String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'):''),recordedAt:now.getTime(),removedAt:0};
+      const tx=D.logWater(board(),current.id,date,record,{today:getTodayKey(),conflicts:state.syncConflicts});
+      if(tx){
+        // Match the app's empty-day format before saving so redraws cannot invalidate Undo.
+        if(!tx.after.meals.length){tx.after=normalizeFoodEntry(tx.after);current.foodEntries[date]=D.copy(tx.after);}
+        commit(tx);renderCardsOnly({force:true});undo(tx,'Water recorded.');
+      }
+      return tx;
     };
     const actions=planningNode('div','food-water-actions'),amounts=[250,350,500],last=summary.records.at(-1)?.amountMl;if(last && !amounts.includes(last))amounts.push(last);
-    for(const amount of amounts){const button=planningButton(amount+' mL',()=>{try{add(amount);}catch(error){notice.textContent=error.message;message(error);}},'plus');button.setAttribute('aria-label','Log '+amount+' mL water');button.disabled=date>getTodayKey() || summary.needsReview;actions.append(button);}
+    for(const amount of amounts){const button=planningButton(amount+' mL',()=>{try{add(amount);}catch(error){notice.textContent=error.message;message(error);}},'plus');button.id=prefix+'-'+amount;button.setAttribute('aria-label','Log '+amount+' mL water');button.disabled=date>getTodayKey() || summary.needsReview;actions.append(button);}
     const custom=planningButton('Custom',()=>{
-      try{live();const dialog=dailyDialog('Record water');dialog.classList.add('food-water-dialog');const check=context(card,date,dialog),form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
+      try{live();const dialog=dailyDialog('Record water');dialog.classList.add('food-water-dialog');const check=scope(dialog),form=planningNode('form','daily-form'),status=planningNode('p','daily-message');status.setAttribute('role','status');
+        dialog.addEventListener('close',()=>{if(document.querySelector('dialog[open]') || document.activeElement!==document.body && !dialog.contains(document.activeElement))return;document.getElementById(prefix+'-custom')?.focus({preventScroll:true});});
         const amount=document.createElement('input');amount.type='number';amount.inputMode='decimal';amount.min='0.01';amount.max='100000';amount.step='any';amount.required=true;
         const drank=document.createElement('input');drank.type='time';const now=new Date();drank.value=date===getTodayKey()?String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'):'';
         const save=planningButton('Record drink',null,'check');save.type='submit';save.classList.add('is-primary');const buttons=planningNode('div','daily-actions');buttons.append(planningButton('Cancel',()=>dialog.close()),save);
-        form.append(planningNode('p','daily-muted',formatReadableDateKey(date)),planningField('Water (mL)',amount),planningField('Drank at (optional)',drank),status,buttons);form.onsubmit=event=>{event.preventDefault();try{check();add(Number(amount.value),drank.value);dialog.close();}catch(error){status.textContent=error.message;}};dialog.append(form);amount.focus();
+        form.append(planningNode('p','daily-muted',formatReadableDateKey(date)),planningField('Water (mL)',amount),planningField('Drank at (optional)',drank),status,buttons);form.onsubmit=event=>{event.preventDefault();try{if(!amount.validity.valid || !drank.validity.valid)throw Error('Complete the water amount and time before saving.');add(Number(amount.value),drank.value,check);dialog.close();}catch(error){status.textContent=error.message;}};dialog.append(form);amount.focus();
       }catch(error){notice.textContent=error.message;}
-    });custom.disabled=date>getTodayKey() || summary.needsReview;actions.append(custom);section.append(actions,notice);
+    });custom.id=prefix+'-custom';custom.disabled=date>getTodayKey() || summary.needsReview;actions.append(custom);section.append(actions,notice);
     if(summary.needsReview)notice.textContent='Original water records are kept. Review their format before adding more.';
-    if(summary.records.length){const history=planningNode('details','food-water-history');history.append(planningNode('summary','','Drink history ('+summary.records.length+')'));for(const record of summary.records){
+    if(!options.compact && summary.records.length){const history=planningNode('details','food-water-history');history.append(planningNode('summary','','Drink history ('+summary.records.length+')'));for(const record of summary.records){
       const row=planningNode('div','food-water-record');row.append(planningNode('span','',record.amountMl+' mL · '+(record.drankTime || 'Time not recorded')));
       const remove=planningButton('',()=>{
-        try{live();const dialog=dailyDialog('Remove water entry'),check=context(card,date,dialog),status=planningNode('p','daily-message');status.setAttribute('role','status');dialog.append(planningNode('p','',record.amountMl+' mL · '+(record.drankTime || 'Time not recorded')+' · '+formatReadableDateKey(date)),status,planningButton('Keep drink',()=>dialog.close()),planningButton('Remove drink',()=>{try{check();const current=live(),tx=D.removeWater(board(),current.id,date,record,{conflicts:state.syncConflicts});commit(tx);dialog.close();renderCardsOnly({force:true});undo(tx,'Drink removed.');}catch(error){status.textContent=error.message;}},'trash-2'));
+        try{live();const dialog=dailyDialog('Remove water entry'),check=scope(dialog),status=planningNode('p','daily-message');status.setAttribute('role','status');dialog.append(planningNode('p','',record.amountMl+' mL · '+(record.drankTime || 'Time not recorded')+' · '+formatReadableDateKey(date)),status,planningButton('Keep drink',()=>dialog.close()),planningButton('Remove drink',()=>{try{const current=check(),tx=D.removeWater(board(),current.id,date,record,{conflicts:state.syncConflicts});commit(tx);dialog.close();renderCardsOnly({force:true});undo(tx,'Drink removed.');}catch(error){status.textContent=error.message;}},'trash-2'));
         }catch(error){notice.textContent=error.message;}
       },'trash-2');remove.setAttribute('aria-label','Remove '+record.amountMl+' mL water at '+(record.drankTime || 'unknown time'));remove.title=remove.getAttribute('aria-label');row.append(remove);history.append(row);
     }section.append(history);}
@@ -330,5 +339,5 @@
     };
     dialog.append(form);choose();if(!sourceId)source.focus();else if(previous && !input.value)usePrevious.focus();else input.focus();
   }
-  window.LifeFoodDailyUI=Object.freeze({render,times,bindDetails,portions,itemPortions});
+  window.LifeFoodDailyUI=Object.freeze({render,times,bindDetails,portions,itemPortions,water});
 })();
