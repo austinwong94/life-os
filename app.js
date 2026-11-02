@@ -4628,7 +4628,7 @@ function normalizeFitnessEntry(entry = {}) {
   return {
     ...entry,
     parts: normalizedParts,
-    metrics: normalizeFitnessMetrics(entry.metrics || {}),
+    metrics: normalizeFitnessMetrics(entry.metrics),
     notes: String(entry.notes || ""),
     updatedAt: normalizeTimestamp(entry.updatedAt) || 0
   };
@@ -4673,6 +4673,7 @@ function normalizeFitnessExercise(exercise = {}) {
 }
 
 function normalizeFitnessMetrics(metrics = {}) {
+  if (!isFitnessMetricsObject(metrics)) return metrics;
   const next = { ...metrics };
   FITNESS_METRIC_FIELDS.forEach((field) => {
     const value = metrics[field.key];
@@ -4683,6 +4684,10 @@ function normalizeFitnessMetrics(metrics = {}) {
     next.bmi = calculatedBmi;
   }
   return next;
+}
+
+function isFitnessMetricsObject(metrics) {
+  return metrics !== null && typeof metrics === 'object' && !Array.isArray(metrics);
 }
 
 function fitnessMetricNumber(value) {
@@ -5125,6 +5130,13 @@ function renderFitnessMetrics(card, dateKey, entry) {
     resolveLiveCard(card).fitnessMetricsOpen = open;
     saveState({ quiet: true, touch: false });
   });
+  const sessionNotes = createFitnessNotesDisclosure("Session notes", entry.notes, (value) => {
+    updateFitnessEntry(card, dateKey, (nextEntry) => { nextEntry.notes = value; });
+  });
+  if (!isFitnessMetricsObject(entry.metrics)) {
+    section.append(summary, createFitnessMetricsReviewNotice(entry.metrics), sessionNotes);
+    return section;
+  }
   const grid = document.createElement("div");
   grid.className = "fitness-metric-grid";
   FITNESS_METRIC_FIELDS.forEach((field) => {
@@ -5161,13 +5173,12 @@ function renderFitnessMetrics(card, dateKey, entry) {
   const hint = document.createElement("p");
   hint.className = "fitness-metrics-hint";
   hint.textContent = "Energy is your 1-5 readiness score: 1 drained, 3 okay, 5 strong.";
-  section.append(summary, grid, hint, createFitnessNotesDisclosure("Session notes", entry.notes, (value) => {
-    updateFitnessEntry(card, dateKey, (nextEntry) => { nextEntry.notes = value; });
-  }));
+  section.append(summary, grid, hint, sessionNotes);
   return section;
 }
 
 function getFitnessMetricsSummary(metrics) {
+  if (!isFitnessMetricsObject(metrics)) return 'Saved metrics need review';
   const summary = [];
   if (fitnessMetricNumber(metrics.weightKg) !== null) summary.push(`${formatFitnessMetricNumber("weightKg", metrics.weightKg)} kg`);
   if (fitnessMetricNumber(metrics.bodyFatPercent) !== null) summary.push(`${formatFitnessMetricNumber("bodyFatPercent", metrics.bodyFatPercent)}% fat`);
@@ -5175,6 +5186,13 @@ function getFitnessMetricsSummary(metrics) {
   const reviewCount = FITNESS_METRIC_FIELDS.filter(field => fitnessMetricNeedsReview(metrics[field.key])).length;
   if (reviewCount) summary.push(`${reviewCount} need review`);
   return summary.join(" · ") || "Optional";
+}
+
+function createFitnessMetricsReviewNotice(metrics, label = 'Saved body metrics need review. Original value retained.') {
+  const notice = planningNode('div', 'fitness-metric-review');
+  const status = planningNode('p', '', label); status.setAttribute('role', 'status');
+  notice.append(status, planningNode('pre', 'fitness-metric-original', JSON.stringify(metrics, null, 2)));
+  return notice;
 }
 
 function openFitnessMetricReview(card, dateKey, field) {
@@ -5186,7 +5204,7 @@ function openFitnessMetricReview(card, dateKey, field) {
     return live;
   };
   const expected = LifeStateMerge.copy(resolve().fitnessEntries[dateKey]);
-  if (!fitnessMetricNeedsReview(expected.metrics[field.key])) throw Error('This measurement changed. Reopen its current view.');
+  if (!isFitnessMetricsObject(expected.metrics) || !fitnessMetricNeedsReview(expected.metrics[field.key])) throw Error('This measurement changed. Reopen its current view.');
   const dialog = dailyDialog('Review '+field.label), form = planningNode('form', 'daily-form');
   const original = planningNode('pre', 'fitness-metric-original', fitnessMetricOriginalText(expected.metrics[field.key]));
   const input = document.createElement('input');
@@ -8553,7 +8571,7 @@ function collectFitnessSessions(range) {
         if (!isDateInReportRange(dateKey, range)) return;
         const normalizedEntry = normalizeFitnessEntry(entry);
         const activeParts = getActiveFitnessParts(normalizedEntry);
-        const hasMetrics = FITNESS_METRIC_FIELDS.some((field) => normalizedEntry.metrics[field.key] !== "");
+        const hasMetrics = hasReadableFitnessMetrics(normalizedEntry.metrics);
         if (!activeParts.length && !hasMetrics && !normalizedEntry.notes) return;
         sessions.push({ card, dateKey, entry: normalizedEntry, activeParts });
       });
@@ -8618,7 +8636,7 @@ function createFitnessMetricsTrendSection(sessions) {
   const metricSessions = sessions
     .slice()
     .reverse()
-    .filter((session) => FITNESS_METRIC_FIELDS.some((field) => session.entry.metrics[field.key] !== ""));
+    .filter((session) => hasReadableFitnessMetrics(session.entry.metrics));
   const section = document.createElement("section");
   section.className = "report-section";
   const heading = document.createElement("h3");
@@ -8636,10 +8654,15 @@ function createFitnessMetricsTrendSection(sessions) {
   ["weightKg", "bmi", "bodyFatPercent", "chestCm", "waistCm", "leftArmCm", "rightArmCm"].forEach((key) => {
     const field = FITNESS_METRIC_FIELDS.find((item) => item.key === key);
     const row = document.createElement("div");
-    row.innerHTML = `<strong>${escapeHtml(field.label)}</strong><span>${escapeHtml(formatMetricValue(first.entry.metrics[key], field.suffix, field.decimals))}</span><span>${escapeHtml(formatMetricValue(latest.entry.metrics[key], field.suffix, field.decimals))}</span>`;
+    const firstValue = isFitnessMetricsObject(first.entry.metrics) ? formatMetricValue(first.entry.metrics[key], field.suffix, field.decimals) : 'Needs review';
+    const latestValue = isFitnessMetricsObject(latest.entry.metrics) ? formatMetricValue(latest.entry.metrics[key], field.suffix, field.decimals) : 'Needs review';
+    row.innerHTML = `<strong>${escapeHtml(field.label)}</strong><span>${escapeHtml(firstValue)}</span><span>${escapeHtml(latestValue)}</span>`;
     table.append(row);
   });
   section.append(heading, createReportSubhead(`${formatRecordDate(first.dateKey)} to ${formatRecordDate(latest.dateKey)}`), table);
+  for (const session of metricSessions) {
+    if (!isFitnessMetricsObject(session.entry.metrics)) section.append(createFitnessMetricsReviewNotice(session.entry.metrics, formatRecordDate(session.dateKey)+' · body metrics need review. Original value retained.'));
+  }
   return section;
 }
 
@@ -13439,10 +13462,12 @@ function renderReadableFitness(card) {
 }
 
 function hasReadableFitnessMetrics(metrics = {}) {
+  if (!isFitnessMetricsObject(metrics)) return true;
   return FITNESS_METRIC_FIELDS.some((field) => metrics[field.key] !== "" && metrics[field.key] !== null && typeof metrics[field.key] !== "undefined");
 }
 
 function renderReadableFitnessMetrics(metrics = {}) {
+  if (!isFitnessMetricsObject(metrics)) return renderReadableKeyValues('Body metrics', [['Saved metrics (needs review)', JSON.stringify(metrics, null, 2)]]);
   const rows = FITNESS_METRIC_FIELDS
     .filter((field) => metrics[field.key] !== "" && metrics[field.key] !== null && typeof metrics[field.key] !== "undefined")
     .map((field) => [field.label, formatMetricValue(metrics[field.key], field.suffix, field.decimals)]);

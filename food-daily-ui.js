@@ -183,7 +183,7 @@
     const fitness=state.cards.filter(c=>c.type==='fitness' && !c.archivedAt),selected=fitness.length===1?fitness[0]:fitness.find(c=>c.id===weightSources.get(JSON.stringify([state.activeBoardId,card.id])));
     if(selected && state.cards.filter(c=>c.id===selected.id).length===1){
       const history=Object.entries(selected.fitnessEntries || {}).filter(([d])=>D.day(d) && d<=date);
-      const review=history.some(([,e])=>fitnessMetricNeedsReview(e?.metrics?.weightKg));
+      const review=history.some(([,e])=>e?.metrics!==undefined && !isFitnessMetricsObject(e.metrics) || fitnessMetricNeedsReview(e?.metrics?.weightKg));
       const weights=history.filter(([,e])=>fitnessMetricNumber(e?.metrics?.weightKg)>0).sort(([a],[b])=>b.localeCompare(a));
       if(review)section.append(planningNode('p','food-weight-recent','Weight history needs review. Original values are kept in Fitness Log → Body metrics.'));
       else if(weights.length){let text='Weight: '+weights[0][1].metrics.weightKg+' kg · '+formatReadableDateKey(weights[0][0]);if(weights.length>1){const change=Number(weights[0][1].metrics.weightKg)-Number(weights[1][1].metrics.weightKg);text+=' · '+(change>0?'+':'')+change.toFixed(2)+' kg since '+formatReadableDateKey(weights[1][0]);}section.append(planningNode('p','food-weight-recent',text));}

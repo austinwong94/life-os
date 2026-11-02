@@ -56,3 +56,17 @@ test('valid numeric metrics retain precision and BMI calculation without coercin
  assert.equal(c.calculateBMI(70,[175]),'');assert.equal(c.calculateBMI(true,175),'');
  const original={weightKg:70.25,heightCm:175,bmi:{imported:'22.9'}};assert.deepEqual(plain(c.normalizeFitnessMetrics(original).bmi),original.bmi);
 });
+
+test('unsupported fitness metrics containers remain at the original key through repeated normalization',()=>{
+ const c=fixture();
+ for(const metrics of [null,false,true,0,72,'','Imported 72 kg',[],[72,{unit:'kg',notes:'Keep every line\nSecond line'}]]){
+  const original={metrics,notes:'  Original session\n\tKeep this line',customData:extra},before=JSON.stringify(original),entry=c.normalizeFitnessEntry(original);
+  assert.deepEqual(plain(entry.metrics),metrics);assert.deepEqual(plain(c.normalizeFitnessEntry(entry).metrics),metrics);
+  assert.equal(entry.notes,original.notes);assert.deepEqual(plain(entry.customData),extra);assert.equal(JSON.stringify(original),before);
+ }
+});
+
+test('missing and ordinary named fitness metrics keep the established defaults and calculations',()=>{
+ const c=fixture();assert.equal(c.normalizeFitnessEntry({}).metrics.weightKg,'');assert.equal(c.normalizeFitnessEntry({metrics:{}}).metrics.bmi,'');
+ const next=c.normalizeFitnessEntry({metrics:{weightKg:'72.25',heightCm:'175',customData:extra}});assert.equal(next.metrics.weightKg,72.25);assert.equal(next.metrics.bmi,23.6);assert.deepEqual(plain(next.metrics.customData),extra);
+});
