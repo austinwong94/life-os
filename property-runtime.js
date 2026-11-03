@@ -3630,7 +3630,7 @@ function drawQuickViewImage() {
 function allAppData() {
   return {
     ...propertyOriginalFields,
-    version: 3,
+    version: propertyOriginalFields.version === 4 || documents.some(doc => doc.type === 'Damage Fees') ? 4 : 3,
     appVersion: APP_VERSION,
     ownerId: cloudUser?.id || readSyncState().userId || "",
     exportedAt: new Date().toISOString(),
@@ -4491,7 +4491,7 @@ function validateBackupData(data) {
   if (!payload || typeof payload !== "object" || !Array.isArray(payload.bookings)) {
     throw new Error("This file is not a Sunrise Villa backup. No records were changed.");
   }
-  if (Number(payload.version || 1) > 3) throw new Error("This backup uses a newer format. Update the application before importing it.");
+  if (Number(payload.version || 1) > 4) throw new Error("This backup uses a newer format. Update the application before importing it.");
   for (const key of ["documents"]) {
     if (payload[key] !== undefined && !Array.isArray(payload[key])) throw new Error("Invalid " + key + " collection.");
   }

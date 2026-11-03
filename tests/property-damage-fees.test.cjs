@@ -18,3 +18,10 @@ test('damage print escapes customer text and distinguishes invoice requests from
   const invoice=c.buildDamageMarkup(doc);assert.match(invoice,/Damage Compensation Invoice/);assert.match(invoice,/not proof of payment/);assert.match(invoice,/&lt;script&gt;/);assert.doesNotMatch(invoice,/<script>|<img/);assert.match(invoice,/Line one<br>Line two/);assert.match(invoice,/RM 30.00/);
   const receipt=c.buildDamageMarkup({...doc,damageKind:'Receipt',payments:[{date:'2026-11-03',amount:30,mode:'Transfer',reference:'TX1'}]});assert.match(receipt,/Damage Compensation Receipt/);assert.match(receipt,/Total compensation received/);assert.match(receipt,/RM 0.00/);assert.doesNotMatch(receipt,/not proof of payment/);
 });
+test('only saved damage documents opt into the newer format and a previously upgraded copy never downgrades',()=>{
+  const c={propertyOriginalFields:{version:3,custom:{keep:true}},documents:[{id:'invoice',type:'Invoice'}],bookings:[],taxPlan:{},profitData:{},appSettings:{},APP_VERSION:'test',cloudUser:{id:'owner'}};vm.createContext(c);vm.runInContext(extract('allAppData'),c);
+  assert.equal(c.allAppData().version,3);const before=JSON.stringify(c.propertyOriginalFields);c.documents.push({id:'damage',type:'Damage Fees'});assert.equal(c.allAppData().version,4);assert.equal(JSON.stringify(c.propertyOriginalFields),before);c.propertyOriginalFields.version=4;c.documents=[];assert.equal(c.allAppData().version,4);
+});
+test('the new reader accepts format four without modifying its records and refuses unsupported future formats',()=>{
+  const c={};vm.createContext(c);vm.runInContext(extract('validateBackupData'),c);const doc={version:4,bookings:[],documents:[{id:'damage',type:'Damage Fees',damageItems:[{id:'item',description:'Towel',quantity:2,unitPrice:12.34}]}],custom:{keep:true}},before=JSON.stringify(doc);assert.equal(c.validateBackupData(doc),doc);assert.equal(JSON.stringify(doc),before);assert.throws(()=>c.validateBackupData({...doc,version:5}),/newer format/);
+});
