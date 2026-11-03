@@ -1857,7 +1857,7 @@ function loadDocuments() {
 
 function normalizeDocument(doc) {
   const now = new Date().toISOString();
-  const type = ["Quotation", "Invoice", "Official Receipt"].includes(doc.type) ? doc.type : "Quotation";
+  const type = ["Quotation", "Invoice", "Official Receipt", "Damage Fees"].includes(doc.type) ? doc.type : "Quotation";
   const issuer = issuers[doc.issuer] ? doc.issuer : "Sunrise Villa Ventures";
   const bookingType = doc.bookingType === "Airbnb Booking" ? "Airbnb Booking" : "Direct Booking";
   const checkIn = String(doc.checkIn || isoDate(new Date()));
@@ -1890,6 +1890,15 @@ function normalizeDocument(doc) {
     createdAt: doc.createdAt || now,
     updatedAt: doc.updatedAt || now,
   };
+  if (type === 'Damage Fees') Object.assign(normalized, {
+    damageKind:doc.damageKind === 'Receipt' ? 'Receipt' : 'Invoice',
+    damageDate:String(doc.damageDate || normalized.date),
+    damageDueDate:String(doc.damageDueDate || ''),
+    damageReference:String(doc.damageReference || ''),
+    damageRelatedInvoice:String(doc.damageRelatedInvoice || ''),
+    damageDepositApplied:Number(doc.damageDepositApplied || 0),
+    damageItems:Array.isArray(doc.damageItems) ? doc.damageItems.map(item=>({...item,id:String(item.id || crypto.randomUUID()),description:String(item.description || ''),quantity:Number(item.quantity ?? 1),unitPrice:Number(item.unitPrice || 0)})) : [],
+  });
   const totalAmount = documentTotalFor(normalized);
   const amountDue = documentAmountDueFor({ ...normalized, totalAmount });
   const codePattern = new RegExp("^" + issuers[issuer].code + "-[0-9]{4}-" + documentTypeCode(type) + "[A-D](08|18)(-[0-9]+)?$");
@@ -2765,7 +2774,7 @@ function prefixFor(name) {
 }
 
 function documentTypeCode(type) {
-  return { Quotation: "Q", Invoice: "I", "Official Receipt": "R" }[type] || "Q";
+  return { Quotation: "Q", Invoice: "I", "Official Receipt": "R", "Damage Fees": "D" }[type] || "Q";
 }
 
 function documentNightsCode(nights) {
@@ -2794,10 +2803,12 @@ function documentCodeFor(doc) {
 }
 
 function documentTotalFor(doc) {
+  if (doc.type === 'Damage Fees') return damageTotals(doc).total;
   return Number(doc.accommodationFee || 0) + Number(doc.securityDeposit || 0);
 }
 
 function documentAmountDueFor(doc) {
+  if (doc.type === 'Damage Fees') return damageTotals(doc).balance;
   const total = Number(doc.totalAmount ?? documentTotalFor(doc));
   if (doc.type === "Invoice" && doc.invoiceScope === "Balance Payment") {
     return Math.max(0, total - Number(doc.previouslyReceived || 0));
@@ -2805,8 +2816,50 @@ function documentAmountDueFor(doc) {
   return total;
 }
 
+function damageTotals(doc) {
+  const cents = value => Math.round((Number(value) || 0) * 100);
+  const total = (doc.damageItems || []).reduce((sum, item) => sum + Math.round(cents(item.unitPrice) * Number(item.quantity || 0)), 0);
+  const deposit = cents(doc.damageDepositApplied), paid = (doc.payments || []).reduce((sum, payment) => sum + cents(payment.amount), 0);
+  return {total:total / 100, deposit:deposit / 100, paid:paid / 100, balance:Math.max(0,total-deposit-paid) / 100, overpayment:Math.max(0,deposit+paid-total) / 100};
+}
+
+function damageRowsFromForm() {
+  return [...document.querySelectorAll('#damageItemRows .damage-item')].map(row => ({
+    ...row._damageOriginal, id:row.dataset.damageId,
+    description:row.querySelector('[data-damage-description]').value.trim(),
+    quantity:Number(row.querySelector('[data-damage-quantity]').value),
+    unitPrice:Number(row.querySelector('[data-damage-price]').value),
+  }));
+}
+
+function renderDamageRows(items = []) {
+  const host=document.querySelector('#damageItemRows');
+  host.innerHTML=items.map(item=>`<div class="damage-item" data-damage-id="${escapeHtml(item.id || crypto.randomUUID())}">
+    <label class="damage-description">Damaged item / repair details<input data-damage-description maxlength="1000" required value="${escapeHtml(item.description || '')}" placeholder="Item and damage or repair needed" /></label>
+    <label>Quantity<input data-damage-quantity type="number" min="1" max="100000" step="1" required inputmode="numeric" value="${Number(item.quantity ?? 1)}" /></label>
+    <label>Unit cost (RM)<input data-damage-price type="number" min="0.01" max="10000000" step="0.01" required inputmode="decimal" value="${Number(item.unitPrice || 0)}" /></label>
+    <button type="button" class="ghost-button damage-remove" data-remove-damage title="Remove damaged item" aria-label="Remove damaged item">&times;</button>
+  </div>`).join('');
+  [...host.children].forEach((row,index)=>row._damageOriginal={...items[index]});
+  updateReceiptVisibility();
+}
+
+function damageFormFields() {
+  const value=id=>document.querySelector('#'+id).value;
+  return {damageKind:value('docDamageKind'),damageDate:value('docDamageDate'),damageDueDate:value('docDamageDue'),damageReference:value('docDamageReference').trim(),damageRelatedInvoice:value('docDamageInvoice').trim(),damageDepositApplied:Number(value('docDamageDeposit')),damageItems:damageRowsFromForm()};
+}
+
 function paymentTotalFor(doc) {
   return (doc.payments || []).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+}
+
+function documentListedAmount(doc) {
+  if(doc.type==='Damage Fees' && doc.damageKind==='Receipt') {const t=damageTotals(doc);return (Math.round(t.paid*100)+Math.round(t.deposit*100))/100;}
+  return doc.type==='Official Receipt' ? paymentTotalFor(doc) : documentAmountDueFor(doc);
+}
+
+function documentListedLabel(doc) {
+  return doc.type==='Official Receipt' || (doc.type==='Damage Fees' && doc.damageKind==='Receipt') ? 'Received' : 'Amount due';
 }
 
 function documentStatusClass(status) {
@@ -5805,8 +5858,8 @@ function prefillDocFromBooking(id) {
   if (els.docCheckIn) els.docCheckIn.value = b.arrival || "";
   if (els.docCheckOut) els.docCheckOut.value = departureFor(b);
   if (els.docNights) els.docNights.value = b.nights || 1;
-  if (els.docAccommodationFee) els.docAccommodationFee.value = b.revenue || 0;
-  if (els.docDepositAmount) els.docDepositAmount.value = b.depositAmount || 0;
+  if (els.docAccommodationFee) els.docAccommodationFee.value = type === 'Damage Fees' ? 0 : b.revenue || 0;
+  if (els.docDepositAmount) els.docDepositAmount.value = type === 'Damage Fees' ? 0 : b.depositAmount || 0;
 
   els.docBillTo.value = "";
   els.docBillAddress.value = "";
@@ -5816,7 +5869,7 @@ function prefillDocFromBooking(id) {
   const fullTotal = Number(b.revenue || 0) + Number(b.depositAmount || 0);
   const received = Number(b.paid || 0);
   const recordedPayments = typeof bookingReceiptPayments === "function" ? bookingReceiptPayments(b) : [];
-  renderPaymentRows(recordedPayments.length ? recordedPayments : [{ ...normalizePayment({ amount: received }), date: "" }]);
+  renderPaymentRows(type === 'Damage Fees' ? [] : recordedPayments.length ? recordedPayments : [{ ...normalizePayment({ amount: received }), date: "" }]);
   if (els.docType?.value === "Invoice" && els.docInvoiceScope) {
     const isPartial = received > 0 && fullTotal > 0 && received < fullTotal;
     els.docInvoiceScope.value = isPartial ? "Balance Payment" : "Full Booking";
@@ -5850,7 +5903,8 @@ function formDocument() {
     previouslyReceived: Number(els.docPreviouslyReceived?.value || 0),
     linkedReceiptCode: els.docLinkedReceiptCode?.value.trim() || "",
     remarks: els.docRemarks.value.trim(),
-    payments: els.docType.value === "Official Receipt" ? paymentRowsFromForm() : [],
+    payments: els.docType.value === "Official Receipt" || (els.docType.value === 'Damage Fees' && document.querySelector('#docDamageKind').value === 'Receipt') ? paymentRowsFromForm() : [],
+    ...(els.docType.value === 'Damage Fees' ? damageFormFields() : {}),
   };
   const existing = documents.find((doc) => doc.id === raw.id);
   if (raw.type === "Official Receipt" && typeof receiptPreviouslyReceived === "function") raw.previouslyReceived = receiptPreviouslyReceived(raw);
@@ -5890,7 +5944,14 @@ function fillDocumentForm(doc) {
   if (els.docPreviouslyReceived) els.docPreviouslyReceived.value = normalized.previouslyReceived;
   if (els.docLinkedReceiptCode) els.docLinkedReceiptCode.value = normalized.linkedReceiptCode;
   els.docRemarks.value = normalized.remarks;
-  renderPaymentRows(normalized.payments.length ? normalized.payments : [normalizePayment({})]);
+  document.querySelector('#docDamageKind').value=normalized.damageKind || 'Invoice';
+  document.querySelector('#docDamageDate').value=normalized.damageDate || normalized.date;
+  document.querySelector('#docDamageDue').value=normalized.damageDueDate || '';
+  document.querySelector('#docDamageReference').value=normalized.damageReference || '';
+  document.querySelector('#docDamageInvoice').value=normalized.damageRelatedInvoice || '';
+  document.querySelector('#docDamageDeposit').value=normalized.damageDepositApplied || 0;
+  renderDamageRows(normalized.damageItems || []);
+  renderPaymentRows(normalized.payments.length ? normalized.payments : normalized.type === 'Damage Fees' ? [] : [normalizePayment({})]);
   updateReceiptVisibility();
   renderDocumentPreview(normalized);
   setDocumentWorkspace("editor");
@@ -5947,17 +6008,24 @@ function renderPaymentRows(payments = [normalizePayment({})]) {
 
 // Payments are entered explicitly; the booking total is never assumed received.
 function receiptTotalFromForm() {
+  if (els.docType.value === 'Damage Fees') {const totals=damageTotals(damageFormFields());return Math.max(0,totals.total-totals.deposit);}
   return Number(els.docAccommodationFee.value || 0) + Number(els.docDepositAmount.value || 0);
 }
 function updateReceiptVisibility() {
-  const isReceipt = els.docType.value === "Official Receipt";
+  const isDamage = els.docType.value === 'Damage Fees';
+  const isReceipt = els.docType.value === "Official Receipt" || (isDamage && document.querySelector('#docDamageKind').value === 'Receipt');
   const isInvoice = els.docType.value === "Invoice";
   const isBalanceInvoice = isInvoice && els.docInvoiceScope?.value === "Balance Payment";
   if (els.receiptPaymentSection) els.receiptPaymentSection.hidden = !isReceipt;
   if (els.invoiceBalanceSection) els.invoiceBalanceSection.hidden = !isInvoice;
   if (els.docPreviouslyReceived) els.docPreviouslyReceived.disabled = !isBalanceInvoice;
   if (els.docLinkedReceiptCode) els.docLinkedReceiptCode.disabled = !isBalanceInvoice;
-  if (isReceipt && !els.paymentRows.children.length) renderPaymentRows([normalizePayment({})]);
+  const damageSection=document.querySelector('#damageFeeSection');
+  damageSection.hidden=!isDamage;
+  damageSection.querySelectorAll('input,select').forEach(input=>input.disabled=!isDamage);
+  document.querySelector('#docDamageDate').required=isDamage;
+  document.querySelectorAll('[data-stay-charge]').forEach(label=>{label.hidden=isDamage;label.querySelector('input').disabled=isDamage;});
+  if (isReceipt && !isDamage && !els.paymentRows.children.length) renderPaymentRows([normalizePayment({})]);
   els.paymentRows.querySelectorAll("input").forEach(input => { input.disabled = !isReceipt; });
   document.querySelectorAll("[data-document-type]").forEach(button => {
     const active = button.dataset.documentType === els.docType.value;
@@ -6041,6 +6109,7 @@ function fitDocPreviewFrame(frame) {
 // document — never the surrounding app, the builder form, or any other guest's
 // records that live in the archive.
 function buildDocumentMarkup(normalized) {
+  if (normalized.type === 'Damage Fees') return buildDamageMarkup(normalized);
   const issuer = issuers[normalized.issuer] || issuers["Sunrise Villa Ventures"];
   const isReceipt = normalized.type === "Official Receipt";
   const isBalanceInvoice = normalized.type === "Invoice" && normalized.invoiceScope === "Balance Payment";
@@ -6192,6 +6261,36 @@ function buildDocumentMarkup(normalized) {
   `;
 }
 
+function buildDamageMarkup(doc) {
+  const issuer=issuers[doc.issuer] || issuers['Sunrise Villa Ventures'], t=damageTotals(doc), receipt=doc.damageKind==='Receipt';
+  const title=receipt ? 'Damage Compensation Receipt' : 'Damage Compensation Invoice';
+  return `<header class="doc-paper-head damage-paper-head"><div class="doc-issuer"><h2>${escapeHtml(doc.issuer)}</h2>
+    ${issuer.registration ? `<p>Business Registration No.: ${escapeHtml(issuer.registration)}</p>` : ''}
+    ${issuer.address ? `<p>${escapeHtml(issuer.address)}</p>` : ''}
+    <p>${[issuer.contact,issuer.email].filter(Boolean).map(escapeHtml).join(' · ')}</p></div>
+    <div class="doc-title-box"><span>${title}</span><strong>${escapeHtml(doc.code)}</strong><small>${shortDate(doc.date)}</small></div></header>
+    <div class="doc-info-grid"><section><h4>Bill to</h4><p><strong>${escapeHtml(doc.guestName)}</strong></p>
+      ${doc.guestContact ? `<p>${escapeHtml(doc.guestContact)}</p>` : ''}${doc.billTo ? `<p>${escapeHtml(doc.billTo)}</p>` : ''}
+      ${doc.billAddress ? `<p class="doc-address">${escapeMultiline(doc.billAddress)}</p>` : ''}</section>
+      <section><h4>Property / stay</h4><p><strong>${escapeHtml(doc.propertyName)}</strong></p><p>${shortDate(doc.checkIn)} &rarr; ${shortDate(doc.checkOut)}</p>
+      <p>Damage recorded: ${shortDate(doc.damageDate)}</p>${doc.damageDueDate ? `<p>Payment due: ${shortDate(doc.damageDueDate)}</p>` : ''}
+      ${doc.damageReference ? `<p>Claim reference: ${escapeHtml(doc.damageReference)}</p>` : ''}${doc.damageRelatedInvoice ? `<p>Related invoice: ${escapeHtml(doc.damageRelatedInvoice)}</p>` : ''}</section></div>
+    <table class="doc-item-table damage-items"><colgroup><col class="damage-description-col"><col class="damage-quantity-col"><col><col></colgroup><thead><tr><th>Description</th><th>Qty</th><th>Unit cost</th><th>Amount</th></tr></thead><tbody>
+      ${doc.damageItems.map(item=>`<tr><td>${escapeHtml(item.description)}</td><td>${Number(item.quantity)}</td><td>${money(item.unitPrice)}</td><td>${money(Math.round(Math.round(Number(item.unitPrice)*100)*Number(item.quantity))/100)}</td></tr>`).join('')}
+    </tbody><tfoot><tr><th colspan="3">Total damage charges</th><th>${money(t.total)}</th></tr>
+      <tr><td colspan="3">Less: Security deposit applied</td><td>${money(t.deposit)}</td></tr>
+      ${receipt ? `<tr><td colspan="3">Less: Payment received</td><td>${money(t.paid)}</td></tr>` : ''}
+      <tr><th colspan="3">Balance due</th><th><span class="doc-total-mark">${money(t.balance)}</span></th></tr></tfoot></table>
+    ${receipt ? `<section class="doc-payment-section"><h4>Damage compensation received</h4><table class="doc-item-table compact-doc-table"><thead><tr><th>Date</th><th>Payment details</th><th>Reference</th><th>Amount</th></tr></thead><tbody>
+      ${doc.payments.map(payment=>`<tr><td>${payment.date ? shortDate(payment.date) : '-'}</td><td>${escapeHtml([payment.mode,payment.bank].filter(Boolean).join(' · '))}</td><td>${escapeHtml(payment.reference)}</td><td>${money(payment.amount)}</td></tr>`).join('')}
+      ${t.deposit>0 ? `<tr><td>${shortDate(doc.date)}</td><td>Security deposit applied</td><td>${escapeHtml(doc.damageReference || '-')}</td><td>${money(t.deposit)}</td></tr>` : ''}
+      </tbody><tfoot><tr><th colspan="3">Total compensation received</th><th>${money((Math.round(t.paid*100)+Math.round(t.deposit*100))/100)}</th></tr></tfoot></table></section>` : ''}
+    <section class="doc-remarks"><h4>Damage details / remarks</h4><p class="doc-address">${escapeMultiline(doc.remarks || '-')}</p></section>
+    <p class="doc-balance-note">${receipt ? 'This receipt confirms only the compensation and applied deposit listed above.' : 'This invoice requests compensation for the itemized damages above. It is not proof of payment.'} Accommodation charges are not included.</p>
+    <div class="doc-signatures"><div><span></span><strong>Prepared by</strong></div><div><span></span><strong>${receipt ? 'Received by' : 'Acknowledged by'}</strong></div></div>
+    <footer class="doc-foot"><span>${title}</span><span class="doc-foot-meta">${escapeHtml(doc.code)}</span></footer>`;
+}
+
 function renderDocuments() {
   if (!els.documentForm) return;
   updateReceiptVisibility();
@@ -6247,7 +6346,7 @@ function revealDocumentField(field) {
 
 function initializeDocumentEditor() {
   const view=document.querySelector('#documentsView'),form=els.documentForm;
-  const titles=['Document details','Guest & billing','Stay & pricing','Balance invoice','Payment transactions'];
+  const titles=['Document details','Guest & billing','Stay & pricing','Damage compensation','Balance invoice','Payment transactions'];
   [...form.querySelectorAll(':scope>.document-form-section:not(.action-section)')].forEach((section,index)=>{
     const heading=section.querySelector(':scope>.section-heading'),details=document.createElement('details'),summary=document.createElement('summary');
     details.className='document-fields';details.open=index!==0;summary.textContent=titles[index];details.append(summary);
@@ -6256,6 +6355,7 @@ function initializeDocumentEditor() {
     heading?.remove();while(section.firstChild)content.append(section.firstChild);
     details.append(content);section.append(details);
   });
+  form.querySelector(':scope>.document-form-section').after(document.querySelector('#damageFeeSection'));
   form.addEventListener('invalid',event=>revealDocumentField(event.target),true);
   const actions=form.querySelector('.action-section'),buttons=actions.querySelector('.document-actions');
   actions.className='document-action-bar';actions.setAttribute('aria-label','Document actions');
@@ -6278,6 +6378,12 @@ function initializeDocumentEditor() {
 function renderDocumentPaymentSummary(doc) {
   const summary = document.querySelector("#documentPaymentSummary");
   if (!summary) return;
+  summary.dataset.damage=String(doc.type==='Damage Fees');
+  if(doc.type==='Damage Fees') {
+    const t=damageTotals(doc);
+    summary.innerHTML=`<span>Damage charges<strong>${money(t.total)}</strong></span><span>Deposit applied<strong>${money(t.deposit)}</strong></span><span>Payment received<strong>${money(t.paid)}</strong></span><span>${t.overpayment ? 'Overpayment' : 'Balance due'}<strong>${money(t.overpayment || t.balance)}</strong></span>`;
+    return;
+  }
   const received = doc.type === "Official Receipt" ? paymentTotalFor(doc) : doc.invoiceScope === "Balance Payment" && doc.type === "Invoice" ? doc.previouslyReceived : 0;
   const total = documentTotalFor(doc);
   const balance = Math.max(0, total - received - (doc.type === "Official Receipt" ? Number(doc.previouslyReceived || 0) : 0));
@@ -6287,12 +6393,20 @@ function renderDocumentPaymentSummary(doc) {
 }
 
 function validateDocumentForm() {
+  const isDamage=els.docType.value==='Damage Fees', deposit=document.querySelector('#docDamageDeposit');
+  deposit.setCustomValidity(isDamage && Number(deposit.value)>damageTotals(damageFormFields()).total ? 'Deposit applied cannot exceed the damage charges.' : '');
   els.docCheckOut.setCustomValidity(els.docCheckOut.value <= els.docCheckIn.value ? "Check-out must be after check-in." : "");
   els.docPreviouslyReceived?.setCustomValidity(Number(els.docPreviouslyReceived.value) > receiptTotalFromForm() ? "Previously received cannot exceed this booking total." : "");
   // WebKit needs folded fields laid out before native validation can focus them.
   const invalid=[...els.documentForm.elements].find(control=>control.willValidate && !control.validity.valid);
   if(invalid){revealDocumentField(invalid);invalid.getBoundingClientRect();}
   if (!els.documentForm.reportValidity()) return false;
+  if(isDamage) {
+    const doc=formDocument(), t=damageTotals(doc);
+    if(!doc.damageItems.length || t.total<=0) {setDocumentFeedback('Add at least one damaged item and its actual cost.',true);revealDocumentField(document.querySelector('#docDamageDate'));return false;}
+    if(doc.damageKind==='Receipt' && t.paid+t.deposit<=0) {setDocumentFeedback('Record a payment or an applied deposit before issuing a damage receipt.',true);return false;}
+    if(t.overpayment>0) {setDocumentFeedback('Payment and applied deposit exceed the damage charges. Check the amounts.',true);return false;}
+  }
   if (els.docType.value === "Official Receipt" && paymentTotalFor(formDocument()) <= 0) {
     setDocumentFeedback("Enter at least one payment amount and transaction date.");
     els.receiptPaymentSection.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -6450,6 +6564,16 @@ const DOC_PRINT_CSS = `
   .doc-title-box span { display: block; text-transform: uppercase; letter-spacing: 2.4px; font-size: 11px; font-weight: 700; color: #b0891c; }
   .doc-title-box strong { display: block; font-size: 17px; margin: 6px 0 3px; letter-spacing: .3px; color: #23201a; }
   .doc-title-box small { display: block; font-size: 11px; color: #8b8578; }
+  .damage-paper-head .doc-title-box { max-width: 240px; }
+  .damage-paper-head .doc-title-box span { letter-spacing: 0; font-size: 12px; line-height: 1.5; }
+  .damage-paper-head .doc-issuer { min-width: 0; }
+  .damage-paper-head ~ .doc-item-table tfoot td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .damage-paper-head ~ * { min-width: 0; overflow-wrap: anywhere; }
+  .damage-items { table-layout: fixed; }
+  .damage-description-col { width: 48%; }
+  .damage-quantity-col { width: 10%; }
+  .damage-items tr { break-inside: avoid; }
+  .damage-items tfoot { display: table-row-group; }
 
   /* Bill To / Stay */
   .doc-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin: 4px 0 24px; }
@@ -6583,18 +6707,18 @@ function renderDocumentArchive() {
     ? filtered
         .map(
           (doc) => {
-            const amountDue = doc.type === "Official Receipt" ? paymentTotalFor(doc) : documentAmountDueFor(doc);
+            const amountDue = documentListedAmount(doc);
             const receiptBalance = doc.type === "Official Receipt" ? Math.max(0, documentTotalFor(doc) - paymentTotalFor(doc) - Number(doc.previouslyReceived || 0)) : 0;
             const canCreateBalanceInvoice = doc.type === "Official Receipt" && receiptBalance > 0;
             return `
             <tr>
               <td data-document-field="code"><strong>${escapeHtml(doc.code)}</strong><br><span class="table-muted">${shortDate(doc.date)}</span>${counts.get(doc.id)!==1?'<br><span class="balance-due">Identity needs review</span>':''}</td>
-              <td data-document-field="type">${escapeHtml(doc.type)}</td>
+              <td data-document-field="type">${escapeHtml(doc.type)}${doc.type==='Damage Fees' ? ' · '+escapeHtml(doc.damageKind) : ''}</td>
               <td data-document-field="issuer">${escapeHtml(issuers[doc.issuer]?.code || doc.issuer)}</td>
               <td data-document-field="guest">${escapeHtml(doc.guestName || "-")}</td>
               <td data-document-field="bill">${escapeHtml(doc.billTo || "-")}</td>
               <td data-document-field="stay">${shortDate(doc.checkIn)}<br><span class="table-muted">${doc.nights} night${doc.nights === 1 ? "" : "s"}</span><br><span class="table-muted">${escapeHtml(doc.propertyName || "-")}</span></td>
-              <td class="money-cell" data-document-field="amount"><strong>${money(amountDue)}</strong><br><span class="table-muted">${doc.type === "Official Receipt" ? "Received" : "Amount due"}</span>${doc.type === "Official Receipt" ? `<br><span class="${receiptBalance > 0 ? "balance-due" : "table-muted"}">Balance ${money(receiptBalance)}</span>` : ""}</td>
+              <td class="money-cell" data-document-field="amount"><strong>${money(amountDue)}</strong><br><span class="table-muted">${documentListedLabel(doc)}</span>${doc.type === "Official Receipt" ? `<br><span class="${receiptBalance > 0 ? "balance-due" : "table-muted"}">Balance ${money(receiptBalance)}</span>` : ""}</td>
               <td data-document-field="status"><span class="doc-status ${documentStatusClass(doc.status)}">${escapeHtml(doc.status)}</span></td>
               <td class="actions">
                 <button class="small-action" type="button" data-open-document="${escapeHtml(doc.id)}">Open</button>
@@ -9492,7 +9616,9 @@ document.querySelectorAll("[data-document-workspace]").forEach(button => {
 document.querySelectorAll("[data-document-type]").forEach(button => {
   button.addEventListener("click", () => {
     const type = button.dataset.documentType;
-    if (documents.some(doc => doc.id === els.documentId.value) && els.docType.value !== type) {
+    if (els.docType.value !== type && (type === 'Damage Fees' || els.docType.value === 'Damage Fees')) {
+      fillDocumentForm({...formDocument(),id:crypto.randomUUID(),code:'',type,status:'Draft',accommodationFee:0,securityDeposit:0,previouslyReceived:0,linkedReceiptCode:'',payments:[],damageKind:'Invoice',damageItems:[],damageDepositApplied:0});
+    } else if (documents.some(doc => doc.id === els.documentId.value) && els.docType.value !== type) {
       fillDocumentForm({ ...formDocument(), id: crypto.randomUUID(), code: "", type, status: "Draft" });
     } else {
       els.docType.value = type;
@@ -9508,6 +9634,25 @@ document.querySelector("#jumpToPayments")?.addEventListener("click", () => {
   els.paymentRows.querySelector("input")?.focus({ preventScroll: true });
 });
 els.documentForm?.addEventListener("input", () => setDocumentFeedback("Unsaved changes", true));
+document.querySelector('#damageItemRows')?.addEventListener('input',()=>renderDocumentPreview());
+document.querySelector('#damageItemRows')?.addEventListener('click',event=>{
+  const button=event.target.closest('[data-remove-damage]');if(!button)return;
+  button.closest('.damage-item').remove();renderDocumentPreview();setDocumentFeedback('Unsaved changes',true);
+});
+for(const button of document.querySelectorAll('[data-damage-preset],#addDamageItem'))button.addEventListener('click',()=>{
+  if(els.docType.value!=='Damage Fees')return;
+  renderDamageRows([...damageRowsFromForm(),{id:crypto.randomUUID(),description:button.dataset.damagePreset || '',quantity:1,unitPrice:0}]);
+  const row=document.querySelector('#damageItemRows').lastElementChild;row?.querySelector(button.dataset.damagePreset ? '[data-damage-price]' : '[data-damage-description]')?.focus();
+  renderDocumentPreview();setDocumentFeedback('Unsaved changes',true);
+});
+for(const input of document.querySelectorAll('#docDamageKind,#docDamageDate,#docDamageDue,#docDamageReference,#docDamageInvoice,#docDamageDeposit')) {
+  input.addEventListener('input',()=>{updateReceiptVisibility();renderDocumentPreview();});
+  input.addEventListener('change',()=>{
+    const saved=documents.find(doc=>doc.id===els.documentId.value);
+    if(input.id==='docDamageKind' && saved && saved.damageKind!==input.value)fillDocumentForm({...formDocument(),id:crypto.randomUUID(),code:'',status:'Draft',damageRelatedInvoice:input.value==='Receipt' ? saved.code : saved.damageRelatedInvoice});
+    updateReceiptVisibility();renderDocumentPreview();setDocumentFeedback('Unsaved changes',true);
+  });
+}
 els.backupNow?.addEventListener("click", downloadBackup);
 els.syncCloudNow?.addEventListener("click", syncCloudNow);
 
@@ -9812,7 +9957,7 @@ els.paymentRows?.addEventListener("click", (event) => {
   if (removeIndex === undefined) return;
   const payments = paymentRowsFromForm(true);
   payments.splice(Number(removeIndex), 1);
-  renderPaymentRows(payments.length ? payments : [normalizePayment({})]);
+  renderPaymentRows(payments.length ? payments : els.docType.value === 'Damage Fees' ? [] : [normalizePayment({})]);
   renderDocumentPreview(formDocument());
   setDocumentFeedback('Unsaved changes',true);
 });
@@ -10208,7 +10353,7 @@ function bookingWorkspaceRecord() {
 }
 
 function currentBookingDocumentTarget(target) {
-  if(!target || !bookingWorkspaceAvailable() || cloudUser.id!==target.owner || activeVillaKey()!==target.villa || !['saved','Invoice','Official Receipt'].includes(target.mode))return null;
+  if(!target || !bookingWorkspaceAvailable() || cloudUser.id!==target.owner || activeVillaKey()!==target.villa || !['saved','Invoice','Official Receipt','Damage Fees'].includes(target.mode))return null;
   const booking=LifePropertyBookingList.unchanged(bookings,target.bookingId,target.bookingExpected);
   if(!booking || villaOf(booking)!==target.villa)return null;
   if(target.mode!=='saved')return {booking,document:null};
@@ -10321,9 +10466,9 @@ function renderBookingWorkspace() {
       <div class="workspace-table-scroll"><table class="workspace-table"><thead><tr><th>Date</th><th>Bank / reference</th><th>Amount</th><th>Status</th></tr></thead><tbody>${ledger.length ? ledger.map(entry => `<tr><td>${entry.date ? shortDate(entry.date) : 'Not recorded'}</td><td>${escapeHtml(entry.bank || entry.note || 'Payment')}<small>${escapeHtml(entry.reference)}</small></td><td class="money-cell">${money(VillaLedger.amount(entry.amountSen))}</td><td>${entry.voidedAt ? 'Voided' : entry.kind === 'opening' ? 'To reconcile' : entry.kind === 'adjustment' ? 'Correction' : `<button type="button" class="small-action danger" data-void-payment="${escapeHtml(entry.id)}">Void</button>`}</td></tr>`).join('') : '<tr><td colspan="4">No money recorded.</td></tr>'}</tbody></table></div>
     </section>
     <section data-workspace-panel="documents" ${bookingWorkspaceTab === 'documents' ? '' : 'hidden'}>
-      <div class="workspace-actions"><button class="primary-button" type="button" data-booking-document="Official Receipt">Create receipt</button><button class="ghost-button" type="button" data-booking-document="Invoice">Create invoice</button></div>
+      <div class="workspace-actions"><button class="primary-button" type="button" data-booking-document="Official Receipt">Create receipt</button><button class="ghost-button" type="button" data-booking-document="Invoice">Create invoice</button><button class="ghost-button" type="button" data-booking-document="Damage Fees">Damage fees</button></div>
       <p class="workspace-document-count" role="status">${docs.length} linked document${docs.length===1?'':'s'}</p>
-      <div class="workspace-document-list">${docs.length ? docs.map(doc => `<button class="workspace-document-row" type="button" data-booking-open-document="${escapeHtml(doc.id)}"><span class="workspace-document-main"><strong>${escapeHtml(doc.code)}</strong><small>${escapeHtml(doc.type)} · ${shortDate(doc.date)} · ${escapeHtml(doc.status)}</small></span><span class="workspace-document-value"><strong>${money(doc.type==='Official Receipt'?paymentTotalFor(doc):documentAmountDueFor(doc))}</strong><small>${doc.type==='Official Receipt'?'Received':'Amount due'}</small></span></button>`).join('') : '<p>No linked documents.</p>'}</div>
+      <div class="workspace-document-list">${docs.length ? docs.map(doc => `<button class="workspace-document-row" type="button" data-booking-open-document="${escapeHtml(doc.id)}"><span class="workspace-document-main"><strong>${escapeHtml(doc.code)}</strong><small>${escapeHtml(doc.type)}${doc.type==='Damage Fees'?' · '+escapeHtml(doc.damageKind):''} · ${shortDate(doc.date)} · ${escapeHtml(doc.status)}</small></span><span class="workspace-document-value"><strong>${money(documentListedAmount(doc))}</strong><small>${documentListedLabel(doc)}</small></span></button>`).join('') : '<p>No linked documents.</p>'}</div>
     </section>
     <section data-workspace-panel="messages" ${bookingWorkspaceTab === 'messages' ? '' : 'hidden'}>
       ${[['checkin', 'Check-in details'], ['guide', 'Guest guide'], ['review', 'Review request']].map(([type, label]) => `<div class="workspace-message-row"><span><strong>${label}</strong><small>${type === 'checkin' ? hasCheckinBeenSent(booking) ? 'Marked sent' : 'Not marked sent' : booking.sentLog?.[type] ? 'Marked sent ' + shortDate(booking.sentLog[type]) : 'Not marked sent'}</small></span><button type="button" class="ghost-button" data-booking-message="${type}">Open WhatsApp</button><button type="button" class="ghost-button" data-booking-message-done="${type}">Mark sent</button></div>`).join('')}

@@ -114,6 +114,17 @@ body[data-workspace-view=guide] #openAddBooking { display: none; }
 }
 
 #cloudCopiesDialog .recovery-option { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.damage-presets { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 16px; }
+.damage-item-rows { display: grid; gap: 12px; margin-bottom: 16px; }
+.damage-item { display: grid; grid-template-columns: minmax(0, 1fr) 80px 120px 44px; align-items: end; gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--line); }
+.damage-item label { min-width: 0; font-size: 12px; }
+.damage-item input { width: 100%; min-width: 0; min-height: 44px; }
+.damage-remove { width: 44px; height: 44px; font-size: 22px; padding: 0; }
+.damage-note { color: var(--muted); font-size: 12px; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .damage-item { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
+  .damage-description { grid-column: 1 / -1; }
+}
 @media (max-width: 600px) {
   #cloudCopiesDialog table { width: 100%; min-width: 0; }
   #cloudCopiesDialog thead { display: none; }

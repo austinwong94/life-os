@@ -1040,6 +1040,7 @@
               <button type="button" class="booking-channel-option" data-document-type="Quotation">Quotation</button>
               <button type="button" class="booking-channel-option" data-document-type="Invoice">Invoice</button>
               <button type="button" class="booking-channel-option" data-document-type="Official Receipt">Official Receipt</button>
+              <button type="button" class="booking-channel-option" data-document-type="Damage Fees">Damage Fees</button>
             </div>
             <div class="document-payment-summary" id="documentPaymentSummary" aria-live="polite"></div>
             <button type="button" class="ghost-button compact" id="jumpToPayments" hidden>Enter payment transactions</button>
@@ -1062,6 +1063,7 @@
                       <option>Quotation</option>
                       <option>Invoice</option>
                       <option>Official Receipt</option>
+                      <option>Damage Fees</option>
                     </select>
                   </label>
                   <label>Issuer Company
@@ -1140,16 +1142,36 @@
                   <label>Number of Nights
                     <input id="docNights" type="number" min="1" step="1" required />
                   </label>
-                  <label>Accommodation Fee
+                  <label data-stay-charge>Accommodation Fee
                     <input id="docAccommodationFee" type="number" min="0" step="0.01" required />
                   </label>
-                  <label>Refundable Damage Security Deposit
+                  <label data-stay-charge>Refundable Damage Security Deposit
                     <input id="docDepositAmount" type="number" min="0" step="0.01" />
                   </label>
                   <label class="wide-field">Remarks
                     <textarea id="docRemarks" rows="3" placeholder="Optional payment terms, claim notes, or booking remarks"></textarea>
                   </label>
                 </div>
+              </section>
+
+              <section class="document-form-section" id="damageFeeSection" hidden>
+                <div class="section-heading compact-heading"><div><h3>Damage compensation</h3></div></div>
+                <div class="form-grid two-col">
+                  <label>Document purpose<select id="docDamageKind"><option value="Invoice">Invoice — request payment</option><option value="Receipt">Receipt — payment received</option></select></label>
+                  <label>Damage recorded on<input id="docDamageDate" type="date" /></label>
+                  <label>Payment due on<input id="docDamageDue" type="date" /></label>
+                  <label>Claim / evidence reference<input id="docDamageReference" maxlength="300" placeholder="Optional claim or photo reference" /></label>
+                  <label>Related damage invoice<input id="docDamageInvoice" maxlength="200" placeholder="Optional invoice number" /></label>
+                </div>
+                <div class="damage-presets" role="group" aria-label="Add damaged item">
+                  <button class="ghost-button compact" type="button" data-damage-preset="Sofa cover">+ Sofa cover</button>
+                  <button class="ghost-button compact" type="button" data-damage-preset="Towel">+ Towel</button>
+                  <button class="ghost-button compact" type="button" data-damage-preset="Bed sheet">+ Bed sheet</button>
+                  <button class="ghost-button compact" type="button" id="addDamageItem">+ Other item</button>
+                </div>
+                <div id="damageItemRows" class="damage-item-rows"></div>
+                <label>Security deposit applied to these damages (RM)<input id="docDamageDeposit" type="number" min="0" step="0.01" inputmode="decimal" value="0" /></label>
+                <p class="damage-note">Only enter the deposit actually retained for this claim. Accommodation payments and booking balances stay separate.</p>
               </section>
 
               <section class="document-form-section invoice-balance-only" id="invoiceBalanceSection" hidden>
@@ -1227,6 +1249,7 @@
                   <option>Quotation</option>
                   <option>Invoice</option>
                   <option>Official Receipt</option>
+                  <option>Damage Fees</option>
                 </select>
               </label>
               <div class="document-archive-layout" role="group" aria-label="Document layout">
