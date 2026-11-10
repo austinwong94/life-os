@@ -4257,7 +4257,7 @@ function renderPlannerLinkedEditItem(item) {
 
   const form = document.createElement("form");
   form.className = "planner-linked-edit-form";
-  const current = () => row.isConnected && !form.closest('[hidden],[inert]') && state.activeBoardId === boardId && plannerTaskEditDraft === draft && editingPlannerTaskKey === draft.key;
+  const current = () => row.isConnected && !document.hidden && !form.closest('[hidden],[inert]') && !document.querySelector('dialog[open]') && state.activeBoardId === boardId && plannerTaskEditDraft === draft && editingPlannerTaskKey === draft.key;
 
   const dateInput = document.createElement("input");
   dateInput.type = "date";
@@ -4296,8 +4296,9 @@ function renderPlannerLinkedEditItem(item) {
 
   const schedule = planningNode('div', 'planner-edit-schedule');
   schedule.append(planningField('Planned day', planningOptionalDate(dateInput,"Clear task date",()=>{if(current())draft.dateKey="";})), planningCaptureDates(dateInput,today,current));
-  form.append(schedule, titleInput, save, cancel);
+  form.append(schedule, titleInput);
   appendTaskEditFields(form, draft,current);
+  const actions=planningNode('div','planner-edit-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Task edit actions');actions.append(cancel,save);form.append(actions);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!current()) return;
