@@ -602,13 +602,52 @@ function openDailyStart(item,plan={}) {
   render();const interval=setInterval(render,500);dialog.addEventListener('close',()=>{clearInterval(interval);refreshDailyFocusSession();},{once:true});
 }
 function openDailyStepOptions(item) {
-  const dialog=dailyDialog('Next-step options'),menu=planningNode('div','daily-menu');dialog.append(menu);
-  menu.append(planningButton('Continue',()=>{dialog.close();openDailyStart(item);},'play'));
-  if(item.sourceKind==='card'){menu.append(planningButton('Edit / plan task',()=>{dialog.close();openCardTaskEditor(item);},'pencil'));return;}
-  const expected=LifeStateMerge.copy(LifePlanner.ensure(resolveLiveCard(item.card)).find(t=>t.id===item.taskId));
-  const apply=updates=>{const card=resolveLiveCard(item.card),tasks=LifePlanner.ensure(card),task=tasks.find(t=>t.id===item.taskId);if(!task || !LifeStateMerge.equal(task,expected))throw new Error('Task changed elsewhere. Reopen its options.');const before=LifeStateMerge.copy(task);LifePlanner.change(card,task.id,updates);LifePlanner.project(card);if(!saveState()){tasks.splice(tasks.findIndex(t=>t.id===task.id),1,before);LifePlanner.project(card);syncActiveBoard({touchBoard:false});throw new Error('Not saved. Please retry.');}dialog.close();renderCardsOnly({force:true});};
-  for(const [label,status] of [['Waiting','waiting'],['Park','parked']])menu.append(planningButton(label,()=>{try{apply({status});}catch(error){dialog.append(planningNode('p','daily-message',error.message));}}));
-  const date=planningInput('date',item.dateKey || getTodayKey(),()=>{});menu.append(planningField('New planned day',date),planningButton('Reschedule',()=>{if(LifePlanner.validDate(date.value))try{apply({dateKey:date.value});}catch(error){dialog.append(planningNode('p','daily-message',error.message));}}));
+  const boardId=state.activeBoardId,day=getTodayKey(),mode=state.ui.workspaceMode,session=dailySession(),key=dailyFocusKey(item),dialog=dailyDialog('Next-step options'),menu=planningNode('div','daily-menu'),message=planningNode('p','daily-message');
+  dialog.classList.add('daily-step-options');message.setAttribute('role','status');dialog.append(planningNode('p','daily-step-option-title',item.title),menu,message);
+  const raw=task=>task.sourceKind==='card'?task.base:LifePlanner.ensure(task.card).find(t=>t.id===task.taskId);
+  const expected=LifeStateMerge.copy(raw(item)),projection=dailySuggestionProjection(item),baseline=LifeStateMerge.copy(latestDailyRecord('focus',day) || null);
+  const history=()=>dailyRecords().filter(record=>record.kind==='focus' && record.date===day).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+  const beforeHistory=LifeStateMerge.copy(history()),keys=dailyFocusKeys(day,getWorkspaceTaskItems());
+  const current=()=>dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog && state.activeBoardId===boardId && getTodayKey()===day && state.ui.workspaceMode===mode && dailySession()===session;
+  const live=()=>{
+    if(!current())throw new Error('The board, day or options changed. Reopen the task options.');
+    const matches=getWorkspaceTaskItems().filter(task=>dailyFocusKey(task)===key);
+    if(matches.length!==1 || !LifeStateMerge.equal(raw(matches[0]),expected) || !LifeStateMerge.equal(dailySuggestionProjection(matches[0]),projection) || projection.blocked || !projection.editable)throw new Error('Task changed or moved. Reopen its options.');
+    return matches[0];
+  };
+  const attempt=action=>{try{action();}catch(error){message.textContent=error.message;}};
+  menu.append(planningButton('Continue',()=>attempt(()=>{const task=live();dialog.close();openDailyStart(task,baseline?.plans?.[key] || {});}), 'play'));
+  if(Array.isArray(keys) && keys.includes(key))menu.append(planningButton("Remove from today's plan",()=>attempt(()=>{
+    live();
+    if(session.focusDrafts?.[day])throw new Error('Your next-step draft is kept. Finish it in Choose before changing the saved plan.');
+    if(!LifeStateMerge.equal(history(),beforeHistory))throw new Error('The plan changed in another tab. Reopen its options before changing it.');
+    if(!baseline || keys.filter(value=>value===key).length!==1 || baseline.plans!==undefined && (!baseline.plans || typeof baseline.plans!=='object' || Array.isArray(baseline.plans)))throw new Error('The saved plan needs review. Original information was kept.');
+    const plans=LifeStateMerge.copy(baseline.plans || {});delete plans[key];
+    if(!saveDailyRecord({...LifeStateMerge.copy(baseline),taskKeys:keys.filter(value=>value!==key),plans},message))return;
+    const afterHistory=LifeStateMerge.copy(history());dialog.close();renderCardsOnly({force:true});
+    const undo=()=>{
+      try{
+        if(state.activeBoardId!==boardId || getTodayKey()!==day || state.ui.workspaceMode!=='today' || document.querySelector('dialog[open]') || dailySession()!==session || session.focusDrafts?.[day] || !LifeStateMerge.equal(history(),afterHistory))throw new Error('The view, board, day or plan changed. Undo was not applied.');
+        const available=getWorkspaceTaskItems();if(keys.some(value=>available.filter(task=>dailyFocusKey(task)===value).length!==1))throw new Error('An original task moved. Undo was not applied.');
+        if(!saveDailyRecord(LifeStateMerge.copy(baseline))){setSaveStatus('Undo was not saved. The current plan is kept; retry.','error');showUndoToast({message:'Undo was not saved. Retry Undo.',onUndo:undo});return;}
+        clearUndoToast();renderCardsOnly({force:true});
+      }catch(error){clearUndoToast();setSaveStatus(error.message,'error');}
+    };
+    showUndoToast({message:"Removed from today's plan. Task kept in All tasks.",onUndo:undo});
+  }),'x'));
+  if(item.sourceKind==='card'){menu.append(planningButton('Edit / plan task',()=>attempt(()=>{const task=live();dialog.close();openCardTaskEditor(task);}), 'pencil'));return;}
+  const apply=updates=>{
+    const currentTask=live(),card=currentTask.card,tasks=LifePlanner.ensure(card),task=tasks.find(task=>task.id===item.taskId),before=LifeStateMerge.copy(task);
+    LifePlanner.change(card,task.id,updates);LifePlanner.project(card);
+    if(!saveState()){tasks.splice(tasks.findIndex(task=>task.id===item.taskId),1,before);LifePlanner.project(card);syncActiveBoard({touchBoard:false});throw new Error('Not saved. Please retry.');}
+    dialog.close();renderCardsOnly({force:true});
+  };
+  const statuses=planningNode('div','daily-actions');
+  for(const [label,status] of [['Waiting','waiting'],['Park','parked']])statuses.append(planningButton(label,()=>attempt(()=>apply({status})),'pause'));
+  menu.append(statuses);
+  const date=planningInput('date',item.dateKey || day,()=>{});menu.append(planningField('New planned day',date),planningButton('Reschedule',()=>attempt(()=>{
+    if(!LifePlanner.validDate(date.value))throw new Error('Choose a valid planned day. The task is unchanged.');apply({dateKey:date.value});
+  }),'calendar'));
 }
 function openTaskHistory(item) {
   closeCardActionMenus();const dialog=dailyDialog('Task history · '+item.title);
