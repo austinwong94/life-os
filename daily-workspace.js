@@ -176,8 +176,11 @@ function renderDailyNavigation() {
 }
 function openSaveDetails() {
   const dialog=dailyDialog('Saving & version'),details=planningNode('dl','daily-save-details');dialog.append(details);
+  const storageDisclosure=planningNode('details','daily-save-storage'),storageSummary=planningNode('summary','','Storage & recovery details'),storageDetails=planningNode('dl','daily-save-storage-details');
+  storageDisclosure.append(storageSummary,storageDetails);
   const render=()=>{
-    details.replaceChildren();const add=(label,text)=>details.append(planningNode('dt','',label),planningNode('dd','',text));
+    details.replaceChildren();storageDetails.replaceChildren();const add=(label,text)=>details.append(planningNode('dt','',label),planningNode('dd','',text));
+    const addStorage=(label,text)=>storageDetails.append(planningNode('dt','',label),planningNode('dd','',text));
     add('Loaded version',loadedReleaseId() || 'Unversioned source');add('Environment',PREVIEW_MODE?'Separate preview records - cloud disabled':location.hostname==='127.0.0.1'||location.hostname==='localhost'?'Local development':'This website');
     let pending;try{pending=LifeDeviceStore.pending().length;}catch{}
     add('Device',corruptLocalStateDetected?'Recovery required':pending===undefined?'Device copies could not be checked':pending>0?'Pending copies kept - shared save not confirmed':lastLocalSaveOk?'Saved on this device':'Saving failed - export your writing');
@@ -192,18 +195,18 @@ function openSaveDetails() {
       add('Boards with record changes',count);
     }
     add('Changes needing review',String(state.syncConflicts?.length || 0));
+    if(lastDeviceSaveError)add('Last device save issue',deviceSaveFailureReason()+' '+formatRecordDateTime(lastDeviceSaveError.at));
     try{
       const storage=LifeDeviceStore.diagnostics(),mb=bytes=>(bytes/1048576).toFixed(2)+' MB';
-      add('Browser storage used (estimate)',mb(storage.totalBytes));
-      add('Pending copy storage',mb(storage.pendingBytes));
+      addStorage('Browser storage used (estimate)',mb(storage.totalBytes));
+      addStorage('Pending copy storage',mb(storage.pendingBytes));
       const labels=[[STORAGE_KEY,'Active information'],[CLOUD_RECOVERY_KEY,'Recent recovery cache'],[DIARY_BACKUP_KEY,'Diary recovery copies'],[PRE_UPGRADE_KEY,'Original pre-upgrade copy'],[CLOUD_BASE_KEY,'Cloud comparison copy']];
-      for(const [key,label] of labels)add(label,mb((localStorage.getItem(key)?.length || 0)*2));
+      for(const [key,label] of labels)addStorage(label,mb((localStorage.getItem(key)?.length || 0)*2));
       if(typeof recoveryVault!=='undefined' && recoveryVault){
-        const archive=recoveryVault.diagnostics();add('Recovery archive',archive.error || (archive.ready?archive.archivedCopies+' verified copies in IndexedDB':'Opening recovery archive'));
-        add('Space reclaimed this tab',mb(archive.movedBytes));
+        const archive=recoveryVault.diagnostics();addStorage('Recovery archive',archive.error || (archive.ready?archive.archivedCopies+' verified copies in IndexedDB':'Opening recovery archive'));
+        addStorage('Space reclaimed this tab',mb(archive.movedBytes));
       }
-      if(lastDeviceSaveError)add('Last device save issue',deviceSaveFailureReason()+' '+formatRecordDateTime(lastDeviceSaveError.at));
-    }catch{add('Browser storage','Access unavailable');}
+    }catch{addStorage('Browser storage','Access unavailable');}
   };render();const timer=setInterval(render,1500);dialog.addEventListener('close',()=>clearInterval(timer),{once:true});
   const actions=planningNode('div','daily-actions');
   const feedback=planningNode('p','daily-message');feedback.setAttribute('role','status');
@@ -225,7 +228,7 @@ function openSaveDetails() {
     const link=planningNode('a','planning-button','Open saved workspace'),url=new URL(location.href);
     url.searchParams.delete('preview');url.hash='';link.href=url.href;actions.append(link);
   }
-  dialog.append(feedback,actions);
+  dialog.append(feedback,actions,storageDisclosure);
 }
 function openDailyCapture() {
   const boardId=state.activeBoardId,today=getTodayKey(),session=dailySession(),draft=session.capture ||= {kind:'task',text:'',date:today,area:''};

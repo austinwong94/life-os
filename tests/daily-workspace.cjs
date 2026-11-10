@@ -97,7 +97,8 @@ const results=[];
   const count=p.locator('.daily-save-details dt').filter({hasText:/^Boards (with record changes|changed since cloud comparison)$/});
   assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'0');
   assert.equal(await count.innerText(),'Boards with record changes');
-  const labels=await p.locator('.daily-save-details dt').allTextContents();assert(labels.indexOf('Cloud')<labels.indexOf('Browser storage used (estimate)'));assert(labels.indexOf('Changes needing review')<labels.indexOf('Browser storage used (estimate)'));
+  const labels=await p.locator('#dailyDialog dt').allTextContents();assert(labels.indexOf('Cloud')<labels.indexOf('Browser storage used (estimate)'));assert(labels.indexOf('Changes needing review')<labels.indexOf('Browser storage used (estimate)'));
+  assert.equal(await p.locator('.daily-save-storage').getAttribute('open'),null);assert.equal(await p.getByText('Browser storage used (estimate)',{exact:true}).isVisible(),false);
   await p.clock.runFor(1600);assert.equal(await count.evaluate(el=>el.nextElementSibling.textContent),'0');
   assert.equal(await p.evaluate(()=>JSON.stringify(state)===diagnosticOriginalState && JSON.stringify(cloudMergeBase)===diagnosticOriginalBase && localStorage.getItem(STORAGE_KEY)===diagnosticOriginalStorage),true);
   for(const width of [320,390,1080]){
@@ -112,6 +113,33 @@ const results=[];
   assert.equal(await p.evaluate(()=>localStorage.getItem(STORAGE_KEY)===diagnosticOriginalStorage),true);
   for(const width of [320,390,1080]){await p.setViewportSize({width,height:1000});assert(await p.locator('#dailyDialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1 && el.getBoundingClientRect().right<=innerWidth+1));}
   await p.screenshot({path:out+'/save-diagnostics-'+(process.env.TEST_BROWSER || 'chromium')+'.png'});
+ });
+ await run('storage diagnostics expand by keyboard without hiding save actions or changing records and retain focus during refresh',async p=>{
+  await seed(p);await p.evaluate(()=>flushDeviceWrites());await p.clock.install({time:new Date('2026-09-21T04:00:00Z')});
+  const before=await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),saved:localStorage.getItem(STORAGE_KEY)}));
+  await p.locator('#headerSaveStatus').click();const disclosure=p.locator('.daily-save-storage'),summary=disclosure.locator('summary');
+  assert.equal(await disclosure.getAttribute('open'),null);
+  assert(await p.getByRole('button',{name:'Download my information',exact:true}).isVisible());assert(await p.getByRole('button',{name:'Recovery',exact:true}).isVisible());
+  for(const width of [320,390,768,1080]){
+   await p.setViewportSize({width,height:850});
+   await summary.focus();await summary.press('Enter');assert.notEqual(await disclosure.getAttribute('open'),null);
+   assert(await p.getByText('Browser storage used (estimate)',{exact:true}).isVisible());
+   const original=await summary.elementHandle();await p.clock.runFor(1600);
+   assert(await original.evaluate(el=>el===document.activeElement));assert.notEqual(await disclosure.getAttribute('open'),null);
+   assert(await p.locator('#dailyDialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1 && el.getBoundingClientRect().right<=innerWidth+1));
+   await summary.press('Space');assert.equal(await disclosure.getAttribute('open'),null);
+   await p.locator('#dailyDialog').evaluate(el=>el.scrollTop=0);
+   await p.screenshot({path:out+'/compact-saving-'+width+'.png'});
+  }
+  assert.deepEqual(await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),saved:localStorage.getItem(STORAGE_KEY)})),before);
+  await p.getByRole('button',{name:'Close',exact:true}).click();await p.locator('#headerSaveStatus').click();assert.equal(await p.locator('.daily-save-storage').getAttribute('open'),null);
+ });
+ await run('device save errors remain visible while technical storage details are collapsed',async p=>{
+  await seed(p);await p.evaluate(()=>flushDeviceWrites());const before=await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage()));
+  await p.evaluate(()=>{lastLocalSaveOk=false;lastDeviceSaveError={at:Date.now(),message:'Synthetic quota error',name:'QuotaExceededError'};});
+  await p.locator('#headerSaveStatus').click();const issue=p.locator('#dailyDialog > .daily-save-details dt').filter({hasText:/^Last device save issue$/});
+  assert(await issue.isVisible());assert(await issue.evaluate(el=>Boolean(el.nextElementSibling.textContent)));assert.match(await p.locator('#dailyDialog > .daily-save-details').innerText(),/Saving failed/);
+  assert.equal(await p.locator('.daily-save-storage').getAttribute('open'),null);assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
  });
  await run('failed weekly save retains its draft, rollback is clean and board backup normalization retains reflections',async p=>{
   await p.locator('#weeklyReviewButton').click();await p.getByLabel('What mattered?').fill('Everything I meant to keep.');await p.evaluate(()=>{window.reviewStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw new Error('Full');};});
