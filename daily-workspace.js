@@ -826,7 +826,7 @@ function taskGoalFields(draft) {
 }
 function appendDailyTaskFields(grid,draft,canApply) {
   const options=taskGoalOptions();if(draft.goalLink && !options.some(([key])=>key===draft.goalLink))options.push([draft.goalLink,'Existing priority link']);
-  const day=getTodayKey(),current=()=>grid.isConnected && !document.hidden && !grid.closest('[hidden],[inert]') && !document.querySelector('dialog[open]') && getTodayKey()===day && canApply();
+  const day=getTodayKey(),current=()=>grid.isConnected && !document.hidden && !grid.closest('[hidden],[inert]') && !document.querySelector('dialog[open]') && canApply();
   const followUp=planningInput('date',draft.followUp,value=>{if(!current())return;draft.followUp=value;refreshFollowUp();});
   followUp.setAttribute('aria-label','Follow-up date');
   const quick=planningCaptureDates(followUp,day,current,'Follow-up quick dates'),notice=planningNode('small','daily-muted');notice.setAttribute('role','status');
