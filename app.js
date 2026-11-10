@@ -1443,7 +1443,7 @@ if (corruptLocalStateDetected) {
 
 window.addEventListener("storage", (event) => {
   if (event.key === RESTORE_GUARD_KEY) {
-    window.clearTimeout(cloudSaveTimer);
+    clearQueuedCloudSave();
     cloudSaveEnabled = Boolean(cloudSession?.access_token) && !isRestoreSyncPaused();
     if (isRestoreSyncPaused()) {setSaveStatus('Restored on device - cloud paused', 'local'); renderCloudStatus();}
   }
@@ -13909,7 +13909,7 @@ async function adoptCloudSessionFromAnotherTab() {
     renderCloudStatus();
     return;
   }
-  window.clearTimeout(cloudSaveTimer);
+  clearQueuedCloudSave();
   cloudSaveEnabled = false;
   const expected = getExpectedCloudOwnerId();
   if (session?.access_token && expected && session.user?.id === expected) {
@@ -14461,14 +14461,16 @@ async function writeCloudState(session, payload, savePlan) {
 
 async function pushCloudState(options = {}) {
   if (PREVIEW_MODE || ((!cloudSaveEnabled || isRestoreSyncPaused()) && !options.manual) || corruptLocalStateDetected) return;
-  cloudCheckGeneration++;
   if(options.retryOwnerId && options.retryOwnerId!==cloudSession?.user?.id)return;
+  clearQueuedCloudSave();
+  cloudCheckGeneration++;
   if(options.manual)cloudSyncRetry.reset();
   if(navigator.onLine===false){pauseCloudRetry();return;}
   if (cloudPushInFlight) {cloudPushAgain = true; return;}
   cloudSyncRetry.cancel();
   const retryOwnerId=cloudSession?.user?.id;
   cloudPushInFlight = true;
+  if (lastLocalSaveOk) setSaveStatus('Saved on device, syncing', 'saving');
   try {
     await LifeDeviceStore.cloudLocked(async () => {
       if (isRestoreSyncPaused()) {
@@ -14548,15 +14550,20 @@ async function pullCloudState(options = {}) {
   } catch (error) {setSaveStatus("Cloud could not be loaded", "error"); renderCloudStatus(normalizeCloudError(error.message || "Cloud load failed."));}
 }
 
+function clearQueuedCloudSave() {
+  window.clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = null;
+}
+
 function queueCloudSave(options = {}) {
   if (!cloudSaveEnabled || isRestoreSyncPaused() || !cloudSession?.access_token || corruptLocalStateDetected || cloudConflictPending) return;
   cloudCheckGeneration++;
-  window.clearTimeout(cloudSaveTimer);
+  clearQueuedCloudSave();
   if(navigator.onLine===false){pauseCloudRetry();return;}
   if(cloudSyncRetry.status().scheduled)return;
-  if (!options.silent) setSaveStatus(lastLocalSaveOk ? "Saved on device, syncing" : "Saving to cloud", "saving");
+  if (!options.silent && lastLocalSaveOk) setSaveStatus('Saved on device - cloud save queued', 'saving');
   if (options.immediate) {pushCloudState({silent: options.silent}); return;}
-  cloudSaveTimer = window.setTimeout(() => pushCloudState({silent: options.silent}), CLOUD_SAVE_DEBOUNCE_MS);
+  cloudSaveTimer = window.setTimeout(() => {cloudSaveTimer = null;pushCloudState({silent: options.silent});}, CLOUD_SAVE_DEBOUNCE_MS);
 }
 
 function canRetryCloudSave(ownerId) {
@@ -14567,7 +14574,7 @@ function resumeCloudSync() {
   if(cloudSaveEnabled)queueCloudSave({immediate:true,silent:true});
 }
 function pauseCloudRetry() {
-  cloudSyncRetry.cancel();window.clearTimeout(cloudSaveTimer);
+  cloudSyncRetry.cancel();clearQueuedCloudSave();
   setSaveStatus(lastLocalSaveOk?'Offline - saved on device':'Offline - export your draft',lastLocalSaveOk?'local':'error');
 }
 
@@ -14608,11 +14615,18 @@ function saveState(options = {}) {
     lastLocalSaveOk = false;lastDeviceSaveError={name:error.name || 'Error',at:Date.now()};
     if(error.name==='QuotaExceededError' && typeof scheduleRecoveryVault==='function')scheduleRecoveryVault();
   }
+  if (!options.skipCloud && touched && !cloudConflictPending) queueCloudSave({silent:true});
   if (!lastLocalSaveOk) setSaveStatus("Not saved on device - "+deviceSaveFailureReason(), "error");
   else if (cloudConflictPending) setSaveStatus(cloudReviewStatusLabel(), "error");
   else if (isRestoreSyncPaused()) setSaveStatus('Saved on device - cloud paused', 'local');
-  else if (touched || !options.quiet) setSaveStatus(cloudSaveEnabled ? "Saved on device, syncing" : "Saved on device", cloudSaveEnabled ? "saving" : "local");
-  if (!options.skipCloud && touched && !cloudConflictPending) queueCloudSave({silent: options.quiet});
+  else if (touched || !options.quiet) {
+    if (navigator.onLine === false) setSaveStatus('Offline - saved on device', 'local');
+    else if (cloudPushInFlight) setSaveStatus('Saved on device, syncing', 'saving');
+    else if (cloudSyncRetry.status().scheduled) setSaveStatus('Saved on device - retrying cloud', 'local');
+    else if (cloudSaveTimer !== null) setSaveStatus('Saved on device - cloud save queued', 'saving');
+    else if (cloudStartupCheck.pending) setSaveStatus('Saved on device - checking cloud', 'local');
+    else setSaveStatus('Saved on device', 'local');
+  }
   return lastLocalSaveOk;
 }
 

@@ -223,7 +223,7 @@ async function applyReviewedRestore(restored, expected, source) {
       state = next; restoreTabBoardSelection();
       localMergeBase = getStateForStorage(); corruptLocalStateDetected = false; lastLocalSaveOk = true; localStateSource = 'stored';
       cloudConflictPending = Boolean(state.syncConflicts?.length); cloudSaveEnabled = source === 'cloud' && Boolean(cloudSession?.access_token);
-      window.clearTimeout(cloudSaveTimer); cloudPushAgain = false;
+      clearQueuedCloudSave(); cloudPushAgain = false;
       cloudSyncRetry.reset();unverifiedCloudWrite=null;
     },{recover:corruptLocalStateDetected});
   });

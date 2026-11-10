@@ -712,7 +712,7 @@ function initializeExperience() {
   if(typeof initializeRecoveryVault==='function')initializeRecoveryVault();
   const startupDeviceSave = corruptLocalStateDetected ? Promise.resolve(false) : flushDeviceWrites();
   cloudConflictPending = Boolean(state.syncConflicts?.length);
-  if (isRestoreSyncPaused()) {cloudSaveEnabled = false; window.clearTimeout(cloudSaveTimer);}
+  if (isRestoreSyncPaused()) {cloudSaveEnabled = false; clearQueuedCloudSave();}
   const status = document.getElementById("headerSaveStatus");
   status.onclick = () => cloudConflictPending || corruptLocalStateDetected ? openRecovery() : openSettingsModal();
   const observer = new MutationObserver(() => {
