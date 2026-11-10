@@ -66,7 +66,14 @@
         ['string','number'].includes(typeof draft.minutes) && ['string','number'].includes(typeof draft.initial.minutes);
     }catch{return false;}
   }
-  const api = {areas,dateKey,shift,captureDateChoices,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink,taskEditValues,taskEditChanged,validTaskEditDraft};
+  function validCardTaskEditDraft(draft,boardId){
+    const ref=draft?.ref,base=draft?.base;
+    return Boolean(typeof boardId==='string' && boardId.trim() && draft && !Array.isArray(draft) && (draft.version===undefined || draft.version===1) && ref && !Array.isArray(ref) && ref.boardId===boardId && typeof ref.cardId==='string' && ref.cardId.trim() && ['checklist','daily','single'].includes(ref.kind) &&
+      (draft.version===undefined || draft.key===JSON.stringify([ref.boardId,ref.cardId,ref.kind,ref.itemId])) &&
+      base && typeof base==='object' && !Array.isArray(base) && (ref.kind==='single'?ref.itemId===null:typeof ref.itemId==='string' && ref.itemId.trim() && base.id===ref.itemId) &&
+      typeof draft.title==='string' && typeof draft.sourceTitle==='string' && typeof draft.completedOn==='string');
+  }
+  const api = {areas,dateKey,shift,captureDateChoices,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink,taskEditValues,taskEditChanged,validTaskEditDraft,validCardTaskEditDraft};
   root.LifePlanning = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -215,8 +222,8 @@ async function confirmParentTaskCompletion(target,done) {
     return !remaining || await confirmTaskAction('Complete this task?',`${remaining} subtask${remaining===1?' is':'s are'} still unfinished.\n\nThe checklist will be kept unchanged. Nothing will be deleted or automatically ticked.`,'Complete task');
   }catch(error){setSaveStatus(error.message,'error');return false;}
 }
-function subtaskControlCurrent(node,ref,session) {
-  return node.isConnected && !document.hidden && !node.closest('[hidden],[inert]') && node.getClientRects().length>0 && state.activeBoardId===ref.boardId && planningSessions.get(ref.boardId)===session;
+function planningControlCurrent(node,ref,session) {
+  return node.isConnected && !document.hidden && !node.closest('[hidden],[inert]') && node.getClientRects().length>0 && state.activeBoardId===ref.boardId && (session===undefined || planningSessions.get(ref.boardId)===session);
 }
 function subtaskDraftMap(session,key) {
   if(!Object.hasOwn(session,key))session[key]={};
@@ -233,7 +240,7 @@ function openSubtaskEditor(ref,child,day) {
   if(typeof draft.title!=='string' || draft.base?.id!==child.id){setSaveStatus('This subtask draft needs review. Its stored copy was kept.','error');return;}
   const dialog=dailyDialog('Edit subtask'),form=planningNode('form','daily-form'),message=planningNode('p','planning-message');message.setAttribute('role','status');
   dialog.classList.add('subtask-editor');let busy=false;
-  const current=()=>!busy && dialog.open && subtaskControlCurrent(dialog,ref,session) && drafts[key]===draft && [...document.querySelectorAll('dialog[open]')].at(-1)===dialog;
+  const current=()=>!busy && dialog.open && planningControlCurrent(dialog,ref,session) && drafts[key]===draft && [...document.querySelectorAll('dialog[open]')].at(-1)===dialog;
   const status=planningNode('small','subtask-draft-status');status.setAttribute('aria-live','polite');
   const persist=()=>{const ok=savePlanningSession();status.textContent=ok?'Draft kept in this tab':'Memory only. Keep this tab open.';return ok;};
   const input=planningInput('text',draft.title,value=>{if(!current())return;draft.title=value;persist();});input.required=true;
@@ -279,7 +286,7 @@ function renderTaskSubtasks(item,{offerEmpty=false}={}) {
   let children,drafts,pendingAdds;
   try{children=LifeSubtasks.active(resolveSubtaskParent(ref).target);drafts=subtaskDraftMap(session,'subtaskDrafts');pendingAdds=subtaskDraftMap(session,'subtaskPendingAdds');}catch(error){return planningNode('p','planning-message',error.message);}
   const opens=session.subtaskOpen ||= {},draftKey='add:'+key;
-  const current=()=>subtaskControlCurrent(details,ref,session) && !document.querySelector('dialog[open]');
+  const current=()=>planningControlCurrent(details,ref,session) && !document.querySelector('dialog[open]');
   const usable=()=>current() && details.open;
   details.dataset.owner=key;details.open=Boolean(opens[key]);details.hidden=!offerEmpty && !children.length && !details.open && !drafts[draftKey];
   const summary=planningNode('summary'),count=children.filter(child=>child.done).length;
@@ -338,12 +345,15 @@ function renderTaskSubtasks(item,{offerEmpty=false}={}) {
 function getWorkspaceTaskItems() {
   return [...getPlannerSourceItems(),...LifeTaskRepository.collect(workspaceTaskBoard())];
 }
-function saveCardTaskChange(ref,base,updates,day=getTodayKey()) {
+function saveCardTaskChange(ref,base,updates,day=getTodayKey(),prepare) {
   const transaction=LifeTaskRepository.change(workspaceTaskBoard(),ref,base,updates,{day});
-  if(!saveState()){
+  try{
+    if(prepare && !prepare(transaction))throw new Error('Draft storage is unavailable. The task is unchanged; keep this tab open and retry.');
+    if(!saveState())throw new Error("Not saved yet. Your draft is kept; try again when device saving is available.");
+  }catch(error){
     LifeTaskRepository.restore(workspaceTaskBoard(),transaction);
     syncActiveBoard({touchBoard:false});
-    throw new Error("Not saved yet. Your draft is kept; try again when device saving is available.");
+    throw error;
   }
   return transaction;
 }
@@ -365,35 +375,68 @@ function openCardTaskSource(ref) {
   document.getElementById('dailyDialog')?.close();setWorkspaceMode('board');startEditingCard(ref.cardId);
 }
 function openCardTaskEditor(item) {
+  if(item?.ref?.boardId!==undefined && item.ref.boardId!==state.activeBoardId)return;
   const session=planningSession();
   if(item && !item.editable)return;
+  if(Object.hasOwn(session,'cardTaskDraft') && !LifePlanning.validCardTaskEditDraft(session.cardTaskDraft,state.activeBoardId)){setSaveStatus('This task draft needs review. Its stored copy was kept.','error');return;}
   if(item && session.cardTaskDraft && !LifeStateMerge.equal(session.cardTaskDraft.ref,item.ref)){
     setSaveStatus("Finish or discard the open task draft before editing another task.","error");
+    return;
   }else if(item && !session.cardTaskDraft){
-    session.cardTaskDraft={ref:item.ref,base:LifeStateMerge.copy(item.base),title:item.title,sourceTitle:item.sourceTitle,completedOn:item.completedOn || ''};savePlanningSession();
+    try{
+      LifeTaskRepository.resolve(workspaceTaskBoard(),item.ref);
+      const fresh=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.editable && LifeStateMerge.equal(task.ref,item.ref));
+      if(!fresh)throw new Error('The source task is no longer available.');
+      session.cardTaskDraft={version:1,key:subtaskKey(fresh.ref),ref:LifeStateMerge.copy(fresh.ref),base:LifeStateMerge.copy(fresh.base),title:fresh.title,sourceTitle:fresh.sourceTitle,completedOn:fresh.completedOn || ''};
+    }catch(error){setSaveStatus(error.message,'error');return;}
   }
   const draft=session.cardTaskDraft;if(!draft)return;
+  if(!LifePlanning.validCardTaskEditDraft(draft,state.activeBoardId)){setSaveStatus('This task draft needs review. Its stored copy was kept.','error');return;}
   const dialog=dailyDialog('Edit card task'),form=planningNode('form','card-task-editor');
-  const name=planningInput('text',draft.title,value=>{draft.title=value;savePlanningSession();});name.required=true;
+  dialog.classList.add('card-task-dialog');
+  const current=()=>dialog.open && planningControlCurrent(dialog,draft.ref,session) && session.cardTaskDraft===draft && [...document.querySelectorAll('dialog[open]')].at(-1)===dialog;
+  const status=planningNode('small','card-task-draft-status');status.setAttribute('aria-live','polite');
+  const persist=()=>{const ok=savePlanningSession();status.textContent=ok?'Draft kept in this tab':'Memory only. Keep this tab open.';return ok;};
+  const name=planningInput('text',draft.title,value=>{if(current()){draft.title=value;persist();}});name.required=true;
   const message=planningNode('p','planning-message');message.setAttribute('role','status');
-  const actions=planningNode('div','daily-actions'),save=planningButton('Save task',null,'check');save.type='submit';
-  actions.append(save,planningButton('Discard draft',()=>{delete session.cardTaskDraft;savePlanningSession();dialog.close();renderCardsOnly({force:true});}),
-    planningButton('Edit source card',()=>openCardTaskSource(draft.ref),'pencil'));
+  const discard=()=>{
+    delete session.cardTaskDraft;
+    if(!savePlanningSession()){session.cardTaskDraft=draft;message.textContent='Draft was not discarded. Its stored copy was kept; please retry.';return false;}
+    return true;
+  };
+  const actions=planningNode('div','card-task-editor-actions'),save=planningButton('Save task',null,'check');save.type='submit';save.classList.add('is-primary');
+  actions.append(status,planningIcon('Discard draft',()=>{if(current() && discard()){dialog.close();renderCardsOnly({force:true});}},'x'),save);
   form.append(planningNode('p','daily-muted',draft.sourceTitle),planningField('Task name',name));
-  if(draft.base.done){const date=planningInput('date',draft.completedOn,value=>{draft.completedOn=value;savePlanningSession();});date.max=getTodayKey();form.append(planningField('Completion date (optional)',date));}
-  form.append(actions,message);
+  let date;
+  if(draft.base.done){date=planningInput('date',draft.completedOn,value=>{if(current()){draft.completedOn=value;persist();}});date.max=getTodayKey();form.append(planningField('Completion date (optional)',date));}
+  if(draft.completedOn && (!LifeTaskRepository.validDate(draft.completedOn) || draft.completedOn>getTodayKey()))message.textContent='Completion date needs review. Choose a past or current date; the saved task is unchanged.';
+  form.append(message,actions,planningButton('Edit source card',()=>{if(current())openCardTaskSource(draft.ref);},'pencil'));
   form.onsubmit=event=>{
-    event.preventDefault();
+    event.preventDefault();if(!current())return;
+    draft.title=name.value;
+    if(draft.completedOn && !LifeTaskRepository.validDate(draft.completedOn) && !date?.value){persist();message.textContent='Choose a valid completion date. The saved task is unchanged.';return;}
+    if(date)draft.completedOn=date.value;
     try{
-      const transaction=saveCardTaskChange(draft.ref,draft.base,{title:draft.title,...(draft.completedOn?{completedOn:draft.completedOn}:{})});
-      delete session.cardTaskDraft;savePlanningSession();dialog.close();renderCardsOnly({force:true});showCardTaskUndo(transaction);
+      const source=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.editable && LifeStateMerge.equal(task.ref,draft.ref));
+      const updates={title:draft.title.trim(),...(draft.completedOn?{completedOn:draft.completedOn}:{})};
+      // A retained post-save receipt permits cleanup, not a repeated source write.
+      const acknowledged=draft.after && source && LifeStateMerge.equal(source.base,draft.after);
+      const sameChange=acknowledged && LifeStateMerge.equal(updates,draft.savedValues);
+      let transaction;
+      if(!sameChange){
+        if(acknowledged)draft.base=LifeStateMerge.copy(source.base);
+        transaction=saveCardTaskChange(draft.ref,draft.base,updates,getTodayKey(),change=>{draft.after=LifeStateMerge.copy(change.after);draft.savedValues=LifeStateMerge.copy(updates);return persist();});
+      }
+      if(!discard()){message.textContent='Task saved. Draft cleanup needs retry; Save will not repeat the change.';return;}
+      dialog.close();renderCardsOnly({force:true});if(transaction)showCardTaskUndo(transaction);
     }catch(error){message.textContent=error.message;}
   };
-  dialog.append(form);name.focus();
+  dialog.append(form);persist();name.focus();
 }
 function renderWorkspaceTaskItem(item) {
   if(item.sourceKind!=="card")return renderPlannerLinkedItem(item);
   const row=planningNode('div','planner-linked-item card-source-task');row.classList.toggle('is-done',item.done);
+  const current=()=>planningControlCurrent(row,item.ref) && !document.querySelector('dialog[open]');
   row.dataset.taskRef=subtaskKey(taskSubtaskRef(item));
   row.dataset.sourceCard=item.ref.cardId || '';row.dataset.sourceTask=item.ref.itemId || '';
   const check=planningInput('checkbox','',()=>{});check.className='planner-linked-check';check.checked=item.done;check.disabled=!item.editable;
@@ -406,9 +449,11 @@ function renderWorkspaceTaskItem(item) {
   const title=planningNode('button','planner-linked-copy',item.title);title.type='button';title.disabled=!item.editable;title.setAttribute('aria-label',label);
   const message=planningNode('p','planning-message');message.setAttribute('role','status');
   const toggle=async event=>{
+    if(!current()){check.checked=item.done;return;}
     event.currentTarget.focus({preventScroll:true});
     check.checked=item.done;
     if(!await confirmParentTaskCompletion(item.base,!item.done))return;
+    if(!current())return;
     try{
       const transaction=saveCardTaskChange(item.ref,item.base,{done:!item.done},item.dateKey || getTodayKey());
       renderCardsOnly({force:true});showCardTaskUndo(transaction);
@@ -416,10 +461,12 @@ function renderWorkspaceTaskItem(item) {
   };check.onchange=toggle;title.onclick=toggle;
   const actions=planningNode('div','planner-linked-actions');
   actions.append(planningIcon('Task options: '+item.title,()=>{
+    if(!current())return;
     const dialog=dailyDialog('Task options'),menu=planningNode('div','daily-menu');
-    const edit=planningButton('Edit task',()=>{dialog.close();openCardTaskEditor(item);},'pencil');edit.disabled=!item.editable;
-    const subtasks=planningButton('Subtasks',()=>{dialog.close();openTaskSubtasks(item);},'list');subtasks.disabled=!item.editable;
-    menu.append(subtasks,edit,planningButton('Edit source card',()=>openCardTaskSource(item.ref),'pencil'),planningButton('Completion history',()=>{dialog.close();openTaskHistory(item);},'calendar'));dialog.append(menu);
+    const menuCurrent=()=>dialog.open && planningControlCurrent(row,item.ref) && [...document.querySelectorAll('dialog[open]')].at(-1)===dialog;
+    const edit=planningButton('Edit task',()=>{if(menuCurrent()){dialog.close();openCardTaskEditor(item);}},'pencil');edit.disabled=!item.editable;
+    const subtasks=planningButton('Subtasks',()=>{if(menuCurrent()){dialog.close();openTaskSubtasks(item);}},'list');subtasks.disabled=!item.editable;
+    menu.append(subtasks,edit,planningButton('Edit source card',()=>{if(menuCurrent())openCardTaskSource(item.ref);},'pencil'),planningButton('Completion history',()=>{if(menuCurrent()){dialog.close();openTaskHistory(item);}},'calendar'));dialog.append(menu);
   },'more-vertical'));
   main.append(meta,title,message);row.append(check,main,actions);
   if(item.editable){const subtasks=renderTaskSubtasks(item);row.append(subtasks);row.classList.toggle('has-subtasks',!subtasks.hidden && subtasks.matches('details'));}return row;
@@ -599,7 +646,7 @@ function renderTaskResults(root) {
     columns.append(button);
   }
   heading.append(count,columns);root.append(heading);
-  if(session.cardTaskDraft)root.append(planningButton('Continue task draft',()=>openCardTaskEditor(),'pencil'));
+  if(session.cardTaskDraft){const boardId=state.activeBoardId;root.append(planningButton('Continue task draft',()=>{if(planningControlCurrent(root,{boardId},session) && !document.querySelector('dialog[open]'))openCardTaskEditor();},'pencil'));}
   if(!items.length){root.append(planningNode("p","planning-empty",query?"No matching tasks.":"No tasks in this view."));return;}
   const list=planningNode("div","workspace-task-list");root.append(list);
   items.forEach(item=>{

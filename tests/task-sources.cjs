@@ -25,6 +25,7 @@ const seed=async p=>p.evaluate(async()=>{
 (async()=>{
   const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name,action){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1080,height:1100},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',route=>route.fulfill({status:503,body:'Synthetic test only'}));
     const page=await context.newPage(),errors=[];page.setDefaultTimeout(6500);page.on('pageerror',e=>errors.push(e.message));
@@ -134,6 +135,84 @@ const seed=async p=>p.evaluate(async()=>{
       assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).isVisible(),true);await p.getByRole('button',{name:'Discard draft',exact:true}).click();
       if([390,1080].includes(width))await p.screenshot({path:out+'/task-sources-'+width+'.png',fullPage:true});
     }
+  });
+  await run('source editor safety: detached editor fields and Save cannot write or contaminate another board session',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('My original-board draft');
+    await p.evaluate(()=>{window.oldCardTaskInput=document.querySelector('.card-task-editor input');window.oldCardTaskForm=oldCardTaskInput.form;window.sourceBoard=state.activeBoardId;window.sourceDraft=JSON.stringify(planningSession().cardTaskDraft);document.getElementById('dailyDialog').close();});await p.locator('#dailyDialog').waitFor({state:'detached'});
+    await p.evaluate(()=>{switchBoard('other-board');window.otherSession=JSON.stringify(planningSession());oldCardTaskInput.value='Detached corruption';oldCardTaskInput.dispatchEvent(new Event('input',{bubbles:true}));oldCardTaskForm.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});
+    assert.equal(await p.evaluate(()=>JSON.stringify(planningSession())===otherSession),true);assert.equal(await p.evaluate(()=>JSON.stringify(planningSessions.get(sourceBoard).cardTaskDraft)===sourceDraft),true);
+    await p.evaluate(()=>switchBoard(sourceBoard));await all(p);await p.getByRole('button',{name:'Continue task draft',exact:true}).click();assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'My original-board draft');assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'Contact partner');
+  });
+  await run('source editor safety: failed discard preserves the visible draft and its exact stored copy',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Keep all of these words');
+    const before=await p.evaluate(()=>sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId)));
+    await p.evaluate(()=>{window.originalCardSet=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(String(k).includes('life-os-planning:'))throw new DOMException('Synthetic quota','QuotaExceededError');return originalCardSet.call(this,k,v);};});
+    await p.getByRole('button',{name:'Discard draft',exact:true}).click();assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/not discarded|could not discard/i);assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Keep all of these words');assert.equal(await p.evaluate(()=>sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))),before);
+    await p.evaluate(()=>{Storage.prototype.setItem=originalCardSet;});await p.getByRole('button',{name:'Discard draft',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'Contact partner');
+  });
+  await run('source editor safety: detached and CSS-hidden source task controls never complete a task or open options',async p=>{
+    await all(p);await p.evaluate(()=>{window.oldSourceRow=document.querySelector('.card-source-task[data-source-task="one"]');renderCardsOnly({force:true});oldSourceRow.querySelector('input').dispatchEvent(new Event('change',{bubbles:true}));oldSourceRow.querySelector('.planner-linked-actions button').click();});
+    assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].done),false);assert.equal(await p.locator('#dailyDialog').count(),0);
+    await p.evaluate(()=>{const row=document.querySelector('.card-source-task[data-source-task="one"]');row.style.display='none';row.querySelector('input').dispatchEvent(new Event('change',{bubbles:true}));row.querySelector('.planner-linked-copy').click();row.querySelector('.planner-linked-actions button').click();});
+    assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].done),false);assert.equal(await p.locator('#dailyDialog').count(),0);
+  });
+  await run('source editor safety: a stale same-board Edit command uses the current canonical source name',async p=>{
+    await all(p);await row(p,'one').getByRole('button',{name:/Task options:/}).click();
+    await p.evaluate(()=>{state.cards.find(c=>c.id==='project-a').items[0].text='Latest source wording';});await p.getByRole('button',{name:'Edit task',exact:true}).click();
+    assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Latest source wording');await p.getByRole('button',{name:'Save task',exact:true}).click();assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'Latest source wording');
+  });
+  await run('source editor safety: interrupted cleanup recovers the saved name and completion date without repeating history',async p=>{
+    await all(p);await row(p,'one').getByRole('checkbox').check();await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Call the Culturely partner');await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');
+    await p.evaluate(()=>{window.originalCardSave=saveState;window.originalCardSet=Storage.prototype.setItem;window.blockCardCleanup=false;saveState=function(...args){const ok=originalCardSave(...args);if(ok)blockCardCleanup=true;return ok;};Storage.prototype.setItem=function(k,v){if(blockCardCleanup && String(k).includes('life-os-planning:'))throw new DOMException('Synthetic cleanup refusal','QuotaExceededError');return originalCardSet.call(this,k,v);};});
+    await p.getByRole('button',{name:'Save task',exact:true}).click();assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/Task saved/);
+    const saved=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items[0]));assert.equal(saved.taskCompletion.on,'2026-09-21');assert.equal(saved.taskCompletionEvents.length,2);
+    await p.evaluate(async()=>{Storage.prototype.setItem=originalCardSet;saveState=originalCardSave;await flushDeviceWrites();});await p.reload();await all(p);await p.getByRole('button',{name:'Continue task draft',exact:true}).click();
+    assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Call the Culturely partner');assert.equal(await p.getByLabel('Completion date (optional)',{exact:true}).inputValue(),'2026-09-21');
+    await p.evaluate(()=>{window.originalCardSave=saveState;window.replayedCardSaves=0;saveState=function(...args){replayedCardSaves++;return originalCardSave(...args);};});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>replayedCardSaves),0);assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items[0])),saved);assert.equal(await p.getByRole('button',{name:'Continue task draft',exact:true}).count(),0);
+  });
+  await run('source editor safety: unavailable receipt storage rolls back the exact task while retaining retryable wording',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('My protected task draft');const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards));
+    await p.evaluate(()=>{window.originalCardSet=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(String(k).includes('life-os-planning:'))throw new DOMException('Synthetic quota','QuotaExceededError');return originalCardSet.call(this,k,v);};});
+    await p.getByRole('button',{name:'Save task',exact:true}).click();assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/Draft storage is unavailable/);assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'My protected task draft');assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state.cards)),before);assert.match(await p.locator('.card-task-draft-status').innerText(),/Memory only/);
+    await p.evaluate(()=>{Storage.prototype.setItem=originalCardSet;});await p.getByRole('button',{name:'Save task',exact:true}).click();assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'My protected task draft');
+  });
+  await run('source editor safety: newer changes after an interrupted successful save cannot be overwritten by its retained receipt',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Saved before interruption');
+    await p.evaluate(()=>{window.originalCardSave=saveState;window.originalCardSet=Storage.prototype.setItem;window.blockCardCleanup=false;saveState=function(...args){const ok=originalCardSave(...args);if(ok)blockCardCleanup=true;return ok;};Storage.prototype.setItem=function(k,v){if(blockCardCleanup && String(k).includes('life-os-planning:'))throw new DOMException('Synthetic cleanup refusal','QuotaExceededError');return originalCardSet.call(this,k,v);};});
+    await p.getByRole('button',{name:'Save task',exact:true}).click();await p.evaluate(async()=>{Storage.prototype.setItem=originalCardSet;saveState=originalCardSave;state.cards.find(c=>c.id==='project-a').items[0].text='Newer source edit';saveState();await flushDeviceWrites();});await p.reload();await all(p);await p.getByRole('button',{name:'Continue task draft',exact:true}).click();await p.getByRole('button',{name:'Save task',exact:true}).click();
+    assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/changed elsewhere/);assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Saved before interruption');assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'Newer source edit');
+  });
+  await run('source editor safety: malformed draft envelopes remain stored and are not replaced by a new edit',async p=>{
+    await all(p);for(const value of [false,null,[],{}, {version:2,title:'Keep this unknown version'}, {ref:{boardId:'other-board'},title:'Wrong-board draft'}]){
+      const raw=await p.evaluate(value=>{planningSession().cardTaskDraft=value;savePlanningSession();return sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId));},value);
+      await edit(p,'one');assert.equal(await p.locator('.card-task-editor').count(),0);assert.equal(await p.evaluate(()=>sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))),raw);assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'Contact partner');
+    }
+  });
+  await run('source editor safety: completion confirmation cannot act after switching to a board with copied IDs',async p=>{
+    await p.evaluate(()=>{const other=state.boards.find(b=>b.id==='other-board');other.cards[0].id='project-a';LifeSubtasks.change(state.cards.find(c=>c.id==='project-a').items[0],{type:'add',id:'step',title:'Prepare discussion notes'});saveState();});await all(p);
+    await row(p,'one').getByRole('checkbox').click();await p.locator('#taskConfirmationDialog').waitFor();await p.evaluate(()=>{window.sourceBoard=state.activeBoardId;switchBoard('other-board');});await p.locator('#taskConfirmationDialog').getByRole('button',{name:'Complete task',exact:true}).click();await p.locator('#taskConfirmationDialog').waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].done),false);await p.evaluate(()=>switchBoard(sourceBoard));assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].done),false);
+  });
+  await run('source editor safety: closed completion-date fields cannot contaminate the retained original-board draft',async p=>{
+    await all(p);await row(p,'one').getByRole('checkbox').check();await edit(p,'one');await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');
+    await p.evaluate(()=>{window.oldCardDate=document.querySelector('.card-task-editor input[type=date]');window.sourceBoard=state.activeBoardId;window.beforeDateDraft=JSON.stringify(planningSession().cardTaskDraft);document.getElementById('dailyDialog').close();});await p.locator('#dailyDialog').waitFor({state:'detached'});
+    await p.evaluate(()=>{switchBoard('other-board');oldCardDate.value='2026-09-01';oldCardDate.dispatchEvent(new Event('input',{bubbles:true}));});assert.equal(await p.evaluate(()=>JSON.stringify(planningSessions.get(sourceBoard).cardTaskDraft)===beforeDateDraft),true);assert.equal(await p.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);
+  });
+  await run('source editor safety: protected card-task editor fits short phones portrait desktops and wide screens',async p=>{
+    await all(p);await row(p,'one').getByRole('checkbox').check();await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Contact the Culturely partner about the launch');
+    for(const [width,height] of [[320,844],[390,480],[390,844],[768,1000],[1080,1100],[1440,1000]]){
+      await p.setViewportSize({width,height});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+      for(const label of ['Save task','Discard draft','Edit source card']){const button=p.getByRole('button',{name:label,exact:true});await button.scrollIntoViewIfNeeded();assert.equal(await button.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=44 && r.height>=44;}),true);}
+      await p.screenshot({path:out+'/protected-card-task-'+width+'x'+height+'.png'});
+    }
+  });
+  await run('source editor safety: legacy drafts stay recoverable and invalid completion dates need explicit repair',async p=>{
+    await all(p);await row(p,'one').getByRole('checkbox').check();
+    const before=await p.evaluate(()=>{const source=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.itemId==='one');planningSession().cardTaskDraft={ref:source.ref,base:LifeStateMerge.copy(source.base),title:'Recovered legacy wording',sourceTitle:source.sourceTitle,completedOn:'2026-02-30'};savePlanningSession();return LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items);});
+    await p.evaluate(()=>flushDeviceWrites());await p.reload();await all(p);await p.getByRole('button',{name:'Continue task draft',exact:true}).click();assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Recovered legacy wording');
+    await p.getByRole('button',{name:'Save task',exact:true}).click();assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/valid completion date/);assert.equal(await p.evaluate(()=>planningSession().cardTaskDraft.completedOn),'2026-02-30');assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items)),before);
+    await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');await p.getByRole('button',{name:'Save task',exact:true}).click();const items=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items));assert.equal(items[0].text,'Recovered legacy wording');assert.equal(items[0].taskCompletion.on,'2026-09-21');assert.equal(items[0].custom,'keep');assert.deepEqual(items.slice(1),before.slice(1));
   });
   await browser.close();fs.writeFileSync(out+'/task-sources-results.json',JSON.stringify(results,null,2));process.exitCode=results.some(r=>!r.pass)?1:0;
 })().catch(error=>{console.error(error);process.exitCode=1;});

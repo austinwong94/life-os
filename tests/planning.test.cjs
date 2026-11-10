@@ -4,6 +4,24 @@ const P=require('../planner-store.js');
 const W=require('../planning.js');
 const M=require('../state-merge.js');
 const draft={title:'Culturely meeting',area:'Culturely',startDate:'2026-09-10',endDate:'2026-09-10',startTime:'14:00',endTime:'15:00',allDay:false,notes:'Private notes\nSecond line'};
+function cardTaskEdit(kind='checklist'){
+  return {version:1,key:JSON.stringify(['board','source',kind,kind==='single'?null:'task']),ref:{boardId:'board',cardId:'source',kind,itemId:kind==='single'?null:'task'},base:kind==='single'?{title:'Book appointment',done:false}:{id:'task',text:'Call partner',done:false,custom:{keep:'all fields'}},title:'My full draft',sourceTitle:'Original project',completedOn:''};
+}
+test('source-task drafts validate exact board and original task identity for Project To-Do and single cards',()=>{
+  for(const kind of ['checklist','daily','single']){const d=cardTaskEdit(kind);assert(W.validCardTaskEditDraft(d,'board'));assert.equal(W.validCardTaskEditDraft(d,'another-board'),false);assert.equal(W.validCardTaskEditDraft(d,''),false);}
+});
+test('legacy source-task draft envelopes remain valid without changing canonical metadata',()=>{
+  const d=cardTaskEdit();delete d.version;delete d.key;d.base.subtasks=[{id:'child',title:'Keep this step',done:true}];d.after={...d.base,text:d.title};const before=JSON.stringify(d);assert(W.validCardTaskEditDraft(d,'board'));assert.equal(JSON.stringify(d),before);
+});
+test('malformed and unsupported source-task drafts cannot be converted into editable empty drafts',()=>{
+  const d=cardTaskEdit();for(const value of [null,[],false,0,'',{}, {...d,version:2},{...d,ref:null},{...d,ref:[]},{...d,ref:{...d.ref,cardId:' '}},{...d,ref:{...d.ref,kind:'planner'}},{...d,base:null},{...d,base:[]},{...d,title:3},{...d,sourceTitle:[]},{...d,completedOn:false}])assert.equal(W.validCardTaskEditDraft(value,'board'),false);
+});
+test('mismatched item IDs and ambiguous single-card identities cannot bind source-task drafts to another task',()=>{
+  const d=cardTaskEdit();assert.equal(W.validCardTaskEditDraft({...d,ref:{...d.ref,itemId:'wrong'}},'board'),false);assert.equal(W.validCardTaskEditDraft({...d,base:{...d.base,id:'wrong'}},'board'),false);assert.equal(W.validCardTaskEditDraft({...d,key:JSON.stringify(['board','wrong-card','checklist','task'])},'board'),false);const single=cardTaskEdit('single');assert.equal(W.validCardTaskEditDraft({...single,ref:{...single.ref,itemId:'task'}},'board'),false);
+});
+test('invalid completion date wording remains recoverable for explicit repair instead of being guessed or cleared',()=>{
+  const d=cardTaskEdit();d.completedOn='2026-02-30';const before=JSON.stringify(d);Object.freeze(d);Object.freeze(d.ref);Object.freeze(d.base);assert(W.validCardTaskEditDraft(d,'board'));assert.equal(JSON.stringify(d),before);
+});
 function taskEdit(){
   const values={title:'Original task',dateKey:'2026-11-11',area:'Personal',project:'Family',status:'waiting',deadline:'',notes:'Every original line\nStill kept',priority:'normal',goalLink:'',followUp:'2026-11-12',intent:'task',minutes:15,nextAction:'One step',startTime:''};
   return {version:1,key:JSON.stringify(['board','card','task']),ref:{boardId:'board',cardId:'card',kind:'planner',itemId:'task'},base:{id:'task',title:'Original task',custom:{kept:true}},...values,initial:W.taskEditValues(values)};
