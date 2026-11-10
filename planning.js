@@ -88,22 +88,23 @@ function planningField(label, input) {
 function planningInput(type, value, onInput) {
   const input = document.createElement("input"); input.type = type; input.value = value || ""; input.oninput = () => onInput(input.value); return input;
 }
-function planningOptionalDate(input,label,onClear) {
+function planningOptionalDate(input,label,onClear,canApply=()=>true) {
   const group=planningNode("div","planning-optional-date");
   group.append(input,planningIcon(label,event=>{
     event.preventDefault();
+    if(!canApply())return;
     // Recreate the native date editor's internal segments as well as its value.
     // WebKit can otherwise keep stale segments after the value becomes empty.
     input.type="text";input.value="";input.type="date";onClear();
   },"x"));return group;
 }
-function planningCaptureDates(input,today,canApply) {
-  const root=planningNode('div','planning-date-choices');root.setAttribute('role','group');root.setAttribute('aria-label','Quick dates');
+function planningCaptureDates(input,today,canApply,label='Quick dates') {
+  const root=planningNode('div','planning-date-choices');root.setAttribute('role','group');root.setAttribute('aria-label',label);
   for(const [label,value] of LifePlanning.captureDateChoices(today)){
     const button=planningButton(label,()=>{
       if(!root.isConnected || !input.isConnected || root.hidden || root.closest('details')?.open===false || root.closest('dialog')?.open===false || getTodayKey()!==today || !canApply())return;
       input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));
-    });button.title=formatReadableDateKey(value);root.append(button);
+    });button.title=formatReadableDateKey(value);button.dataset.date=value;root.append(button);
   }
   return root;
 }
@@ -334,7 +335,7 @@ function renderWorkspaceTaskItem(item) {
 function getTaskEditMetadata(item) {
   const task = LifePlanner.ensure(resolveLiveCard(item.card)).find(task=>task.id===item.taskId);
   return {area:task?.area ?? item.group ?? getPlannerGroup(item.card), project:task?.project || "", status:task?.status || "todo",
-    deadline:task?.deadline || "", notes:task?.notes || "", priority:task?.priority || "normal", goalLink:taskGoalValue(task || {}), followUp:task?.followUp || '', intent:task?.intent || 'task', minutes:task?.estimatedMinutes || '',nextAction:task?.nextAction || '',startTime:task?.startTime || '',base:LifeStateMerge.copy(task)};
+    deadline:task?.deadline || "", notes:task?.notes || "", priority:task?.priority || "normal", goalLink:taskGoalValue(task || {}), followUp:task?.followUp ?? '', intent:task?.intent || 'task', minutes:task?.estimatedMinutes || '',nextAction:task?.nextAction || '',startTime:task?.startTime || '',base:LifeStateMerge.copy(task)};
 }
 function appendTaskMetadata(meta, item) {
   if (!item.workspaceTask && item.area === undefined) return;
@@ -350,7 +351,7 @@ function appendTaskMetadata(meta, item) {
     meta.append(planningNode('span','task-goal',kr?.title || priority?.title || 'Linked priority'));
   }
 }
-function appendTaskEditFields(form, draft) {
+function appendTaskEditFields(form, draft,canApply) {
   const grid = planningNode("div", "task-edit-details");
   const deadline=planningInput("date",draft.deadline,value=>draft.deadline=value);deadline.setAttribute("aria-label","Deadline (optional)");
   grid.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>draft.area=value)),
@@ -359,7 +360,7 @@ function appendTaskEditFields(form, draft) {
     planningField("Deadline (optional)",planningOptionalDate(deadline,"Clear deadline",()=>draft.deadline="")),
     planningField("Priority",planningSelect(Object.entries(PRIORITY_META).map(([key,meta])=>[key,meta.label]),draft.priority,value=>draft.priority=value)));
   const notes = planningNode("textarea"); notes.value = draft.notes; notes.rows = 3; notes.oninput = () => draft.notes=notes.value;
-  grid.append(planningField("Task notes",notes)); appendDailyTaskFields(grid,draft); form.append(grid);
+  grid.append(planningField("Task notes",notes)); appendDailyTaskFields(grid,draft,canApply); form.append(grid);
 }
 function renderPlanningWorkspace(mode) {
   const root = planningNode("section", "planning-workspace"); root.setAttribute("aria-label",mode==="tasks"?"Tasks":"Calendar");

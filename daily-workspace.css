@@ -51,6 +51,9 @@
 .daily-follow-up-row small, .daily-follow-up-row time { min-width: 0; overflow-wrap: anywhere; }
 .daily-follow-ups > .daily-muted { margin: 10px 0 0; font-size: 12px; }
 .daily-follow-ups .planning-button { min-height: 44px; }
+.task-follow-up-field { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.task-follow-up-field .planning-button[aria-pressed="true"] { background: var(--action-soft); color: var(--action); border-color: var(--action); }
+.task-follow-up-field > small { font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .daily-priority-line { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 12px 0; border-bottom: 1px solid #e1e7e3; font-size: 13px; }
 .daily-priority-line span { overflow-wrap: anywhere; }
 .daily-priority-line strong { white-space: nowrap; color: #276b5d; }

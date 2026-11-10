@@ -824,12 +824,22 @@ function taskGoalFields(draft) {
   if(draft.minutes && (!Number.isInteger(Number(draft.minutes)) || Number(draft.minutes)<1 || Number(draft.minutes)>1440))throw new Error('Use estimated minutes between 1 and 1440.');
   return {coachingProgramId,coachingPriorityId,coachingKrId,followUp:draft.followUp || '',intent:draft.intent || 'task',estimatedMinutes:Number(draft.minutes) || 0,nextAction:draft.nextAction || '',startTime:draft.startTime || ''};
 }
-function appendDailyTaskFields(grid,draft) {
+function appendDailyTaskFields(grid,draft,canApply) {
   const options=taskGoalOptions();if(draft.goalLink && !options.some(([key])=>key===draft.goalLink))options.push([draft.goalLink,'Existing priority link']);
-  const followUp=planningInput('date',draft.followUp,value=>draft.followUp=value);
+  const day=getTodayKey(),current=()=>grid.isConnected && !document.hidden && !grid.closest('[hidden],[inert]') && !document.querySelector('dialog[open]') && getTodayKey()===day && canApply();
+  const followUp=planningInput('date',draft.followUp,value=>{if(!current())return;draft.followUp=value;refreshFollowUp();});
   followUp.setAttribute('aria-label','Follow-up date');
+  const quick=planningCaptureDates(followUp,day,current,'Follow-up quick dates'),notice=planningNode('small','daily-muted');notice.setAttribute('role','status');
+  const refreshFollowUp=()=>{
+    const invalid=draft.followUp!=='' && draft.followUp!=null && !LifePlanner.validDate(draft.followUp);
+    const message=invalid?'The saved follow-up date needs review. Choose a date or clear it.':'';
+    followUp.setCustomValidity(message);notice.textContent=message;notice.hidden=!invalid;
+    for(const button of quick.children)button.setAttribute('aria-pressed',String(button.dataset.date===draft.followUp));
+  };
+  const field=planningNode('div','task-follow-up-field');
+  field.append(planningField('Follow-up date',planningOptionalDate(followUp,'Clear follow-up date',()=>{draft.followUp='';refreshFollowUp();},current)),quick,notice);refreshFollowUp();
   grid.append(planningField('Contributes to',planningSelect(options,draft.goalLink,value=>draft.goalLink=value)),
-    planningField('Follow-up date',planningOptionalDate(followUp,'Clear follow-up date',()=>draft.followUp='')),
+    field,
     planningField('Task kind',planningSelect([['task','Task'],['experience','Experience to try']],draft.intent,value=>draft.intent=value)));
   const minutes=planningInput('number',draft.minutes,value=>draft.minutes=value);minutes.min=1;minutes.max=1440;minutes.step=1;
   grid.append(planningField('Next action (optional)',planningInput('text',draft.nextAction,value=>draft.nextAction=value)),planningField('Estimated minutes (optional)',minutes),planningField('Start time (optional)',planningInput('time',draft.startTime,value=>draft.startTime=value)));

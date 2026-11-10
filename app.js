@@ -4216,7 +4216,7 @@ function renderPlannerLinkedItem(item) {
 }
 
 function getPlannerTaskRowKey(item) {
-  return `${item?.card?.id || ""}:${item?.taskId || ""}`;
+  return JSON.stringify([item?.boardId || state.activeBoardId,item?.card?.id || "",item?.taskId || ""]);
 }
 
 function startPlannerTaskEdit(item) {
@@ -4297,7 +4297,7 @@ function renderPlannerLinkedEditItem(item) {
   const schedule = planningNode('div', 'planner-edit-schedule');
   schedule.append(planningField('Planned day', planningOptionalDate(dateInput,"Clear task date",()=>{if(current())draft.dateKey="";})), planningCaptureDates(dateInput,today,current));
   form.append(schedule, titleInput, save, cancel);
-  appendTaskEditFields(form, draft);
+  appendTaskEditFields(form, draft,current);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!current()) return;
@@ -4330,7 +4330,9 @@ function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
     window.alert("This task changed while you were editing. Your draft is still here. Cancel and reopen the task to compare the latest version.");
     return false;
   }
-  if (draft?.followUp && !LifePlanner.validDate(draft.followUp)) return false;
+  if (draft && draft.followUp!=='' && draft.followUp!=null && !LifePlanner.validDate(draft.followUp)) {
+    setSaveStatus('Choose a valid follow-up date, or clear it. Your draft is kept.','error');return false;
+  }
   let metadata;
   try{metadata = draft ? {area:draft.area,project:draft.project.trim(),status:draft.status,deadline:draft.deadline,notes:draft.notes,priority:draft.priority,...taskGoalFields(draft)} : {};}
   catch(error){window.alert(error.message);return false;}
