@@ -52,7 +52,21 @@
     url.search = new URLSearchParams({action:"TEMPLATE",text:activity.title,dates,location:activity.location || "",details:[activity.notes,activity.url].filter(Boolean).join("\n")}).toString();
     return url.href;
   }
-  const api = {areas,dateKey,shift,captureDateChoices,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink};
+  const taskEditKeys=['title','dateKey','area','project','status','deadline','notes','priority','goalLink','followUp','intent','minutes','nextAction','startTime'];
+  const taskEditValues=draft=>Object.fromEntries(taskEditKeys.map(key=>[key,draft?.[key]]));
+  const taskEditChanged=draft=>!draft?.initial || JSON.stringify(taskEditValues(draft))!==JSON.stringify(taskEditValues(draft.initial));
+  function validTaskEditDraft(draft,boardId){
+    try{
+      if(!draft || Array.isArray(draft) || draft.version!==1 || typeof draft.key!=='string')return false;
+      const key=JSON.parse(draft.key);
+      if(!Array.isArray(key) || key.length!==3 || key.some(value=>typeof value!=='string' || !value) || key[0]!==boardId)return false;
+      if(!draft.ref || draft.ref.kind!=='planner' || draft.ref.boardId!==key[0] || draft.ref.cardId!==key[1] || draft.ref.itemId!==key[2])return false;
+      if(!draft.base || Array.isArray(draft.base) || draft.base.id!==key[2] || !draft.initial || typeof draft.initial!=='object' || Array.isArray(draft.initial))return false;
+      return taskEditKeys.filter(key=>!['minutes','followUp'].includes(key)).every(key=>Object.hasOwn(draft,key) && typeof draft[key]==='string' && Object.hasOwn(draft.initial,key) && typeof draft.initial[key]==='string') &&
+        ['string','number'].includes(typeof draft.minutes) && ['string','number'].includes(typeof draft.initial.minutes);
+    }catch{return false;}
+  }
+  const api = {areas,dateKey,shift,captureDateChoices,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink,taskEditValues,taskEditChanged,validTaskEditDraft};
   root.LifePlanning = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -60,16 +74,18 @@
 // Drafts and view preferences are board-scoped and tab-local. They never enter
 // the cloud snapshot or replace canonical task/activity records while typing.
 const planningSessions = new Map();
+const planningSessionFaults = new Set();
 function planningSession() {
   if (!planningSessions.has(state.activeBoardId)) {
-    let saved = {}; try { saved = JSON.parse(sessionStorage.getItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId)) || "{}"); } catch {}
+    let saved = {};try{saved=JSON.parse(sessionStorage.getItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId)) || '{}');if(!saved || typeof saved!=='object' || Array.isArray(saved))throw new Error('Unreadable planning session');}catch{saved={};planningSessionFaults.add(state.activeBoardId);}
     planningSessions.set(state.activeBoardId, {view:"today",area:"*",search:"",day:getTodayKey(),calendarMode:innerWidth<=700?"agenda":"month",...saved});
   }
   return planningSessions.get(state.activeBoardId);
 }
 function savePlanningSession() {
-  try { sessionStorage.setItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId),JSON.stringify(planningSession())); }
-  catch { setSaveStatus("Draft kept in this tab - draft storage unavailable", "error"); }
+  if(planningSessionFaults.has(state.activeBoardId)){setSaveStatus('Planning draft storage needs review. Its stored copy has been kept.','error');return false;}
+  try { sessionStorage.setItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId),JSON.stringify(planningSession()));return true; }
+  catch { setSaveStatus("Draft kept in this tab - draft storage unavailable", "error");return false; }
 }
 function planningNode(tag, className, text) {
   const node = document.createElement(tag); if (className) node.className = className; if (text !== undefined) node.textContent = text; return node;
@@ -353,13 +369,14 @@ function appendTaskMetadata(meta, item) {
 }
 function appendTaskEditFields(form, draft,canApply) {
   const grid = planningNode("div", "task-edit-details");
-  const deadline=planningInput("date",draft.deadline,value=>draft.deadline=value);deadline.setAttribute("aria-label","Deadline (optional)");
-  grid.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>draft.area=value)),
-    planningField("Status",planningSelect([["todo","To do"],["doing","Doing"],["waiting","Waiting"],["parked","Parked"]],draft.status,value=>draft.status=value)),
-    planningField("Project",planningInput("text",draft.project,value=>draft.project=value)),
-    planningField("Deadline (optional)",planningOptionalDate(deadline,"Clear deadline",()=>draft.deadline="")),
-    planningField("Priority",planningSelect(Object.entries(PRIORITY_META).map(([key,meta])=>[key,meta.label]),draft.priority,value=>draft.priority=value)));
-  const notes = planningNode("textarea"); notes.value = draft.notes; notes.rows = 3; notes.oninput = () => draft.notes=notes.value;
+  const update=(key,value)=>{if(canApply())draft[key]=value;};
+  const deadline=planningInput("date",draft.deadline,value=>update('deadline',value));deadline.setAttribute("aria-label","Deadline (optional)");
+  grid.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>update('area',value))),
+    planningField("Status",planningSelect([["todo","To do"],["doing","Doing"],["waiting","Waiting"],["parked","Parked"]],draft.status,value=>update('status',value))),
+    planningField("Project",planningInput("text",draft.project,value=>update('project',value))),
+    planningField("Deadline (optional)",planningOptionalDate(deadline,"Clear deadline",()=>update('deadline',''),canApply)),
+    planningField("Priority",planningSelect(Object.entries(PRIORITY_META).map(([key,meta])=>[key,meta.label]),draft.priority,value=>update('priority',value))));
+  const notes = planningNode("textarea"); notes.value = draft.notes; notes.rows = 3; notes.oninput = () => update('notes',notes.value);
   grid.append(planningField("Task notes",notes)); appendDailyTaskFields(grid,draft,canApply); form.append(grid);
 }
 function renderPlanningWorkspace(mode) {
@@ -385,13 +402,13 @@ function renderPlanningDateNavigation(day, change) {
   return nav;
 }
 function renderTasksWorkspace(root) {
-  const session = planningSession();
+  const session = planningSession(),boardId=state.activeBoardId;
   root.classList.add("task-workspace");
   const results = planningNode("div","task-results");
   const search = planningInput("search",session.search,value=>{
     session.search=value;
     if(value.trim()){session.searchExpanded=true;header.classList.add("is-search-open");searchToggle.setAttribute("aria-expanded","true");}
-    savePlanningSession();renderTaskResults(results);
+    savePlanningSession();renderTaskResults(results);resume.hidden=!session.plannerTaskDraft || !!results.querySelector('.planner-linked-edit-form');
   });
   search.placeholder = "Search tasks and projects"; search.setAttribute("aria-label","Search tasks and projects"); search.className="planning-search";
   const header = planningNode("header","planning-heading task-heading");
@@ -406,7 +423,8 @@ function renderTasksWorkspace(root) {
   searchToggle.classList.add("task-search-toggle");searchToggle.setAttribute("aria-expanded",String(session.searchExpanded));
   search.id="taskWorkspaceSearch";searchToggle.setAttribute("aria-controls",search.id);
   header.classList.toggle("is-search-open",session.searchExpanded);
-  header.append(planningNode("h2","","Tasks"),renderPlanningAreaFilter(),searchToggle,search); root.append(header);
+  const resume=planningButton('Task draft',()=>{if(root.isConnected && !document.hidden && !document.querySelector('dialog[open]') && state.activeBoardId===boardId && planningSession()===session)openPlannerTaskDraft();},'pencil');resume.classList.add('planner-draft-resume');
+  header.append(planningNode("h2","","Tasks"),renderPlanningAreaFilter(),searchToggle,search,resume); root.append(header);
   const toolbar = planningNode("div","task-toolbar");
   const tabs = planningNode("div","planning-tabs"); tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Task view");
   for (const [key,label] of [["today","Today"],["upcoming","Upcoming"],["all","All tasks"],["completed","Completed"]]) {
@@ -428,6 +446,7 @@ function renderTasksWorkspace(root) {
   root.append(toolbar);
   root.append(renderTaskCapture());
   root.append(results); renderTaskResults(results);
+  resume.hidden=!session.plannerTaskDraft || !!results.querySelector('.planner-linked-edit-form');
 }
 function renderTaskCapture() {
   const session = planningSession(),boardId=state.activeBoardId,today=getTodayKey();

@@ -4,6 +4,26 @@ const P=require('../planner-store.js');
 const W=require('../planning.js');
 const M=require('../state-merge.js');
 const draft={title:'Culturely meeting',area:'Culturely',startDate:'2026-09-10',endDate:'2026-09-10',startTime:'14:00',endTime:'15:00',allDay:false,notes:'Private notes\nSecond line'};
+function taskEdit(){
+  const values={title:'Original task',dateKey:'2026-11-11',area:'Personal',project:'Family',status:'waiting',deadline:'',notes:'Every original line\nStill kept',priority:'normal',goalLink:'',followUp:'2026-11-12',intent:'task',minutes:15,nextAction:'One step',startTime:''};
+  return {version:1,key:JSON.stringify(['board','card','task']),ref:{boardId:'board',cardId:'card',kind:'planner',itemId:'task'},base:{id:'task',title:'Original task',custom:{kept:true}},...values,initial:W.taskEditValues(values)};
+}
+test('task edit recovery validates exact board/card/task identity without matching titles',()=>{
+  const d=taskEdit();assert(W.validTaskEditDraft(d,'board'));assert.equal(W.validTaskEditDraft(d,'other-board'),false);
+  for(const key of ['bad','[]',JSON.stringify(['board','wrong-card','task']),JSON.stringify(['board','card','wrong-task']),JSON.stringify(['board','card','task','extra'])])assert.equal(W.validTaskEditDraft({...d,key},'board'),false);
+});
+test('invalid task edit envelopes cannot become editable empty or wrong-version drafts',()=>{
+  const d=taskEdit();for(const value of [null,[],{},false,{...d,version:2},{...d,ref:null},{...d,ref:{...d.ref,kind:'single'}},{...d,base:null},{...d,base:[]},{...d,initial:null},{...d,notes:{}},{...d,project:3},{...d,minutes:true}])assert.equal(W.validTaskEditDraft(value,'board'),false);
+});
+test('task edit dirty state compares every editable field and clears when changes are reverted',()=>{
+  const d=taskEdit();assert.equal(W.taskEditChanged(d),false);for(const key of Object.keys(W.taskEditValues(d))){const next={...d,[key]:'A different value'};assert.equal(W.taskEditChanged(next),true,key);assert.equal(W.taskEditChanged({...next,[key]:d[key]}),false,key);}
+});
+test('invalid imported dates remain preserved for explicit repair rather than failing safe draft recovery',()=>{
+  for(const followUp of ['2026-02-30',{legacy:'Do not remove'},false,0]){const d=taskEdit();d.followUp=followUp;d.initial.followUp=followUp;assert(W.validTaskEditDraft(d,'board'));assert.equal(W.taskEditChanged(d),false);}
+});
+test('task edit projection is read-only and excludes source snapshots and unknown metadata from editable fields',()=>{
+  const d=taskEdit(),before=JSON.stringify(d);Object.freeze(d);Object.freeze(d.initial);Object.freeze(d.base);const values=W.taskEditValues(d);assert.equal(Object.hasOwn(values,'base'),false);assert.equal(Object.hasOwn(values,'custom'),false);assert.equal(Object.hasOwn(values,'initial'),false);assert(W.validTaskEditDraft(d,'board'));assert.equal(W.taskEditChanged(d),false);assert.equal(JSON.stringify(d),before);
+});
 test('capture date choices use explicit local calendar days and return independent choices',()=>{
   const expected=[['Today','2026-11-01'],['Tomorrow','2026-11-02'],['In 7 days','2026-11-08']];
   const result=W.captureDateChoices('2026-11-01');assert.deepEqual(result,expected);result[0][1]='Changed';result.push(['Other','']);assert.deepEqual(W.captureDateChoices('2026-11-01'),expected);

@@ -1163,6 +1163,7 @@ let draggedCardId = null;
 let editingCardId = null;
 let editingPlannerTaskKey = "";
 let plannerTaskEditDraft = null;
+const plannerDraftPersistence = new WeakMap();
 let selectedTimerMode = "none";
 let attachedImageData = "";
 let draftPreviewDismissed = false;
@@ -3133,6 +3134,7 @@ function renderCardsOnly(options = {}) {
     queueDeferredBoardRender(options);
     return;
   }
+  syncPlannerTaskEditDraft();
   // A completed background save may redraw the card between keyboard presses.
   // Preserve focus on the same feeling without changing the saved selection.
   const feelingButton = document.activeElement?.closest?.(".mood-picker button");
@@ -4219,34 +4221,91 @@ function getPlannerTaskRowKey(item) {
   return JSON.stringify([item?.boardId || state.activeBoardId,item?.card?.id || "",item?.taskId || ""]);
 }
 
+function makePlannerTaskEditDraft(item) {
+  const key=getPlannerTaskRowKey(item),matches=getPlannerSourceItems().filter(row=>getPlannerTaskRowKey(row)===key);
+  if(matches.length!==1)throw new Error('Task changed or moved. Reopen its current task options.');
+  const live=matches[0],metadata=getTaskEditMetadata(live);
+  const draft={version:1,key,ref:taskSubtaskRef(live),title:metadata.base.title || '',dateKey:metadata.base.dateKey || '',...metadata};
+  draft.initial=LifeStateMerge.copy(LifePlanning.taskEditValues(draft));return draft;
+}
 function startPlannerTaskEdit(item) {
-  editingPlannerTaskKey = getPlannerTaskRowKey(item);
-  plannerTaskEditDraft = {
-    key: editingPlannerTaskKey,
-    title: item.title || "",
-    dateKey: item.undated ? "" : normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey(),
-    ...getTaskEditMetadata(item)
-  };
+  if(item?.boardId && item.boardId!==state.activeBoardId){setSaveStatus('This task belongs to another board. Reopen its current task options.','error');return;}
+  const key=getPlannerTaskRowKey(item),session=planningSession(),previous=session.plannerTaskDraft;
+  if(previous && !LifePlanning.validTaskEditDraft(previous,state.activeBoardId)){setSaveStatus('Saved task draft needs review. It has been kept unchanged.','error');return;}
+  if(previous && previous.key!==key && LifePlanning.taskEditChanged(previous)){setSaveStatus('Finish or cancel the open task edit before editing another task on this board.','error');return;}
+  try{plannerTaskEditDraft=previous?.key===key?previous:makePlannerTaskEditDraft(item);}catch(error){setSaveStatus(error.message,'error');return;}
+  editingPlannerTaskKey=key;session.plannerTaskDraft=plannerTaskEditDraft;persistPlannerTaskEditDraft(plannerTaskEditDraft);
   renderCardsOnly({ force: true });
 }
 
 function cancelPlannerTaskEdit() {
+  const session=planningSession(),draft=session.plannerTaskDraft;
+  delete session.plannerTaskDraft;
+  if(!savePlanningSession()){session.plannerTaskDraft=draft;return false;}
   editingPlannerTaskKey = "";
   plannerTaskEditDraft = null;
   renderCardsOnly({ force: true });
+  return true;
 }
 
 function getPlannerTaskEditDraft(item) {
   const key = getPlannerTaskRowKey(item);
   if (!plannerTaskEditDraft || plannerTaskEditDraft.key !== key) {
-    plannerTaskEditDraft = {
-      key,
-      title: item.title || "",
-      dateKey: item.undated ? "" : normalizeDateKey(item.scheduledDate || item.carryoverFrom || item.dateKey) || getTodayKey(),
-      ...getTaskEditMetadata(item)
-    };
+    plannerTaskEditDraft=makePlannerTaskEditDraft(item);editingPlannerTaskKey=key;planningSession().plannerTaskDraft=plannerTaskEditDraft;persistPlannerTaskEditDraft(plannerTaskEditDraft);
   }
   return plannerTaskEditDraft;
+}
+
+function plannerTaskEditUpdates(title,day,draft) {
+  return {title,dateKey:day,...(draft?{area:draft.area,project:draft.project.trim(),status:draft.status,deadline:draft.deadline,notes:draft.notes,priority:draft.priority,...taskGoalFields(draft)}:{})};
+}
+function plannerTaskDraftAlreadySaved(draft) {
+  try{
+    const [boardId,cardId,itemId]=JSON.parse(draft.key),current=resolveSubtaskParent({boardId,cardId,itemId,kind:'planner'}).target;
+    if(LifeStateMerge.equal(draft.base,current) || draft.dateKey && !LifePlanner.validDate(draft.dateKey) || draft.followUp!=='' && draft.followUp!=null && !LifePlanner.validDate(draft.followUp))return false;
+    const expected={...LifeStateMerge.copy(draft.base),...plannerTaskEditUpdates(stripPlannerBullet(draft.title),normalizeDateKey(draft.dateKey),draft),updatedAt:current.updatedAt};
+    return LifeStateMerge.equal(expected,current);
+  }catch{return false;}
+}
+function syncPlannerTaskEditDraft() {
+  if(!planningSessions.has(state.activeBoardId)){
+    let retained=false;try{retained=!!JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId)) || '{}')?.plannerTaskDraft;}catch{}
+    if(!retained){editingPlannerTaskKey='';plannerTaskEditDraft=null;return;}
+  }
+  const session=planningSession(),draft=session.plannerTaskDraft;
+  if(draft && !LifePlanning.validTaskEditDraft(draft,state.activeBoardId)){
+    editingPlannerTaskKey='';plannerTaskEditDraft=null;setSaveStatus('Saved task draft needs review. It has been kept unchanged.','error');return;
+  }
+  if(draft && plannerTaskDraftAlreadySaved(draft)){
+    delete session.plannerTaskDraft;if(!savePlanningSession())session.plannerTaskDraft=draft;
+    editingPlannerTaskKey='';plannerTaskEditDraft=null;return;
+  }
+  editingPlannerTaskKey=draft?.key || '';plannerTaskEditDraft=draft || null;
+  if(draft && !plannerDraftPersistence.has(draft))plannerDraftPersistence.set(draft,{snapshot:JSON.stringify(draft),ok:true});
+}
+function persistPlannerTaskEditDraft(draft) {
+  if(planningSession().plannerTaskDraft!==draft)return false;
+  const snapshot=JSON.stringify(draft),previous=plannerDraftPersistence.get(draft);
+  if(previous?.saved && !LifePlanning.taskEditChanged(draft))return previous.ok;
+  if(previous?.ok && previous.snapshot===snapshot)return true;
+  const ok=savePlanningSession();plannerDraftPersistence.set(draft,{snapshot,ok});return ok;
+}
+function openPlannerTaskDraft() {
+  const session=planningSession(),draft=session.plannerTaskDraft,boardId=state.activeBoardId;
+  if(!LifePlanning.validTaskEditDraft(draft,boardId)){setSaveStatus('Saved task draft needs review. It has been kept unchanged.','error');return;}
+  if(getPlannerSourceItems().filter(item=>getPlannerTaskRowKey(item)===draft.key).length===1){session.view='all';session.area='*';session.search='';savePlanningSession();setWorkspaceMode('tasks');requestAnimationFrame(()=>elements.boardGrid.querySelector('.planner-linked-edit-form')?.scrollIntoView({block:'center'}));return;}
+  const dialog=dailyDialog('Saved task draft'),message=planningNode('p','daily-message');message.setAttribute('role','status');
+  dialog.append(planningNode('p','daily-muted','The original task is not available here. Your draft is kept separately.'));
+  const labels={title:'Task name',dateKey:'Planned day',area:'Area',project:'Project',status:'Status',deadline:'Deadline',notes:'Notes',priority:'Priority',goalLink:'Linked priority',followUp:'Follow-up date',intent:'Task kind',minutes:'Estimated minutes',nextAction:'Next action',startTime:'Start time'};
+  for(const [key,value]of Object.entries(LifePlanning.taskEditValues(draft))){
+    if(value==='' || value==null)continue;
+    const text=key==='goalLink'?(taskGoalOptions().find(([id])=>id===value)?.[1] || 'Existing priority link'):typeof value==='string' || typeof value==='number'?String(value):'Saved value needs review';
+    const entry=planningNode('div','planner-draft-entry');entry.append(planningNode('strong','',labels[key]),planningNode('p','',text));dialog.append(entry);
+  }
+  dialog.append(planningButton('Discard task draft',()=>{
+    if(!dialog.open || !dialog.isConnected || state.activeBoardId!==boardId || planningSession()!==session || session.plannerTaskDraft!==draft)return;
+    if(!cancelPlannerTaskEdit()){message.textContent='Draft was not discarded. It is kept; retry when draft storage is available.';return;}dialog.close();
+  },'x'),message);
 }
 
 function renderPlannerLinkedEditItem(item) {
@@ -4292,20 +4351,27 @@ function renderPlannerLinkedEditItem(item) {
   cancel.title = "Cancel edit";
   cancel.setAttribute("aria-label", "Cancel planner task edit");
   cancel.innerHTML = ICONS.x;
-  cancel.addEventListener("click", () => { if (current()) cancelPlannerTaskEdit(); });
+  cancel.addEventListener("click", () => { if (current() && !cancelPlannerTaskEdit()) draftStatus.textContent='Draft not discarded. Retry.'; });
 
   const schedule = planningNode('div', 'planner-edit-schedule');
   schedule.append(planningField('Planned day', planningOptionalDate(dateInput,"Clear task date",()=>{if(current())draft.dateKey="";})), planningCaptureDates(dateInput,today,current));
   form.append(schedule, titleInput);
   appendTaskEditFields(form, draft,current);
-  const actions=planningNode('div','planner-edit-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Task edit actions');actions.append(cancel,save);form.append(actions);
+  const actions=planningNode('div','planner-edit-actions'),draftStatus=planningNode('small','planner-edit-draft-status');draftStatus.setAttribute('role','status');
+  const refreshDraftStatus=()=>{
+    const receipt=plannerDraftPersistence.get(draft),retained=receipt?.ok;
+    let changedSource=false;try{changedSource=!LifeStateMerge.equal(draft.base,resolveSubtaskParent(taskSubtaskRef(item)).target);}catch{changedSource=true;}
+    draftStatus.textContent=receipt?.saved?'Task saved; draft kept':!retained?'Memory only. Keep tab open.':changedSource?'Task changed; draft kept':LifePlanning.taskEditChanged(draft)?'Draft kept in this tab':'No task changes';
+  };
+  const keepDraft=event=>{if(!current() || event.type==='click' && event.target.closest('.planner-linked-edit-save,.planner-linked-edit-cancel'))return;persistPlannerTaskEditDraft(draft);refreshDraftStatus();};
+  for(const event of ['input','change','click'])form.addEventListener(event,keepDraft);
+  actions.setAttribute('role','group');actions.setAttribute('aria-label','Task edit actions');actions.append(draftStatus,cancel,save);form.append(actions);refreshDraftStatus();
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     if (!current()) return;
+    persistPlannerTaskEditDraft(draft);refreshDraftStatus();
     const saved = updatePlannerTask(item, draft.title, draft.dateKey, draft);
     if (!saved) return;
-    editingPlannerTaskKey = "";
-    plannerTaskEditDraft = null;
   });
 
   row.append(form);
@@ -4334,11 +4400,11 @@ function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
   if (draft && draft.followUp!=='' && draft.followUp!=null && !LifePlanner.validDate(draft.followUp)) {
     setSaveStatus('Choose a valid follow-up date, or clear it. Your draft is kept.','error');return false;
   }
-  let metadata;
-  try{metadata = draft ? {area:draft.area,project:draft.project.trim(),status:draft.status,deadline:draft.deadline,notes:draft.notes,priority:draft.priority,...taskGoalFields(draft)} : {};}
+  let updates;
+  try{updates=plannerTaskEditUpdates(title,day,draft);}
   catch(error){window.alert(error.message);return false;}
   const before=LifeStateMerge.copy(current),previousTime=card.updatedAt;
-  if (!LifePlanner.change(card, item.taskId, {title, dateKey: day, ...metadata})) return false;
+  if (!LifePlanner.change(card, item.taskId, updates)) return false;
   LifePlanner.project(card);
   card.updatedAt = Date.now();
   if (!saveState()) {
@@ -4347,6 +4413,14 @@ function updatePlannerTask(item, nextTitle, nextDateKey, draft) {
     LifePlanner.project(card);syncActiveBoard({touchBoard:false});
     window.alert("Not saved yet. Your task edit is kept here; try again when device saving is available.");
     return false;
+  }
+  const session=planningSession(),retained=session.plannerTaskDraft;
+  delete session.plannerTaskDraft;
+  if(!savePlanningSession()){
+    session.plannerTaskDraft=retained;
+    if(draft && retained===draft){draft.base=LifeStateMerge.copy(current);draft.initial=LifeStateMerge.copy(LifePlanning.taskEditValues(draft));plannerDraftPersistence.set(draft,{snapshot:'',ok:false,saved:true});}
+    const status=elements.boardGrid.querySelector('.planner-edit-draft-status');if(status)status.textContent='Task saved; draft kept';
+    setSaveStatus('Task saved on this device; local draft cleanup is unavailable.','error');return true;
   }
   editingPlannerTaskKey = "";
   plannerTaskEditDraft = null;

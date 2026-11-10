@@ -825,6 +825,7 @@ function taskGoalFields(draft) {
   return {coachingProgramId,coachingPriorityId,coachingKrId,followUp:draft.followUp || '',intent:draft.intent || 'task',estimatedMinutes:Number(draft.minutes) || 0,nextAction:draft.nextAction || '',startTime:draft.startTime || ''};
 }
 function appendDailyTaskFields(grid,draft,canApply) {
+  const update=(key,value)=>{if(canApply())draft[key]=value;};
   const options=taskGoalOptions();if(draft.goalLink && !options.some(([key])=>key===draft.goalLink))options.push([draft.goalLink,'Existing priority link']);
   const day=getTodayKey(),current=()=>grid.isConnected && !document.hidden && !grid.closest('[hidden],[inert]') && !document.querySelector('dialog[open]') && canApply();
   const followUp=planningInput('date',draft.followUp,value=>{if(!current())return;draft.followUp=value;refreshFollowUp();});
@@ -838,9 +839,9 @@ function appendDailyTaskFields(grid,draft,canApply) {
   };
   const field=planningNode('div','task-follow-up-field');
   field.append(planningField('Follow-up date',planningOptionalDate(followUp,'Clear follow-up date',()=>{draft.followUp='';refreshFollowUp();},current)),quick,notice);refreshFollowUp();
-  grid.append(planningField('Contributes to',planningSelect(options,draft.goalLink,value=>draft.goalLink=value)),
+  grid.append(planningField('Contributes to',planningSelect(options,draft.goalLink,value=>update('goalLink',value))),
     field,
-    planningField('Task kind',planningSelect([['task','Task'],['experience','Experience to try']],draft.intent,value=>draft.intent=value)));
-  const minutes=planningInput('number',draft.minutes,value=>draft.minutes=value);minutes.min=1;minutes.max=1440;minutes.step=1;
-  grid.append(planningField('Next action (optional)',planningInput('text',draft.nextAction,value=>draft.nextAction=value)),planningField('Estimated minutes (optional)',minutes),planningField('Start time (optional)',planningInput('time',draft.startTime,value=>draft.startTime=value)));
+    planningField('Task kind',planningSelect([['task','Task'],['experience','Experience to try']],draft.intent,value=>update('intent',value))));
+  const minutes=planningInput('number',draft.minutes,value=>update('minutes',value));minutes.min=1;minutes.max=1440;minutes.step=1;
+  grid.append(planningField('Next action (optional)',planningInput('text',draft.nextAction,value=>update('nextAction',value))),planningField('Estimated minutes (optional)',minutes),planningField('Start time (optional)',planningInput('time',draft.startTime,value=>update('startTime',value))));
 }

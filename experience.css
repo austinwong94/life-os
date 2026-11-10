@@ -155,6 +155,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .planner-linked-edit-form > input, .planner-edit-actions > button, .planner-linked-edit-form .planner-linked-edit-date { min-height: 44px; border-radius: 6px; font-size: 16px; font-weight: 400; }
 .planner-edit-actions { grid-column: 1 / -1; position: sticky; bottom: 0; z-index: 3; display: flex; justify-content: flex-end; gap: 8px; padding: 8px 0; background: var(--surface,#fff); border-top: 1px solid var(--line); }
 .planner-edit-actions > button { width: 44px; height: 44px; flex: 0 0 44px; }
+.planner-edit-draft-status { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; margin: 0; font-size: 12px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; }
+.planner-draft-entry strong { font-size: 12px; }
+.planner-draft-entry p { margin: 4px 0 12px; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .planner-edit-actions > .planner-linked-edit-save { background: var(--action-fill,var(--action)); color: var(--action-on,#fff); border-color: var(--action); }
 .planner-edit-actions > .planner-linked-edit-cancel { background: var(--surface,#fff); color: var(--ink); border-color: var(--line); }
 .planner-edit-actions > button svg { width: 18px; height: 18px; stroke-width: 1.8; }
