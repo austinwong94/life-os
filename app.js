@@ -7142,7 +7142,7 @@ function updatePlannerEntry(card, dateKey, updates, options = {}) {
 }
 
 
-async function togglePlannerTaskDone(item) {
+async function togglePlannerTaskDone(item,options={}) {
   if (!item?.card || !item.taskId) return false;
   let card,task,ref;
   try{ref=taskSubtaskRef(item);const live=resolveSubtaskParent(ref);card=live.card;task=live.target;}
@@ -7150,6 +7150,7 @@ async function togglePlannerTaskDone(item) {
   if (!task) return false;
   const boardId=state.activeBoardId,before=LifeStateMerge.copy(task);
   if(!await confirmParentTaskCompletion(before,!before.done))return false;
+  if(options.canCommit && !options.canCommit())return false;
   const sources=getPlannerSourceCards().filter(source=>source.id===item.card.id);card=sources.length===1?sources[0]:null;
   const matches=card?LifePlanner.ensure(card).filter(t=>t.id===item.taskId && LifePlanner.active(t)):[];
   if(boardId!==state.activeBoardId || matches.length!==1 || !LifeStateMerge.equal(matches[0],before)){setSaveStatus('This task changed or moved. Review it before completing.','error');renderCardsOnly({force:true});return false;}

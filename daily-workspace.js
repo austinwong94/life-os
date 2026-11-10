@@ -468,30 +468,82 @@ function dailyUpcoming(start,end='9999-12-31') {
   return [...activities,...tasks].sort((a,b)=>a.date.localeCompare(b.date)||a.title.localeCompare(b.title));
 }
 function openDailyStart(item,plan={}) {
-  const dialog=dailyDialog(item.title),session=dailySession(),key=dailyFocusKey(item);
-  const expected=item.sourceKind==='card'?null:LifeStateMerge.copy(LifePlanner.ensure(resolveLiveCard(item.card)).find(t=>t.id===item.taskId));
-  dialog.append(planningNode('p','daily-next-action',plan.nextAction || item.nextAction || item.title));
+  const dialog=dailyDialog(item.title),session=dailySession(),key=dailyFocusKey(item),boardId=state.activeBoardId,day=getTodayKey();
+  dialog.classList.add('daily-start-dialog');
+  const snapshot=task=>task.sourceKind==='card'?task.base:LifePlanner.ensure(task.card).find(t=>t.id===task.taskId);
+  const expected=LifeStateMerge.copy(snapshot(item));let busy=false;
+  const current=()=>dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog && boardId===state.activeBoardId && day===getTodayKey() && dailySession()===session;
+  const liveTask=()=>{
+    if(!current())return null;
+    const matches=getWorkspaceTaskItems().filter(task=>dailyFocusKey(task)===key);
+    return matches.length===1 && (matches[0].sourceKind!=='card' || matches[0].editable) && !dailySuggestionProjection(matches[0]).blocked && LifeStateMerge.equal(snapshot(matches[0]),expected)?matches[0]:null;
+  };
+  const nextAction=plan.nextAction || item.nextAction || '';
+  if(nextAction && nextAction!==item.title)dialog.append(planningNode('p','daily-next-action',nextAction));
   if(plan.startTime)dialog.append(planningNode('small','daily-muted','Planned start · '+plan.startTime));
-  const display=planningNode('output','daily-focus-clock'),actions=planningNode('div','daily-actions'),message=planningNode('p','daily-message');message.setAttribute('role','status');dialog.append(display,actions,message);
-  const render=()=>{const timer=session.focusTimer?.key===key?session.focusTimer:null,seconds=timer?Math.max(0,Math.ceil((timer.endAt?timer.endAt-Date.now():timer.remaining)/1000)):0;display.textContent=timer?(seconds?String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0'):'Session finished'):'Ready to begin';};
-  actions.append(planningButton('Start 5 minutes',()=>{session.focusTimer={key,endAt:Date.now()+300000};saveDailyDraft();render();},'play'),planningButton('Pause / resume',()=>{const timer=session.focusTimer;if(timer?.key!==key)return;if(timer.endAt){timer.remaining=Math.max(0,timer.endAt-Date.now());delete timer.endAt;}else{timer.endAt=Date.now()+timer.remaining;delete timer.remaining;}saveDailyDraft();render();},'pause'));
+  const display=planningNode('output','daily-focus-clock'),status=planningNode('p','daily-muted'),choices=planningNode('div','daily-start-choices'),actions=planningNode('div','daily-actions'),message=planningNode('p','daily-message');
+  display.setAttribute('aria-label','Focus time remaining');display.setAttribute('aria-live','off');status.setAttribute('role','status');message.setAttribute('role','status');choices.setAttribute('role','group');choices.setAttribute('aria-label','Start a focus session');
+  const remaining=timer=>{const value=timer?(timer.endAt?timer.endAt-Date.now():timer.remaining || 0):0;return Number.isFinite(value)?Math.max(0,value):0;};
+  const canAct=()=>{
+    if(busy || !current())return false;
+    const task=liveTask();
+    if(!task){message.textContent='This task, board or day changed. Reopen Start before continuing.';return false;}
+    if(task.done){message.textContent='This task is already completed. It has not been reopened.';return false;}
+    return true;
+  };
+  const start=minutes=>{
+    if(!canAct())return;
+    if(!Number.isInteger(minutes) || minutes<1 || minutes>180){message.textContent='Use whole minutes between 1 and 180.';return;}
+    if(remaining(session.focusTimer)>0){message.textContent='A timer is already active. Pause, resume or reset it before starting again.';return;}
+    session.focusTimer={key,endAt:Date.now()+minutes*60000};saveDailyDraft(boardId);message.textContent='';render();
+  };
+  const presetButtons=[5,15,25].map(minutes=>planningButton('Start '+minutes+' minutes',()=>start(minutes),'play'));choices.append(...presetButtons);
+  const custom=planningNode('details','daily-start-custom'),customRow=planningNode('div','daily-actions'),minutes=planningInput('number','',()=>{});
+  minutes.min='1';minutes.max='180';minutes.step='1';minutes.inputMode='numeric';
+  const customStart=planningButton('Start custom session',()=>start(minutes.value===''?NaN:Number(minutes.value)),'play');customRow.append(planningField('Custom minutes',minutes),customStart);custom.append(planningNode('summary','','Custom duration'),customRow);
+  const pause=planningIcon('Pause timer',()=>{
+    if(!canAct())return;const timer=session.focusTimer;if(timer?.key!==key || !timer.endAt || !remaining(timer))return;
+    timer.remaining=remaining(timer);delete timer.endAt;saveDailyDraft(boardId);render();
+  },'pause');
+  const resume=planningIcon('Resume timer',()=>{
+    if(!canAct())return;const timer=session.focusTimer;if(timer?.key!==key || timer.endAt || !remaining(timer))return;
+    timer.endAt=Date.now()+timer.remaining;saveDailyDraft(boardId);render();
+  },'play');
+  const reset=planningIcon('Reset timer',()=>{if(!canAct())return;delete session.focusTimer;saveDailyDraft(boardId);message.textContent='';render();},'rotate-ccw');
+  const render=()=>{
+    if(!current())return;
+    const timer=session.focusTimer?.key===key?session.focusTimer:null,ms=remaining(timer),seconds=Math.ceil(ms/1000),valid=Boolean(liveTask()),active=remaining(session.focusTimer)>0;
+    const text=timer?(seconds?String(Math.floor(seconds/60)).padStart(2,'0')+':'+String(seconds%60).padStart(2,'0'):'Session finished'):'Ready to begin';
+    const stateText=!valid?'Task changed - reopen Start':timer?ms?(timer.endAt?'Running':'Paused'):'Timer finished - task stays open until marked done':active?'Another task has an active timer':'';
+    if(display.textContent!==text)display.textContent=text;
+    display.classList.toggle('is-idle',!timer || !ms);
+    if(status.textContent!==stateText)status.textContent=stateText;
+    for(const button of [...presetButtons,customStart])button.disabled=busy || !valid || active || item.done;
+    pause.hidden=!timer || !timer.endAt || !ms;resume.hidden=!timer || Boolean(timer.endAt) || !ms;
+    pause.disabled=resume.disabled=reset.disabled=busy || !valid || !session.focusTimer || item.done;
+    complete.disabled=busy || !valid;
+  };
+  actions.append(pause,resume,reset);dialog.append(display,status,choices,custom,actions,message);
   const complete=planningButton('Mark done',async()=>{
-    complete.disabled=true;
+    if(!canAct())return;busy=true;render();
     try{
       if(item.sourceKind==='card'){
-        if(!await confirmParentTaskCompletion(item.base,true))return;
-        saveCardTaskChange(item.ref,item.base,{done:true});
+        if(!await confirmParentTaskCompletion(expected,true))return;
+        if(!liveTask())throw new Error('This task, board or day changed. Reopen Start before completing.');
+        saveCardTaskChange(item.ref,expected,{done:true},day);
       }else{
         const task=LifePlanner.ensure(resolveLiveCard(item.card)).find(t=>t.id===item.taskId);
         if(!LifeStateMerge.equal(task,expected))throw new Error('This task changed elsewhere. Reopen the current task before completing.');
         if(task.done)throw new Error('This task is already completed. It has not been reopened.');
-        if(!await togglePlannerTaskDone({...item,dateKey:getTodayKey()})){
-          message.textContent=lastLocalSaveOk?'':'Completion was not saved. Please retry.';return;
+        if(!await togglePlannerTaskDone({...item,dateKey:day},{canCommit:()=>Boolean(liveTask())})){
+          if(!lastLocalSaveOk)message.textContent='Completion was not saved. Please retry.';
+          else if(!liveTask())message.textContent='This task, board or day changed. Reopen Start before completing.';
+          return;
         }
       }
       dialog.close();renderCardsOnly({force:true});
     }catch(error){message.textContent=error.message;}
-    finally{complete.disabled=false;}
+    finally{busy=false;render();}
   },'check');actions.append(complete);
   render();const interval=setInterval(render,500);dialog.addEventListener('close',()=>clearInterval(interval),{once:true});
 }

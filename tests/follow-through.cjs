@@ -9,6 +9,7 @@ const results=[];
 (async()=>{
   const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name,action){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1080,height:1100},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',route=>route.fulfill({status:503,body:'Synthetic isolated records only'}));
     const p=await context.newPage(),errors=[];p.setDefaultTimeout(7000);p.on('pageerror',e=>errors.push(e.message));p.on('dialog',d=>d.accept());
@@ -54,8 +55,59 @@ const results=[];
     await p.keyboard.press('Escape');await p.reload();await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();
     assert.equal(await p.getByLabel('Next action: Late action').inputValue(),'Write the first paragraph, then ask for feedback');assert.equal(await p.getByLabel('Estimated minutes: Late action').inputValue(),'25');
     await p.getByRole('button',{name:'Keep next steps',exact:true}).click();assert.match(await p.locator('.daily-capacity').innerText(),/25 minutes estimated \/ 20 available/);
-    await p.getByRole('button',{name:'Start',exact:true}).click();await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();assert.equal(await p.locator('.daily-focus-clock').innerText(),'05:00');await p.getByRole('button',{name:'Pause / resume',exact:true}).click();await p.getByRole('button',{name:'Mark done',exact:true}).click();
+    await p.getByRole('button',{name:'Start',exact:true}).click();await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();assert.equal(await p.locator('.daily-focus-clock').innerText(),'05:00');await p.getByRole('button',{name:'Pause timer',exact:true}).click();assert.equal(await p.getByRole('button',{name:'Resume timer',exact:true}).isVisible(),true);await p.getByRole('button',{name:'Mark done',exact:true}).click();
     assert.equal(await p.evaluate(()=>coachingProgram().entries.length),0);assert.equal(await p.evaluate(()=>dailyFollowThrough('2026-10-11','2026-10-11')[0].done),1);
+  });
+  await run('focus presets custom typing pause resume and reload preserve source records and do not silently restart active timers',async p=>{
+    await seed(p);await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});
+    await p.clock.pauseAt(new Date('2026-10-11T04:00:01Z'));
+    const before=await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage()));
+    const open=()=>p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='a')));
+    await open();
+    for(const minutes of [5,15,25]){
+      await p.getByRole('button',{name:'Start '+minutes+' minutes',exact:true}).click();assert.equal(await p.locator('.daily-focus-clock').innerText(),String(minutes).padStart(2,'0')+':00');
+      const deadline=await p.evaluate(()=>dailySession().focusTimer.endAt);await p.clock.runFor(1100);
+      await p.evaluate(()=>[...document.querySelectorAll('.daily-start-choices button')][0].onclick());assert.equal(await p.evaluate(()=>dailySession().focusTimer.endAt),deadline);
+      await p.getByRole('button',{name:'Pause timer',exact:true}).click();const remaining=await p.evaluate(()=>dailySession().focusTimer.remaining);await p.clock.runFor(2000);assert.equal(await p.evaluate(()=>dailySession().focusTimer.remaining),remaining);
+      await p.getByRole('button',{name:'Resume timer',exact:true}).click();assert.equal(await p.evaluate(()=>dailySession().focusTimer.endAt-Date.now()),remaining);
+      await p.getByRole('button',{name:'Reset timer',exact:true}).click();assert.equal(await p.locator('.daily-focus-clock').innerText(),'Ready to begin');
+    }
+    await p.locator('.daily-start-custom > summary').click();const input=p.getByLabel('Custom minutes',{exact:true});await input.pressSequentially('137');await p.clock.runFor(1600);assert.equal(await input.inputValue(),'137');assert(await input.evaluate(el=>el===document.activeElement));
+    await p.getByRole('button',{name:'Start custom session',exact:true}).click();assert.equal(await p.locator('.daily-focus-clock').innerText(),'137:00');
+    const deadline=await p.evaluate(()=>dailySession().focusTimer.endAt);await p.getByRole('button',{name:'Close',exact:true}).click();await p.reload();await open();assert.equal(await p.evaluate(()=>dailySession().focusTimer.endAt),deadline);
+    assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
+  });
+  await run('focus custom duration rejects invalid values and timer expiry never completes a task or invents progress',async p=>{
+    await seed(p);await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='b')));
+    await p.locator('.daily-start-custom > summary').click();for(const value of ['','0','-1','0.5','181']){await p.getByLabel('Custom minutes',{exact:true}).fill(value);await p.getByRole('button',{name:'Start custom session',exact:true}).click();assert.match(await p.locator('#dailyDialog .daily-message').innerText(),/whole minutes/);assert.equal(await p.evaluate(()=>dailySession().focusTimer),undefined);}
+    await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();await p.clock.runFor(300600);assert.equal(await p.locator('.daily-focus-clock').innerText(),'Session finished');assert(await p.getByRole('button',{name:'Pause timer',exact:true}).isHidden());assert(await p.getByRole('button',{name:'Resume timer',exact:true}).isHidden());assert.equal(await p.evaluate(()=>LifePlanner.ensure(state.cards.find(c=>c.id==='follow-source')).find(t=>t.id==='b').done),false);assert.equal(await p.evaluate(()=>dailyRecords().length),0);assert.equal(await p.evaluate(()=>coachingProgram().entries.length),0);
+  });
+  for(const reason of ['closed','hidden','detached','superseded','board','day','task'])await run('stale focus '+reason+' controls cannot start a timer or complete records',async p=>{
+    await seed(p);await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});
+    await p.evaluate(reason=>{
+      openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='a'));const dialog=document.getElementById('dailyDialog'),start=dialog.querySelector('.daily-start-choices button'),done=[...dialog.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='Mark done');
+      window.staleFocusControls={start,done};
+      if(reason==='closed')dialog.close();if(reason==='hidden')dialog.hidden=true;if(reason==='detached')dialog.remove();if(reason==='superseded')openSaveDetails();
+      if(reason==='board'){state.boards.push(createBoardRecord({id:'focus-other',name:'Other board',cards:[]}));syncActiveBoard({touchBoard:false});applyBoardToState(state,'focus-other');}
+      if(reason==='task')LifePlanner.change(state.cards.find(c=>c.id==='follow-source'),'a',{title:'A newer title'});
+    },reason);
+    if(reason==='day')await p.clock.setSystemTime(new Date('2026-10-12T04:00:00Z'));
+    const result=await p.evaluate(async()=>{const before=JSON.stringify({records:LifeCloudCopies.records(getStateForStorage()),drafts:[...dailySessions]});await staleFocusControls.start.onclick();await staleFocusControls.done.onclick();return before===JSON.stringify({records:LifeCloudCopies.records(getStateForStorage()),drafts:[...dailySessions]});});assert.equal(result,true);
+  });
+  await run('focus completion rechecks context after subtask confirmation for planner and project tasks',async p=>{
+    await seed(p);
+    for(const kind of ['planner','card']){
+      const result=await p.evaluate(async kind=>{
+        const task=getWorkspaceTaskItems().find(t=>kind==='card'?t.sourceKind==='card' && t.ref.itemId==='new':t.taskId==='a');openDailyStart(task);const done=[...document.querySelectorAll('#dailyDialog button')].find(b=>b.getAttribute('aria-label')==='Mark done'),original=confirmParentTaskCompletion;
+        let release;confirmParentTaskCompletion=()=>new Promise(resolve=>release=resolve);const saving=done.onclick();document.getElementById('dailyDialog').hidden=true;
+        const before=JSON.stringify(LifeCloudCopies.records(getStateForStorage()));release(true);await saving;confirmParentTaskCompletion=original;return before===JSON.stringify(LifeCloudCopies.records(getStateForStorage()));
+      },kind);assert.equal(result,true);
+    }
+  });
+  await run('focus controls stay usable on phone portrait and desktop without changing source records',async p=>{
+    await seed(p);const before=await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage()));await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='a')));
+    for(const width of [320,390,768,1080,1440]){await p.setViewportSize({width,height:850});assert(await p.locator('#dailyDialog').evaluate(n=>n.scrollWidth<=n.clientWidth+1 && n.getBoundingClientRect().right<=innerWidth+1));assert(await p.locator('.daily-start-choices button').evaluateAll(nodes=>nodes.every(n=>n.getBoundingClientRect().height>=44 && n.getBoundingClientRect().width>=44)));await p.screenshot({path:out+'/focus-start-'+width+'.png'});}
+    assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
   });
   await run('changing the daily plan does not inflate original-choice follow-through',async p=>{
     await seed(p);await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();for(const name of ['Late action','Personal action'])await p.getByRole('checkbox',{name,exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();

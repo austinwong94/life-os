@@ -241,6 +241,17 @@ body, .workspace { background: var(--page); color: var(--ink); }
 .daily-capacity { display: block; margin-top: 10px; color: var(--muted); }
 .daily-focus-clock { display: block; font-size: 32px; font-variant-numeric: tabular-nums; padding: 24px 0; }
 .daily-next-action { font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
+.daily-start-dialog > .daily-section-head { display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:start; }
+.daily-start-dialog h2 { font-size:18px;line-height:1.4;overflow-wrap:anywhere; }
+.daily-start-dialog .daily-focus-clock { font-size:32px;line-height:1.2;min-height:72px;padding:16px 0; }
+.daily-start-dialog .daily-focus-clock.is-idle { font-size:18px; }
+.daily-start-dialog > .daily-muted { min-height:20px;margin:0 0 8px;font-size:12px;line-height:20px; }
+.daily-start-choices { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0; }
+.daily-start-choices .planning-button { min-height:44px;padding:8px;font-size:13px;white-space:normal;overflow-wrap:anywhere; }
+.daily-start-custom { margin-bottom:16px; }
+.daily-start-custom > summary { box-sizing:border-box;min-height:44px;padding:12px 0;cursor:pointer;font-size:13px;line-height:20px; }
+.daily-start-custom .planning-field { flex:1 1 120px; }
+.daily-start-dialog .daily-actions > [hidden] { display:none; }
 .coaching-pace { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-block: 10px; color: var(--muted); }
 .coaching-pace button { font-size: 12px; padding: 6px 8px; }
 .coaching-overdue-checkin { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0; border-block: 1px solid var(--line); color: var(--waiting); }
