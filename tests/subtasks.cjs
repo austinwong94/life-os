@@ -9,6 +9,7 @@ const confirm=async(p,action='Complete task')=>{await p.locator('#taskConfirmati
 (async()=>{
   const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
   async function run(name,fn){
+    if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
     const context=await browser.newContext({viewport:{width:1080,height:1100},timezoneId:'Asia/Kuala_Lumpur'});
     await context.route('https://**/*',r=>r.fulfill({status:503,body:'Synthetic test'}));
     const p=await context.newPage(),errors=[];p.on('pageerror',e=>errors.push(e.message));p.setDefaultTimeout(6500);await p.clock.setFixedTime(new Date('2026-10-12T04:00:00Z'));
@@ -169,6 +170,99 @@ const confirm=async(p,action='Complete task')=>{await p.locator('#taskConfirmati
     });
     const save=p.getByRole('button',{name:'Save subtask version',exact:true});assert.equal(await save.isDisabled(),true);await p.getByRole('radio',{name:'Other tab version',exact:true}).check();await p.getByLabel('Apply this version to this subtask only.',{exact:true}).check();await save.click();await p.getByText('Subtask version saved. Other checklist steps were kept.',{exact:true}).waitFor();
     assert.equal(await p.evaluate(()=>LifeSubtasks.active(getPlannerSourceItems()[0])[0].title),'Order food');assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);
+  });
+  await run('subtask safety: detached controls cannot change records or persist drafts into another board',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');
+    await p.evaluate(()=>{
+      window.oldSubtaskInput=document.querySelector('.subtask-add input');window.oldSubtaskCheck=document.querySelector('.subtask-row input');window.oldSubtaskOptions=document.querySelector('.subtask-row button');
+      window.originalSubtaskBoard=state.activeBoardId;window.beforeSubtaskRecords=JSON.stringify(getStateForStorage().boards);
+      window.beforeSubtaskSession=JSON.stringify(planningSession());switchBoard('other');
+      window.otherSubtaskSession=JSON.stringify(planningSession());
+      oldSubtaskInput.value='Detached writing';oldSubtaskInput.dispatchEvent(new Event('input',{bubbles:true}));oldSubtaskInput.form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));oldSubtaskCheck.dispatchEvent(new Event('change',{bubbles:true}));oldSubtaskOptions.click();
+    });
+    assert.equal(await p.locator('#dailyDialog').count(),0);
+    assert.equal(await p.evaluate(()=>JSON.stringify(planningSession())===otherSubtaskSession),true);
+    assert.equal(await p.evaluate(()=>JSON.stringify(planningSessions.get(originalSubtaskBoard))===beforeSubtaskSession),true);
+    await p.evaluate(()=>switchBoard(originalSubtaskBoard));
+    assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks[0].done),false);
+  });
+  await run('subtask safety: stale same-board checkbox and closed editor cannot mutate a retained draft',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');
+    await p.evaluate(()=>{window.oldSubtaskCheck=document.querySelector('.subtask-row input');renderCardsOnly({force:true});oldSubtaskCheck.dispatchEvent(new Event('change',{bubbles:true}));});
+    assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks[0].done),false);
+    await p.getByRole('button',{name:'Subtask options: Buy cake',exact:true}).click();await p.getByLabel('Subtask name',{exact:true}).fill('Chocolate cake');
+    await p.evaluate(()=>{window.closedSubtaskInput=document.querySelector('#dailyDialog input');document.querySelector('#dailyDialog').close();});await p.locator('#dailyDialog').waitFor({state:'detached'});
+    await p.evaluate(()=>{closedSubtaskInput.value='Detached corruption';closedSubtaskInput.dispatchEvent(new Event('input',{bubbles:true}));closedSubtaskInput.form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));});
+    await p.getByRole('button',{name:'Subtask options: Buy cake',exact:true}).click();assert.equal(await p.getByLabel('Subtask name',{exact:true}).inputValue(),'Chocolate cake');
+    assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks[0].title),'Buy cake');
+  });
+  await run('subtask safety: failed draft discard stays open and preserves the stored and visible wording',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');await p.getByRole('button',{name:'Subtask options: Buy cake',exact:true}).click();await p.getByLabel('Subtask name',{exact:true}).fill('Keep every word');
+    await p.evaluate(()=>{window.originalSubtaskSet=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(String(k).includes('life-os-planning:'))throw new DOMException('Synthetic quota','QuotaExceededError');return originalSubtaskSet.call(this,k,v);};});
+    await p.getByRole('button',{name:'Discard draft',exact:true}).click();assert.equal(await p.locator('#dailyDialog').count(),1);assert.equal(await p.getByLabel('Subtask name',{exact:true}).inputValue(),'Keep every word');assert.match(await p.locator('#dailyDialog [role=status]').innerText(),/not discarded|could not discard/i);
+    await p.evaluate(()=>{Storage.prototype.setItem=originalSubtaskSet;});await p.getByRole('button',{name:'Discard draft',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks[0].title),'Buy cake');
+  });
+  await run('subtask safety: interrupted successful-add cleanup cannot create a duplicate after reload',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");const input=p.getByLabel("Add a subtask to Sister's birthday",{exact:true});await input.fill('Buy cake');
+    await p.evaluate(()=>{window.originalSubtaskSave=saveState;window.originalSubtaskSet=Storage.prototype.setItem;window.blockSubtaskCleanup=false;saveState=function(...args){const ok=originalSubtaskSave(...args);if(ok)blockSubtaskCleanup=true;return ok;};Storage.prototype.setItem=function(k,v){if(blockSubtaskCleanup && String(k).includes('life-os-planning:'))throw new DOMException('Synthetic cleanup refusal','QuotaExceededError');return originalSubtaskSet.call(this,k,v);};});
+    await input.press('Enter');await p.evaluate(async()=>{Storage.prototype.setItem=originalSubtaskSet;saveState=originalSubtaskSave;await flushDeviceWrites();});await p.reload();await tasks(p);
+    if(await input.inputValue())await input.press('Enter');
+    assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks.length),1);assert.equal(await input.inputValue(),'');
+  });
+  await run('subtask safety: a refused add receipt leaves canonical records and the prior stored draft unchanged',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");const input=p.getByLabel("Add a subtask to Sister's birthday",{exact:true});await input.fill('Buy a thoughtful gift');
+    const before=await p.evaluate(()=>({task:LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]),session:sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))}));
+    await p.evaluate(()=>{window.originalSubtaskSet=Storage.prototype.setItem;Storage.prototype.setItem=function(k,v){if(String(k).includes('life-os-planning:'))throw new DOMException('Synthetic quota','QuotaExceededError');return originalSubtaskSet.call(this,k,v);};});
+    await input.press('Enter');assert.match(await p.locator('.subtask-add [role=status]').first().innerText(),/Draft storage is unavailable/);assert.equal(await input.inputValue(),'Buy a thoughtful gift');
+    assert.deepEqual(await p.evaluate(()=>({task:LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]),session:sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))})),before);
+    await p.evaluate(()=>{Storage.prototype.setItem=originalSubtaskSet;});await input.press('Enter');assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks.length),1);
+  });
+  await run('subtask safety: successful rename with failed cleanup retries without replaying the canonical change',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');await p.getByRole('button',{name:'Subtask options: Buy cake',exact:true}).click();await p.getByLabel('Subtask name',{exact:true}).fill('Buy chocolate cake');
+    await p.evaluate(()=>{window.originalSubtaskSave=saveState;window.originalSubtaskSet=Storage.prototype.setItem;window.blockSubtaskCleanup=false;window.subtaskSourceSaves=0;saveState=function(...args){subtaskSourceSaves++;const ok=originalSubtaskSave(...args);if(ok)blockSubtaskCleanup=true;return ok;};Storage.prototype.setItem=function(k,v){if(blockSubtaskCleanup && String(k).includes('life-os-planning:'))throw new DOMException('Synthetic cleanup refusal','QuotaExceededError');return originalSubtaskSet.call(this,k,v);};});
+    await p.getByRole('button',{name:'Save subtask',exact:true}).click();assert.match(await p.locator('#dailyDialog [role=status]').innerText(),/Subtask saved/);assert.equal(await p.getByLabel('Subtask name',{exact:true}).inputValue(),'Buy chocolate cake');
+    const saved=await p.evaluate(()=>LifeStateMerge.copy(getPlannerSourceItems()[0].subtasks[0]));
+    await p.evaluate(()=>{Storage.prototype.setItem=originalSubtaskSet;});await p.getByRole('button',{name:'Save subtask',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>subtaskSourceSaves),1);assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(getPlannerSourceItems()[0].subtasks[0])),saved);
+    await p.evaluate(async()=>{saveState=originalSubtaskSave;await flushDeviceWrites();});await p.reload();await tasks(p);assert.equal(await p.getByRole('checkbox',{name:'Complete subtask: Buy chocolate cake',exact:true}).count(),1);
+  });
+  await run('subtask safety: pending delete refuses a board switch and never removes another board record',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');await p.getByRole('button',{name:'Subtask options: Buy cake',exact:true}).click();await p.getByLabel('Subtask name',{exact:true}).fill('My pending draft');
+    await p.getByRole('button',{name:'Delete subtask',exact:true}).click();await p.evaluate(()=>{window.originalSubtaskBoard=state.activeBoardId;switchBoard('other');});await confirm(p,'Delete subtask');
+    assert.equal(await p.evaluate(()=>state.activeBoardId),'other');await p.evaluate(()=>switchBoard(originalSubtaskBoard));
+    assert.equal(await p.evaluate(()=>LifeSubtasks.active(getPlannerSourceItems()[0])[0].title),'Buy cake');
+    await p.locator('#dailyDialog').getByRole('button',{name:'Close',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});await tasks(p);await p.getByRole('button',{name:'Subtask options: Buy cake',exact:true}).click();assert.equal(await p.getByLabel('Subtask name',{exact:true}).inputValue(),'My pending draft');
+  });
+  await run('subtask safety: an already-added step changed elsewhere is not duplicated and discarding only clears its draft',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");const input=p.getByLabel("Add a subtask to Sister's birthday",{exact:true});await input.fill('Buy cake');
+    await p.evaluate(()=>{window.originalSubtaskSave=saveState;window.originalSubtaskSet=Storage.prototype.setItem;window.blockSubtaskCleanup=false;saveState=function(...args){const ok=originalSubtaskSave(...args);if(ok)blockSubtaskCleanup=true;return ok;};Storage.prototype.setItem=function(k,v){if(blockSubtaskCleanup && String(k).includes('life-os-planning:'))throw new DOMException('Synthetic cleanup refusal','QuotaExceededError');return originalSubtaskSet.call(this,k,v);};});
+    await input.press('Enter');await p.evaluate(async()=>{Storage.prototype.setItem=originalSubtaskSet;saveState=originalSubtaskSave;const task=getPlannerSourceCards()[0].plannerTasks[0];LifeSubtasks.change(task,{type:'rename',id:task.subtasks[0].id,title:'Cake ordered elsewhere'},task.subtasks[0]);saveState();await flushDeviceWrites();});await p.reload();await tasks(p);
+    await input.press('Enter');assert.match(await p.locator('.subtask-add [role=status]').first().innerText(),/already added and later changed/);assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks.length),1);
+    const before=await p.evaluate(()=>LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]));await p.getByRole('button',{name:'Discard subtask draft',exact:true}).click();assert.equal(await input.inputValue(),'');assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0])),before);
+    await add(p,"Sister's birthday",'Order food');assert.equal(await p.evaluate(()=>getPlannerSourceItems()[0].subtasks.length),2);
+  });
+  await run('subtask safety: protected draft and retry controls fit phone, short phone and portrait desktop layouts',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');await p.getByRole('button',{name:'Subtask options: Buy cake',exact:true}).click();await p.getByLabel('Subtask name',{exact:true}).fill('Order birthday cake with a personal message');
+    for(const [width,height] of [[320,844],[390,480],[390,844],[768,1000],[1080,1100],[1440,1000]]){
+      await p.setViewportSize({width,height});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+      for(const label of ['Save subtask','Discard draft','Delete subtask']){const button=p.getByRole('button',{name:label,exact:true});await button.scrollIntoViewIfNeeded();assert.equal(await button.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.height>=44 && r.width>=44;}),true);}
+      await p.screenshot({path:out+'/protected-subtask-'+width+'x'+height+'.png'});
+    }
+  });
+  await run('subtask safety: CSS-hidden checklist controls cannot write or open editors',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');
+    const before=await p.evaluate(()=>({task:LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]),session:JSON.stringify(planningSession())}));
+    await p.evaluate(()=>{const details=document.querySelector('.task-subtasks');details.style.display='none';const input=details.querySelector('.subtask-add input');input.value='Hidden writing';input.dispatchEvent(new Event('input',{bubbles:true}));input.form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));details.querySelector('.subtask-row input').dispatchEvent(new Event('change',{bubbles:true}));details.querySelector('.subtask-row button').click();});
+    assert.equal(await p.locator('#dailyDialog').count(),0);assert.deepEqual(await p.evaluate(()=>({task:LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]),session:JSON.stringify(planningSession())})),before);
+  });
+  await run('subtask safety: malformed stored draft maps are preserved rather than silently dropping receipts',async p=>{
+    await tasks(p);await open(p,"Sister's birthday");await add(p,"Sister's birthday",'Buy cake');
+    for(const property of ['subtaskDrafts','subtaskPendingAdds'])for(const value of [[],null,false,'Unreadable draft']){
+      const before=await p.evaluate(({property,value})=>{const session=planningSession();session.subtaskDrafts={};session.subtaskPendingAdds={};session[property]=value;savePlanningSession();const before={task:LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]),raw:sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))};renderCardsOnly({force:true});return before;},{property,value});
+      assert.equal(await p.getByText('This checklist draft needs review. Its stored copy was kept.',{exact:true}).count()>0,true);
+      assert.deepEqual(await p.evaluate(()=>({task:LifeStateMerge.copy(getPlannerSourceCards()[0].plannerTasks[0]),raw:sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))})),before);
+    }
   });
   await browser.close();fs.writeFileSync(out+'/results.json',JSON.stringify(results,null,2));process.exitCode=results.some(r=>!r.pass)?1:0;
 })().catch(e=>{console.error(e);process.exitCode=1;});

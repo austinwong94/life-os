@@ -146,16 +146,19 @@ function resolveSubtaskParent(ref) {
   return {card:cards[0],target:tasks[0]};
 }
 function subtaskKey(ref) {return JSON.stringify([ref.boardId,ref.cardId,ref.kind,ref.itemId]);}
-function saveSubtaskChange(ref,command,expected,day) {
+function saveSubtaskChange(ref,command,expected,day,prepare) {
   const {card,target}=resolveSubtaskParent(ref),oldTime=target.updatedAt;
   const transaction=LifeSubtasks.change(target,command,expected,{day});
   if(ref.kind==='planner'){target.updatedAt=Date.now();LifePlanner.project(card);}
-  if(!saveState()){
+  try{
+    if(prepare && !prepare(transaction))throw new Error('Draft storage is unavailable. The checklist is unchanged; keep this tab open and retry.');
+    if(!saveState())throw new Error('Not saved yet. Your draft is kept; please retry.');
+  }catch(error){
     LifeSubtasks.restore(target,transaction);
     if(oldTime===undefined)delete target.updatedAt;else target.updatedAt=oldTime;
     if(ref.kind==='planner')LifePlanner.project(card);
     syncActiveBoard({touchBoard:false});
-    throw new Error('Not saved yet. Your draft is kept; please retry.');
+    throw error;
   }
   showUndoToast({message:command.type==='remove'?'Subtask removed.':'Checklist saved.',onUndo:()=>{
     try{
@@ -166,9 +169,12 @@ function saveSubtaskChange(ref,command,expected,day) {
       clearUndoToast();renderCardsOnly({force:true});
     }catch(error){clearUndoToast();setSaveStatus(error.message,'error');}
   }});
+  return transaction;
 }
 function openTaskSubtasks(item) {
-  const key=subtaskKey(taskSubtaskRef(item));(planningSession().subtaskOpen ||= {})[key]=true;
+  const ref=taskSubtaskRef(item);
+  try{resolveSubtaskParent(ref);}catch(error){setSaveStatus(error.message,'error');return;}
+  const key=subtaskKey(ref);(planningSession().subtaskOpen ||= {})[key]=true;
   savePlanningSession();renderCardsOnly({force:true});
 }
 function captureTaskControlFocus(element=document.activeElement) {
@@ -209,51 +215,121 @@ async function confirmParentTaskCompletion(target,done) {
     return !remaining || await confirmTaskAction('Complete this task?',`${remaining} subtask${remaining===1?' is':'s are'} still unfinished.\n\nThe checklist will be kept unchanged. Nothing will be deleted or automatically ticked.`,'Complete task');
   }catch(error){setSaveStatus(error.message,'error');return false;}
 }
+function subtaskControlCurrent(node,ref,session) {
+  return node.isConnected && !document.hidden && !node.closest('[hidden],[inert]') && node.getClientRects().length>0 && state.activeBoardId===ref.boardId && planningSessions.get(ref.boardId)===session;
+}
+function subtaskDraftMap(session,key) {
+  if(!Object.hasOwn(session,key))session[key]={};
+  const map=session[key];
+  if(!map || typeof map!=='object' || Array.isArray(map))throw new Error('This checklist draft needs review. Its stored copy was kept.');
+  return map;
+}
 function openSubtaskEditor(ref,child,day) {
-  const session=planningSession(),key=subtaskKey(ref)+':'+child.id,drafts=session.subtaskDrafts ||= {};
-  const draft=drafts[key] ||= {title:child.title,base:LifeStateMerge.copy(child)};
+  let live,session,drafts;
+  try{live=LifeSubtasks.active(resolveSubtaskParent(ref).target).find(item=>item.id===child.id);if(!live)throw new Error('This subtask is no longer available.');session=planningSession();drafts=subtaskDraftMap(session,'subtaskDrafts');}
+  catch(error){setSaveStatus(error.message,'error');return;}
+  const key=subtaskKey(ref)+':'+child.id;
+  const draft=drafts[key] ||= {title:live.title,base:LifeStateMerge.copy(live)};
+  if(typeof draft.title!=='string' || draft.base?.id!==child.id){setSaveStatus('This subtask draft needs review. Its stored copy was kept.','error');return;}
   const dialog=dailyDialog('Edit subtask'),form=planningNode('form','daily-form'),message=planningNode('p','planning-message');message.setAttribute('role','status');
-  const input=planningInput('text',draft.title,value=>{draft.title=value;savePlanningSession();});input.required=true;
+  dialog.classList.add('subtask-editor');let busy=false;
+  const current=()=>!busy && dialog.open && subtaskControlCurrent(dialog,ref,session) && drafts[key]===draft && [...document.querySelectorAll('dialog[open]')].at(-1)===dialog;
+  const status=planningNode('small','subtask-draft-status');status.setAttribute('aria-live','polite');
+  const persist=()=>{const ok=savePlanningSession();status.textContent=ok?'Draft kept in this tab':'Memory only. Keep this tab open.';return ok;};
+  const input=planningInput('text',draft.title,value=>{if(!current())return;draft.title=value;persist();});input.required=true;
   form.append(planningField('Subtask name',input));
-  const completion=LifeTaskRepository.knownCompletion(child);
+  const completion=LifeTaskRepository.knownCompletion(live);
   if(completion){const date=planningNode('p','daily-task-source','Completed '+formatReadableDateKey(completion.on));date.title=formatRecordDateTime(completion.at)+' · Recorded '+formatRecordDateTime(completion.recordedAt);form.append(date);}
   const save=planningButton('Save subtask',null,'check');save.type='submit';save.classList.add('is-primary');
+  const discard=()=>{
+    delete drafts[key];
+    if(!savePlanningSession()){drafts[key]=draft;message.textContent='Draft was not discarded. Its stored copy was kept; please retry.';return false;}
+    return true;
+  };
   const finish=command=>{
-    try{saveSubtaskChange(ref,command,draft.base,day);delete drafts[key];savePlanningSession();dialog.close();renderCardsOnly({force:true});}
+    if(!current())return;
+    try{
+      const source=LifeSubtasks.records(resolveSubtaskParent(ref).target).find(item=>item.id===child.id);
+      // An interrupted UI cleanup must not repeat a successful source change.
+      const acknowledged=draft.after && LifeStateMerge.equal(source,draft.after);
+      const sameAction=acknowledged && draft.action===command.type && (command.type!=='rename' || command.title.trim()===draft.after.title);
+      if(!sameAction){
+        if(acknowledged)draft.base=LifeStateMerge.copy(source);
+        saveSubtaskChange(ref,command,draft.base,day,transaction=>{draft.after=LifeStateMerge.copy(transaction.after);draft.action=command.type;return persist();});
+      }
+      if(!discard()){message.textContent='Subtask saved. Draft cleanup needs retry; Save will not repeat the change.';return;}
+      dialog.close();renderCardsOnly({force:true});
+    }
     catch(error){message.textContent=error.message;}
   };
   form.onsubmit=event=>{event.preventDefault();finish({type:'rename',id:child.id,title:input.value});};
   const remove=planningButton('Delete subtask',async()=>{
-    if(await confirmTaskAction('Delete this subtask?',`"${child.title}"\n\nOnly this subtask will be removed. The parent task and other subtasks will be kept.`,'Delete subtask',{danger:true}))finish({type:'remove',id:child.id});
+    if(!current())return;
+    busy=true;let confirmed=false;
+    try{confirmed=await confirmTaskAction('Delete this subtask?',`"${live.title}"\n\nOnly this subtask will be removed. The parent task and other subtasks will be kept.`,'Delete subtask',{danger:true});}
+    finally{busy=false;}
+    if(confirmed)finish({type:'remove',id:child.id});
   },'trash-2');remove.classList.add('is-danger');
-  form.append(message,save,remove,planningButton('Discard draft',()=>{delete drafts[key];savePlanningSession();dialog.close();}));dialog.append(form);input.focus();
+  const actions=planningNode('div','subtask-editor-actions');
+  actions.append(status,planningIcon('Discard draft',()=>{if(current() && discard())dialog.close();},'x'),save);
+  form.append(message,actions,remove);dialog.append(form);persist();input.focus();
 }
 function renderTaskSubtasks(item,{offerEmpty=false}={}) {
   const ref=taskSubtaskRef(item),key=subtaskKey(ref),session=planningSession(),details=planningNode('details','task-subtasks');
-  let children;
-  try{children=LifeSubtasks.active(resolveSubtaskParent(ref).target);}catch(error){return planningNode('p','planning-message',error.message);}
-  const opens=session.subtaskOpen ||= {},drafts=session.subtaskDrafts ||= {},draftKey='add:'+key;
+  let children,drafts,pendingAdds;
+  try{children=LifeSubtasks.active(resolveSubtaskParent(ref).target);drafts=subtaskDraftMap(session,'subtaskDrafts');pendingAdds=subtaskDraftMap(session,'subtaskPendingAdds');}catch(error){return planningNode('p','planning-message',error.message);}
+  const opens=session.subtaskOpen ||= {},draftKey='add:'+key;
+  const current=()=>subtaskControlCurrent(details,ref,session) && !document.querySelector('dialog[open]');
+  const usable=()=>current() && details.open;
   details.dataset.owner=key;details.open=Boolean(opens[key]);details.hidden=!offerEmpty && !children.length && !details.open && !drafts[draftKey];
   const summary=planningNode('summary'),count=children.filter(child=>child.done).length;
   summary.append(planningNode('span','','Subtasks'),planningNode('span','subtask-progress',children.length?`${count}/${children.length} · ${Math.round(count/children.length*100)}%`:''));details.append(summary);
-  summary.addEventListener('click',()=>{opens[key]=!details.open;savePlanningSession();});
-  details.addEventListener('toggle',()=>{if(details.isConnected){opens[key]=details.open;savePlanningSession();}});
+  summary.addEventListener('click',event=>{if(!current()){event.preventDefault();return;}opens[key]=!details.open;savePlanningSession();});
+  details.addEventListener('toggle',()=>{if(current()){opens[key]=details.open;savePlanningSession();}});
   const list=planningNode('div','subtask-list');
   for(const child of children){
     const row=planningNode('div','subtask-row'),label=planningNode('label','subtask-label'),check=planningNode('input');check.type='checkbox';check.checked=child.done;check.setAttribute('aria-label',`${child.done?'Reopen':'Complete'} subtask: ${child.title}`);
     const text=planningNode('span','subtask-title',child.title);text.classList.toggle('is-done',child.done);label.append(check,text);
     const completion=LifeTaskRepository.knownCompletion(child);if(completion)text.title='Completed '+formatReadableDateKey(completion.on)+' · '+formatRecordDateTime(completion.at);
     const error=planningNode('p','planning-message');error.setAttribute('role','status');
-    check.onchange=()=>{try{saveSubtaskChange(ref,{type:'complete',id:child.id},child,item.dateKey || getTodayKey());renderCardsOnly({force:true});}catch(e){check.checked=child.done;error.textContent=e.message;}};
-    row.append(label,planningIcon('Subtask options: '+child.title,()=>openSubtaskEditor(ref,child,item.dateKey || getTodayKey()),'more-vertical'),error);list.append(row);
+    check.onchange=()=>{if(!usable()){check.checked=child.done;return;}try{saveSubtaskChange(ref,{type:'complete',id:child.id},child,item.dateKey || getTodayKey());renderCardsOnly({force:true});}catch(e){check.checked=child.done;error.textContent=e.message;}};
+    row.append(label,planningIcon('Subtask options: '+child.title,()=>{if(usable())openSubtaskEditor(ref,child,item.dateKey || getTodayKey());},'more-vertical'),error);list.append(row);
   }
   const form=planningNode('form','subtask-add'),input=planningNode('input');input.type='text';input.placeholder='Add a subtask';input.setAttribute('aria-label','Add a subtask to '+item.title);input.value=drafts[draftKey] || '';
-  input.oninput=()=>{drafts[draftKey]=input.value;savePlanningSession();};
+  input.oninput=()=>{if(!usable())return;drafts[draftKey]=input.value;savePlanningSession();};
   const button=planningIcon('Add subtask',null,'plus');button.type='submit';const error=planningNode('p','planning-message');error.setAttribute('role','status');
-  form.append(input,button,error);form.onsubmit=event=>{
-    event.preventDefault();if(!input.value.trim())return;
+  const discard=planningIcon('Discard subtask draft',()=>{
+    if(!usable())return;
+    const pending=pendingAdds[key],text=drafts[draftKey];delete drafts[draftKey];delete pendingAdds[key];
+    if(!savePlanningSession()){if(text!==undefined)drafts[draftKey]=text;if(pending)pendingAdds[key]=pending;error.textContent='Draft was not discarded. Please retry.';return;}
+    renderCardsOnly({force:true});
+  },'x');
+  discard.hidden=!input.value && !pendingAdds[key];
+  input.addEventListener('input',()=>{if(usable())discard.hidden=!input.value && !pendingAdds[key];});
+  form.append(input,button,discard,error);form.onsubmit=event=>{
+    event.preventDefault();if(!usable() || !input.value.trim())return;
     try{
-      saveSubtaskChange(ref,{type:'add',id:createId(),title:input.value},null,item.dateKey || getTodayKey());delete drafts[draftKey];opens[key]=true;savePlanningSession();renderCardsOnly({force:true});
+      let pending=pendingAdds[key];
+      if(pending){
+        if(typeof pending.id!=='string' || pending.after?.id!==pending.id || typeof pending.after?.title!=='string')throw new Error('This subtask draft needs review. Its stored copy was kept.');
+        const saved=LifeSubtasks.records(resolveSubtaskParent(ref).target).find(child=>child.id===pending.id);
+        if(saved){
+          if(!LifeStateMerge.equal(saved,pending.after))throw new Error('This step was already added and later changed. Review it or discard this draft; no duplicate was added.');
+          const same=input.value.trim()===pending.after.title,text=drafts[draftKey];
+          delete pendingAdds[key];if(same)delete drafts[draftKey];
+          if(!savePlanningSession()){pendingAdds[key]=pending;if(text!==undefined)drafts[draftKey]=text;throw new Error('Subtask saved. Draft cleanup needs retry; no duplicate was added.');}
+          if(same){renderCardsOnly({force:true});return;}
+          pending=null;
+        }
+      }
+      const id=pending?.id || createId();
+      // Keep the exact intended record before staging its canonical save.
+      saveSubtaskChange(ref,{type:'add',id,title:input.value},null,item.dateKey || getTodayKey(),transaction=>{
+        pendingAdds[key]={id,after:LifeStateMerge.copy(transaction.after)};return savePlanningSession();
+      });
+      pending=pendingAdds[key];const text=drafts[draftKey];delete drafts[draftKey];delete pendingAdds[key];opens[key]=true;
+      if(!savePlanningSession()){drafts[draftKey]=text;pendingAdds[key]=pending;discard.hidden=false;error.textContent='Subtask saved. Draft cleanup needs retry; no duplicate was added.';return;}
+      renderCardsOnly({force:true});
       requestAnimationFrame(()=>{if(document.activeElement===document.body){const next=[...document.querySelectorAll('.task-subtasks')].find(node=>node.dataset.owner===key);next?.querySelector('.subtask-add input')?.focus({preventScroll:true});}});
     }
     catch(e){error.textContent=e.message;}
