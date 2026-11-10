@@ -343,7 +343,7 @@ function appendTaskMetadata(meta, item) {
   if (item.project) meta.append(planningNode("span", "task-project", item.project));
   if (!item.done && ["doing","waiting"].includes(item.status)) meta.append(planningNode("span", "task-status", item.status === "doing" ? "Doing" : "Waiting"));
   if (!item.done && item.deadline) meta.append(planningNode("span", "task-deadline"+(item.deadline<getTodayKey()?" is-late":""), "Due "+formatPlannerOriginDate(item.deadline)));
-  if (!item.done && item.followUp) meta.append(planningNode('span','task-follow-up','Follow up '+formatPlannerOriginDate(item.followUp)));
+  if (!item.done && item.followUp) meta.append(planningNode('span','task-follow-up',LifePlanner.validDate(item.followUp)?'Follow up '+formatPlannerOriginDate(item.followUp):'Follow-up date needs review'));
   if (item.status==='parked') meta.append(planningNode('span','task-status','Parked'));
   if (item.coachingProgramId) {
     const program=currentCoachingPrograms().find(p=>p.id===item.coachingProgramId),priority=program?.priorities.find(p=>p.id===item.coachingPriorityId),kr=priority?.krs.find(k=>k.id===item.coachingKrId);
@@ -481,7 +481,8 @@ function renderTaskResults(root) {
   if(session.view==="completed")items=items.filter(item=>item.done);
   const query=session.search.trim().toLocaleLowerCase();
   if(query)items=items.filter(item=>[item.title,item.project,item.notes,item.group,item.sourceTitle].some(value=>String(value||"").toLocaleLowerCase().includes(query)));
-  items=items.slice().sort((a,b)=>session.view==="waiting"?(a.followUp||'9999').localeCompare(b.followUp||'9999')||a.title.localeCompare(b.title):session.view==="completed"?(b.completedOn||"").localeCompare(a.completedOn||"")||a.title.localeCompare(b.title)
+  const followUpOrder=item=>LifePlanner.validDate(item.followUp)?item.followUp:'9999';
+  items=items.slice().sort((a,b)=>session.view==="waiting"?followUpOrder(a).localeCompare(followUpOrder(b))||a.title.localeCompare(b.title):session.view==="completed"?(b.completedOn||"").localeCompare(a.completedOn||"")||a.title.localeCompare(b.title)
     :Number(a.done)-Number(b.done)||(a.scheduledDate||a.dateKey||"9999").localeCompare(b.scheduledDate||b.dateKey||"9999")||a.title.localeCompare(b.title));
   const count=planningNode("p","planning-count",`${items.length} ${items.length===1?"task":"tasks"}`);count.setAttribute("role","status");
   const extraLabel={waiting:'Waiting on',parked:'Parked',experiences:'Experiences'}[session.view];if(extraLabel)count.textContent=extraLabel+' · '+count.textContent;

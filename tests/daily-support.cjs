@@ -25,6 +25,72 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
     state.cards=[card,diary];state.archivedCards=[];state.boards.push(createBoardRecord({id:'support-other',name:'Independent board',cards:[]}));saveState();await flushDeviceWrites();
     window.supportBoard=state.activeBoardId;window.supportOriginal=JSON.stringify(state.cards);
   });await workspace(p,'today');await p.evaluate(()=>flushDeviceWrites());}
+  async function followUps(p){await p.evaluate(async()=>{
+    const card=state.cards.find(c=>c.id==='support-source');
+    for(const [id,title,date,extra] of [
+      ['follow-1','Check the cake delivery','2026-12-01',{status:'waiting',followUp:'2026-10-14',area:'Personal'}],
+      ['follow-2','Confirm the guest arrival','2026-10-01',{status:'waiting',followUp:'2026-10-15',area:'Sunrise Villa'}],
+      ['follow-3','Ask about the venue availability','',{status:'waiting',followUp:'2026-10-16',area:'Culturely'}],
+      ['follow-4','Check the supplier reply','',{status:'waiting',followUp:'2026-10-16'}],
+      ['follow-future','Review next week','2026-10-01',{status:'waiting',followUp:'2026-10-20'}]
+    ]){LifePlanner.add(card,date,title,id);LifePlanner.change(card,id,extra);}
+    saveState();await flushDeviceWrites();renderCardsOnly({force:true});
+  });}
+  const preserved=p=>p.evaluate(()=>JSON.stringify({cards:state.cards,archive:getArchivedCards(),otherBoards:state.boards.filter(b=>b.id!==state.activeBoardId)}));
+  await run('follow-ups show only explicit due waiting dates and preserve every original record across renders and reload',async p=>{
+    await followUps(p);const before=await preserved(p),section=p.getByRole('region',{name:'Waiting task follow-ups'});
+    assert.match(await section.innerText(),/4 follow-ups due/);assert.equal(await section.locator('.daily-follow-up-row').count(),3);
+    assert.deepEqual(await section.locator('time').evaluateAll(nodes=>nodes.map(n=>n.dateTime)),['2026-10-14','2026-10-15','2026-10-16']);
+    assert.match(await section.innerText(),/Due today/);assert.match(await section.innerText(),/1 more in Waiting on/);assert.match(await section.innerText(),/1 waiting task has no follow-up date/);
+    assert.doesNotMatch(await section.innerText(),/Review next week/);assert.doesNotMatch(await p.locator('.daily-suggestion-list').innerText(),/cake delivery|guest arrival|venue availability|supplier reply/);
+    assert.equal(await p.evaluate(()=>dailyRecords().length),0);await p.evaluate(()=>renderCardsOnly({force:true}));assert.equal(await preserved(p),before);
+    await p.reload();await workspace(p,'today');assert.match(await section.innerText(),/4 follow-ups due/);assert.equal(await preserved(p),before);
+  });
+  await run('Waiting on opens all original waiting tasks without changing task data or retained planning drafts',async p=>{
+    await followUps(p);await p.evaluate(()=>{planningSession().area='Culturely';planningSession().search='old search';planningSession().subtaskDrafts={'kept':'My full unsubmitted draft'};dailySession().focusDrafts ||= {};dailySession().focusDrafts[getTodayKey()]={taskKeys:[],plans:{},budgetMinutes:'60'};savePlanningSession();saveDailyDraft();});
+    const before=await preserved(p),draft=await p.evaluate(()=>JSON.stringify({subtask:planningSession().subtaskDrafts,focus:dailySession().focusDrafts}));
+    await p.getByRole('region',{name:'Waiting task follow-ups'}).getByRole('button',{name:'Waiting on',exact:true}).click();
+    assert.deepEqual(await p.evaluate(()=>[state.ui.workspaceMode,planningSession().view,planningSession().area,planningSession().search]),['tasks','waiting','*','']);
+    for(const title of ['Check the supplier reply','Review next week','Wait for the venue reply'])assert(await p.getByText(title,{exact:true}).isVisible());
+    assert.equal(await preserved(p),before);assert.equal(await p.evaluate(()=>JSON.stringify({subtask:planningSession().subtaskDrafts,focus:dailySession().focusDrafts})),draft);
+  });
+  await run('follow-up navigation ignores stale, detached and modal-covered controls rather than switching another board or day',async p=>{
+    await followUps(p);await p.evaluate(()=>window.oldFollowUp=document.querySelector('.daily-follow-ups button'));
+    await p.getByRole('button',{name:'Choose',exact:true}).click();await p.evaluate(()=>oldFollowUp.click());assert.equal(await p.evaluate(()=>state.ui.workspaceMode),'today');assert(await p.locator('#dailyDialog').isVisible());await p.keyboard.press('Escape');
+    await p.evaluate(()=>renderCardsOnly({force:true}));await p.evaluate(()=>oldFollowUp.click());assert.equal(await p.evaluate(()=>state.ui.workspaceMode),'today');
+    await p.evaluate(()=>{window.oldFollowUp=document.querySelector('.daily-follow-ups button');switchBoard('support-other');});const other=await preserved(p);await p.evaluate(()=>oldFollowUp.click());assert.equal(await p.evaluate(()=>state.activeBoardId),'support-other');assert.equal(await preserved(p),other);
+    await p.evaluate(()=>switchBoard(supportBoard));await workspace(p,'today');await p.evaluate(()=>window.oldFollowUp=document.querySelector('.daily-follow-ups button'));await p.clock.setFixedTime(new Date('2026-10-17T04:00:00Z'));await p.evaluate(()=>oldFollowUp.click());assert.equal(await p.evaluate(()=>state.ui.workspaceMode),'today');
+  });
+  await run('follow-up list updates when sources complete or park and flags conflicts without rewriting any history',async p=>{
+    await followUps(p);await p.evaluate(()=>{
+      const card=state.cards.find(c=>c.id==='support-source');LifePlanner.change(card,'follow-1',{done:true,completedOn:'2026-10-16',completedAt:Date.now()});LifePlanner.change(card,'follow-2',{status:'parked'});
+      state.syncConflicts=[{kind:'planner-task',segments:['boards',state.activeBoardId,'cards','support-source','plannerTasks','follow-3']}];renderCardsOnly({force:true});
+    });const before=await preserved(p),section=p.getByRole('region',{name:'Waiting task follow-ups'});
+    assert.match(await section.innerText(),/1 follow-up due/);assert.match(await section.innerText(),/1 waiting entry needs review/);assert.doesNotMatch(await section.innerText(),/cake delivery|guest arrival|venue availability/);
+    await p.evaluate(()=>renderCardsOnly({force:true}));assert.equal(await preserved(p),before);
+  });
+  await run('follow-ups can be hidden independently and Lighter day never adds a waiting-task burden',async p=>{
+    await followUps(p);const before=await preserved(p);await p.getByRole('button',{name:'Customize Today',exact:true}).click();await p.locator('#dailyDialog').getByRole('checkbox',{name:'Waiting task follow-ups',exact:true}).uncheck();await p.keyboard.press('Escape');assert.equal(await p.locator('.daily-follow-ups').count(),0);
+    await p.reload();await workspace(p,'today');assert.equal(await p.locator('.daily-follow-ups').count(),0);await p.getByRole('button',{name:'Customize Today',exact:true}).click();await p.locator('#dailyDialog').getByRole('checkbox',{name:'Waiting task follow-ups',exact:true}).check();await p.keyboard.press('Escape');assert.equal(await p.locator('.daily-follow-ups').count(),1);
+    await p.getByRole('button',{name:'Lighter day',exact:true}).click();assert.equal(await p.locator('.daily-follow-ups').count(),0);await p.getByRole('button',{name:'Lighter day',exact:true}).click();assert.equal(await p.locator('.daily-follow-ups').count(),1);assert.equal(await preserved(p),before);
+  });
+  await run('invalid imported follow-up dates stay visible for review without crashing the Waiting on list or rewriting them',async p=>{
+    await followUps(p);await p.evaluate(()=>{
+      const card=state.cards.find(c=>c.id==='support-source');LifePlanner.change(card,'follow-1',{followUp:{legacy:'keep this value'}});LifePlanner.change(card,'follow-2',{followUp:'2026-02-30'});renderCardsOnly({force:true});
+    });const before=await preserved(p),section=p.getByRole('region',{name:'Waiting task follow-ups'});
+    assert.match(await section.innerText(),/2 waiting entries need review/);await section.getByRole('button',{name:'Waiting on',exact:true}).click();
+    assert(await p.getByText('Check the cake delivery',{exact:true}).isVisible());assert.equal(await p.getByText('Follow-up date needs review',{exact:true}).count(),2);assert.equal(await preserved(p),before);
+  });
+  await run('follow-up section fits phone portrait and desktop with readable labels and keyboard-accessible navigation',async p=>{
+    await followUps(p);await p.evaluate(()=>{LifePlanner.change(state.cards.find(c=>c.id==='support-source'),'follow-1',{title:'Check the cake delivery and the special dietary requirements with the bakery before the birthday celebration'});renderCardsOnly({force:true});});
+    const before=await preserved(p),section=p.getByRole('region',{name:'Waiting task follow-ups'});
+    for(const width of [320,390,768,1080,1440]){
+      await p.setViewportSize({width,height:width<500?844:1100});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await section.scrollIntoViewIfNeeded();
+      assert(await section.evaluate(n=>n.scrollWidth<=n.clientWidth+1),'follow-ups overflow at '+width);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'page overflow at '+width);
+      const button=section.getByRole('button',{name:'Waiting on',exact:true});const box=await button.boundingBox();assert(box.height>=44);await button.focus();assert(await button.evaluate(n=>n===document.activeElement));
+      await section.screenshot({path:out+'/follow-ups-'+width+'.png'});if(width===1080){await p.evaluate(()=>scrollTo(0,0));await p.screenshot({path:out+'/today-follow-ups-desktop.png',fullPage:true});}
+    }assert.equal(await preserved(p),before);await section.getByRole('button',{name:'Waiting on',exact:true}).press('Enter');assert.equal(await p.evaluate(()=>planningSession().view),'waiting');
+  });
   await run('one-click selection uses an existing task, preserves dates and writing, caps focus and survives reload',async p=>{
     const original=await p.evaluate(()=>supportOriginal);
     assert.equal(await p.locator('.daily-suggestion-list li').count(),3);assert.equal(await p.locator('.daily-suggestions').getByText('Prepare next month',{exact:true}).count(),0);

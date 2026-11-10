@@ -327,6 +327,7 @@ function renderDailyHome() {
   overview.append(planningButton('All tasks ('+all.length+')',()=>{planningSession().view='all';planningSession().area='*';planningSession().search='';savePlanningSession();setWorkspaceMode('tasks');}),
     planningButton('My board',()=>setWorkspaceMode('board')));focus.append(overview);columns.append(focus);refreshDailyFocusSession();
   if(session.sections.health!==false)context.prepend(renderDailyHealth());
+  if(!session.light && session.sections.followups!==false)renderDailyFollowUps(context,all);
   if(!session.light && session.sections.agenda!==false){
     const agenda=dailySection('Coming up',planningButton('Calendar',()=>setWorkspaceMode('calendar'),'calendar'));
     const items=dailyUpcoming(day);
@@ -361,6 +362,28 @@ function renderDailyHome() {
   grid.classList.toggle('has-single-journal',grid.querySelectorAll('.task-card').length===1);
   if(journalActions.childElementCount)grid.append(journalActions);
   layout.append(grid,context);root.append(done);
+}
+function renderDailyFollowUps(parent,items) {
+  const day=getTodayKey(),boardId=state.activeBoardId,session=dailySession();
+  const summary=LifeMomentum.followUps(items.map(item=>({...dailySuggestionProjection(item),followUp:item.followUp})),{today:day});
+  if(!summary.due.length && !summary.undated.length && !summary.review.length)return;
+  const open=planningButton('Waiting on',()=>{
+    if(!section.isConnected || document.hidden || state.activeBoardId!==boardId || getTodayKey()!==day || state.ui.workspaceMode!=='today' || dailySession()!==session || document.querySelector('dialog[open]'))return;
+    planningSession().view='waiting';planningSession().area='*';planningSession().search='';savePlanningSession();setWorkspaceMode('tasks');
+  },'arrow-right');
+  const section=dailySection('Follow-ups',open);section.classList.add('daily-follow-ups');section.setAttribute('aria-label','Waiting task follow-ups');
+  if(summary.due.length){
+    section.append(planningNode('p','daily-follow-up-count',summary.due.length+' follow-up'+(summary.due.length===1?'':'s')+' due'));
+    for(const item of summary.due.slice(0,3)){
+      const row=planningNode('div','daily-follow-up-row');row.dataset.followUpKey=item.key;
+      const date=planningNode('time','',item.followUp===day?'Due today':'Follow-up '+formatPlannerOriginDate(item.followUp));date.dateTime=item.followUp;
+      row.append(planningNode('strong','',item.title),planningNode('small','daily-muted',item.area),date);section.append(row);
+    }
+    if(summary.due.length>3)section.append(planningNode('small','daily-muted',summary.due.length-3+' more in Waiting on'));
+  }
+  if(summary.undated.length)section.append(planningNode('p','daily-muted',summary.undated.length+' waiting task'+(summary.undated.length===1?' has':'s have')+' no follow-up date.'));
+  if(summary.review.length)section.append(planningNode('p','daily-muted',summary.review.length+' waiting entr'+(summary.review.length===1?'y needs':'ies need')+' review before showing a due date.'));
+  parent.append(section);
 }
 function renderDailyFocusSession(parent) {
   const root=planningNode('section','daily-active-focus'),copy=planningNode('div','daily-active-focus-copy'),title=planningNode('strong'),status=planningNode('small'),clock=planningNode('output'),message=planningNode('p','daily-message');
@@ -402,7 +425,7 @@ function refreshDailyFocusSession() {
 }
 function openDailyPreferences() {
   const dialog=dailyDialog('Customize Today'),session=dailySession();
-  for(const [key,label] of [['health','Food & movement'],['agenda','Upcoming activities'],['routine','Priority progress'],['diary','Diary'],['sidenote','Quick notes']]){
+  for(const [key,label] of [['health','Food & movement'],['followups','Waiting task follow-ups'],['agenda','Upcoming activities'],['routine','Priority progress'],['diary','Diary'],['sidenote','Quick notes']]){
     const row=planningNode('label','daily-check'),check=planningInput('checkbox','',()=>{});check.checked=session.sections[key]!==false;
     check.onchange=()=>{session.sections[key]=check.checked;saveDailyDraft();renderCardsOnly({force:true});};row.append(check,planningNode('span','',label));dialog.append(row);
     if(['diary','sidenote'].includes(key)){

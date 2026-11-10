@@ -44,6 +44,13 @@
 .daily-agenda-row { display: grid; gap: 5px; padding: 10px 0; border-bottom: 1px solid #e1e7e3; }
 .daily-agenda-row strong { font-size: 14px; overflow-wrap: anywhere; }
 .daily-agenda-row small { font-size: 12px; color: #59685f; }
+.daily-follow-up-count { margin: 0 0 4px; font-size: 13px; color: var(--muted); }
+.daily-follow-up-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 4px 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.daily-follow-up-row strong { grid-column: 1 / -1; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.daily-follow-up-row time { font-size: 12px; color: var(--muted); text-align: right; }
+.daily-follow-up-row small, .daily-follow-up-row time { min-width: 0; overflow-wrap: anywhere; }
+.daily-follow-ups > .daily-muted { margin: 10px 0 0; font-size: 12px; }
+.daily-follow-ups .planning-button { min-height: 44px; }
 .daily-priority-line { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 12px 0; border-bottom: 1px solid #e1e7e3; font-size: 13px; }
 .daily-priority-line span { overflow-wrap: anywhere; }
 .daily-priority-line strong { white-space: nowrap; color: #276b5d; }

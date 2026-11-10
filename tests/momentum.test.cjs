@@ -1,5 +1,33 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),M=require('../momentum.js');
 const base={start:'2026-10-12',today:'2026-10-16'};
+test('waiting follow-ups use explicit follow-up dates rather than scheduled dates or priority',()=>{
+  const rows=[{key:'today',status:'waiting',followUp:base.today,dateKey:'2026-12-01'},
+    {key:'past',status:'waiting',followUp:'2026-10-14'},
+    {key:'future',status:'waiting',followUp:'2026-10-17',dateKey:'2026-10-01',priority:'high'},
+    {key:'missing',status:'waiting',dateKey:'2026-10-01'},
+    ...['todo','doing','parked'].map(status=>({key:status,status,followUp:base.today})),
+    {key:'done',status:'waiting',done:true,followUp:base.today}];
+  const result=M.followUps(rows,{today:base.today});assert.deepEqual(result.due.map(r=>r.key),['past','today']);
+  assert.deepEqual(result.upcoming.map(r=>r.key),['future']);assert.deepEqual(result.undated.map(r=>r.key),['missing']);assert.equal(result.review.length,0);
+});
+test('ambiguous, conflicted, unsafe and invalid waiting follow-ups need review, never invented urgency',()=>{
+  const rows=[null,{key:'duplicate',status:'waiting',followUp:base.today},{key:'duplicate',done:true},
+    {key:'blocked',status:'waiting',blocked:true,followUp:base.today},{key:'unsafe',status:'waiting',editable:false},
+    {key:'bad',status:'waiting',followUp:'2026-02-30'},{key:'object',status:'waiting',followUp:{}},
+    {key:'',status:'waiting',followUp:base.today},{status:'waiting'}];
+  const result=M.followUps(rows,{today:base.today});assert.equal(result.review.length,7);
+  assert.deepEqual(result.due,[]);assert.deepEqual(result.upcoming,[]);assert.deepEqual(result.undated,[]);
+  assert.throws(()=>M.followUps(rows,{today:'2026-02-30'}));
+});
+test('follow-up projections keep distinct same-title identities, stable date order and immutable source fields',()=>{
+  const rows=[{key:'b',title:'Same',status:'waiting',followUp:'2028-02-29',unknown:{preserved:true}},
+    {key:'a',title:'Same',status:'waiting',followUp:'2028-02-29'},
+    {key:'year',status:'waiting',followUp:'2027-12-31'},
+    ...['',null,undefined].map((followUp,i)=>({key:'empty-'+i,status:'waiting',followUp}))];
+  const before=JSON.stringify(rows);rows.forEach(Object.freeze);Object.freeze(rows);
+  const result=M.followUps(rows,{today:'2028-02-29'});assert.deepEqual(result.due.map(r=>r.key),['year','a','b']);
+  assert.equal(result.undated.length,3);assert.equal(JSON.stringify(rows),before);assert.notEqual(result.due[0],rows[2]);
+});
 test('daily capacity counts only explicit valid estimates without mutating them',()=>{
   const values=['15',30,''],before=JSON.stringify(values),summary=M.capacity(values,'60');assert.deepEqual(summary,{total:45,estimated:2,missing:1,invalid:0,available:60,invalidBudget:false,remaining:null,overBy:0});assert.equal(JSON.stringify(values),before);
 });

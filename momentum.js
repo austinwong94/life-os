@@ -39,6 +39,21 @@
     }).sort((a,b)=>a.rank-b.rank || orderDate(a).localeCompare(orderDate(b)) || a.key.localeCompare(b.key))
       .slice(0,Math.max(0,Math.min(3,Number.isInteger(limit)?limit:3)));
   }
+  function followUps(items,{today}={}) {
+    if(!valid(today))throw new Error('A valid day is required.');
+    const frequencies=new Map(),result={due:[],upcoming:[],undated:[],review:[]};
+    for(const item of items)if(item)frequencies.set(item.key,(frequencies.get(item.key)||0)+1);
+    for(const item of items){
+      if(!item || item.done || item.status!=='waiting')continue;
+      const row={...item},date=item.followUp;
+      if(typeof item.key!=='string' || !item.key.trim() || frequencies.get(item.key)!==1 || item.blocked || item.editable===false)result.review.push(row);
+      else if(date==='' || date===null || date===undefined)result.undated.push(row);
+      else if(!valid(date))result.review.push(row);
+      else result[date<=today?'due':'upcoming'].push(row);
+    }
+    const order=(a,b)=>a.followUp.localeCompare(b.followUp) || a.key.localeCompare(b.key);
+    result.due.sort(order);result.upcoming.sort(order);return result;
+  }
   function capacity(values,budget){
     const minutes=value=>(typeof value==='number' || typeof value==='string') && value!=='' && Number.isInteger(Number(value)) && Number(value)>0 && Number(value)<=1440?Number(value):null;
     const amounts=Array.isArray(values)?values:[],known=amounts.map(minutes).filter(value=>value!==null);
@@ -47,7 +62,7 @@
     return {total,estimated:known.length,missing,invalid,available,invalidBudget:budget!=='' && budget!==null && budget!==undefined && available===null,
       remaining:available!==null && !missing && !invalid?available-total:null,overBy:available!==null?Math.max(0,total-available):0};
   }
-  const api=Object.freeze({valid,shift,summarize,suggest,capacity});
+  const api=Object.freeze({valid,shift,summarize,suggest,followUps,capacity});
   if(typeof module==='object' && module.exports)module.exports=api;else root.LifeMomentum=api;
 })(typeof window==='undefined'?globalThis:window);
 
