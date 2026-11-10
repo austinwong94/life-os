@@ -109,6 +109,54 @@ const results=[];
     for(const width of [320,390,768,1080,1440]){await p.setViewportSize({width,height:850});assert(await p.locator('#dailyDialog').evaluate(n=>n.scrollWidth<=n.clientWidth+1 && n.getBoundingClientRect().right<=innerWidth+1));assert(await p.locator('.daily-start-choices button').evaluateAll(nodes=>nodes.every(n=>n.getBoundingClientRect().height>=44 && n.getBoundingClientRect().width>=44)));await p.screenshot({path:out+'/focus-start-'+width+'.png'});}
     assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
   });
+  const startSession=async p=>{
+    await seed(p);await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.clock.pauseAt(new Date('2026-10-11T04:01:00Z'));await workspace(p,'today');
+    await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'Late action',exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();
+    await p.getByRole('button',{name:'Start',exact:true}).click();await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();await p.getByRole('button',{name:'Close',exact:true}).click();await p.evaluate(()=>flushDeviceWrites());
+  };
+  await run('Today keeps a closed focus session visible and returns to the same original task without restarting it',async p=>{
+    await startSession(p);const row=p.getByRole('region',{name:'Current focus session',exact:true});assert(await row.isVisible());assert.match(await row.innerText(),/Late action.*Running/s);
+    assert(await p.getByRole('button',{name:'Open session',exact:true}).isVisible());
+    const before=await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),timer:dailySession().focusTimer}));await p.clock.runFor(2100);assert.equal(await row.locator('output').innerText(),'04:58');
+    await row.getByRole('button',{name:'Return to focus session',exact:true}).click();assert.equal(await p.locator('#dailyDialog h2').innerText(),'Late action');assert.equal(await p.evaluate(()=>dailySession().focusTimer.endAt),before.timer.endAt);await p.getByRole('button',{name:'Pause timer',exact:true}).click();await p.getByRole('button',{name:'Close',exact:true}).click();assert.match(await row.innerText(),/Paused/);
+    await p.clock.runFor(2100);assert.equal(await row.locator('output').innerText(),'04:58');assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before.records);
+    await p.reload();await workspace(p,'today');assert.match(await row.innerText(),/Paused/);assert.equal(await row.locator('output').innerText(),'04:58');assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before.records);
+  });
+  await run('Today focus seconds preserve the diary node cursor draft and original records without staging new saves',async p=>{
+    await startSession(p);const writer=p.getByLabel('Diary thoughts',{exact:true});await writer.fill('My complete thought\nEvery word stays.');await p.evaluate(()=>flushDeviceWrites());await writer.evaluate(n=>n.setSelectionRange(3,11));
+    await p.evaluate(()=>{window.focusWriter=document.activeElement;window.focusStage=LifeDeviceStore.stage;window.focusStageCount=0;LifeDeviceStore.stage=(...args)=>{focusStageCount++;return focusStage(...args);};window.focusRecords=LifeStateMerge.copy(LifeCloudCopies.records(getStateForStorage()));});await p.clock.runFor(3100);
+    assert.equal(await writer.inputValue(),'My complete thought\nEvery word stays.');assert(await p.evaluate(()=>focusWriter===document.activeElement && focusWriter.isConnected && focusWriter.selectionStart===3 && focusWriter.selectionEnd===11));assert.equal(await p.evaluate(()=>focusStageCount),0);assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),await p.evaluate(()=>focusRecords));
+  });
+  await run('finished Today sessions stay visible without completing tasks and dismissal preserves every source record',async p=>{
+    await startSession(p);const before=await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage()));await p.clock.runFor(301100);const row=p.getByRole('region',{name:'Current focus session',exact:true});assert.match(await row.innerText(),/Session finished/);assert.equal(await row.locator('output').innerText(),'00:00');assert.equal(await p.evaluate(()=>dailyCompletedTasks(getTodayKey(),getTodayKey()).length),0);assert.equal(await p.evaluate(()=>coachingProgram().entries.length),0);
+    await row.getByRole('button',{name:'Dismiss focus session',exact:true}).click();assert(await row.isHidden());assert(await p.getByRole('button',{name:'Start',exact:true}).isVisible());assert.equal(await p.evaluate(()=>dailySession().focusTimer),undefined);assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);await p.reload();await workspace(p,'today');assert(await row.isHidden());
+  });
+  await run('failed session dismissal rolls back and retries without removing a task or unfinished writing',async p=>{
+    await startSession(p);const before=await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),timer:dailySession().focusTimer}));await p.evaluate(()=>{window.focusStorageSet=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(this===sessionStorage)throw Error('Synthetic full draft storage');return focusStorageSet.call(this,key,value);};});
+    const row=p.getByRole('region',{name:'Current focus session',exact:true});await row.getByRole('button',{name:'Dismiss focus session',exact:true}).click();assert.match(await row.locator('.daily-message').innerText(),/not dismissed/);assert.deepEqual(await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),timer:dailySession().focusTimer})),before);
+    await p.evaluate(()=>Storage.prototype.setItem=focusStorageSet);await row.getByRole('button',{name:'Dismiss focus session',exact:true}).click();assert(await row.isHidden());assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before.records);
+  });
+  for(const reason of ['hidden','detached','board','day','replaced timer','open draft'])await run('stale Today session '+reason+' controls cannot clear or replace a timer or saved records',async p=>{
+    await startSession(p);await p.evaluate(reason=>{
+      const view=dailyFocusSessionView;window.oldFocusControls={open:view.open,dismiss:view.dismiss};
+      if(reason==='hidden')view.root.hidden=true;if(reason==='detached')view.root.remove();
+      if(reason==='board'){state.boards.push(createBoardRecord({id:'session-other',name:'Other board',cards:[]}));syncActiveBoard({touchBoard:false});applyBoardToState(state,'session-other');}
+      if(reason==='replaced timer')dailySession().focusTimer={key:JSON.stringify(['follow-source','b']),endAt:Date.now()+60000};
+      if(reason==='open draft')openDailyCapture();
+    },reason);if(reason==='day')await p.clock.setSystemTime(new Date('2026-10-12T04:00:00Z'));
+    assert(await p.evaluate(()=>{const snapshot=()=>JSON.stringify({records:LifeCloudCopies.records(getStateForStorage()),drafts:[...dailySessions]}),before=snapshot();oldFocusControls.open.onclick();oldFocusControls.dismiss.onclick();return snapshot()===before;}));
+  });
+  await run('completed or unavailable session tasks stay intact and unknown timer formats cannot be silently reset',async p=>{
+    await startSession(p);const row=p.getByRole('region',{name:'Current focus session',exact:true});await p.evaluate(()=>{LifePlanner.complete(state.cards.find(c=>c.id==='follow-source'),'a',getTodayKey());refreshDailyFocusSession();});assert.match(await row.innerText(),/Task completed/);assert(await row.getByRole('button',{name:'Return to focus session',exact:true}).isDisabled());
+    const before=await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage()));await row.getByRole('button',{name:'Dismiss focus session',exact:true}).click();assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
+    await p.evaluate(()=>{dailySession().focusTimer={originalFutureFormat:{keep:'Everything'}};refreshDailyFocusSession();});assert.match(await row.innerText(),/needs review/);assert(await row.getByRole('button',{name:'Dismiss focus session',exact:true}).isDisabled());await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='b')));
+    assert(await p.getByRole('button',{name:'Start 5 minutes',exact:true}).isDisabled());assert(await p.getByRole('button',{name:'Reset timer',exact:true}).isDisabled());assert.deepEqual(await p.evaluate(()=>dailySession().focusTimer),{originalFutureFormat:{keep:'Everything'}});
+  });
+  await run('Today session controls fit phone portrait and desktop and remain available in lighter mode',async p=>{
+    await startSession(p);await p.getByRole('button',{name:'Lighter day',exact:true}).click();const before=await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage()));const row=p.getByRole('region',{name:'Current focus session',exact:true});
+    for(const width of [320,390,768,1080,1440]){await p.setViewportSize({width,height:900});assert(await row.isVisible());assert(await row.evaluate(n=>n.scrollWidth<=n.clientWidth+1));assert(await row.locator('button').evaluateAll(nodes=>nodes.every(n=>n.getBoundingClientRect().width>=44 && n.getBoundingClientRect().height>=44)));await p.screenshot({path:out+'/today-session-'+width+'.png'});}
+    assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
+  });
   await run('changing the daily plan does not inflate original-choice follow-through',async p=>{
     await seed(p);await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();for(const name of ['Late action','Personal action'])await p.getByRole('checkbox',{name,exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();
     await p.getByRole('checkbox',{name:'Mark done: Late action',exact:true}).click();await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'Personal action',exact:true}).uncheck();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();

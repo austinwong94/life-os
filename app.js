@@ -1461,6 +1461,7 @@ window.addEventListener("storage", (event) => {
 });
 
 setInterval(() => {
+  refreshDailyFocusSession();
   LifeWorkoutRestUI.refresh();
   if (state.cards.some((card) => card.runningSince || shouldTickCountdownEverySecond(card))) {
     refreshTimerDisplays();
