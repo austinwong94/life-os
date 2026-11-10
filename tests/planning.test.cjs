@@ -7,6 +7,22 @@ const draft={title:'Culturely meeting',area:'Culturely',startDate:'2026-09-10',e
 function cardTaskEdit(kind='checklist'){
   return {version:1,key:JSON.stringify(['board','source',kind,kind==='single'?null:'task']),ref:{boardId:'board',cardId:'source',kind,itemId:kind==='single'?null:'task'},base:kind==='single'?{title:'Book appointment',done:false}:{id:'task',text:'Call partner',done:false,custom:{keep:'all fields'}},title:'My full draft',sourceTitle:'Original project',completedOn:''};
 }
+function activityEdit(){const id='activity',boardId='board';return {...draft,location:'',url:'',id,version:1,boardId,key:JSON.stringify([boardId,id]),newRecord:true,base:null,sourceBase:null,allDay:false};}
+test('activity recovery validates board-scoped stable identity and preserves legacy draft formats',()=>{
+  const d=activityEdit();assert(W.validActivityDraft(d,'board'));assert.equal(W.validActivityDraft(d,'other'),false);const legacy={...d,id:''};for(const key of ['version','boardId','key','newRecord','sourceBase'])delete legacy[key];const before=JSON.stringify(legacy);assert(W.validActivityDraft(legacy,'board'));assert.equal(JSON.stringify(legacy),before);
+});
+test('malformed activity drafts and partial save receipts cannot become editable records',()=>{
+  const d=activityEdit();for(const bad of [null,false,[],{}, {...d,version:2},{...d,allDay:'true'},{...d,id:''},{...d,key:'wrong'},{...d,notes:[]},{...d,newRecord:false},{...d,receipt:{}},{...d,receipt:{status:'unknown',after:{id:d.id,type:'event',activity:{}},values:{}}}])assert.equal(W.validActivityDraft(bad,'board'),false);
+});
+test('activity field merging preserves unknown integration metadata and removes stale timed fields on all-day conversion',()=>{
+  const previous={title:'Old',startAt:'2026-09-10T06:00:00Z',endAt:'2026-09-10T07:00:00Z',custom:{keep:'every field'},externalId:'external'};const normalized=W.activityFromDraft({...draft,allDay:true});const before=JSON.stringify(previous);const next=W.mergeActivityFields(previous,normalized);assert.deepEqual(next.custom,previous.custom);assert.equal(next.externalId,'external');assert.equal(Object.hasOwn(next,'startAt'),false);assert.equal(Object.hasOwn(next,'endAt'),false);assert.equal(next.title,draft.title);assert.equal(JSON.stringify(previous),before);
+});
+test('activity conflict snapshots cover owned fields but do not discard independent card metadata',()=>{
+  const card={id:'activity',type:'event',title:'Original',category:'Personal',targetAt:'2026-09-10T06:00:00Z',description:'Keep',calendarOnly:true,activity:{title:'Original',custom:{keep:true}},custom:'outside editor',updatedAt:42};const before=JSON.stringify(card);assert.deepEqual(Object.keys(W.activityCardState(card)),['id','type','title','category','targetAt','description','calendarOnly','activity']);assert.equal(JSON.stringify(card),before);
+});
+test('prepared failed and saved activity receipts remain recoverable without changing recorded values',()=>{
+  for(const status of ['prepared','failed','saved']){const d=activityEdit();d.receipt={status,after:{id:d.id,type:'event',activity:W.activityFromDraft(d)},values:W.activityFromDraft(d)};const before=JSON.stringify(d);assert(W.validActivityDraft(d,'board'));assert.equal(JSON.stringify(d),before);}
+});
 test('source-task drafts validate exact board and original task identity for Project To-Do and single cards',()=>{
   for(const kind of ['checklist','daily','single']){const d=cardTaskEdit(kind);assert(W.validCardTaskEditDraft(d,'board'));assert.equal(W.validCardTaskEditDraft(d,'another-board'),false);assert.equal(W.validCardTaskEditDraft(d,''),false);}
 });

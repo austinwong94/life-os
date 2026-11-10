@@ -73,7 +73,25 @@
       base && typeof base==='object' && !Array.isArray(base) && (ref.kind==='single'?ref.itemId===null:typeof ref.itemId==='string' && ref.itemId.trim() && base.id===ref.itemId) &&
       typeof draft.title==='string' && typeof draft.sourceTitle==='string' && typeof draft.completedOn==='string');
   }
-  const api = {areas,dateKey,shift,captureDateChoices,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink,taskEditValues,taskEditChanged,validTaskEditDraft,validCardTaskEditDraft};
+  const activityKeys=['title','area','allDay','startDate','endDate','startAt','endAt','location','url','notes','timezone'];
+  function mergeActivityFields(previous,activity){
+    return {...Object.fromEntries(Object.entries(previous || {}).filter(([key])=>!activityKeys.includes(key))),...activity};
+  }
+  function activityCardState(card){
+    return Object.fromEntries(['id','type','title','category','targetAt','description','calendarOnly','activity'].filter(key=>Object.hasOwn(card,key)).map(key=>[key,card[key]]));
+  }
+  function validActivityDraft(draft,boardId){
+    if(typeof boardId!=='string' || !boardId.trim())return false;
+    if(!draft || Array.isArray(draft) || !['id','title','area','startDate','endDate','startTime','endTime','location','url','notes'].every(key=>typeof draft[key]==='string') || typeof draft.allDay!=='boolean' || !(draft.base===null || draft.base && typeof draft.base==='object' && !Array.isArray(draft.base)))return false;
+    if(draft.version===undefined)return !Object.hasOwn(draft,'receipt');
+    if(draft.version!==1 || !draft.id.trim() || draft.boardId!==boardId || draft.key!==JSON.stringify([boardId,draft.id]) || typeof draft.newRecord!=='boolean' || !(draft.newRecord?draft.sourceBase===null:draft.sourceBase?.id===draft.id && draft.sourceBase.type==='event'))return false;
+    if(Object.hasOwn(draft,'receipt')){
+      const r=draft.receipt;
+      if(!r || !['prepared','failed','saved'].includes(r.status) || r.after?.id!==draft.id || r.after.type!=='event' || !r.after.activity || typeof r.after.activity!=='object' || Array.isArray(r.after.activity) || !r.values || typeof r.values!=='object' || Array.isArray(r.values))return false;
+    }
+    return true;
+  }
+  const api = {areas,dateKey,shift,captureDateChoices,localInput,changeActivityStart,activityFromDraft,occursOn,googleLink,taskEditValues,taskEditChanged,validTaskEditDraft,validCardTaskEditDraft,mergeActivityFields,activityCardState,validActivityDraft};
   root.LifePlanning = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
@@ -660,9 +678,9 @@ function renderTaskResults(root) {
 function calendarActivities(includeArchived=false) {
   const cards=includeArchived?getArchivedCards():state.cards;
   return cards.filter(card=>card.type==="event").flatMap(card=>{
-    if(card.activity)return [{card,activity:card.activity}];
+    if(card.activity)return [{boardId:state.activeBoardId,card,activity:card.activity}];
     if(!Number.isFinite(Date.parse(card.targetAt)))return [];
-    return [{card,activity:{title:card.title,area:card.category,allDay:false,startAt:card.targetAt,endAt:card.targetAt,notes:card.description || "",location:"",url:""},legacy:true}];
+    return [{boardId:state.activeBoardId,card,activity:{title:card.title,area:card.category,allDay:false,startAt:card.targetAt,endAt:card.targetAt,notes:card.description || "",location:"",url:""},legacy:true}];
   });
 }
 function calendarPlannerTasks() {
@@ -670,9 +688,9 @@ function calendarPlannerTasks() {
   return getPlannerSourceItems().filter(item=>LifePlanner.validDate(item.dateKey) && (session.area==="*" || item.group===session.area));
 }
 function renderCalendarWorkspace(root) {
-  const session=planningSession();
-  const header=planningNode("header","planning-heading");header.append(planningNode("h2","","Calendar"),planningButton("Add activity",()=>openActivityEditor(),"plus"));root.append(header);
-  if(session.activityDraft){root.append(planningNode("p","calendar-timezone",Intl.DateTimeFormat().resolvedOptions().timeZone),renderActivityEditor());return;}
+  const session=planningSession(),boardId=state.activeBoardId;
+  const header=planningNode("header","planning-heading");header.append(planningNode("h2","","Calendar"),planningButton("Add activity",()=>{if(planningControlCurrent(root,{boardId},session) && !document.querySelector('dialog[open]'))openActivityEditor();},"plus"));root.append(header);
+  if(Object.hasOwn(session,'activityDraft')){root.append(planningNode("p","calendar-timezone",Intl.DateTimeFormat().resolvedOptions().timeZone),renderActivityEditor());return;}
   const toolbar=planningNode("div","calendar-toolbar"); toolbar.append(renderPlanningAreaFilter());
   const tabs=planningNode("div","planning-tabs");tabs.setAttribute("role","group");tabs.setAttribute("aria-label","Calendar view");
   for(const [key,label] of [["month","Month"],["week","Week"],["agenda","Agenda"]]){
@@ -758,64 +776,109 @@ function formatActivityTiming(activity) {
 }
 function renderActivityRow(item) {
   const {activity,card}=item,row=planningNode("article","activity-row");
+  const boardId=state.activeBoardId,current=()=>planningControlCurrent(row,{boardId}) && !document.querySelector('dialog[open]');
   const copy=planningNode("div","activity-copy");copy.append(planningNode("span","task-area",activity.area||"Unsorted"),planningNode("h4","",activity.title),planningNode("p","",formatActivityTiming(activity)));
   if(activity.location)copy.append(planningNode("p","",activity.location));
   if(activity.notes){const notes=planningNode("details","activity-notes");notes.append(planningNode("summary","","Notes"),planningNode("p","",activity.notes));copy.append(notes);}
   if(activity.url){try{const url=new URL(activity.url);if(url.protocol==="https:"&&!url.username&&!url.password){const link=planningNode("a","","Meeting link");link.href=url.href;link.target="_blank";link.rel="noopener noreferrer";copy.append(link);}}catch{}}
   const actions=planningNode("div","activity-actions");
-  actions.append(planningIcon("Edit activity: "+activity.title,()=>openActivityEditor(item),"pencil"));
+  actions.append(planningIcon("Edit activity: "+activity.title,()=>{if(current())openActivityEditor(item);},"pencil"));
   const google=planningButton("Add to Google Calendar",()=>{
+    if(!current())return;
     if(!confirm("This creates a separate Google event, not a synced event. Repeating it can create duplicates. Create a copy anyway?"))return;
     window.open(LifePlanning.googleLink(activity),"_blank","noopener,noreferrer");
   },"external-link");
   const details=planningNode("details","activity-more");details.append(planningNode("summary","","More"),google,
-    planningButton("Archive",()=>{if(confirm(`Archive "${activity.title}"? You can restore it from Archive.`))archiveCard(card.id);},"archive"));
+    planningButton("Archive",()=>{if(current() && confirm(`Archive "${activity.title}"? You can restore it from Archive.`) && current())archiveCard(card.id);},"archive"));
   actions.append(details);row.append(copy,actions);return row;
 }
+const activityDraftPersistence=new WeakMap();
 function openActivityEditor(item) {
+  if(item?.boardId && item.boardId!==state.activeBoardId)return;
   const session=planningSession();
-  if(session.activityDraft){planningRefresh();return;}
-  const a=item?.activity,start=a?.startAt?LifePlanning.localInput(a.startAt):"",end=a?.endAt?LifePlanning.localInput(a.endAt):"";
-  session.activityDraft={id:item?.card.id || "",base:item?LifeStateMerge.copy(item.card.activity || {targetAt:item.card.targetAt,title:item.card.title,description:item.card.description}):null,
-    title:a?.title || "",area:a?.area || session.lastArea || "",allDay:a?.allDay || false,startDate:a?.allDay?a.startDate:start.slice(0,10)||session.day,
-    endDate:a?.allDay?a.endDate:end.slice(0,10)||session.day,startTime:start.slice(11)||"09:00",endTime:end.slice(11)||"10:00",location:a?.location||"",url:a?.url||"",notes:a?.notes||""};
-  planningRefresh();elements.boardGrid.querySelector('[aria-label="Activity name"]')?.focus();
+  if(Object.hasOwn(session,'activityDraft')){planningRefresh();return;}
+  const matches=item?calendarActivities().filter(value=>value.card.id===item.card.id):[];
+  if(item && matches.length!==1){setSaveStatus('The source activity changed or is unavailable.','error');return;}
+  const fresh=matches[0],a=fresh?.activity,start=a?.startAt?LifePlanning.localInput(a.startAt):"",end=a?.endAt?LifePlanning.localInput(a.endAt):"",id=fresh?.card.id || createId(),boardId=state.activeBoardId;
+  session.activityDraft={version:1,boardId,key:JSON.stringify([boardId,id]),id,newRecord:!fresh,sourceBase:fresh?LifeStateMerge.copy(LifePlanning.activityCardState(fresh.card)):null,base:fresh?LifeStateMerge.copy(fresh.card.activity || {targetAt:fresh.card.targetAt,title:fresh.card.title,description:fresh.card.description}):null,
+    title:String(a?.title || ""),area:String(a?.area || session.lastArea || ""),allDay:Boolean(a?.allDay),startDate:a?.allDay?String(a.startDate || ''):fresh?start.slice(0,10):session.day,
+    endDate:a?.allDay?String(a.endDate || ''):fresh?end.slice(0,10):session.day,startTime:fresh?start.slice(11):"09:00",endTime:fresh?end.slice(11):"10:00",location:String(a?.location||""),url:String(a?.url||""),notes:String(a?.notes||"")};
+  activityDraftPersistence.set(session.activityDraft,savePlanningSession());renderCardsOnly({force:true});elements.boardGrid.querySelector('[aria-label="Activity name"]')?.focus();
+}
+function activityCardMatches(id){
+  return [...state.cards.map(card=>({card,boardId:state.activeBoardId,archived:Boolean(card.archivedAt)})),...getArchivedCards().map(card=>({card,boardId:state.activeBoardId,archived:true})),
+    ...state.boards.filter(board=>board.id!==state.activeBoardId).flatMap(board=>[...(board.cards || []).map(card=>({card,boardId:board.id,archived:Boolean(card.archivedAt)})),...(board.archivedCards || []).map(card=>({card,boardId:board.id,archived:true}))])].filter(item=>item.card.id===id);
+}
+function saveActivityDraft(draft,persist){
+  const values=LifePlanning.activityFromDraft(draft);
+  if(draft.version===undefined){
+    const matches=draft.id?activityCardMatches(draft.id):[],source=matches[0];
+    if(draft.id && (matches.length!==1 || source.boardId!==state.activeBoardId || source.archived || source.card.type!=='event' || !LifeStateMerge.equal(draft.base,source.card.activity || {targetAt:source.card.targetAt,title:source.card.title,description:source.card.description})))throw new Error('This activity changed or is unavailable. Your draft was kept.');
+    draft.newRecord=!draft.id;draft.id ||= createId();draft.boardId=state.activeBoardId;draft.version=1;draft.key=JSON.stringify([draft.boardId,draft.id]);draft.sourceBase=source?LifeStateMerge.copy(LifePlanning.activityCardState(source.card)):null;
+  }
+  const matches=activityCardMatches(draft.id),match=matches[0],live=match?.card;
+  if(matches.length && (matches.length!==1 || match.boardId!==state.activeBoardId || match.archived || live.type!=='event'))throw new Error('This activity changed, moved or was archived. Your draft was kept.');
+  const current=live?LifePlanning.activityCardState(live):null,acknowledged=live && draft.receipt && LifeStateMerge.equal(current,draft.receipt.after);
+  if(acknowledged && LifeStateMerge.equal(values,draft.receipt.values))return values;
+  if(acknowledged){draft.newRecord=false;draft.sourceBase=LifeStateMerge.copy(current);draft.base=LifeStateMerge.copy(live.activity || {targetAt:live.targetAt,title:live.title,description:live.description});}
+  if(!acknowledged && (draft.newRecord?Boolean(live):!live || !LifeStateMerge.equal(current,draft.sourceBase)))throw new Error('This activity changed in another tab. Your draft was kept. Reopen it to review the latest version.');
+  // An absent prepared record may have been saved and subsequently deleted.
+  if(!live && draft.receipt && draft.receipt.status!=='failed')throw new Error('The previous save outcome needs review. Your draft was kept; no activity was recreated.');
+  const targetAt=values.allDay?new Date(values.startDate+'T12:00:00').toISOString():values.startAt;
+  const before=live?LifeStateMerge.copy(live):null,next=live?LifeStateMerge.copy(live):makeCard({type:'event',title:values.title,category:values.area||'Unsorted',timerMode:'date',targetAt});
+  next.id=draft.id;if(!live){next.calendarOnly=true;next.order=nextOrder();}
+  Object.assign(next,{activity:LifePlanning.mergeActivityFields(live?.activity,values),title:values.title,category:values.area||'Unsorted',targetAt,updatedAt:Date.now()});
+  next.metadata={...next.metadata,category:next.category};
+  const receipt={status:'prepared',after:LifeStateMerge.copy(LifePlanning.activityCardState(next)),values:LifeStateMerge.copy(values)};draft.receipt=receipt;
+  if(!persist()){receipt.status='failed';throw new Error('Draft storage is unavailable. The activity is unchanged; keep this tab open and retry.');}
+  if(live)Object.assign(live,next);else state.cards.push(next);
+  try{if(!saveState())throw new Error('Not saved yet. Your activity draft was kept; please retry.');}
+  catch(error){
+    if(live){for(const key of Object.keys(live))delete live[key];Object.assign(live,before);}else state.cards=state.cards.filter(card=>card!==next);
+    syncActiveBoard({touchBoard:false});receipt.status='failed';persist();throw error;
+  }
+  receipt.status='saved';return values;
 }
 function renderActivityEditor() {
   const session=planningSession(),draft=session.activityDraft,form=planningNode("form","activity-editor");
-  form.append(planningNode("h3","",draft.id?"Edit activity":"New activity"));
-  const field=(label,type,key)=>planningField(label,planningInput(type,draft[key],value=>{draft[key]=value;savePlanningSession();}));
+  if(!LifePlanning.validActivityDraft(draft,state.activeBoardId)){const message=planningNode('p','planning-message','This activity draft needs review. Its stored copy was kept.');message.setAttribute('role','alert');return message;}
+  const boardId=state.activeBoardId;let busy=false;
+  const current=()=>!busy && planningControlCurrent(form,{boardId},session) && session.activityDraft===draft && state.ui.workspaceMode==='calendar' && !document.querySelector('dialog[open]');
+  const status=planningNode('small','activity-draft-status');status.setAttribute('aria-live','polite');
+  const persist=()=>{const ok=savePlanningSession();activityDraftPersistence.set(draft,ok);status.textContent=ok?'Draft kept in this tab':'Memory only. Keep this tab open.';return ok;};
+  form.append(planningNode("h3","",draft.newRecord || !draft.id?"New activity":"Edit activity"));
+  const field=(label,type,key)=>planningField(label,planningInput(type,draft[key],value=>{if(current()){draft[key]=value;persist();}}));
   const name=field("Activity name","text","title");name.querySelector("input").required=true;form.append(name);
-  form.append(planningField("Activity area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{draft.area=value;savePlanningSession();})));
-  const allDay=planningInput("checkbox","",()=>{});allDay.checked=draft.allDay;allDay.onchange=()=>{draft.allDay=allDay.checked;planningRefresh();};form.append(planningField("All day",allDay));
-  const endDate=planningInput("date",draft.endDate,value=>{draft.endDate=value;draft.endDateFollowsStart=!value||value===draft.startDate;savePlanningSession();});
+  form.append(planningField("Activity area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{if(current()){draft.area=value;persist();}})));
+  const allDay=planningInput("checkbox","",()=>{});allDay.checked=draft.allDay;allDay.onchange=()=>{if(!current()){allDay.checked=draft.allDay;return;}draft.allDay=allDay.checked;persist();renderCardsOnly({force:true});};const allDayField=planningField("All day",allDay);allDayField.classList.add('activity-all-day');form.append(allDayField);
+  const endDate=planningInput("date",draft.endDate,value=>{if(!current())return;draft.endDate=value;draft.endDateFollowsStart=!value||value===draft.startDate;persist();});
   endDate.min=LifePlanner.validDate(draft.startDate)?draft.startDate:"";
   const startDate=planningInput("date",draft.startDate,value=>{
-    Object.assign(draft,LifePlanning.changeActivityStart(draft,value));endDate.value=draft.endDate;endDate.min=LifePlanner.validDate(value)?value:"";savePlanningSession();
+    if(!current())return;Object.assign(draft,LifePlanning.changeActivityStart(draft,value));endDate.value=draft.endDate;endDate.min=LifePlanner.validDate(value)?value:"";persist();
   });
   const dates=planningNode("div","activity-dates");dates.append(planningField("Start date",startDate),planningField("End date",endDate));
   if(!draft.allDay)dates.append(field("Start time","time","startTime"),field("End time","time","endTime"));form.append(dates);
   form.append(field("Location","text","location"),field("Meeting link","url","url"));
-  const notes=planningNode("textarea");notes.rows=4;notes.value=draft.notes;notes.oninput=()=>{draft.notes=notes.value;savePlanningSession();};form.append(planningField("Activity notes",notes));
+  const notes=planningNode("textarea");notes.rows=4;notes.value=draft.notes;notes.oninput=()=>{if(current()){draft.notes=notes.value;persist();}};form.append(planningField("Activity notes",notes));
   const message=planningNode("p","planning-message");message.setAttribute("role","alert");form.append(message);
   const actions=planningNode("div","activity-editor-actions"),save=planningButton("Save activity",null,"check");save.type="submit";save.classList.add("is-primary");
-  actions.append(save,planningButton("Cancel",()=>{if(!draft.title.trim()||confirm("Discard this activity draft?")){delete session.activityDraft;planningRefresh();}},"x"));form.append(actions);
+  actions.append(status,planningIcon('Cancel',async()=>{
+    if(!current())return;busy=true;let confirmed=false;
+    try{confirmed=await confirmTaskAction('Discard activity draft?',`"${draft.title || 'Untitled activity'}"\n\nOnly this draft will be discarded. Saved activities will remain unchanged.`,'Discard draft',{danger:true});}finally{busy=false;}
+    if(!confirmed || !current())return;delete session.activityDraft;
+    if(!savePlanningSession()){session.activityDraft=draft;message.textContent='Draft was not discarded. Its stored copy was kept; please retry.';return;}
+    renderCardsOnly({force:true});
+  },'x'),save);form.append(actions);
   form.onsubmit=event=>{
-    event.preventDefault();
+    event.preventDefault();if(!current())return;
     try{
-      const activity=LifePlanning.activityFromDraft(draft);
-      let card=draft.id?state.cards.find(card=>card.id===draft.id):null;
-      if(draft.id&&((!card && (!draft.pendingNew || getArchivedCards().some(card=>card.id===draft.id))) || (card && !LifeStateMerge.equal(draft.base,card.activity || {targetAt:card.targetAt,title:card.title,description:card.description}))))throw new Error("This activity changed in another tab. Your draft is kept. Cancel and reopen to review the latest version.");
-      const targetAt=activity.allDay?new Date(activity.startDate+"T12:00:00").toISOString():activity.startAt;
-      if(!card){card=makeCard({type:"event",title:activity.title,category:activity.area||"Unsorted",timerMode:"date",targetAt});card.id=draft.id || card.id;card.calendarOnly=true;state.cards.push(card);draft.pendingNew=true;}
-      Object.assign(card,{activity,title:activity.title,category:activity.area||"Unsorted",targetAt,updatedAt:Date.now()});
-      draft.id=card.id;draft.base=LifeStateMerge.copy(activity);savePlanningSession();
-      if(!saveState())throw new Error("Not saved yet. Your activity draft is kept; try again when device saving is available.");
-      session.lastArea=draft.area;session.day=activity.allDay?activity.startDate:LifePlanning.localInput(activity.startAt).slice(0,10);session.area="*";
-      delete session.activityDraft;savePlanningSession();renderCardsOnly({force:true});
+      const activity=saveActivityDraft(draft,persist),previous={lastArea:session.lastArea,day:session.day,area:session.area};
+      session.lastArea=draft.area;session.day=activity.allDay?activity.startDate:LifePlanning.localInput(activity.startAt).slice(0,10);session.area="*";delete session.activityDraft;
+      if(!savePlanningSession()){Object.assign(session,previous);session.activityDraft=draft;message.textContent='Activity saved. Draft cleanup needs retry; Save will not repeat the change.';return;}
+      renderCardsOnly({force:true});
     }catch(error){message.textContent=error.message;}
   };
-  return form;
+  status.textContent=planningSessionFaults.has(boardId) || activityDraftPersistence.get(draft)===false?'Memory only. Keep this tab open.':'Draft kept in this tab';return form;
 }
 function renderReadableActivity(activity) {
   return renderReadableKeyValues("Activity",[["Name",activity.title],["Area",activity.area],["When",formatActivityTiming(activity)],["Recorded time zone",activity.timezone],["Location",activity.location],["Meeting link",activity.url],["Notes",activity.notes]]);

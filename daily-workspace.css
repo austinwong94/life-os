@@ -152,6 +152,12 @@
 .subtask-add > [hidden] { display: none; }
 .subtask-editor-actions, .card-task-editor-actions { display: grid; grid-template-columns: minmax(0,1fr) 44px auto; align-items: center; gap: 8px; }
 .subtask-draft-status, .card-task-draft-status { min-width: 0; font-size: 12px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; }
+.activity-editor .activity-editor-actions { display: grid; grid-template-columns: minmax(0,1fr) 44px auto; align-items: center; gap: 8px; background: var(--surface,#fff); border-color: var(--line); }
+.activity-draft-status { min-width: 0; font-size: 12px; line-height: 18px; color: var(--muted); overflow-wrap: anywhere; }
+.activity-editor .activity-editor-actions .planning-button { min-width: 44px; min-height: 44px; }
+.activity-editor .activity-editor-actions .planning-icon { width: 44px; height: 44px; flex-basis: 44px; }
+.activity-editor .activity-all-day { display: flex; flex-direction: row; align-items: center; justify-content: space-between; min-height: 44px; gap: 12px; cursor: pointer; }
+.activity-editor .activity-all-day input { width: 20px; height: 20px; margin: 0; accent-color: var(--action); }
 :is(.subtask-editor,.card-task-dialog) .planning-message { margin: 0; font-size: 13px; line-height: 1.5; }
 :is(.subtask-editor,.card-task-dialog) .planning-message:empty { display: none; }
 :is(.subtask-editor,.card-task-dialog) .planning-button { min-width: 44px; min-height: 44px; }
