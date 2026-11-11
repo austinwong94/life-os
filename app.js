@@ -1430,7 +1430,7 @@ render();
 initializeExperience();
 handleCloudAuthRedirect();
 window.setTimeout(maintainCloudSession, 0);
-clearStartupBoardSearch();
+clearStartupBoardSearch({initial:true});
 [100, 400, 900].forEach((delay) => window.setTimeout(clearStartupBoardSearch, delay));
 startLocalDevAutoReload();
 
@@ -2802,7 +2802,9 @@ function renderBoardMeta() {
   });
 }
 
-function clearStartupBoardSearch() {
+function clearStartupBoardSearch({initial=false} = {}) {
+  // Delayed browser-autofill cleanup must not clear a search started after startup.
+  if(!initial && (normalizeLabel(state.searchQuery || '') || document.activeElement===elements.boardSearch))return;
   const hadSearch = Boolean(normalizeLabel(state.searchQuery || elements.boardSearch.value || ""));
   state.searchQuery = "";
   elements.boardSearch.value = "";

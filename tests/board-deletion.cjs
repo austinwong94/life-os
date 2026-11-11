@@ -48,6 +48,12 @@ fs.mkdirSync(out,{recursive:true});const results=[];
  await run('board deletion: failed final save keeps view preferences and enables a fresh safe retry',async p=>{
   await p.evaluate(()=>{state.activeFilter='open';state.searchQuery='Original search';state.ui.controlsOpen=false;});await start(p);await continueReview(p);const before=await snapshot(p);await fail(p);await finish(p);assert.deepEqual(await snapshot(p),before);assert.match(await p.locator('#boardActionStatus').innerText(),/Board deletion was not saved/);assert.equal(await p.locator('#deleteBoardButton').isDisabled(),false);await p.screenshot({path:out+'/sample-refused-deletion.png'});await recover(p);await p.locator('#deleteBoardButton').click();await continueReview(p);await finish(p);assert.equal(await p.evaluate(()=>state.boards.some(b=>b.id==='delete-source')),false);
  });
+ await run('board deletion: delayed startup cleanup keeps a newly entered search and its visible text',async p=>{
+  const result=await p.evaluate(()=>{elements.boardSearch.value='Original search';elements.boardSearch.dispatchEvent(new Event('input',{bubbles:true}));for(let i=0;i<3;i++)clearStartupBoardSearch();return {query:state.searchQuery,text:elements.boardSearch.value};});assert.deepEqual(result,{query:'Original search',text:'Original search'});await start(p);await continueReview(p);const before=await snapshot(p);await fail(p);await finish(p);assert.deepEqual(await snapshot(p),before);assert.equal(await p.locator('#boardSearch').inputValue(),'Original search');
+ });
+ await run('board deletion: autofill cleanup still removes only an untouched restored search field',async p=>{
+  const result=await p.evaluate(()=>{state.searchQuery='';elements.boardSearch.value='Restored stale browser text';clearStartupBoardSearch();return {query:state.searchQuery,text:elements.boardSearch.value};});assert.deepEqual(result,{query:'',text:''});
+ });
  await run('board deletion: changing boards during confirmation never deletes the new active board',async p=>{
   await start(p);await p.evaluate(()=>switchBoard('delete-other'));const before=await snapshot(p);await p.locator('#taskConfirmationDialog').getByRole('button',{name:'Continue',exact:true}).click();await p.waitForFunction(()=>pendingBoardDeletion===null);assert.deepEqual(await snapshot(p),before);assert.equal(await p.locator('#taskConfirmationDialog').count(),0);
  });
