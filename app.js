@@ -1183,7 +1183,8 @@ let applyingExternalStorageUpdate = false;
 let localDevSourceSignature = "";
 let localDevReloadPending = false;
 let activeReportType = "fitness";
-let activeMoveCardId = "";
+let activeCardMove = null;
+let pendingCardDeletion = null;
 let timerDisplayBoardId = "";
 let timerDisplayFrames = new Map();
 
@@ -1977,7 +1978,7 @@ function bindEvents() {
     }
     const deleteButton = event.target.closest("button[data-delete-archived-card]");
     if (deleteButton) {
-      permanentlyDeleteArchivedCard(deleteButton.dataset.deleteArchivedCard);
+      permanentlyDeleteArchivedCard(deleteButton.dataset.deleteArchivedCard,context);
       return;
     }
     const button = event.target.closest("button[data-restore-card]");
@@ -2629,19 +2630,23 @@ function getMoveDestinationBoards() {
     : [];
 }
 
-function openMoveCardModal(cardId) {
+function openMoveCardModal(cardId, options = {}) {
   const card = state.cards.find((item) => item.id === cardId);
-  if (!card) return;
-  syncActiveBoard();
-  activeMoveCardId = cardId;
+  if(editingCardId===cardId){setCardMoveFeedback('Finish or close this card editor before moving. Your draft was kept.');return false;}
+  if (!card || options.boardId && options.boardId!==state.activeBoardId || options.expected && !LifeStateMerge.equal(card,options.expected)) {
+    setCardMoveFeedback('This card changed. Reopen its options before moving it.');return false;
+  }
+  activeCardMove={boardId:state.activeBoardId,expected:LifeStateMerge.copy(card),destinations:getMoveDestinationBoards().map(board=>({id:board.id,name:board.name})),busy:false};
   closeOtherOverlays("move");
+  setCardMoveFeedback('');
   renderMoveCardModal(card);
   elements.moveCardModal.hidden = false;
   syncModalOpenState();
+  return true;
 }
 
 function closeMoveCardModal() {
-  activeMoveCardId = "";
+  activeCardMove = null;
   elements.moveCardModal.hidden = true;
   syncModalOpenState();
 }
@@ -2667,15 +2672,30 @@ function renderMoveCardModal(card) {
   hydrateIcons(elements.moveCardModal);
 }
 
-function confirmMoveCardToBoard() {
-  const card = state.cards.find((item) => item.id === activeMoveCardId);
-  const targetBoardId = elements.moveBoardSelect.value;
-  if (!card || !targetBoardId || targetBoardId === state.activeBoardId) return;
-  if (["planner", "planlist"].includes(card.type)) {
-    const confirmed = window.confirm("This card is connected to planner data on its board. Move it anyway?");
-    if (!confirmed) return;
-  }
-  moveActiveCardToBoard(card.id, targetBoardId);
+function setCardMoveFeedback(message) {
+  const status=document.getElementById('moveCardStatus');
+  if(status){status.textContent=message;status.hidden=!message;if(message && !elements.moveCardModal.hidden)status.scrollIntoView({block:'nearest'});}
+  if(message)setSaveStatus(message,'error');
+}
+
+async function confirmMoveCardToBoard() {
+  const context=activeCardMove,targetBoardId=elements.moveBoardSelect.value;
+  if(!context || context.busy || document.querySelector('dialog[open]'))return false;
+  const current=()=>activeCardMove===context && !elements.moveCardModal.hidden && planningControlCurrent(elements.moveCardConfirmButton,{boardId:context.boardId}) && elements.moveBoardSelect.value===targetBoardId;
+  if(!current())return false;
+  context.busy=true;elements.moveCardConfirmButton.disabled=true;
+  try{
+    const matches=state.cards.filter(card=>card.id===context.expected.id),card=matches[0];
+    const destination=context.destinations.find(board=>board.id===targetBoardId),targets=state.boards.filter(board=>board.id===targetBoardId);
+    if(matches.length!==1 || !LifeStateMerge.equal(card,context.expected))throw new Error('This card changed. Reopen Move to board to review its latest version.');
+    if(!destination || targets.length!==1 || targets[0].name!==destination.name)throw new Error('The destination changed. Reopen Move to board to review it.');
+    if(['planner','planlist'].includes(card.type)){
+      const confirmed=await confirmTaskAction('Move linked planner card?',elements.moveCardNote.textContent,'Move card');
+      if(!confirmed || !current())return false;
+    }
+    return moveActiveCardToBoard(card.id,targetBoardId,context);
+  }catch(error){setCardMoveFeedback(error.message);return false;}
+  finally{if(activeCardMove===context){context.busy=false;elements.moveCardConfirmButton.disabled=context.destinations.length===0;}}
 }
 
 function render(options = {}) {
@@ -3736,7 +3756,7 @@ function renderCard(card, options = {}) {
       closeCardActionMenus();
       const action = actionButton.dataset.cardAction;
       if (action === "edit") startEditingCard(card.id);
-      if (action === "move") openMoveCardModal(card.id);
+      if (action === "move") openMoveCardModal(card.id,{boardId:ownerBoardId,expected:cardActionSnapshot});
       if (action === "archive") archiveCard(card.id,{boardId:ownerBoardId,expected:cardActionSnapshot});
       if (action === "delete") deleteCard(card.id,{boardId:ownerBoardId,expected:cardActionSnapshot});
     });
@@ -9709,79 +9729,65 @@ function archiveCard(id, options = {}) {
   return true;
 }
 
-function moveActiveCardToBoard(cardId, targetBoardId) {
-  syncActiveBoard();
-  const sourceBoardId = state.activeBoardId;
-  const sourceBoard = state.boards.find((board) => board.id === sourceBoardId);
-  const targetBoard = state.boards.find((board) => board.id === targetBoardId);
-  if (!sourceBoard || !targetBoard || sourceBoardId === targetBoardId) return;
-
-  const cardIndex = state.cards.findIndex((card) => card.id === cardId);
-  if (cardIndex < 0) return;
-  const [card] = state.cards.splice(cardIndex, 1);
-  const now = Date.now();
-  const movedCard = normalizeCard({
-    ...card,
-    runningSince: null,
-    layoutColumn: 0,
-    order: getNextBoardOrder(targetBoard),
-    movedFromBoardId: sourceBoardId,
-    movedFromBoardName: sourceBoard.name,
-    movedToBoardId: targetBoardId,
-    movedToBoardName: targetBoard.name,
-    movedAt: now,
-    updatedAt: now
-  });
-
-  sourceBoard.cards = state.cards.map(normalizeCard);
-  sourceBoard.updatedAt = now;
-  targetBoard.cards = [...(Array.isArray(targetBoard.cards) ? targetBoard.cards : []), movedCard].map(normalizeCard);
-  targetBoard.updatedAt = now;
-
-  if (editingCardId === cardId) {
-    resetFormState();
-  }
-  closeMoveCardModal();
-  saveState();
-  render();
-  showUndoToast({
-    message: `"${card.title}" moved to ${targetBoard.name}.`,
-    onUndo: () => moveCardBackToBoard(movedCard.id, targetBoardId, sourceBoardId)
-  });
+function transferCardBetweenBoards(cardId, sourceBoardId, targetBoardId, options = {}) {
+  try {
+    if(options.boardId && options.boardId!==state.activeBoardId)throw new Error('Return to the original board and reopen Move to board.');
+    const sources=state.boards.filter(board=>board.id===sourceBoardId),targets=state.boards.filter(board=>board.id===targetBoardId);
+    if(sources.length!==1 || targets.length!==1 || sourceBoardId===targetBoardId)throw new Error('The source or destination changed. Nothing was moved.');
+    const source=sources[0],target=targets[0];
+    if(options.destinations && !options.destinations.some(board=>board.id===targetBoardId && board.name===target.name))throw new Error('The destination changed. Reopen Move to board to review it.');
+    if(sourceBoardId===state.activeBoardId && editingCardId===cardId)throw new Error('Finish or close this card editor before moving. Your draft was kept.');
+    const sourceCards=sourceBoardId===state.activeBoardId?state.cards:source.cards;
+    const targetCards=targetBoardId===state.activeBoardId?state.cards:target.cards;
+    const sourceArchive=sourceBoardId===state.activeBoardId?state.archivedCards:source.archivedCards;
+    const targetArchiveRaw=targetBoardId===state.activeBoardId?state.archivedCards:target.archivedCards;
+    if(sourceArchive!==undefined && !Array.isArray(sourceArchive) || targetArchiveRaw!==undefined && !Array.isArray(targetArchiveRaw))throw new Error('These archived records need review. Nothing was moved.');
+    const targetArchive=targetBoardId===state.activeBoardId?getArchivedCards():getArchivedCards(target);
+    if(!Array.isArray(sourceCards) || !Array.isArray(targetCards))throw new Error('These board records need review. Nothing was moved.');
+    const matches=sourceCards.filter(card=>card.id===cardId);
+    if(typeof cardId!=='string' || !cardId.trim() || matches.length!==1 || (sourceArchive || []).some(card=>card.id===cardId) || [...targetCards,...targetArchive].some(card=>card.id===cardId))throw new Error('This card cannot be identified safely. Both boards were kept unchanged.');
+    const card=matches[0],before=LifeStateMerge.copy(card);
+    if(options.expected && !LifeStateMerge.equal(before,options.expected))throw new Error('This card changed. Its latest version was kept; reopen its options.');
+    const now=Date.now(),next=LifeStateMerge.copy(options.returnCard || card);
+    if(next.id!==cardId)throw new Error('The original card needs review. Nothing was moved.');
+    if(isManualTimer(card) && card.runningSince)next.remaining=getRemaining(LifeStateMerge.copy(card));
+    else if(options.returnCard)next.remaining=card.remaining;
+    next.runningSince=null;next.updatedAt=now;
+    if(!options.returnCard)Object.assign(next,{layoutColumn:0,order:getNextBoardOrder({cards:targetCards}),movedFromBoardId:sourceBoardId,movedFromBoardName:source.name,movedToBoardId:targetBoardId,movedToBoardName:target.name,movedAt:now});
+    const from=sourceCards.filter(item=>item!==card),to=[...targetCards,next],previousBoards=state.boards,previousCards=state.cards;
+    // Stage both sides as one save; a refusal must restore the complete pair.
+    state.boards=state.boards.map(board=>board===source?{...board,cards:from,updatedAt:now}:board===target?{...board,cards:to,updatedAt:now}:board);
+    if(sourceBoardId===state.activeBoardId)state.cards=from;
+    if(targetBoardId===state.activeBoardId)state.cards=to;
+    try {if(!saveState())throw new Error('Device save refused');}
+    catch {
+      state.boards=previousBoards;state.cards=previousCards;syncActiveBoard({touchBoard:false});
+      setCardMoveFeedback('Move was not saved. Both boards and the original card were kept. '+deviceSaveFailureReason());
+      return {ok:false,retryable:true};
+    }
+    setCardMoveFeedback('');return {ok:true,before,after:next,sourceBoardId,targetBoardId,targetName:target.name};
+  }catch(error){setCardMoveFeedback(error.message);return {ok:false,retryable:false};}
 }
 
-function moveCardBackToBoard(cardId, sourceBoardId, targetBoardId) {
-  syncActiveBoard();
-  const sourceBoard = state.boards.find((board) => board.id === sourceBoardId);
-  const targetBoard = state.boards.find((board) => board.id === targetBoardId);
-  if (!sourceBoard || !targetBoard) return;
-  const sourceCards = sourceBoardId === state.activeBoardId ? state.cards : Array.isArray(sourceBoard.cards) ? sourceBoard.cards : [];
-  const cardIndex = sourceCards.findIndex((card) => card.id === cardId);
-  if (cardIndex < 0) return;
-  const [card] = sourceCards.splice(cardIndex, 1);
-  const now = Date.now();
-  const restoredCard = normalizeCard({
-    ...card,
-    runningSince: null,
-    layoutColumn: 0,
-    order: getNextBoardOrder(targetBoard),
-    movedAt: now,
-    movedFromBoardId: sourceBoardId,
-    movedFromBoardName: sourceBoard.name,
-    movedToBoardId: targetBoardId,
-    movedToBoardName: targetBoard.name,
-    updatedAt: now
-  });
-  sourceBoard.cards = sourceCards.map(normalizeCard);
-  sourceBoard.updatedAt = now;
-  targetBoard.cards = [...(Array.isArray(targetBoard.cards) ? targetBoard.cards : []), restoredCard].map(normalizeCard);
-  targetBoard.updatedAt = now;
-  if (targetBoardId === state.activeBoardId) {
-    state.cards = targetBoard.cards.map(normalizeCard);
+function moveActiveCardToBoard(cardId, targetBoardId, options = {}) {
+  const result=transferCardBetweenBoards(cardId,state.activeBoardId,targetBoardId,options);
+  if(!result.ok)return false;
+  closeMoveCardModal();render();
+  const expected=LifeStateMerge.copy(result.after),returnCard=LifeStateMerge.copy(result.before);
+  if(isManualTimer(returnCard))returnCard.remaining=result.after.remaining;
+  returnCard.runningSince=null;
+  showUndoToast({message:`"${result.before.title}" moved to ${result.targetName}.`,onUndo:()=>moveCardBackToBoard(cardId,result.targetBoardId,result.sourceBoardId,{expected,returnCard})});
+  return true;
+}
+
+function moveCardBackToBoard(cardId, sourceBoardId, targetBoardId, options = {}) {
+  const result=transferCardBetweenBoards(cardId,sourceBoardId,targetBoardId,options);
+  if(!result.ok){
+    if(result.retryable)showUndoToast({message:'Undo was not saved. Both boards were kept. Retry Undo.',onUndo:()=>moveCardBackToBoard(cardId,sourceBoardId,targetBoardId,options)});
+    else clearUndoToast();
+    return false;
   }
-  saveState();
-  render();
-  clearUndoToast();
+  render();clearUndoToast();return true;
 }
 
 function getNextBoardOrder(board) {
@@ -9808,25 +9814,35 @@ function restoreArchivedCard(id, options = {}) {
   return true;
 }
 
-function permanentlyDeleteArchivedCard(id) {
-  const records = getArchivedCards();
-  const index = records.findIndex((card) => card.id === id);
-  if (index < 0) return;
-  const card = records[index];
-  const title = card.title || "this archived card";
-  const firstConfirm = window.confirm(`Delete "${title}" forever? This cannot be undone.`);
-  if (!firstConfirm) return;
-  const secondConfirm = window.confirm(`Final confirmation: permanently delete "${title}" from Archive?`);
-  if (!secondConfirm) return;
-  if (!saveCloudRecoveryPoint("before-card-delete")) return;
-  if (card.type === "planner") card.plannerSourceOnly = true;
-  else records.splice(index, 1);
-  state.archivedCards = records;
-  saveState();
-  renderBoardMeta();
-  if (!elements.recordsModal.hidden) {
-    renderRecordsModal();
-  }
+async function permanentlyDeleteArchivedCard(id, options = {}) {
+  if(pendingCardDeletion || document.querySelector('dialog[open]'))return false;
+  const context={boardId:options.boardId || state.activeBoardId,expected:options.expected || LifeStateMerge.copy(getArchivedCards().find(card=>card.id===id)),fromArchive:!elements.recordsModal.hidden};
+  pendingCardDeletion=context;
+  try {
+    const current=()=>{
+      const matches=getArchivedCards().filter(card=>card.id===id);
+      if(state.activeBoardId!==context.boardId || context.fromArchive && elements.recordsModal.hidden || matches.length!==1 || state.cards.some(card=>card.id===id) || !LifeStateMerge.equal(matches[0],context.expected))throw new Error('This archived card or board changed. Nothing was deleted; reopen Archive to review it.');
+      return matches[0];
+    };
+    const card=current(),title=card.title || 'this archived card';
+    const note=card.type==='planner'?'Linked task history will remain available to other planner views.':'Your other cards will not be deleted.';
+    if(!await confirmTaskAction('Delete archived card?',`"${title}"\n\nThis removes the card from Archive. A recovery copy must be saved first. ${note}`,'Continue'))return false;
+    current();
+    if(!await confirmTaskAction('Confirm permanent deletion',`Delete "${title}" from Archive?\n\nThere is no Undo for this action. Recovery copies are kept separately.`,'Delete permanently',{danger:true}))return false;
+    current();syncActiveBoard({touchBoard:false});
+    if(!saveCloudRecoveryPoint('before-card-delete',getStateForStorage())){setCardArchiveFeedback('Nothing was deleted. A recovery copy could not be saved. Free space or download your data before retrying.');return false;}
+    const live=current(),original=getArchivedCards(),hadArchive=Object.hasOwn(state,'archivedCards');
+    state.archivedCards=live.type==='planner'?original.map(item=>item.id===id?{...LifeStateMerge.copy(item),plannerSourceOnly:true}:item):original.filter(item=>item.id!==id);
+    try {if(!saveState())throw new Error('Device save refused');}
+    catch {
+      if(hadArchive)state.archivedCards=original;else delete state.archivedCards;
+      syncActiveBoard({touchBoard:false});setCardArchiveFeedback('Deletion was not saved. The complete card remains in Archive. '+deviceSaveFailureReason());return false;
+    }
+    setCardArchiveFeedback('');clearUndoToast();renderBoardMeta();
+    if(!elements.recordsModal.hidden)renderRecordsModal();
+    return true;
+  }catch(error){setCardArchiveFeedback(error.message);return false;}
+  finally{if(pendingCardDeletion===context)pendingCardDeletion=null;}
 }
 
 function getArchivedCards(sourceState = state) {

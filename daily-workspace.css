@@ -159,6 +159,12 @@
 .activity-editor .activity-all-day { display: flex; flex-direction: row; align-items: center; justify-content: space-between; min-height: 44px; gap: 12px; cursor: pointer; }
 .activity-editor .activity-all-day input { width: 20px; height: 20px; margin: 0; accent-color: var(--action); }
 .records-modal { padding: 0; }
+.move-card-modal { max-height: min(760px,calc(100dvh - 104px - env(safe-area-inset-bottom))); }
+.move-card-body { display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
+.move-card-body > * { flex-shrink: 0; }
+.move-card-body .card-move-status { color: var(--danger,#a52b42); font-size: 13px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.move-card-body select, .move-card-actions button { min-height: 44px; font-size: 14px; }
+.move-card-actions button { border-radius: 6px; font-weight: 600; }
 .records-modal-body { display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
 .records-modal-body > * { flex-shrink: 0; }
 .records-modal-body > .records-list { overflow: visible; }

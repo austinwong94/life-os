@@ -142,6 +142,15 @@ jobs:
           TEST_BROWSER: webkit
           TEST_URL: http://127.0.0.1:5180/?liveReload=0
           TEST_OUTPUT: test-results/startup-repeat-webkit
+      - name: Check card moves and permanent deletion in Chromium
+        run: npm run test:card-transfer
+        env:
+          TEST_OUTPUT: test-results/card-transfer-chromium
+      - name: Check card moves and permanent deletion in WebKit
+        run: npm run test:card-transfer
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/card-transfer-webkit
       - run: npm run test:planner-archive
         env:
           TEST_OUTPUT: test-results/planner-archive

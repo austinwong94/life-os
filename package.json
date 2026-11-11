@@ -15,6 +15,7 @@
     "test:planner-review": "node tests/planner-review.cjs",
     "test:planner-archive": "node tests/planner-archive.cjs",
     "test:card-archive": "node tests/card-archive.cjs",
+    "test:card-transfer": "node tests/card-transfer.cjs",
     "test:health-review": "node tests/health-review.cjs",
     "test:health-interface": "node tests/health-interface.cjs",
     "test:health-workspace": "node tests/health-workspace.cjs",
