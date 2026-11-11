@@ -1162,6 +1162,9 @@ const cloudSyncRetry=LifeCloudTransport.createRetry({allowed:canRetryCloudSave,r
 let draggedCardId = null;
 let draggedCardContext = null;
 const boardToolPresses = new WeakMap();
+const cardTimerControls = new WeakMap();
+const cardTimerFeedbacks = new Map();
+const pendingRoutineResets = new Set();
 let editingCardId = null;
 let editingPlannerTaskKey = "";
 let plannerTaskEditDraft = null;
@@ -3734,7 +3737,7 @@ function renderCard(card, options = {}) {
   toggleButton.disabled = !interactive || !hasTimer;
   toggleButton.classList.toggle("is-auto", isAutoTimer);
   if (interactive && hasTimer && !isAutoTimer) {
-    toggleButton.addEventListener("click", () => toggleTimer(card.id));
+    bindCardTimerControl(toggleButton,node,card.id,ownerBoardId,false);
   }
 
   const cardActions = node.querySelector(".card-actions");
@@ -3757,7 +3760,7 @@ function renderCard(card, options = {}) {
   moveButton.title = moveButton.disabled ? "Create another board first" : "Move to another board";
   if (interactive) {
     if (hasTimer) {
-      resetButton.addEventListener("click", () => resetTimer(card.id));
+      bindCardTimerControl(resetButton,node,card.id,ownerBoardId,true);
     }
     menuToggle.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -10381,39 +10384,89 @@ function populateTimerFields(card) {
   elements.timerMinutes.value = String(minutes);
 }
 
-function toggleTimer(id) {
-  const card = state.cards.find((item) => item.id === id);
-  if (!card) return;
-  normalizeTimer(card);
-  if (!isManualTimer(card)) return;
-  if (card.runningSince) {
-    card.remaining = getRemaining(card);
-    card.runningSince = null;
-  } else {
-    if (getRemaining(card) <= 0) {
-      card.remaining = card.duration;
-    }
-    card.runningSince = Date.now();
-  }
-  saveState();
-  renderCardsOnly();
+function toggleTimer(id,options={}) {
+  const card=state.cards.find(item=>item.id===id);
+  return runBoardTool('timer',{...options,cardId:id,action:options.action || (card?.runningSince?'pause':'start')});
 }
 
-function resetTimer(id) {
-  const card = state.cards.find((item) => item.id === id);
-  if (!card) return;
-  if (card.type === "routine") {
-    resetRoutineToday(card);
-    saveState();
-    renderCardsOnly();
-    return;
+function resetTimer(id,options={}) {
+  const card=state.cards.find(item=>item.id===id);
+  if(card?.type==='routine')return confirmRoutineTimerReset(id,options);
+  return runBoardTool('timer',{...options,cardId:id,action:'reset'});
+}
+
+function cardTimerSnapshot(card) {
+  const keys=['id','type','timerMode','duration','remaining','runningSince','targetAt','calendarOnly',...(card?.type==='routine'?['items','history','lastResetDate']:[])];
+  const clock=Object.fromEntries(keys.filter(key=>card && Object.hasOwn(card,key)).map(key=>[key,card[key]]));
+  return LifeCloudCopies.records({boards:[{cards:[clock]}]});
+}
+
+function paintCardTimerFeedback(node,card,boardId) {
+  const feedback=node.querySelector('.timer-action-status'),entry=cardTimerFeedbacks.get(JSON.stringify([boardId,card.id]));
+  if(!feedback)return;
+  const current=entry && LifeCloudCopies.equal(entry.expected,cardTimerSnapshot(card));
+  const message=current?entry.message:'',status=current && entry.error?'error':'saved';
+  if(feedback.textContent!==message)feedback.textContent=message;
+  if(feedback.hidden!==!current)feedback.hidden=!current;
+  if(feedback.dataset.status!==status)feedback.dataset.status=status;
+}
+
+function setCardTimerFeedback(id,message,error=false,boardId=state.activeBoardId) {
+  const matches=state.activeBoardId===boardId && Array.isArray(state.cards)?state.cards.filter(card=>card?.id===id):[];
+  if(matches.length===1){
+    const card=matches[0];cardTimerFeedbacks.set(JSON.stringify([boardId,id]),{message,error,expected:cardTimerSnapshot(card)});
+    for(const node of elements.boardGrid.querySelectorAll('.task-card[data-clock-board]'))if(node.dataset.clockBoard===boardId && node.dataset.id===id){paintCardClock(node,card,getRemaining({...card}));paintCardTimerFeedback(node,card,boardId);}
   }
-  normalizeTimer(card);
-  if (!isManualTimer(card)) return;
-  card.remaining = card.duration;
-  card.runningSince = null;
-  saveState();
-  renderCardsOnly();
+  if(error)setSaveStatus(message,'error');
+}
+
+function bindCardTimerControl(control,node,id,boardId,reset) {
+  let pressed;
+  const capture=()=>{const context=cardTimerControls.get(control);pressed=context?{...context}:null;};
+  control.addEventListener('pointerdown',event=>{if(event.button===0)capture();});
+  control.addEventListener('keydown',event=>{if(!event.repeat && !event.isComposing && ['Enter',' '].includes(event.key))capture();});
+  control.addEventListener('click',()=>{
+    const context=pressed || cardTimerControls.get(control);pressed=null;
+    if(!context || control.disabled || !planningControlCurrent(control,{boardId}) || document.querySelector('dialog[open]'))return;
+    if(reset)resetTimer(id,context);else toggleTimer(id,context);
+  });
+}
+
+async function confirmRoutineTimerReset(id,options={}) {
+  const boardId=options.boardId || state.activeBoardId,key=JSON.stringify([boardId,id]);
+  if(pendingRoutineResets.has(key))return false;
+  pendingRoutineResets.add(key);
+  try{
+    const card=state.cards.find(item=>item.id===id),context={...options,boardId,cardId:id,action:'reset',day:options.day || getTodayKey(),cardExpected:options.cardExpected || cardTimerSnapshot(card)};
+    checkBoardToolContext('timer',context);cardTimerPlan(context);
+    const completed=card.items.filter(item=>item.done).length;
+    if(!await confirmTaskAction('Reset today\'s routine?',`Clear today's ${completed} completed item${completed===1?'':'s'} in "${card.title}"? Earlier days stay unchanged.`,'Reset today',{danger:true}))return false;
+    return runBoardTool('timer',context);
+  }catch(error){setCardTimerFeedback(id,error.message || 'Routine was not reset. Your records were kept.',true,boardId);return false;}
+  finally{pendingRoutineResets.delete(key);}
+}
+
+function cardTimerPlan(options) {
+  const card=state.cards.find(item=>item.id===options.cardId),action=options.action;
+  if(!card || card.calendarOnly || !['start','pause','reset'].includes(action))throw new Error('This timer is unavailable. No records were changed.');
+  const next=LifeStateMerge.copy(card);let keys=['duration','remaining','runningSince'];
+  if(card.type==='routine'){
+    if(action!=='reset' || options.day!==getTodayKey())throw new Error('The routine day changed. Review today before resetting it.');
+    if(!Array.isArray(card.items) || card.items.some(item=>!item || typeof item!=='object' || Array.isArray(item)) || !Array.isArray(card.history) || card.history.some(entry=>!entry || typeof entry!=='object' || entry.date!==normalizeDateKey(entry.date) || !Array.isArray(entry.items)) || new Set(card.history.map(entry=>entry.date)).size!==card.history.length)throw new Error('Routine history needs review. Its original records were kept.');
+    resetRoutineToday(next);
+    const today=next.history.find(entry=>entry.date===getTodayKey());
+    next.history=card.history.map(entry=>entry.date===getTodayKey()?today:LifeStateMerge.copy(entry));
+    if(!next.history.some(entry=>entry.date===getTodayKey()))next.history.push(today);
+    keys=[...keys,'targetAt','items','history','lastResetDate'];
+  }else{
+    if(!isManualTimer(card))throw new Error('This countdown runs automatically. No records were changed.');
+    for(const key of keys)if(card[key]!=null && !Number.isFinite(Number(card[key])))throw new Error('This focus timer needs review. Its original clock was kept.');
+    if(action==='start' && card.runningSince || action==='pause' && !card.runningSince)return {patches:[],boardPatch:{},ordered:state.cards,message:action==='start'?'Timer is already running.':'Timer is already paused.'};
+    normalizeTimer(next);const remaining=Math.min(next.duration,getRemaining(next));
+    next.remaining=action==='reset'?next.duration:action==='pause'?remaining:remaining<=0?next.duration:next.remaining;
+    next.runningSince=action==='start'?Date.now():null;
+  }
+  return {patches:[{card,keys,after:Object.fromEntries(keys.map(key=>[key,next[key]]))}],boardPatch:{},ordered:state.cards,message:card.type==='routine'?'Today\'s routine reset on this device. Earlier days were kept.':`Timer ${action==='start'?'started':action==='pause'?'paused':'reset'} on this device.`};
 }
 
 function startAllTimers(options = {}) {
@@ -10508,7 +10561,8 @@ function checkedSavedBoardLayout() {
   });
 }
 
-function boardToolPlan(kind,columns) {
+function boardToolPlan(kind,columns,options={}) {
+  if(kind==='timer')return cardTimerPlan(options);
   const patches=[],visible=state.cards.filter(card=>!card.calendarOnly),boardPatch={};let ordered=state.cards;
   if(kind==='start' || kind==='pause'){
     for(const card of state.cards){
@@ -10553,31 +10607,41 @@ function boardToolPlan(kind,columns) {
   return {patches,boardPatch,ordered,message:kind==='saveLayout'?'Layout saved on this device.':kind==='restore'?'Saved layout restored on this device.':kind==='arrange'?'Board arranged on this device.':'Card positions saved on this device.'};
 }
 
-function runBoardTool(kind,options={},columns) {
-  let previous,patches=[],staged=false;
-  try{
+function checkBoardToolContext(kind,options) {
     if(options.boardId && options.boardId!==state.activeBoardId)throw new Error('The active board changed. This command was not applied.');
     if(document.querySelector('dialog[open]') || pendingBoardDeletion || composerSavePending || hasComposerDraft())throw new Error('Finish or discard the current draft before using board tools. Your writing was kept.');
     validateBoardActionRecords();
     if(!Array.isArray(state.cards) || !Array.isArray(state.archivedCards))throw new Error('The selected board records need review. Their original information was kept.');
-    checkedSavedBoardLayout();
+    if(kind!=='timer')checkedSavedBoardLayout();
     const seen=new Set();for(const card of [...state.cards,...getArchivedCards()]){if(!card || typeof card.id!=='string' || !card.id || seen.has(card.id))throw new Error('Card identities need review. No board tools were applied.');seen.add(card.id);}
     if(cloudConflictPending || (state.syncConflicts || []).some(item=>item.segments?.[0]!=='boards' || item.segments[1]===state.activeBoardId))throw new Error('Review the conflicting board copies before using board tools. Your records were kept.');
     if(options.expected && !LifeCloudCopies.equal(boardToolsSnapshot(),options.expected))throw new Error('This board changed after the command was pressed. Review it and retry.');
-    const plan=boardToolPlan(kind,columns);patches=plan.patches.map(p=>({...p,before:Object.fromEntries(p.keys.filter(key=>Object.hasOwn(p.card,key)).map(key=>[key,p.card[key]]))}));
+    if(kind==='timer'){
+      const matches=state.cards.filter(card=>card.id===options.cardId);
+      if(typeof options.cardId!=='string' || !options.cardId || matches.length!==1)throw new Error('This timer cannot be identified safely. Its original records were kept.');
+      if(options.cardExpected && !LifeCloudCopies.equal(cardTimerSnapshot(matches[0]),options.cardExpected))throw new Error('This timer changed. Review its latest state before retrying.');
+    }
+}
+
+function runBoardTool(kind,options={},columns) {
+  let previous,patches=[],staged=false;
+  const feedback=(message,error=false)=>kind==='timer'?setCardTimerFeedback(options.cardId,message,error,options.boardId || state.activeBoardId):setBoardToolsStatus(message,error);
+  try{
+    checkBoardToolContext(kind,options);
+    const plan=boardToolPlan(kind,columns,options);patches=plan.patches.map(p=>({...p,before:Object.fromEntries(p.keys.filter(key=>Object.hasOwn(p.card,key)).map(key=>[key,p.card[key]]))}));
     const changed=patches.some(p=>!LifeStateMerge.equal(p.before,p.after)) || Object.entries(plan.boardPatch).some(([key,value])=>!LifeStateMerge.equal(state.board[key],value));
-    if(!changed){setBoardToolsStatus(plan.message);return true;}
+    if(!changed){feedback(plan.message);return true;}
     previous={...state};state.boards=[...state.boards];state.board={...state.board,...plan.boardPatch};state.cards=plan.ordered;
     for(const p of patches){for(const key of p.keys)delete p.card[key];Object.assign(p.card,p.after);}
     // Stage isolated copies, then retain live card identities for editors that defer redraws.
     const liveCards=state.cards,liveArchive=state.archivedCards;let accepted;
     try{state.cards=LifeStateMerge.copy(liveCards);state.archivedCards=LifeStateMerge.copy(liveArchive);accepted=saveState();}
     finally{state.cards=liveCards;state.archivedCards=liveArchive;}
-    if(!accepted)throw new Error(`Board tools were not saved. The previous ${kind==='start' || kind==='pause'?'timer state was':'positions were'} kept. `+deviceSaveFailureReason());
-    staged=true;renderBoardMeta();renderCardsOnly({reason:'device-commit'});setBoardToolsStatus(plan.message);return true;
+    if(!accepted)throw new Error(kind==='timer'?'Timer was not saved. Its previous state was kept. '+deviceSaveFailureReason():`Board tools were not saved. The previous ${kind==='start' || kind==='pause'?'timer state was':'positions were'} kept. `+deviceSaveFailureReason());
+    staged=true;renderBoardMeta();renderCardsOnly({reason:'device-commit'});feedback(plan.message);return true;
   }catch(error){
     if(previous && !staged){for(const p of patches){for(const key of p.keys)delete p.card[key];Object.assign(p.card,p.before);}restoreBoardActionState(previous);}
-    setBoardToolsStatus(staged?'The command is saved on this device, but the view needs attention. Keep this tab open.':error.message || 'The command was not saved. Your original board was kept.',true);return false;
+    feedback(staged?'The command is saved on this device, but the view needs attention. Keep this tab open.':error.message || 'The command was not saved. Your original board was kept.',true);return false;
   }finally{if(kind==='move'){draggedCardId=null;draggedCardContext=null;elements.boardGrid.classList.remove('is-dragging-card');}}
 }
 
@@ -10866,6 +10930,11 @@ function shouldTickCountdownEverySecond(card) {
 }
 
 function paintCardClock(node, card, remaining) {
+  const expected=isManualTimer(card) || card.type==='routine'?cardTimerSnapshot(card):null;
+  for(const [selector,action]of [['.timer-toggle',card.runningSince?'pause':'start'],['.timer-reset','reset']]){
+    const control=node.querySelector(selector);if(control && expected)cardTimerControls.set(control,{boardId:node.dataset.clockBoard,cardExpected:expected,action,day:getTodayKey()});
+  }
+  paintCardTimerFeedback(node,card,node.dataset.clockBoard);
   const setText = (selector, value) => {
     const target = node.querySelector(selector);
     if (target && target.textContent !== value) target.textContent = value;
@@ -11144,7 +11213,8 @@ function upsertRoutineHistory(card, dateKey, items, status) {
   };
   const index = card.history.findIndex((record) => record.date === dateKey);
   if (index >= 0) {
-    card.history[index] = entry;
+    const previous=card.history[index];
+    card.history[index] = {...previous,...entry,items:entry.items.map((item,i)=>({...((previous.items?.[i]?.text===item.text)?previous.items[i]:{}),...item}))};
   } else {
     card.history.push(entry);
   }
@@ -11156,12 +11226,13 @@ function normalizeRoutineHistory(card) {
     ? card.history
         .filter((entry) => entry && entry.date)
         .map((entry) => ({
+          ...entry,
           date: entry.date,
           status: entry.status || "logged",
           done: Math.max(0, Number(entry.done) || 0),
           total: Math.max(0, Number(entry.total) || 0),
           percent: Math.max(0, Math.min(100, Number(entry.percent) || 0)),
-          items: Array.isArray(entry.items) ? entry.items.map((item) => ({ text: normalizeLabel(item.text || "Item"), done: Boolean(item.done) })) : []
+          items: Array.isArray(entry.items) ? entry.items.map((item) => ({ ...item, text: normalizeLabel(item.text || "Item"), done: Boolean(item.done) })) : []
         }))
     : [];
 }

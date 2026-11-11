@@ -1,0 +1,87 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),browsers=require('playwright');
+const {workspace}=require('./navigation.cjs');
+const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_OUTPUT || path.join(__dirname,'../test-results/timer-actions');
+assert(['localhost','127.0.0.1'].includes(new URL(url).hostname));fs.mkdirSync(out,{recursive:true});const results=[];
+(async()=>{
+ const browser=await browsers[process.env.TEST_BROWSER || 'chromium'].launch({headless:true});
+ async function run(name,fn){
+  if(process.env.TEST_CASE_PATTERN && !new RegExp(process.env.TEST_CASE_PATTERN).test(name))return;
+  const context=await browser.newContext({viewport:{width:1080,height:1100},timezoneId:'Asia/Kuala_Lumpur'});await context.route('https://**/*',r=>r.fulfill({status:503,body:'Synthetic workspaces only'}));
+  const p=await context.newPage(),errors=[];p.on('pageerror',e=>errors.push(e.message));p.setDefaultTimeout(6500);await p.clock.setFixedTime(new Date('2026-11-11T04:00:00Z'));
+  try{await p.goto(url+'?preview=1&liveReload=0');await p.evaluate(async()=>{
+   const make=(id,options)=>({...makeCard(options),id,custom:{keep:'Original '+id}});
+   const paused=make('focus-paused',{type:'single',title:'SAMPLE focus step',timerMode:'hours',duration:600});paused.remaining=360;
+   const running={...LifeStateMerge.copy(paused),id:'focus-running',title:'SAMPLE running focus',runningSince:Date.now()-90000};
+   const diary=make('timer-diary',{type:'diary',title:'SAMPLE diary'});getDiaryEntry(diary,getTodayKey()).thoughts='Every original diary line\nSecond complete line';
+   const routine=make('timer-routine',{type:'routine',title:'SAMPLE daily routine',items:['Rest','Walk']});routine.items[0].done=true;syncRoutineTodayHistory(routine);routine.history.unshift({date:'2026-11-10',status:'logged',done:1,total:1,percent:100,items:[{text:'Rest',done:true}]});
+   const done={...LifeStateMerge.copy(paused),id:'focus-done',title:'SAMPLE completed focus',done:true,taskCompletion:{done:true,on:'2026-11-10',at:1,recordedAt:2},taskCompletionEvents:[{done:true,on:'2026-11-10',at:1,recordedAt:2}]};
+   const calendar={...make('timer-calendar',{type:'event',title:'SAMPLE calendar activity',timerMode:'date',targetAt:new Date(Date.now()+3600000).toISOString()}),calendarOnly:true};
+   state.boards=[createBoardRecord({id:'timer-source',name:'SAMPLE personal board',layout:'custom',columnCount:2,cards:[paused,running,diary,routine,done,calendar],archivedCards:[],money:{...LifeMoney.empty(),custom:{keep:'Original financial information'}},custom:{keep:'Original board information'}}),createBoardRecord({id:'timer-other',name:'SAMPLE work board',cards:[{...LifeStateMerge.copy(paused),title:'Different copied-ID timer'}],custom:{keep:'Other original board'}})];applyBoardToState(state,'timer-source');state.unfamiliarRoot={documents:['Original document reference']};saveState();await flushDeviceWrites();render({force:true});
+  });await workspace(p,'board');await p.evaluate(()=>flushDeviceWrites());await fn(p,context);assert.deepEqual(errors,[]);results.push({name,pass:true});}
+  catch(error){results.push({name,pass:false,error:error.stack,pageErrors:errors});await p.screenshot({path:out+'/failure-'+results.length+'.png'}).catch(()=>{});}
+  console.log(JSON.stringify({name,pass:results.at(-1).pass,error:results.at(-1).error?.slice(-1200)}));await context.close();
+ }
+ const card=(p,id)=>p.locator('.task-card[data-id="'+id+'"]');
+ const snapshot=p=>p.evaluate(()=>{syncActiveBoard({touchBoard:false});return LifeStateMerge.copy({boards:state.boards,board:state.board,cards:state.cards,archivedCards:state.archivedCards,activeBoardId:state.activeBoardId,unfamiliarRoot:state.unfamiliarRoot});});
+ const fail=p=>p.evaluate(()=>{window.timerStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw new DOMException('Synthetic storage refusal','QuotaExceededError');};});
+ const recover=p=>p.evaluate(()=>LifeDeviceStore.stage=timerStage);
+ for(const [label,id,command]of [['starting','focus-paused','toggleTimer'],['pausing','focus-running','toggleTimer'],['resetting','focus-paused','resetTimer']])await run('card timer: refused '+label+' preserves the previous clock and records',async p=>{const before=await snapshot(p);await fail(p);await p.evaluate(([command,id])=>window[command](id),[command,id]);assert.deepEqual(await snapshot(p),before);});
+ await run('card timer: a detached control cannot start another boards copied timer ID',async p=>{
+  await p.evaluate(()=>{window.oldTimerButton=document.querySelector('[data-id="focus-paused"] .timer-toggle');switchBoard('timer-other');});const before=await snapshot(p);await p.evaluate(()=>oldTimerButton.click());assert.deepEqual(await snapshot(p),before);
+ });
+ for(const [name,id,selector]of [['start','focus-paused','.timer-toggle'],['pause','focus-running','.timer-toggle'],['reset','focus-paused','.timer-reset']])await run('card timer: '+name+' feedback supports retry and reload without changing other records',async p=>{
+  const before=await snapshot(p);await fail(p);await card(p,id).locator(selector).click();assert.deepEqual(await snapshot(p),before);assert.match(await card(p,id).locator('.timer-action-status').innerText(),/not saved/);await recover(p);await card(p,id).locator(selector).click();await p.evaluate(()=>flushDeviceWrites());assert.match(await card(p,id).locator('.timer-action-status').innerText(),/on this device/);const after=await snapshot(p);for(const c of before.cards.filter(c=>c.id!==id))assert.deepEqual(after.cards.find(item=>item.id===c.id),c);assert.deepEqual(after.boards[1],before.boards[1]);assert.deepEqual(after.boards[0].money,before.boards[0].money);await p.reload();assert.deepEqual(await p.evaluate(id=>cardTimerSnapshot(state.cards.find(c=>c.id===id)),id),await p.evaluate(c=>cardTimerSnapshot(c),after.cards.find(c=>c.id===id)));
+ });
+ const resetPrompt=p=>card(p,'timer-routine').getByRole('button',{name:'Reset today',exact:true}).click();
+ const confirmReset=p=>p.locator('#taskConfirmationDialog').getByRole('button',{name:'Reset today',exact:true}).click();
+ await run('card timer: routine reset requires confirmation and Cancel preserves every item',async p=>{
+  const before=await snapshot(p);await resetPrompt(p);assert.equal(await p.locator('#taskConfirmationDialog').isVisible(),true);assert.match(await p.locator('#taskConfirmationDialog').innerText(),/1 completed item/);assert.deepEqual(await snapshot(p),before);await p.locator('#taskConfirmationDialog').getByRole('button',{name:'Cancel',exact:true}).click();assert.deepEqual(await snapshot(p),before);
+ });
+ await run('card timer: refused routine reset preserves history and a confirmed retry saves once',async p=>{
+  const before=await snapshot(p);await fail(p);await resetPrompt(p);await confirmReset(p);await p.waitForFunction(()=>pendingRoutineResets.size===0);assert.deepEqual(await snapshot(p),before);assert.match(await card(p,'timer-routine').locator('.timer-action-status').innerText(),/not saved/);await recover(p);await resetPrompt(p);await confirmReset(p);await p.waitForFunction(()=>pendingRoutineResets.size===0);await p.evaluate(()=>flushDeviceWrites());assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='timer-routine').items.filter(i=>i.done).length),0);assert.deepEqual(await p.evaluate(()=>state.cards.find(c=>c.id==='timer-routine').history.filter(e=>e.date!=='2026-11-11')),before.cards.find(c=>c.id==='timer-routine').history.filter(e=>e.date!=='2026-11-11'));await p.reload();assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='timer-routine').history.find(e=>e.date==='2026-11-11').done),0);
+ });
+ await run('card timer: routine reset preserves historical and unfamiliar metadata after reload',async p=>{
+  await p.evaluate(()=>{const c=state.cards.find(c=>c.id==='timer-routine');c.history[0].custom={keep:'Historical detail'};c.history[0].items[0].custom='Historical item detail';c.history.find(e=>e.date===getTodayKey()).custom='Today detail';c.items[0].custom='Live item detail';renderCardsOnly({force:true});});const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='timer-routine')));await resetPrompt(p);await confirmReset(p);await p.waitForFunction(()=>pendingRoutineResets.size===0);await p.evaluate(()=>flushDeviceWrites());await p.reload();const after=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='timer-routine')));assert.deepEqual(after.history.find(e=>e.date==='2026-11-10'),before.history.find(e=>e.date==='2026-11-10'));assert.equal(after.history.find(e=>e.date==='2026-11-11').custom,'Today detail');assert.equal(after.items[0].custom,'Live item detail');
+ });
+ await run('card timer: pending reset refuses a newer routine and never changes a different board',async p=>{
+  await resetPrompt(p);await p.evaluate(()=>state.cards.find(c=>c.id==='timer-routine').items[1].done=true);const newer=await snapshot(p);await confirmReset(p);await p.waitForFunction(()=>pendingRoutineResets.size===0);assert.deepEqual(await snapshot(p),newer);await p.evaluate(()=>renderCardsOnly({force:true}));await resetPrompt(p);await p.evaluate(()=>switchBoard('timer-other'));const other=await snapshot(p);await confirmReset(p);await p.waitForFunction(()=>pendingRoutineResets.size===0);assert.deepEqual(await snapshot(p),other);
+ });
+ await run('card timer: reset across midnight cannot clear the next days routine',async p=>{
+  await resetPrompt(p);await p.clock.setFixedTime(new Date('2026-11-11T16:00:01Z'));const before=await snapshot(p);await confirmReset(p);await p.waitForFunction(()=>pendingRoutineResets.size===0);assert.deepEqual(await snapshot(p),before);assert.match(await card(p,'timer-routine').locator('.timer-action-status').innerText(),/day changed/);
+ });
+ await run('card timer: malformed routine history is retained without opening reset confirmation',async p=>{
+  for(const history of ['Original imported history',[{date:'2026-11-10',items:'Original imported items'}]]){await p.evaluate(history=>state.cards.find(c=>c.id==='timer-routine').history=history,history);const before=await p.evaluate(()=>LifeStateMerge.copy(state));assert.equal(await p.evaluate(()=>resetTimer('timer-routine')),false);assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state)),before);assert.equal(await p.locator('#taskConfirmationDialog').isVisible(),false);}
+ });
+ await run('card timer: a start press cannot become a pause after a newer timer save',async p=>{
+  const button=card(p,'focus-paused').locator('.timer-toggle');await button.dispatchEvent('pointerdown',{button:0});await p.evaluate(()=>{state.cards.find(c=>c.id==='focus-paused').runningSince=Date.now()-5000;});const before=await snapshot(p);await button.dispatchEvent('click');assert.deepEqual(await snapshot(p),before);assert.match(await card(p,'focus-paused').locator('.timer-action-status').innerText(),/changed/);
+ });
+ await run('card timer: completed task history survives explicit timer restart and reset',async p=>{
+  const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='focus-done')));assert.equal(await p.evaluate(()=>toggleTimer('focus-done')),true);assert.equal(await p.evaluate(()=>resetTimer('focus-done')),true);const after=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='focus-done')));for(const key of ['done','taskCompletion','taskCompletionEvents'])assert.deepEqual(after[key],before[key]);
+ });
+ await run('card timer: backwards time is bounded and automatic countdowns cannot be manually reset',async p=>{
+  await p.clock.setFixedTime(new Date('2026-11-10T04:00:00Z'));assert.equal(await p.evaluate(()=>toggleTimer('focus-running')),true);assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='focus-running').remaining),600);const before=await snapshot(p);assert.equal(await p.evaluate(()=>resetTimer('timer-calendar')),false);assert.deepEqual(await snapshot(p),before);
+ });
+ await run('card timer: duplicate IDs and conflicts cause no clock or history writes',async p=>{
+  await p.evaluate(()=>state.syncConflicts=[{segments:['boards','timer-source','cards','focus-paused']}]);const before=await snapshot(p);assert.equal(await p.evaluate(()=>toggleTimer('focus-paused')),false);assert.deepEqual(await snapshot(p),before);await p.evaluate(()=>{state.syncConflicts=[];state.cards.push(LifeStateMerge.copy(state.cards[0]));});const duplicates=await p.evaluate(()=>LifeStateMerge.copy(state));assert.equal(await p.evaluate(()=>resetTimer('focus-paused')),false);assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state)),duplicates);
+ });
+ await run('card timer: an unfinished card form blocks timer changes without losing complete typing',async p=>{
+  await p.evaluate(()=>startEditingCard('focus-paused'));await p.locator('#cardTitle').fill('Complete unsaved focus title');const before=await snapshot(p);assert.equal(await p.evaluate(()=>toggleTimer('focus-paused')),false);assert.deepEqual(await snapshot(p),before);assert.equal(await p.locator('#cardTitle').inputValue(),'Complete unsaved focus title');
+ });
+ await run('card timer: an active diary editor stays attached and subsequent writing saves',async p=>{
+  const text=card(p,'timer-diary').getByLabel('Diary thoughts',{exact:true});await text.focus();await p.evaluate(()=>{window.originalTimerWriter=document.activeElement;window.originalTimerCard=state.cards.find(c=>c.id==='focus-paused');});assert.equal(await p.evaluate(()=>toggleTimer('focus-paused')),true);assert.equal(await p.evaluate(()=>document.activeElement===originalTimerWriter && state.cards.find(c=>c.id==='focus-paused')===originalTimerCard),true);await text.fill('Every new diary character\nSecond complete line');await text.blur();await p.evaluate(()=>flushDeviceWrites());await p.reload();assert.equal(await p.evaluate(()=>getDiaryEntry(state.cards.find(c=>c.id==='timer-diary'),getTodayKey()).thoughts),'Every new diary character\nSecond complete line');
+ });
+ await run('card timer: separate tabs keep both boards timer changes',async(p,context)=>{
+  const q=await context.newPage();await q.goto(url+'?preview=1&liveReload=0');await q.evaluate(()=>switchBoard('timer-other'));assert.equal(await q.evaluate(()=>toggleTimer('focus-paused')),true);await q.evaluate(()=>flushDeviceWrites());await p.waitForFunction(()=>Boolean(state.boards.find(b=>b.id==='timer-other').cards[0].runningSince));assert.equal(await p.evaluate(()=>toggleTimer('focus-running')),true);await p.evaluate(()=>flushDeviceWrites());await q.waitForFunction(()=>state.boards.find(b=>b.id==='timer-source').cards.find(c=>c.id==='focus-running').runningSince===null);assert.equal(await q.evaluate(()=>Boolean(state.cards[0].runningSince)),true);
+ });
+ await run('card timer: no-op commands and stale removed records never stage a save',async p=>{
+  await p.evaluate(()=>{window.timerWrites=0;window.originalTimerStage=LifeDeviceStore.stage;LifeDeviceStore.stage=(...args)=>{timerWrites++;return originalTimerStage(...args);};});assert.equal(await p.evaluate(()=>toggleTimer('focus-paused',{action:'pause'})),true);assert.equal(await p.evaluate(()=>toggleTimer('focus-running',{action:'start'})),true);assert.equal(await p.evaluate(()=>resetTimer('missing')),false);assert.equal(await p.evaluate(()=>timerWrites),0);
+ });
+ await run('card timer: clock ticks do not repeatedly rewrite the save announcement',async p=>{
+  assert.equal(await p.evaluate(()=>toggleTimer('focus-paused')),true);assert.equal(await p.evaluate(async()=>{const n=document.querySelector('[data-id="focus-paused"] .timer-action-status');let changes=0;const observer=new MutationObserver(records=>changes+=records.length);observer.observe(n,{childList:true,subtree:true,attributes:true,characterData:true});refreshTimerDisplays();refreshTimerDisplays();refreshTimerDisplays();await Promise.resolve();observer.disconnect();return changes;}),0);
+ });
+ await run('card timer: feedback and routine confirmation fit phone portrait and desktop layouts',async p=>{
+  for(const width of [320,390,768,1080,1440]){await p.setViewportSize({width,height:1100});await fail(p);await card(p,'focus-paused').locator('.timer-toggle').click();const message=card(p,'focus-paused').locator('.timer-action-status');assert.match(await message.innerText(),/not saved/);assert.equal(await message.evaluate(n=>n.scrollWidth<=n.clientWidth+1),true);assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);if([390,1080].includes(width))await p.screenshot({path:out+'/sample-timer-refusal-'+width+'.png',fullPage:true});await recover(p);await resetPrompt(p);if([390,1080].includes(width))await p.screenshot({path:out+'/sample-routine-reset-confirmation-'+width+'.png'});const box=await p.locator('#taskConfirmationDialog').boundingBox();assert(box && box.x>=0 && box.x+box.width<=width+1);await p.locator('#taskConfirmationDialog').getByRole('button',{name:'Cancel',exact:true}).click();}
+  await p.setViewportSize({width:1080,height:1100});await card(p,'focus-paused').locator('.timer-toggle').click();assert.match(await card(p,'focus-paused').locator('.timer-action-status').innerText(),/started on this device/);await p.screenshot({path:out+'/sample-timer-saved-1080.png',fullPage:true});
+ });
+ await browser.close();fs.writeFileSync(out+'/results.json',JSON.stringify(results,null,2));if(results.some(r=>!r.pass))process.exitCode=1;
+})().catch(error=>{console.error(error);process.exitCode=1;});
