@@ -5,6 +5,7 @@ const actionLock=require('../security/actions-lock.json');
 const browserLock=require('../security/browser-image-lock.json');
 const browserJobs=['property-ui-preflight','verify-core','verify-features','verify-properties'];
 const browserContainer={image:browserLock.image+'@'+browserLock.digest,options:browserLock.options};
+const coreBrowserContainer={...browserContainer,volumes:['/usr/bin/unzip:/usr/local/bin/unzip:ro']};
 const browserPreflight={name:'Verify pinned browser environment',run:'node scripts/verify-ci-browsers.cjs'};
 const checkoutTrust={name:'Trust this disposable CI checkout',run:'git config --global --add safe.directory "$GITHUB_WORKSPACE"'};
 const previousRefs={'actions/checkout':'v4','actions/setup-node':'v4','actions/upload-artifact':'v4','actions/download-artifact':'v4','actions/configure-pages':'v5','actions/upload-pages-artifact':'v4','actions/deploy-pages':'v4','denoland/setup-deno':'v2'};
@@ -13,7 +14,8 @@ function previousTooling(value){
  for(const [name,job] of Object.entries(copy.jobs)){
   if(job['runs-on']==='ubuntu-24.04')job['runs-on']='ubuntu-latest';
   // Normalize only the reviewed setup replacement; all test and release gates stay byte-for-byte comparable.
-  if(browserJobs.includes(name) && JSON.stringify(job.container)===JSON.stringify(browserContainer))delete job.container;
+  const expectedContainer=name==='verify-core'?coreBrowserContainer:browserContainer;
+  if(browserJobs.includes(name) && JSON.stringify(job.container)===JSON.stringify(expectedContainer))delete job.container;
   if(browserJobs.includes(name))job.steps=job.steps.filter(step=>JSON.stringify(step)!==JSON.stringify(checkoutTrust));
   job.steps=job.steps.map(step=>JSON.stringify(step)===JSON.stringify(browserPreflight)?{run:'npx playwright install --with-deps chromium webkit'}:step);
   for(const step of job.steps){
@@ -42,7 +44,7 @@ test('every browser job uses only the exact reviewed version digest and fail-clo
  for(const [name,job] of Object.entries(rawWorkflow.jobs)){
   assert.equal(job.env?.PLAYWRIGHT_BROWSERS_PATH,undefined);
   if(!browserJobs.includes(name)){assert.equal(job.container,undefined);continue;}
-  assert.deepEqual(job.container,browserContainer);
+  assert.deepEqual(job.container,name==='verify-core'?coreBrowserContainer:browserContainer);
   const trusts=job.steps.filter(step=>step.name===checkoutTrust.name || /safe\.directory/.test(step.run||''));assert.deepEqual(trusts,[checkoutTrust]);
   assert.equal(job.steps.indexOf(trusts[0]),1);assert.equal(job.steps[0].with['fetch-depth'],0);
   const steps=job.steps.filter(step=>step.name===browserPreflight.name || step.run===browserPreflight.run);
