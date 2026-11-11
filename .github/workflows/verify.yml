@@ -47,7 +47,7 @@ jobs:
           path: test-results/
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,6 +139,15 @@ jobs:
         run: npm run test:source-completion
         env:
           TEST_OUTPUT: test-results/source-completion-chromium
+      - name: Check quick-add draft and retry safeguards in Chromium
+        run: npm run test:source-add
+        env:
+          TEST_OUTPUT: test-results/source-add-chromium
+      - name: Check quick-add draft and retry safeguards in WebKit
+        run: npm run test:source-add
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/source-add-webkit
       - name: Check source checkbox completion safeguards in WebKit
         run: npm run test:source-completion
         env:

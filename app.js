@@ -1168,6 +1168,8 @@ const pendingRoutineResets = new Set();
 const sourceCompletionBindings = new WeakMap();
 const sourceCompletionFeedbacks = new Map();
 const pendingSourceCompletions = new Set();
+const sourceAddBindings = new WeakMap();
+const sourceAddMessages = new Map();
 let editingCardId = null;
 let editingPlannerTaskKey = "";
 let plannerTaskEditDraft = null;
@@ -2103,6 +2105,7 @@ async function saveCardFromForm() {
     const current=()=>{
       if(!context.boardId || context.boardId!==state.activeBoardId || context.cardId!==editingCardId || context.revision!==composerRevision || elements.cardComposerPanel.hidden)throw new Error('This editor changed boards or has newer writing. Nothing was saved; your draft was kept.');
       if(!composerCardIsCurrent())throw new Error('This card changed elsewhere or is no longer active. Nothing was replaced; your complete draft was kept.');
+      if(context.cardId && getSelectedFormType()!==state.cards.find(card=>card.id===context.cardId)?.type && hasSourceAddDraftForCard(context.cardId))throw new Error('Finish or discard this card\'s quick-add draft before changing its type. Your card form was kept.');
     };
     current();
     const file=elements.imageFile.files?.[0];
@@ -2415,6 +2418,7 @@ function updateExistingCard(nextCard) {
 }
 
 function startEditingCard(id) {
+  if(hasSourceAddDraftForCard(id)){setSaveStatus('Finish or discard this card\'s quick-add draft before editing. Its complete text was kept.','error');return false;}
   if(hasComposerDraft()){
     openCardComposer();
     if(editingCardId!==id)setComposerFeedback('Finish or discard the current card draft before editing another card.','notice');
@@ -2660,6 +2664,7 @@ function getMoveDestinationBoards() {
 }
 
 function openMoveCardModal(cardId, options = {}) {
+  if(hasSourceAddDraftForCard(cardId)){setCardMoveFeedback('Finish or discard this card\'s quick-add draft before moving. Its complete text was kept.');return false;}
   const card = state.cards.find((item) => item.id === cardId);
   if(editingCardId===cardId){setCardMoveFeedback('Finish or close this card editor before moving. Your draft was kept.');return false;}
   if (!card || options.boardId && options.boardId!==state.activeBoardId || options.expected && !LifeStateMerge.equal(card,options.expected)) {
@@ -3306,7 +3311,7 @@ function isProtectedTextEditActive() {
 }
 
 function hasUnsubmittedDraftText() {
-  return state.cards.some((card) => normalizeLabel(card.dailyDraftText || card.plannerDraftText || card.checklistDraftText || ""));
+  return hasSourceAddDrafts() || state.cards.some((card) => normalizeLabel(card.dailyDraftText || card.plannerDraftText || card.checklistDraftText || ""));
 }
 
 function findHealthDateDraft(scope=elements.boardGrid) {
@@ -6565,21 +6570,7 @@ function renderChecklist(card) {
   wrapper.className = "checklist";
   const items = Array.isArray(card.items) ? card.items : [];
   const limit = getChecklistLimit(card);
-  items.slice(0, limit).forEach((item) => {
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = item.done;
-    const span = document.createElement("span");
-    span.textContent = item.text;
-    label.append(input, span);
-    wrapper.append(label);
-    bindSourceCompletion(input,card,item,wrapper);
-    if(card.type==='checklist'){
-      const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.cardId===card.id && task.ref.itemId===item.id && task.editable);
-      if(task)wrapper.append(renderTaskSubtasks(task,{offerEmpty:true}));
-    }
-  });
+  items.slice(0, limit).forEach((item,index)=>appendSourceTaskRow(wrapper,card,item,index));
   if (items.length > limit) {
     const more = document.createElement("p");
     more.className = "checklist-more";
@@ -6593,32 +6584,7 @@ function renderChecklist(card) {
 }
 
 function renderProjectAddForm(card) {
-  const form = document.createElement("form");
-  form.className = "daily-add-row project-add-row";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.maxLength = 160;
-  input.value = card.checklistDraftText || "";
-  input.placeholder = "Add project task";
-  input.setAttribute("aria-label", "Add project task");
-  input.addEventListener("input", () => {
-    card.checklistDraftText = input.value;
-    persistLocalDraftState();
-  });
-  const button = document.createElement("button");
-  button.type = "submit";
-  button.title = "Add project task";
-  button.setAttribute("aria-label", "Add project task");
-  button.innerHTML = ICONS.plus;
-  form.append(input, button);
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (!addChecklistItemToCard(card, input.value)) return;
-    card.checklistDraftText = "";
-    input.value = "";
-    persistLocalDraftState();
-  });
-  return form;
+  return renderSourceAddForm(card);
 }
 
 function renderBrief(card) {
@@ -6659,22 +6625,7 @@ function renderDailyList(card) {
   const wrapper = document.createElement("div");
   wrapper.className = "daily-list";
   const items = Array.isArray(card.items) ? card.items : [];
-  items.forEach((item, index) => {
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.checked = item.done;
-    const count = document.createElement("span");
-    count.className = "daily-index";
-    count.textContent = String(index + 1).padStart(2, "0");
-    const text = document.createElement("span");
-    text.textContent = item.text;
-    label.append(input, count, text);
-    wrapper.append(label);
-    bindSourceCompletion(input,card,item,wrapper);
-    const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.cardId===card.id && task.ref.itemId===item.id && task.editable);
-    if(task)wrapper.append(renderTaskSubtasks(task,{offerEmpty:true}));
-  });
+  items.forEach((item,index)=>appendSourceTaskRow(wrapper,card,item,index));
   if (card.type === "daily") {
     const plannerLinks = renderDailyPlannerLinks(card);
     if (plannerLinks) wrapper.append(plannerLinks);
@@ -6719,31 +6670,149 @@ function renderDailyPlannerLinks(card) {
 }
 
 function renderDailyAddForm(card) {
-  const form = document.createElement("form");
-  form.className = "daily-add-row";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.maxLength = 120;
-  input.value = card.dailyDraftText || "";
-  input.placeholder = getCardPlanDate(card) === getTodayKey() ? "Add something for today" : "Add item for this day";
-  input.setAttribute("aria-label", "Add to-do item");
-  input.addEventListener("input", () => {
-    card.dailyDraftText = input.value;
-    persistLocalDraftState();
-  });
-  const button = document.createElement("button");
-  button.type = "submit";
-  button.title = "Add item";
-  button.setAttribute("aria-label", "Add item");
-  button.innerHTML = ICONS.plus;
-  form.append(input, button);
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    if (!addDailyItemToCard(card, input.value)) return;
-    card.dailyDraftText = "";
-    persistLocalDraftState();
-  });
+  return renderSourceAddForm(card);
+}
+
+function appendSourceTaskRow(wrapper,card,item,index) {
+  const label=document.createElement('label'),input=document.createElement('input'),text=document.createElement('span');input.type='checkbox';input.checked=item.done;text.textContent=item.text;
+  if(typeof item.id==='string')label.dataset.sourceItemId=item.id;
+  label.append(input);
+  if(card.type!=='checklist'){const count=document.createElement('span');count.className='daily-index';count.textContent=String(index+1).padStart(2,'0');label.append(count);}
+  label.append(text);wrapper.append(label);bindSourceCompletion(input,card,item,wrapper);
+  const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.cardId===card.id && task.ref.itemId===item.id && task.editable);
+  if(task)wrapper.append(renderTaskSubtasks(task,{offerEmpty:true}));
+}
+
+function sourceAddIdentity(card) {
+  return Object.fromEntries(['id','type','title','createdAt',...(card.type==='daily'?['plannedDate']:[])].filter(key=>Object.hasOwn(card,key)).map(key=>[key,card[key]]));
+}
+
+function sourceAddContext(card) {
+  const ownerId=getExpectedCloudOwnerId();return {boardId:state.activeBoardId,ownerId,cardId:card.id,key:JSON.stringify([ownerId,card.id,card.type,card.createdAt]),source:sourceAddIdentity(card)};
+}
+
+function sourceAddStore() {
+  const session=planningSession();
+  if(!Object.hasOwn(session,'sourceAddDrafts'))session.sourceAddDrafts={};
+  const drafts=session.sourceAddDrafts;
+  if(!drafts || typeof drafts!=='object' || Array.isArray(drafts))throw new Error('Saved task drafts need review. Their stored copy was kept.');
+  return drafts;
+}
+
+function sourceAddDraft(card,context=sourceAddContext(card)) {
+  const drafts=sourceAddStore(),field=card.type==='daily'?'dailyDraftText':'checklistDraftText';
+  if(planningSessionFaults.has(context.boardId))throw new Error('Saved task drafts need review. Their stored copy was kept.');
+  if(!Object.hasOwn(drafts,context.key)){
+    if(card[field]!=null && typeof card[field]!=='string')throw new Error('The original task draft needs review. Its stored information was kept.');
+    drafts[context.key]={version:1,boardId:context.boardId,ownerId:context.ownerId,cardId:card.id,type:card.type,createdAt:card.createdAt,text:card[field] || '',legacyBase:{present:Object.hasOwn(card,field),...(Object.hasOwn(card,field)?{value:card[field]}:{})},legacyHandled:false};
+  }
+  const draft=drafts[context.key],pending=draft?.pending;
+  if(!draft || draft.version!==1 || draft.boardId!==context.boardId || draft.ownerId!==context.ownerId || draft.cardId!==card.id || draft.type!==card.type || draft.createdAt!==card.createdAt || typeof draft.text!=='string' || !draft.legacyBase || typeof draft.legacyBase.present!=='boolean' || typeof draft.legacyHandled!=='boolean' || pending!==undefined && (!pending || typeof pending.after?.id!=='string' || !pending.after.id.trim() || typeof pending.after.text!=='string' || !pending.after.text.trim() || pending.after.done!==false))throw new Error('This task draft needs review. Its stored copy was kept.');
+  return draft;
+}
+
+function hasSourceAddDrafts() {
+  try{return Object.values(sourceAddStore()).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && (typeof draft.text!=='string' || draft.text.trim() || draft.pending));}catch{return true;}
+}
+
+function hasSourceAddDraftForCard(cardId,boardId=state.activeBoardId) {
+  try{
+    const session=boardId===state.activeBoardId?planningSession():planningSessions.get(boardId) || JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+boardId)) || '{}');
+    if(!session || typeof session!=='object' || Array.isArray(session))return true;
+    const drafts=session.sourceAddDrafts ?? {};if(!drafts || typeof drafts!=='object' || Array.isArray(drafts))return true;
+    return Object.values(drafts).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && draft.cardId===cardId && (typeof draft.text!=='string' || draft.text.trim() || draft.pending));
+  }catch{return true;}
+}
+
+function resolveSourceAdd(context) {
+  if(context.boardId!==state.activeBoardId || context.ownerId!==getExpectedCloudOwnerId())throw new Error('The board or account changed. Your task draft was kept.');
+  const matches=Array.isArray(state.cards)?state.cards.filter(card=>card?.id===context.cardId):[],card=matches.length===1?matches[0]:null;
+  if(!card || !['checklist','daily'].includes(card.type) || card.archivedAt || card.calendarOnly || !LifeStateMerge.equal(sourceAddIdentity(card),context.source))throw new Error('This card changed or moved. Review its latest version before adding. Your draft was kept.');
+  if(!Array.isArray(card.items) || card.items.some(item=>!item || typeof item!=='object' || Array.isArray(item)))throw new Error('This task list needs review. Its original records were kept.');
+  const ids=card.items.filter(item=>item.id!=null && item.id!=='').map(item=>item.id);
+  if(ids.some(id=>typeof id!=='string' || !id.trim()) || new Set(ids).size!==ids.length)throw new Error('Task identities need review. No task was added.');
+  return card;
+}
+
+function sourceAddFormCurrent(binding) {
+  return binding && !binding.composing && binding.context.ownerId===getExpectedCloudOwnerId() && binding.session===planningSessions.get(binding.context.boardId) && elements.boardGrid.contains(binding.form) && !binding.form.closest('.is-preview') && planningControlCurrent(binding.form,binding.context) && !document.querySelector('dialog[open]');
+}
+
+function setSourceAddFeedback(context,message,error=false) {
+  sourceAddMessages.set(JSON.stringify([context.boardId,context.key]),{message,error});
+  for(const form of elements.boardGrid.querySelectorAll('.source-add-form')){
+    const binding=sourceAddBindings.get(form);if(!binding || binding.context.boardId!==context.boardId || binding.context.key!==context.key || context.boardId!==state.activeBoardId || context.ownerId!==getExpectedCloudOwnerId())continue;
+    if(binding.status.textContent!==message)binding.status.textContent=message;binding.status.hidden=!message;binding.status.dataset.status=error?'error':'saved';
+    if(binding.draft){if(!binding.composing && binding.input.value!==binding.draft.text)binding.input.value=binding.draft.text;binding.discard.hidden=!binding.draft.text && !binding.draft.pending && (binding.draft.legacyHandled || !binding.draft.legacyBase.value);}
+  }
+  if(error)setSaveStatus(message,'error');
+}
+
+function renderSourceAddForm(card) {
+  const form=document.createElement('form');form.className='daily-add-row source-add-form'+(card.type==='checklist'?' project-add-row':'');
+  const input=document.createElement('input');input.type='text';input.maxLength=card.type==='daily'?120:160;input.setAttribute('aria-label',card.type==='daily'?'Add to-do item':'Add project task');input.placeholder=card.type==='checklist'?'Add project task':getCardPlanDate(card)===getTodayKey()?'Add something for today':'Add item for this day';
+  const actions=document.createElement('div');actions.className='source-add-actions';const submit=document.createElement('button');submit.type='submit';submit.title=card.type==='daily'?'Add item':'Add project task';submit.setAttribute('aria-label',submit.title);submit.innerHTML=ICONS.plus;
+  const discard=document.createElement('button');discard.type='button';discard.className='source-add-discard';discard.title='Discard task draft';discard.setAttribute('aria-label',discard.title);discard.innerHTML=ICONS.x;
+  const status=document.createElement('p');status.className='source-add-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.hidden=true;
+  actions.append(submit,discard);form.append(input,actions,status);
+  const context=sourceAddContext(card),binding={form,input,submit,discard,status,context,session:planningSession(),draft:null,composing:false};sourceAddBindings.set(form,binding);
+  try{binding.draft=sourceAddDraft(card,context);input.value=binding.draft.text;discard.hidden=!input.value && !binding.draft.pending && (binding.draft.legacyHandled || !binding.draft.legacyBase.value);const old=sourceAddMessages.get(JSON.stringify([context.boardId,context.key]));if(old){status.textContent=old.message;status.hidden=!old.message;status.dataset.status=old.error?'error':'saved';}}
+  catch(error){input.value=typeof card[card.type==='daily'?'dailyDraftText':'checklistDraftText']==='string'?card[card.type==='daily'?'dailyDraftText':'checklistDraftText']:'';input.disabled=true;submit.disabled=true;discard.hidden=true;status.textContent=error.message;status.hidden=false;status.dataset.status='error';return form;}
+  const persist=()=>{if(!sourceAddFormCurrent(binding))return;binding.draft.text=input.value;const ok=savePlanningSession();setSourceAddFeedback(context,ok?'Draft kept in this tab.':'Draft kept in memory only. Keep this tab open.',!ok);};
+  input.addEventListener('input',persist);input.addEventListener('compositionstart',()=>binding.composing=true);input.addEventListener('compositionend',()=>{binding.composing=false;persist();});
+  form.addEventListener('submit',event=>{event.preventDefault();if(!sourceAddFormCurrent(binding))return;submitSourceAdd(card,input.value,{context,binding});});
+  discard.addEventListener('click',()=>{if(sourceAddFormCurrent(binding))submitSourceAdd(card,input.value,{context,binding,discard:true});});
   return form;
+}
+
+function paintSourceAddedItem(context,id) {
+  if(context.boardId!==state.activeBoardId)return;
+  const card=resolveSourceAdd(context),index=card.items.findIndex(item=>item.id===id);if(index<0)return;
+  for(const form of elements.boardGrid.querySelectorAll('.source-add-form')){
+    const binding=sourceAddBindings.get(form);if(!binding || binding.context.key!==context.key || binding.context.boardId!==context.boardId || !LifeStateMerge.equal(binding.context.source,context.source))continue;
+    const wrapper=form.parentElement;if([...wrapper.querySelectorAll('label[data-source-item-id]')].some(label=>label.dataset.sourceItemId===id))continue;
+    const rows=document.createDocumentFragment();appendSourceTaskRow(rows,card,card.items[index],index);wrapper.insertBefore(rows,wrapper.querySelector(':scope > .daily-planner-links') || form);
+  }
+  const progress=getProgress(LifeStateMerge.copy(card));for(const node of elements.boardGrid.querySelectorAll('.task-card'))if(node.dataset.id===card.id){node.querySelector('.card-percent').textContent=`${progress.percent}%`;node.querySelector('.progress-track span').style.width=`${progress.percent}%`;node.querySelector('.card-progress p').textContent=`${progress.percent}% · ${progress.label}`;}
+}
+
+function sourceAddPlan(options) {
+  const card=resolveSourceAdd(options),draft=sourceAddDraft(card,options),field=card.type==='daily'?'dailyDraftText':'checklistDraftText',patches=[],after={};
+  if(draft!==options.draft)throw new Error('The task draft changed. No task was added.');
+  if(!options.discard){
+    const candidate=draft.pending?.after;if(!candidate || !LifeStateMerge.equal(candidate,options.after))throw new Error('This add receipt needs review. Its stored copy was kept.');
+    const matches=card.items.filter(item=>item.id===candidate.id);
+    if(matches.length>1 || matches.length===1 && !LifeStateMerge.equal(matches[0],candidate))throw new Error('This task was already saved and later changed. No duplicate was added.');
+    if(!matches.length)after.items=[...card.items,LifeStateMerge.copy(candidate)];
+  }
+  if(!draft.legacyHandled && draft.legacyBase.present && Object.hasOwn(card,field) && LifeStateMerge.equal(card[field],draft.legacyBase.value) && typeof card[field]==='string' && card[field])after[field]='';
+  if(Object.keys(after).length)patches.push({card,keys:Object.keys(after),after});
+  return {patches,boardPatch:{},ordered:state.cards,message:options.discard?'Draft cleared; saved tasks were kept.':'Task added on this device.'};
+}
+
+function submitSourceAdd(card,value,options={}) {
+  let context=options.context,recordSaved=false;
+  try{
+    if(!context){if(!state.cards.includes(card))throw new Error('This card changed or moved. The task was not added.');context=sourceAddContext(card);}
+    const live=resolveSourceAdd(context),draft=sourceAddDraft(live,context),text=normalizeLabel(String(value || ''));
+    draft.text=String(value || '');
+    if(!options.discard){
+      if(!draft.pending && !text)return false;
+      if(text.length>(live.type==='daily'?120:160))throw new Error('The task name is too long. Its complete text was kept.');
+      if(draft.pending){const saved=live.items.find(item=>item.id===draft.pending.after.id);if(!saved && text!==draft.pending.after.text)throw new Error('The previous add needs review. Its original receipt and your new text were kept.');}
+      else draft.pending={after:{id:createId(),text,done:false}};
+    }
+    if(!savePlanningSession())throw new Error('The draft could not be secured for retry. Keep this tab open; no task was added.');
+    if(!runBoardTool('sourceAdd',{...context,draft,after:draft.pending?.after,discard:Boolean(options.discard)}))return false;
+    recordSaved=!options.discard;
+    const pending=draft.pending,before={text:draft.text,legacyHandled:draft.legacyHandled,...(pending?{pending}:{})};
+    if(pending && !options.discard)paintSourceAddedItem(context,pending.after.id);
+    if(options.discard || !pending || normalizeLabel(draft.text)===pending.after.text)draft.text='';draft.legacyHandled=true;delete draft.pending;
+    if(!savePlanningSession()){draft.text=before.text;draft.legacyHandled=before.legacyHandled;if(before.pending)draft.pending=before.pending;setSourceAddFeedback(context,options.discard?'Draft cleanup was not saved. Please retry; saved tasks were kept.':'Task saved. Draft cleanup needs retry; no duplicate was added.',true);return false;}
+    setSourceAddFeedback(context,options.discard?'Draft discarded. Saved tasks were kept.':draft.text?'Previous task saved. Your new draft was kept.':'Task added on this device.');
+    if(options.binding && sourceAddFormCurrent(options.binding) && [options.binding.input,options.binding.submit,options.binding.discard,document.body].includes(document.activeElement))options.binding.input.focus({preventScroll:true});
+    renderCardsOnly({reason:'device-commit'});return true;
+  }catch(error){if(context)setSourceAddFeedback(context,recordSaved?'Task saved. The view or draft cleanup needs retry; no duplicate was added.':error.message || 'Task was not added. Its draft was kept.',true);else setSaveStatus(error.message,'error');return false;}
 }
 
 function renderRoutineHistory(card) {
@@ -7549,32 +7618,11 @@ function addPlannerTaskToDate(card, dateKey, value) {
 }
 
 function addDailyItemToCard(card, value) {
-  const text = normalizeLabel(String(value || ""));
-  if (!text || !card || card.type !== "daily") return false;
-  card.items = Array.isArray(card.items) ? card.items : [];
-  card.items.push({
-    id: createId(),
-    text,
-    done: false
-  });
-  saveState();
-  renderCardsOnly({ force: true });
-  return true;
+  return card?.type==='daily'?submitSourceAdd(card,value):false;
 }
 
 function addChecklistItemToCard(card, value) {
-  const text = normalizeLabel(String(value || ""));
-  if (!text || !card || card.type !== "checklist") return false;
-  card.items = Array.isArray(card.items) ? card.items : [];
-  card.items.push({
-    id: createId(),
-    text,
-    done: false
-  });
-  card.checklistDraftText = "";
-  saveState();
-  renderCardsOnly({ force: true });
-  return true;
+  return card?.type==='checklist'?submitSourceAdd(card,value):false;
 }
 
 function setPlannerDate(card, dateKey) {
@@ -9826,6 +9874,7 @@ function isCardArchiveControlCurrent(button) {
 
 function changeCardArchive(id,archive,options={}) {
   try{
+    if(archive && hasSourceAddDraftForCard(id))throw new Error('Finish or discard this card\'s quick-add draft before archiving. Its complete text was kept.');
     if(Object.hasOwn(options,'boardId') && options.boardId!==state.activeBoardId)throw new Error('This action belongs to a different board. Return to that board and open Archive.');
     if(archive && editingCardId===id)throw new Error('Finish or close this card editor before archiving. Your draft was kept.');
     const source=archive?state.cards:getArchivedCards(),target=archive?getArchivedCards():state.cards,matches=source.filter(card=>card.id===id);
@@ -9870,6 +9919,7 @@ function archiveCard(id, options = {}) {
 
 function transferCardBetweenBoards(cardId, sourceBoardId, targetBoardId, options = {}) {
   try {
+    if(hasSourceAddDraftForCard(cardId,sourceBoardId))throw new Error('Finish or discard this card\'s quick-add draft before moving. Its complete text was kept.');
     if(options.boardId && options.boardId!==state.activeBoardId)throw new Error('Return to the original board and reopen Move to board.');
     const sources=state.boards.filter(board=>board.id===sourceBoardId),targets=state.boards.filter(board=>board.id===targetBoardId);
     if(sources.length!==1 || targets.length!==1 || sourceBoardId===targetBoardId)throw new Error('The source or destination changed. Nothing was moved.');
@@ -9909,6 +9959,7 @@ function transferCardBetweenBoards(cardId, sourceBoardId, targetBoardId, options
 }
 
 function moveActiveCardToBoard(cardId, targetBoardId, options = {}) {
+  if(hasSourceAddDraftForCard(cardId)){setCardMoveFeedback('Finish or discard this card\'s quick-add draft before moving. Its complete text was kept.');return false;}
   const result=transferCardBetweenBoards(cardId,state.activeBoardId,targetBoardId,options);
   if(!result.ok)return false;
   closeMoveCardModal();render();
@@ -10649,6 +10700,7 @@ function checkedSavedBoardLayout() {
 }
 
 function boardToolPlan(kind,columns,options={}) {
+  if(kind==='sourceAdd')return sourceAddPlan(options);
   if(kind==='timer')return cardTimerPlan(options);
   if(kind==='completion')return sourceCompletionPlan(options);
   const patches=[],visible=state.cards.filter(card=>!card.calendarOnly),boardPatch={};let ordered=state.cards;
@@ -10700,7 +10752,7 @@ function checkBoardToolContext(kind,options) {
     if(document.querySelector('dialog[open]') || pendingBoardDeletion || composerSavePending || hasComposerDraft())throw new Error('Finish or discard the current draft before using board tools. Your writing was kept.');
     validateBoardActionRecords();
     if(!Array.isArray(state.cards) || !Array.isArray(state.archivedCards))throw new Error('The selected board records need review. Their original information was kept.');
-    if(!['timer','completion'].includes(kind))checkedSavedBoardLayout();
+    if(!['timer','completion','sourceAdd'].includes(kind))checkedSavedBoardLayout();
     const seen=new Set();for(const card of [...state.cards,...getArchivedCards()]){if(!card || typeof card.id!=='string' || !card.id || seen.has(card.id))throw new Error('Card identities need review. No board tools were applied.');seen.add(card.id);}
     if(cloudConflictPending || (state.syncConflicts || []).some(item=>item.segments?.[0]!=='boards' || item.segments[1]===state.activeBoardId))throw new Error('Review the conflicting board copies before using board tools. Your records were kept.');
     if(options.expected && !LifeCloudCopies.equal(boardToolsSnapshot(),options.expected))throw new Error('This board changed after the command was pressed. Review it and retry.');
@@ -10713,7 +10765,7 @@ function checkBoardToolContext(kind,options) {
 
 function runBoardTool(kind,options={},columns) {
   let previous,patches=[],staged=false;
-  const feedback=(message,error=false)=>kind==='completion'?setSourceCompletionFeedback(options,message,error):kind==='timer'?setCardTimerFeedback(options.cardId,message,error,options.boardId || state.activeBoardId):setBoardToolsStatus(message,error);
+  const feedback=(message,error=false)=>kind==='sourceAdd'?setSourceAddFeedback(options,message,error):kind==='completion'?setSourceCompletionFeedback(options,message,error):kind==='timer'?setCardTimerFeedback(options.cardId,message,error,options.boardId || state.activeBoardId):setBoardToolsStatus(message,error);
   try{
     checkBoardToolContext(kind,options);
     const plan=boardToolPlan(kind,columns,options);patches=plan.patches.map(p=>({...p,before:Object.fromEntries(p.keys.filter(key=>Object.hasOwn(p.card,key)).map(key=>[key,p.card[key]]))}));
@@ -10725,7 +10777,7 @@ function runBoardTool(kind,options={},columns) {
     const liveCards=state.cards,liveArchive=state.archivedCards;let accepted;
     try{state.cards=LifeStateMerge.copy(liveCards);state.archivedCards=LifeStateMerge.copy(liveArchive);accepted=saveState();}
     finally{state.cards=liveCards;state.archivedCards=liveArchive;}
-    if(!accepted)throw new Error(['timer','completion'].includes(kind)?`${kind==='timer'?'Timer':'Task'} was not saved. Its previous state was kept. `+deviceSaveFailureReason():`Board tools were not saved. The previous ${kind==='start' || kind==='pause'?'timer state was':'positions were'} kept. `+deviceSaveFailureReason());
+    if(!accepted)throw new Error(['timer','completion','sourceAdd'].includes(kind)?`${kind==='timer'?'Timer':kind==='sourceAdd' && options.discard?'Draft':'Task'} was not saved. Its previous state was kept. `+deviceSaveFailureReason():`Board tools were not saved. The previous ${kind==='start' || kind==='pause'?'timer state was':'positions were'} kept. `+deviceSaveFailureReason());
     staged=true;renderBoardMeta();renderCardsOnly({reason:'device-commit'});feedback(plan.message);return true;
   }catch(error){
     if(previous && !staged){for(const p of patches){for(const key of p.keys)delete p.card[key];Object.assign(p.card,p.before);}restoreBoardActionState(previous);}
@@ -13340,7 +13392,7 @@ function readStoredStateSnapshot() {
 
 function isUserEditingCriticalDraft() {
   return Boolean(
-    isProtectedTextEditActive() || findHealthDateDraft() ||
+    isProtectedTextEditActive() || findHealthDateDraft() || hasSourceAddDrafts() ||
       editingCardId ||
       editingPlannerTaskKey ||
       plannerTaskEditDraft ||

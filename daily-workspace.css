@@ -148,6 +148,11 @@
 .timer-action-status[data-status="error"] { color: var(--danger,#a52b42); }
 .source-completion-status { margin: 0 0 4px; font-size: 12px; line-height: 1.5; font-weight: 500; overflow-wrap: anywhere; color: var(--muted,#65716c); }
 .source-completion-status[data-status="error"] { color: var(--danger,#a52b42); }
+.source-add-form { grid-template-columns: minmax(0,1fr) auto; }
+.source-add-actions { display: flex; align-items: center; gap: 4px; }
+.source-add-form .source-add-discard { width: 32px; min-width: 32px; color: var(--muted,#65716c); background: transparent; box-shadow: none; }
+.source-add-status { grid-column: 1 / -1; margin: 0; min-width: 0; font-size: 12px; line-height: 1.5; font-weight: 500; color: var(--muted,#65716c); overflow-wrap: anywhere; }
+.source-add-status[data-status="error"] { color: var(--danger,#a52b42); }
 .planner-linked-item > .task-subtasks { grid-column: 2 / -1; }
 .planner-linked-item.has-subtasks > .planner-linked-check, .planner-linked-item.has-subtasks > .planner-linked-actions { align-self: start; }
 .planner-linked-item.has-subtasks > .planner-linked-check { margin-top: 8px; }
