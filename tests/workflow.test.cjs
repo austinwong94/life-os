@@ -2,11 +2,18 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {groups,verifyCoreManifests}=require('../scripts/verify-core-manifests.cjs');
 const rawWorkflow=YAML.parse(fs.readFileSync(path.join(__dirname,'../.github/workflows/verify.yml'),'utf8'));
 const actionLock=require('../security/actions-lock.json');
+const browserLock=require('../security/browser-image-lock.json');
+const browserJobs=['property-ui-preflight','verify-core','verify-features','verify-properties'];
+const browserContainer={image:browserLock.image+'@'+browserLock.digest,options:browserLock.options};
+const browserPreflight={name:'Verify pinned browser environment',run:'node scripts/verify-ci-browsers.cjs'};
 const previousRefs={'actions/checkout':'v4','actions/setup-node':'v4','actions/upload-artifact':'v4','actions/download-artifact':'v4','actions/configure-pages':'v5','actions/upload-pages-artifact':'v4','actions/deploy-pages':'v4','denoland/setup-deno':'v2'};
 function previousTooling(value){
  const copy=structuredClone(value);
- for(const job of Object.values(copy.jobs)){
+ for(const [name,job] of Object.entries(copy.jobs)){
   if(job['runs-on']==='ubuntu-24.04')job['runs-on']='ubuntu-latest';
+  // Normalize only the reviewed setup replacement; all test and release gates stay byte-for-byte comparable.
+  if(browserJobs.includes(name) && JSON.stringify(job.container)===JSON.stringify(browserContainer))delete job.container;
+  job.steps=job.steps.map(step=>JSON.stringify(step)===JSON.stringify(browserPreflight)?{run:'npx playwright install --with-deps chromium webkit'}:step);
   for(const step of job.steps){
    if(!step.uses)continue;
    const action=actionLock.actions.find(action=>step.uses===action.repository+'@'+action.sha);
@@ -18,8 +25,27 @@ function previousTooling(value){
 const workflow=previousTooling(rawWorkflow);
 const baseline=YAML.parse(execFileSync('git',['show','069f9b296edd8ca80223da5b99ac6faf77e67021:.github/workflows/verify.yml'],{cwd:path.join(__dirname,'..'),encoding:'utf8'}));
 const parallelBaseline=YAML.parse(execFileSync('git',['show','3e17325643295e623335ed582356142f15742236:.github/workflows/verify.yml'],{cwd:path.join(__dirname,'..'),encoding:'utf8'}));
-test('reviewed tool upgrades preserve the complete parallel workflow except exact action refs and runner image',()=>{
+test('reviewed tooling preserves the complete workflow except exact action refs runner and browser setup',()=>{
  assert.deepEqual(workflow,parallelBaseline);
+});
+test('every browser job uses only the exact reviewed version digest and fail-closed preflight',()=>{
+ assert.equal(browserLock.version,'1.63.0');
+ assert.equal(browserLock.image,'mcr.microsoft.com/playwright:v1.63.0-noble');
+ assert.equal(browserLock.digest,'sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27');
+ assert.equal(browserLock.linuxAmd64Manifest,'sha256:bc6ab0d6d44ff4826e4cb8c1e6d801e185bfc42bb0753f8e2a30efc70db054c7');
+ assert.equal(browserLock.options,'--init --shm-size=1g');assert.equal(browserLock.browserPath,'/ms-playwright');
+ const pkg=require('../package.json'),installed=require('playwright/package.json'),npmLock=require('../package-lock.json');
+ assert.equal(pkg.devDependencies.playwright,browserLock.version);assert.equal(installed.version,browserLock.version);
+ for(const key of ['','node_modules/playwright','node_modules/playwright-core'])assert.equal(key?npmLock.packages[key].version:npmLock.packages[key].devDependencies.playwright,browserLock.version);
+ for(const [name,job] of Object.entries(rawWorkflow.jobs)){
+  assert.equal(job.env?.PLAYWRIGHT_BROWSERS_PATH,undefined);
+  if(!browserJobs.includes(name)){assert.equal(job.container,undefined);continue;}
+  assert.deepEqual(job.container,browserContainer);
+  const steps=job.steps.filter(step=>step.name===browserPreflight.name || step.run===browserPreflight.run);
+  assert.deepEqual(steps,[browserPreflight]);
+  const install=job.steps.findIndex(step=>step.run==='npm ci'),smoke=job.steps.indexOf(steps[0]);assert(install>=0 && smoke===install+1);
+  assert(!job.steps.some(step=>/playwright install|apt-get|sudo apt/.test(step.run||'')));
+ }
 });
 test('every external action is pinned to its exact reviewed official commit',()=>{
  assert.equal(actionLock.actions.length,8);

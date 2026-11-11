@@ -8,6 +8,9 @@ concurrency:
 jobs:
   property-ui-preflight:
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --shm-size=1g
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -17,7 +20,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - name: Verify pinned browser environment
+        run: node scripts/verify-ci-browsers.cjs
       - run: npm run build
       - name: Start isolated artifact preview
         run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-preflight.log 2>&1 &
@@ -47,6 +51,9 @@ jobs:
           path: test-results/
   verify-core:
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --shm-size=1g
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -56,7 +63,8 @@ jobs:
         with:
           node-version: "24"
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - name: Verify pinned browser environment
+        run: node scripts/verify-ci-browsers.cjs
       - run: npm test
         if: matrix.group == 'storage'
       - name: Check conservative device receipt recovery in Chromium
@@ -436,6 +444,9 @@ jobs:
   verify-features:
     name: verify-features (${{ matrix.group }})
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --shm-size=1g
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -449,7 +460,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - name: Verify pinned browser environment
+        run: node scripts/verify-ci-browsers.cjs
       - name: Build complete public artifact
         run: npm run build
       - name: Start isolated preview
@@ -803,6 +815,9 @@ jobs:
           path: test-results/
   verify-properties:
     runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
+      options: --init --shm-size=1g
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -812,7 +827,8 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - name: Verify pinned browser environment
+        run: node scripts/verify-ci-browsers.cjs
       - name: Build complete property regression artifact
         run: npm run build
       - name: Start isolated property regression preview

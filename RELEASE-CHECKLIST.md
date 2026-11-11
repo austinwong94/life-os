@@ -1,5 +1,11 @@
 # Safe Review and Release
 
+## Hosted Browser Environment
+
+Browser jobs use the official Playwright 1.63.0 Noble image, pinned by digest in `security/browser-image-lock.json` and the workflow. They do not install Linux dependencies from Ubuntu mirrors on every run. `npm ci` still installs the locked project packages; the required preflight checks the installed version, image marker and executable locations, then launches Chromium and WebKit with isolated content and blocked requests. A failed check prevents the regression suites and deployment. All existing tests, timeouts, artifact comparisons and release gates remain required.
+
+Update the image and npm dependency together after verifying the official registry digest, then run the workflow contract tests and the full hosted regression. A local Mac test cannot certify the Linux image. The container has bounded private shared memory, not privileged mode or host IPC. It is for disposable test records only, never owner records or authenticated personal browser profiles. See [Playwright's official container guidance](https://playwright.dev/docs/ci#via-containers).
+
 ## October 11 Published Release
 
 Build `2026.10.11-follow-through`, published release `9188131e517f1ca6`. GitHub Pages **Source: GitHub Actions** was visibly saved on 11 October. Earlier candidate failures stopped publication; the [final remote gate and deployment](https://github.com/austinwong94/life-os/actions/runs/38106794189) succeeded with 410 passing checks. The live release ID, 18 public file hashes and 17 startup cache versions match the tested artifact. No Supabase migration was performed or required for the additive task and next-step metadata. Physical-phone acceptance, authenticated two-device staging and live owner-policy inspection remain open; the automated tests do not certify these.
@@ -12,7 +18,7 @@ Open [the local review build](http://127.0.0.1:5180/?preview=1) while the local 
 
 Before this isolation upgrade, preview shared the normal storage keys. This upgrade does not guess which old records came from previews, move them or clear them. Save or download unfinished writing before reloading older preview tabs; a new build cannot change the behavior of already-running old code. Old saved tab-local drafts remain accessible under normal mode in the same tab. Do not close a tab containing unsaved writing. Preview and normal storage still share the browser origin's quota and are not encrypted. Use a separate profile or staging origin for large/destructive tests, and never seed tests into a personal browser profile.
 
-The project source is `/Users/austinwong/Documents/Codex/2026-05-04/life-os`.
+The active Mac development source is `/Volumes/Coding/Projects/Life-OS`; source `/Volumes/Coding/Codex/ssd-development-env.sh` before every writing development command. The internal-drive path `/Users/austinwong/Documents/Codex/2026-05-04/life-os` is a preserved legacy copy, not a development fallback.
 
 ## Before Publishing
 
