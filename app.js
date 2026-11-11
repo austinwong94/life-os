@@ -7188,6 +7188,7 @@ function normalizePlannerEntry(entry = {}) {
     };
   });
   return {
+    ...(entry && typeof entry==='object' && !Array.isArray(entry)?entry:{}),
     note,
     checkedItems,
     carryoverItems,

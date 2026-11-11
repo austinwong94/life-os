@@ -583,48 +583,114 @@ function renderTasksWorkspace(root) {
     }dialog.append(menu);
   },'more-vertical'));
   toolbar.append(tabs);
-  if (session.view==="today") toolbar.append(renderPlanningDateNavigation(session.day,value=>{session.day=value;if(session.capture&&!session.capture.title.trim())session.capture.dateKey=value;planningRefresh();}));
+  if (session.view==="today") toolbar.append(renderPlanningDateNavigation(session.day,value=>{session.day=value;if(typeof session.capture?.title==='string' && !session.capture.title.trim())session.capture.dateKey=value;planningRefresh();}));
   root.append(toolbar);
   root.append(renderTaskCapture());
   root.append(results); renderTaskResults(results);
   resume.hidden=!session.plannerTaskDraft || !!results.querySelector('.planner-linked-edit-form');
 }
+function taskCaptureSources() {
+  return [...state.cards,...getArchivedCards()].filter(card=>card.type==='planner' && !card.coachingStore && !card.dailyWorkspaceStore).map(card=>{
+    if(card.plannerSchemaVersion!=null && ![1,2].includes(card.plannerSchemaVersion) || card.plannerSchemaVersion===2 && !Array.isArray(card.plannerTasks))throw new Error('The planner source needs review. Its original records were kept.');
+    const copy=LifeStateMerge.copy(card),tasks=LifePlanner.ensure(copy),ids=tasks.map(task=>task?.id);
+    if(ids.some(id=>typeof id!=='string' || !id) || new Set(ids).size!==ids.length)throw new Error('Task identities need review. Your draft was kept.');
+    return {card,tasks};
+  });
+}
+function taskCaptureSourceIdentity(card) {
+  return {id:card.id,type:card.type,createdAt:card.createdAt,group:getPlannerGroup(card)};
+}
+function saveCapturedTask(draft,context,persist) {
+  if(context.ownerId!==getExpectedCloudOwnerId())throw new Error('The account changed. Your task draft was kept.');
+  checkBoardToolContext('completion',context);
+  const values={title:draft.title.trim(),area:draft.area,dateKey:draft.dateKey},sources=taskCaptureSources();let receipt=draft.receipt;
+  if(receipt && (receipt.version!==1 || receipt.boardId!==context.boardId || receipt.ownerId!==context.ownerId || !['prepared','failed','saved'].includes(receipt.status) || typeof receipt.after?.id!=='string' || !receipt.after.id || receipt.after.done!==false || typeof receipt.source?.id!=='string' || receipt.source.type!=='planner' || !receipt.values || ['title','area','dateKey'].some(key=>typeof receipt.values[key]!=='string') || receipt.newSource && (receipt.newSource.id!==receipt.source.id || receipt.newSource.type!=='planner' || !Array.isArray(receipt.newSource.plannerTasks) || receipt.newSource.plannerTasks.length)))throw new Error('This task receipt needs review. Its stored copy was kept.');
+  if(!receipt && draft.pendingTaskId){
+    const matches=sources.flatMap(source=>source.tasks.filter(task=>task.id===draft.pendingTaskId).map(task=>({source,task})));
+    if(matches.length!==1 || !draft.pendingBase || !LifeStateMerge.equal(matches[0].task,draft.pendingBase))throw new Error('The previous save needs review. Your original draft was kept; no task was recreated.');
+    const {source,task}=matches[0];receipt=draft.receipt={version:1,boardId:context.boardId,ownerId:context.ownerId,status:'saved',source:taskCaptureSourceIdentity(source.card),after:LifeStateMerge.copy(task),values:{title:task.title,area:task.area || '',dateKey:task.dateKey}};
+  }
+  if(receipt){
+    const matches=sources.flatMap(source=>source.tasks.filter(task=>task.id===receipt.after.id).map(task=>({source,task})));
+    if(matches.length){
+      if(matches.length!==1 || !LifeStateMerge.equal(taskCaptureSourceIdentity(matches[0].source.card),receipt.source) || !LifeStateMerge.equal(matches[0].task,receipt.after))throw new Error('This task changed after the save attempt. Your draft was kept; no task was replaced.');
+      return {values:receipt.values,retained:!LifeStateMerge.equal(values,receipt.values)};
+    }
+    if(receipt.status!=='failed')throw new Error('The previous save outcome needs review. Your draft was kept; no task was recreated.');
+  }
+  let source=receipt?sources.find(item=>item.card.id===receipt.source.id)?.card:sources.find(item=>getPlannerGroup(item.card)===(values.area || 'Unsorted'))?.card;
+  if(receipt && source && !LifeStateMerge.equal(taskCaptureSourceIdentity(source),receipt.source))throw new Error('The planner source changed. Your draft was kept.');
+  if(receipt && !source && !receipt.newSource)throw new Error('The planner source moved or was removed. Your draft was kept.');
+  if(!source){
+    source=receipt?.newSource?LifeStateMerge.copy(receipt.newSource):makeCard({title:`${values.area || 'Unsorted'} planner`,description:'Source planner for dated tasks added from Task list cards.',category:values.area || 'Unsorted',type:'planner',timerMode:'none',activePlannerDate:values.dateKey || getTodayKey(),plannerEntries:{}});
+    if(!receipt){source.order=nextOrder();source.plannerSourceOnly=true;source.archivedAt=Date.now();}
+    if([...state.cards,...getArchivedCards()].some(card=>card.id===source.id))throw new Error('The planner identity is already in use. Your draft was kept.');
+  }
+  const live=sources.find(item=>item.card===source)?.card,next=LifeStateMerge.copy(source),task=LifePlanner.add(next,values.dateKey,values.title,receipt?.after.id || createId());
+  if(!task)throw new Error('Choose a valid date or clear it. Your complete draft was kept.');
+  Object.assign(task,{area:values.area,status:'todo',project:'',deadline:'',notes:''});LifePlanner.project(next);
+  receipt=draft.receipt={version:1,boardId:context.boardId,ownerId:context.ownerId,status:'prepared',source:taskCaptureSourceIdentity(source),after:LifeStateMerge.copy(task),values,...(!live?{newSource:LifeStateMerge.copy(source)}:{})};
+  draft.pendingTaskId=task.id;draft.pendingBase=LifeStateMerge.copy(task);
+  if(!persist()){receipt.status='failed';throw new Error('Retry storage is unavailable. No task was added. Keep this tab open.');}
+  const previous={...state},keys=live?Object.keys(next).filter(key=>!LifeStateMerge.equal(live[key],next[key])):[],before=live?Object.fromEntries(keys.filter(key=>Object.hasOwn(live,key)).map(key=>[key,live[key]])):{};
+  try{
+    state.boards=[...state.boards];state.board={...state.board};state.cards=[...state.cards];state.archivedCards=[...getArchivedCards()];
+    if(live)for(const key of keys)live[key]=next[key];else state.archivedCards.push(next);
+    const cards=state.cards,archive=state.archivedCards;let accepted;
+    try{state.cards=LifeStateMerge.copy(cards);state.archivedCards=LifeStateMerge.copy(archive);accepted=saveState();}finally{state.cards=cards;state.archivedCards=archive;}
+    if(!accepted)throw new Error('Not saved yet. Your complete draft was kept; please retry.');
+  }catch(error){if(live){for(const key of keys)delete live[key];Object.assign(live,before);}restoreBoardActionState(previous);receipt.status='failed';persist();throw error;}
+  receipt.status='saved';return {values,retained:false};
+}
 function renderTaskCapture() {
   const session = planningSession(),boardId=state.activeBoardId,today=getTodayKey();
-  const draft = session.capture ||= {title:"",area:session.lastArea || "",dateKey:session.view==="today"?session.day:""};
+  const draft = Object.hasOwn(session,'capture')?session.capture:(session.capture={title:"",area:session.lastArea || "",dateKey:session.view==="today"?session.day:""});
   const form = planningNode("form","task-capture");
-  const current=()=>form.isConnected && state.activeBoardId===boardId && state.ui.workspaceMode==='tasks' && planningSession()===session && session.capture===draft;
-  const title = planningInput("text",draft.title,value=>{if(!current())return;draft.title=value;savePlanningSession();}); title.placeholder="Add a task";title.required=true;title.setAttribute("aria-label","New task");
+  if(!draft || typeof draft!=='object' || Array.isArray(draft) || Object.hasOwn(draft,'version') && draft.version!==1 || ['title','area','dateKey'].some(key=>typeof draft[key]!=='string')){const message=planningNode('p','planning-message','This task draft needs review. Its stored copy was kept.');message.setAttribute('role','status');form.append(message);return form;}
+  const context={boardId,ownerId:getExpectedCloudOwnerId()};let composing=false,busy=false;
+  const current=()=>!busy && context.ownerId===getExpectedCloudOwnerId() && planningControlCurrent(form,context,session) && state.ui.workspaceMode==='tasks' && session.capture===draft && !document.querySelector('dialog[open]');
+  const feedback=(text,error=false)=>{status.textContent=text;status.dataset.status=error?'error':'saved';};
+  const persist=()=>{const ok=savePlanningSession();feedback(ok?'Draft kept in this tab.':'Memory only. Keep this tab open.',!ok);discard.hidden=!draft.title && !draft.pendingTaskId;return ok;};
+  const title = planningInput("text",draft.title,value=>{if(!current())return;draft.title=value;persist();}); title.placeholder="Add a task";title.required=true;title.setAttribute("aria-label","New task");
+  title.addEventListener('compositionstart',()=>composing=true);title.addEventListener('compositionend',()=>{composing=false;if(current()){draft.title=title.value;persist();}});
   const add = planningIcon("Add task",null,"plus"); add.type="submit";add.classList.add("is-primary","task-capture-submit");
-  const main = planningNode("div","task-capture-main");main.append(title);
+  const main = planningNode("div","task-capture-main"),discard=planningIcon('Discard task draft',async()=>{
+    if(!current())return;busy=true;let confirmed=false;
+    try{confirmed=await confirmTaskAction('Discard task draft?','Only the unfinished capture will be discarded. Saved tasks will remain unchanged.','Discard draft',{danger:true});}finally{busy=false;}
+    if(!confirmed || !current())return;const clean={...draft,title:''};for(const key of ['receipt','pendingTaskId','pendingBase'])delete clean[key];session.capture=clean;
+    if(!savePlanningSession()){session.capture=draft;feedback('Draft was not discarded. Its stored copy was kept; please retry.',true);return;}renderCardsOnly({force:true});
+  },'x');discard.hidden=!draft.title && !draft.pendingTaskId;main.append(title,discard);
   const options = planningNode("div","task-capture-options");
   const details=planningNode('details','task-capture-details'),summary=planningNode('summary');summary.setAttribute('aria-label','Task area and date');
   const updateSummary=()=>{summary.textContent=(draft.area || 'Unsorted')+' · '+(draft.dateKey?formatPlannerOriginDate(draft.dateKey):'No date');};
   details.open=Boolean(session.captureOptionsExpanded);details.append(summary,options);updateSummary();
   summary.addEventListener('click',event=>{event.preventDefault();if(!current())return;details.open=!details.open;session.captureOptionsExpanded=details.open;savePlanningSession();});
   details.addEventListener('toggle',()=>{if(!current())return;session.captureOptionsExpanded=details.open;savePlanningSession();});
-  const date=planningInput("date",draft.dateKey,value=>{if(!current())return;draft.dateKey=value;updateSummary();savePlanningSession();});date.setAttribute("aria-label","Planned day (optional)");
+  const date=planningInput("date",draft.dateKey,value=>{if(!current())return;draft.dateKey=value;updateSummary();persist();});date.setAttribute("aria-label","Planned day (optional)");
   const dateField=planningNode('div','planning-date-field');dateField.append(planningField("Planned day (optional)",planningOptionalDate(date,"Clear planned day",()=>{if(!current())return;draft.dateKey="";updateSummary();savePlanningSession();})),planningCaptureDates(date,today,current));
   options.append(planningField("Area",planningSelect(taskAreaOptions(draft.area),draft.area,value=>{if(!current())return;draft.area=value;updateSummary();savePlanningSession();})),dateField);
-  const status=planningNode("p","planning-message");status.setAttribute("role","status");form.append(main,details,add,status);
+  const status=planningNode("p","planning-message");status.setAttribute("role","status");status.setAttribute('aria-live','polite');form.append(main,details,add,status);
   form.onsubmit = event => {
     event.preventDefault();
-    if(!current() || getTodayKey()!==today){status.textContent='The board, view or day changed. Reopen this capture. Your draft is kept.';return;}
-    if (!title.value.trim() || (draft.dateKey && !LifePlanner.validDate(draft.dateKey))) return;
-    draft.pendingTaskId ||= createId();
-    const source = getPlannerSourceCards().find(card=>LifePlanner.ensure(card).some(task=>task.id===draft.pendingTaskId)) || getPlannerWriteSourceCard({category:draft.area || "Unsorted"},draft.dateKey);
-    let task=LifePlanner.ensure(source).find(task=>task.id===draft.pendingTaskId);
-    if(task && draft.pendingBase && !LifeStateMerge.equal(task,draft.pendingBase)) {status.textContent="This task changed after the save attempt. Your draft is kept; review the task before retrying.";return;}
-    task ||= LifePlanner.add(source,draft.dateKey,title.value,draft.pendingTaskId); if(!task)return;
-    LifePlanner.change(source,task.id,{title:title.value.trim(),dateKey:draft.dateKey,area:draft.area,status:"todo",project:"",deadline:"",notes:""});LifePlanner.project(source);
-    draft.pendingBase=LifeStateMerge.copy(task);savePlanningSession();
-    if(!saveState()){status.textContent="Not saved yet. Your draft is kept; try again when device saving is available.";return;}
-    session.lastArea=draft.area;session.capture={area:draft.area,dateKey:draft.dateKey,title:""};session.captureOptionsExpanded=false;
+    if(composing)return;
+    if(!current() || getTodayKey()!==today){feedback('The board, view or day changed. Reopen this capture. Your draft is kept.',true);return;}
+    // Native autofill and composition can update a field before its input event.
+    draft.title=title.value;draft.dateKey=date.value;
+    if (!draft.title.trim() || (draft.dateKey && !LifePlanner.validDate(draft.dateKey))) return;
+    let saved=false;
+    try{
+    const outcome=saveCapturedTask(draft,context,persist);saved=true;
+    const previous=Object.fromEntries(['lastArea','capture','captureOptionsExpanded','area','view','search'].filter(key=>Object.hasOwn(session,key)).map(key=>[key,session[key]])),clean={...draft,title:outcome.retained?draft.title:''};for(const key of ['receipt','pendingTaskId','pendingBase'])delete clean[key];
+    session.lastArea=draft.area;session.capture=clean;session.captureOptionsExpanded=outcome.retained?session.captureOptionsExpanded:false;
     // Keep the newly captured item visible without silently changing its date.
     if ((session.area!=="*" && session.area!==draft.area)) session.area="*";
     if (session.view==="completed" || !draft.dateKey || (session.view==="today" && draft.dateKey>session.day) || (session.view==="upcoming" && draft.dateKey<getTodayKey())) session.view="all";
-    session.search="";savePlanningSession();renderCardsOnly({force:true});
+    session.search="";
+    if(!savePlanningSession()){for(const key of ['lastArea','capture','captureOptionsExpanded','area','view','search'])delete session[key];Object.assign(session,previous);feedback('Task saved. Draft cleanup needs retry; no duplicate will be added.',true);return;}
+    renderCardsOnly({force:true});
     elements.boardGrid.querySelector('[aria-label="New task"]')?.focus({preventScroll:true});
+    const nextStatus=elements.boardGrid.querySelector('.task-capture [role=status]');if(nextStatus){nextStatus.textContent=outcome.retained?'Previous task saved. Your new draft was kept.':'Task added on this device.';nextStatus.dataset.status='saved';}
+    }catch(error){feedback(saved?'Task saved. The view needs attention; no duplicate will be added.':error.message,true);}
   };
   return form;
 }

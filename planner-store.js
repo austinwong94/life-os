@@ -144,7 +144,7 @@
   function project(card) {
     const tasks = ensure(card);
     const dates = new Set([...Object.keys(card.plannerEntries || {}), ...tasks.map(task => task.dateKey)]);
-    card.plannerEntries = Object.fromEntries([...dates].filter(validDate).map(date => [date, entry(card, date)]));
+    card.plannerEntries = Object.fromEntries([...dates].filter(validDate).map(date => [date, {...(card.plannerEntries?.[date] && typeof card.plannerEntries[date]==='object' && !Array.isArray(card.plannerEntries[date])?card.plannerEntries[date]:{}),...entry(card, date)}]));
     card.plannerArchivedTasks = tasks.filter(task => task.archivedAt && !task.deletedAt).map(task => ({...task, sourceDate: task.dateKey, wasDone: task.done}));
   }
 

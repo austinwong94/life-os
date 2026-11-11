@@ -377,3 +377,8 @@ body, .workspace { background: var(--page); color: var(--ink); }
   .task-toolbar .planning-tabs .task-view-label-short { display: inline; }
   .progress-measure strong { font-size: 16px; }
 }
+.task-capture-main { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 6px; }
+.task-capture .planning-message[data-status="saved"] { color: var(--muted,#65716c); }
+@media (min-width:701px) {
+  .task-capture-main .planning-icon { width: 36px; height: 36px; min-height: 36px; }
+}

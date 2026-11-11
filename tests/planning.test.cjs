@@ -3,6 +3,10 @@ const assert=require('node:assert/strict');
 const P=require('../planner-store.js');
 const W=require('../planning.js');
 const M=require('../state-merge.js');
+test('planner projection preserves extra entry metadata while updating canonical task text',()=>{
+  const card={id:'sample',plannerSchemaVersion:2,plannerTasks:[],plannerEntries:{'2026-11-11':{note:'',custom:{keep:'Original entry metadata'}}}};
+  P.add(card,'2026-11-11','A new sample task','sample-task',100);P.project(card);assert.deepEqual(card.plannerEntries['2026-11-11'].custom,{keep:'Original entry metadata'});assert.equal(card.plannerEntries['2026-11-11'].note,'- A new sample task');
+});
 const draft={title:'Culturely meeting',area:'Culturely',startDate:'2026-09-10',endDate:'2026-09-10',startTime:'14:00',endTime:'15:00',allDay:false,notes:'Private notes\nSecond line'};
 function cardTaskEdit(kind='checklist'){
   return {version:1,key:JSON.stringify(['board','source',kind,kind==='single'?null:'task']),ref:{boardId:'board',cardId:'source',kind,itemId:kind==='single'?null:'task'},base:kind==='single'?{title:'Book appointment',done:false}:{id:'task',text:'Call partner',done:false,custom:{keep:'all fields'}},title:'My full draft',sourceTitle:'Original project',completedOn:''};
