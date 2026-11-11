@@ -6711,15 +6711,22 @@ function sourceAddDraft(card,context=sourceAddContext(card)) {
   return draft;
 }
 
+function readSourceAddDrafts(boardId=state.activeBoardId) {
+  // Background safety checks must not initialize the calendar's selected day.
+  const session=planningSessions.get(boardId) ?? JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+boardId)) || '{}');
+  if(planningSessionFaults.has(boardId) || !session || typeof session!=='object' || Array.isArray(session))throw new Error('Saved task drafts need review.');
+  const drafts=Object.hasOwn(session,'sourceAddDrafts')?session.sourceAddDrafts:{};
+  if(!drafts || typeof drafts!=='object' || Array.isArray(drafts))throw new Error('Saved task drafts need review.');
+  return drafts;
+}
+
 function hasSourceAddDrafts() {
-  try{return Object.values(sourceAddStore()).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && (typeof draft.text!=='string' || draft.text.trim() || draft.pending));}catch{return true;}
+  try{return Object.values(readSourceAddDrafts()).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && (typeof draft.text!=='string' || draft.text.trim() || draft.pending));}catch{return true;}
 }
 
 function hasSourceAddDraftForCard(cardId,boardId=state.activeBoardId) {
   try{
-    const session=boardId===state.activeBoardId?planningSession():planningSessions.get(boardId) || JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+boardId)) || '{}');
-    if(!session || typeof session!=='object' || Array.isArray(session))return true;
-    const drafts=session.sourceAddDrafts ?? {};if(!drafts || typeof drafts!=='object' || Array.isArray(drafts))return true;
+    const drafts=readSourceAddDrafts(boardId);
     return Object.values(drafts).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && draft.cardId===cardId && (typeof draft.text!=='string' || draft.text.trim() || draft.pending));
   }catch{return true;}
 }
