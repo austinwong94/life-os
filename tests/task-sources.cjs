@@ -116,7 +116,7 @@ const seed=async p=>p.evaluate(async()=>{
     await all(p);await p.evaluate(()=>{window.savedStage=LifeDeviceStore.stage;LifeDeviceStore.stage=()=>{throw new Error('Synthetic quota failure');};});
     // click rather than check(): this intentionally expects the checkbox to revert.
     await row(p,'one').getByRole('checkbox').click();assert.equal(await row(p,'one').getByRole('checkbox').isChecked(),false);assert.match(await row(p,'one').innerText(),/Not saved yet/);
-    await p.evaluate(()=>{LifeDeviceStore.stage=window.savedStage;});await row(p,'one').getByRole('checkbox').check();await p.getByRole('button',{name:'Undo',exact:true}).click();assert.equal(await row(p,'one').getByRole('checkbox').isChecked(),false);
+    await p.evaluate(()=>{LifeDeviceStore.stage=window.savedStage;});await row(p,'one').getByRole('checkbox').check();await p.getByRole('button',{name:'Undo',exact:true}).click();await p.waitForFunction(()=>document.querySelector('.card-source-task[data-source-task="one"] input[type=checkbox]')?.checked===false);assert.equal(await row(p,'one').getByRole('checkbox').isChecked(),false);
     const single=p.locator('.card-source-task[data-source-card="single-a"]');await single.getByRole('checkbox').check();await p.evaluate(()=>flushDeviceWrites());await p.reload();await all(p);assert.equal(await single.getByRole('checkbox').isChecked(),true);
     assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='single-a').done),true);
   });
@@ -319,6 +319,105 @@ const seed=async p=>p.evaluate(async()=>{
     await p.evaluate(()=>{flushDeviceWrites=actualCardFlush;});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});await p.reload();await q.reload();await all(p);await all(q);
     assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'Original board draft');assert.equal(await q.evaluate(()=>state.cards.find(c=>c.id==='other-project').items[0].text),'Independent board draft');
     assert.equal(await p.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);assert.equal(await q.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);assert.equal(await q.evaluate(()=>state.syncConflicts.length),0);await q.close();
+  });
+  async function undoFixture(p){
+    await all(p);await p.evaluate(()=>{window.originalUndoCards=LifeStateMerge.copy(state.cards);});await row(p,'one').getByRole('checkbox').check();await p.evaluate(async()=>{await flushDeviceWrites();window.beforeTaskUndo=LifeStateMerge.copy(state.cards);window.originalTaskFlush=flushDeviceWrites;window.originalTaskSave=saveState;window.originalTaskStage=LifeDeviceStore.stage;window.taskUndoWrites=0;window.savedTaskUndo=pendingUndoAction;saveState=(...args)=>{taskUndoWrites++;return originalTaskSave(...args);};});
+  }
+  await run('task undo confirmation: failed staging keeps a usable retry and the exact original completed task',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{LifeDeviceStore.stage=()=>{throw Error('Synthetic quota failure');};});await p.locator('#undoToastButton').click();
+    assert.deepEqual(await p.evaluate(()=>state.cards),await p.evaluate(()=>beforeTaskUndo));assert.equal(await p.locator('#undoToast').isVisible(),true);assert.match(await p.locator('#undoToastText').innerText(),/Retry Undo/);
+    await p.evaluate(()=>{LifeDeviceStore.stage=originalTaskStage;});await p.locator('#undoToastButton').click();await p.locator('#undoToast').waitFor({state:'hidden'});assert.deepEqual(await p.evaluate(()=>state.cards),await p.evaluate(()=>originalUndoCards));
+  });
+  await run('task undo confirmation: false receipt keeps a retry and does not replay restoration or completion history',async p=>{
+    await undoFixture(p);const original=await p.evaluate(()=>originalUndoCards);await p.evaluate(()=>{flushDeviceWrites=async()=>false;});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>document.querySelector('#undoToastText')?.textContent.includes('not confirmed'));
+    assert.equal(await p.locator('#undoToast').isVisible(),true);assert.deepEqual(await p.evaluate(()=>state.cards),await p.evaluate(()=>originalUndoCards));const writes=await p.evaluate(()=>taskUndoWrites);
+    for(const [width,height] of [[320,844],[390,844],[768,1000],[1080,1100],[1440,1000]]){
+      await p.setViewportSize({width,height});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+      const toast=p.locator('#undoToast');assert.equal(await toast.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.bottom<=innerHeight && el.scrollWidth<=el.clientWidth+1;}),true);
+      for(const id of ['undoToastButton','undoToastCloseButton'])assert.equal(await p.locator('#'+id).evaluate(el=>{const r=el.getBoundingClientRect();return r.width>=44 && r.height>=44;}),true);
+      if(width===390 || width===1080)await p.screenshot({path:out+'/task-undo-retry-'+width+'.png'});
+    }
+    assert.equal(writes,1);await p.evaluate(()=>{flushDeviceWrites=originalTaskFlush;});await p.locator('#undoToastButton').click();await p.locator('#undoToast').waitFor({state:'hidden'});
+    assert.equal(await p.evaluate(()=>taskUndoWrites),writes);assert.deepEqual(await p.evaluate(()=>state.cards),original);await p.reload();await all(p);assert.deepEqual(await p.evaluate(()=>state.cards),original);await p.evaluate(()=>flushDeviceWrites());
+    for(const [width,height] of [[390,844],[1080,1100]]){await p.setViewportSize({width,height});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await p.evaluate(()=>scrollTo(0,0));await p.screenshot({path:out+'/task-undo-confirmed-'+width+'.png'});}
+  });
+  await run('task undo confirmation: a pending receipt locks Undo and repeated callbacks do not stage twice',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{window.taskUndoReceipts=[];flushDeviceWrites=()=>new Promise(resolve=>taskUndoReceipts.push(resolve));});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>taskUndoReceipts.length>=2);
+    assert.equal(await p.locator('#undoToast').getAttribute('aria-busy'),'true');assert.equal(await p.locator('#undoToastButton').isDisabled(),true);await p.evaluate(()=>{void savedTaskUndo();void savedTaskUndo();});assert.equal(await p.evaluate(()=>taskUndoWrites),1);assert.equal(await p.evaluate(()=>taskUndoReceipts.length),2);
+    await p.evaluate(async()=>{await originalTaskFlush();taskUndoReceipts.splice(0).forEach(resolve=>resolve(true));});await p.locator('#undoToast').waitFor({state:'hidden'});assert.deepEqual(await p.evaluate(()=>state.cards),await p.evaluate(()=>originalUndoCards));
+  });
+  await run('task undo confirmation: rejected receipt retains retry without leaking private storage errors',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{window.undoFlushCalls=0;flushDeviceWrites=(...args)=>++undoFlushCalls===2?Promise.reject(Error('Private synthetic receipt detail')):originalTaskFlush(...args);});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>document.querySelector('#undoToastText')?.textContent.includes('not confirmed'));
+    assert.doesNotMatch(await p.locator('#undoToastText').innerText(),/Private synthetic/);assert.equal(await p.locator('#undoToastButton').isEnabled(),true);assert.equal(await p.evaluate(()=>taskUndoWrites),1);
+    await p.evaluate(()=>{flushDeviceWrites=originalTaskFlush;});await p.locator('#undoToastButton').click();await p.locator('#undoToast').waitFor({state:'hidden'});assert.equal(await p.evaluate(()=>taskUndoWrites),1);assert.deepEqual(await p.evaluate(()=>state.cards),await p.evaluate(()=>originalUndoCards));
+  });
+  for(const reason of ['owner','restore','day','board','source','ambiguous source','editor','hidden'])await run('task undo confirmation: stale '+reason+' before Undo cannot change any source record',async p=>{
+    await undoFixture(p);await p.evaluate(reason=>{
+      if(reason==='owner')state.cloudOwnerId='other-synthetic-owner';if(reason==='restore')readRestoreGuard=()=>({id:'other-synthetic-restore'});if(reason==='day')getTodayKey=()=> '2026-09-23';if(reason==='board')switchBoard('other-board');
+      if(reason==='source')state.cards.find(c=>c.id==='project-a').items[0].text='Newer complete wording';if(reason==='ambiguous source')state.cards.find(c=>c.id==='project-a').items.push({...state.cards.find(c=>c.id==='project-a').items[0],custom:'Keep the second identity'});
+      if(reason==='editor'){const dialog=dailyDialog('My full note');const input=planningInput('text','Keep every word of my new note',()=>{});input.id='undo-protected-draft';dialog.append(input);input.focus();}
+      if(reason==='hidden')elements.undoToast.style.display='none';
+    },reason);
+    const before=await p.evaluate(()=>LifeStateMerge.copy({cards:state.cards,boards:state.boards}));const writes=await p.evaluate(()=>taskUndoWrites);await p.evaluate(()=>savedTaskUndo());
+    assert.deepEqual(await p.evaluate(()=>({cards:state.cards,boards:state.boards})),before);assert.equal(await p.evaluate(()=>taskUndoWrites),writes);if(reason==='editor')assert.equal(await p.locator('#undo-protected-draft').inputValue(),'Keep every word of my new note');
+  });
+  for(const reason of ['owner','restore','day','board','source','ambiguous source','editor'])await run('task undo confirmation: '+reason+' changes during saving keep the newer version and cannot replay Undo',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{window.undoReceipts=[];flushDeviceWrites=()=>new Promise(resolve=>undoReceipts.push(resolve));});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>undoReceipts.length>=2);
+    await p.evaluate(reason=>{
+      if(reason==='owner')state.cloudOwnerId='other-synthetic-owner';if(reason==='restore')readRestoreGuard=()=>({id:'other-synthetic-restore'});if(reason==='day')getTodayKey=()=> '2026-09-23';if(reason==='board')switchBoard('other-board');
+      if(reason==='source')state.cards.find(c=>c.id==='project-a').items[0].text='Newer wording during Undo';if(reason==='ambiguous source')state.cards.find(c=>c.id==='project-a').items.push({...state.cards.find(c=>c.id==='project-a').items[0],custom:'Preserve ambiguous record'});
+      if(reason==='editor'){const dialog=dailyDialog('My protected note');const input=planningInput('text','All my new words remain',()=>{});input.id='undo-protected-draft';dialog.append(input);input.focus();}
+      window.pendingUndoSnapshot=LifeStateMerge.copy({cards:state.cards,boards:state.boards});undoReceipts.splice(0).forEach(resolve=>resolve(true));
+    },reason);
+    await p.waitForFunction(()=>!document.querySelector('#undoToast').hasAttribute('aria-busy'));assert.deepEqual(await p.evaluate(()=>({cards:state.cards,boards:state.boards})),await p.evaluate(()=>pendingUndoSnapshot));assert.equal(await p.locator('#undoToastButton').isDisabled(),true);
+    const writes=await p.evaluate(()=>taskUndoWrites);await p.evaluate(()=>savedTaskUndo());assert.equal(await p.evaluate(()=>taskUndoWrites),writes);assert.deepEqual(await p.evaluate(()=>({cards:state.cards,boards:state.boards})),await p.evaluate(()=>pendingUndoSnapshot));if(reason==='editor')assert.equal(await p.locator('#undo-protected-draft').inputValue(),'All my new words remain');
+  });
+  for(const outcome of [true,false,'reject'])await run('task undo confirmation: a '+outcome+' receipt cannot replace a newer notification',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{window.undoReceipts=[];flushDeviceWrites=()=>new Promise((resolve,reject)=>undoReceipts.push({resolve,reject}));});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>undoReceipts.length>=2);
+    await p.evaluate(outcome=>{window.newUndoCalls=0;showUndoToast({message:'Keep the newer action',onUndo:()=>newUndoCalls++,persistent:true});undoReceipts.splice(0).forEach((r,index)=>{if(outcome==='reject' && index===1)r.reject(Error('Synthetic private detail'));else r.resolve(outcome===true);});},outcome);
+    await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));assert.equal(await p.locator('#undoToastText').innerText(),'Keep the newer action');assert.equal(await p.locator('#undoToastButton').isEnabled(),true);await p.locator('#undoToastButton').click();assert.equal(await p.evaluate(()=>newUndoCalls),1);assert.equal(await p.evaluate(()=>taskUndoWrites),1);assert.deepEqual(await p.evaluate(()=>state.cards),await p.evaluate(()=>originalUndoCards));
+  });
+  await run('task undo confirmation: old expiry callbacks cannot clear persistent retry or a newer action',async p=>{
+    await all(p);const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards));
+    const result=await p.evaluate(()=>{
+      const timeout=window.setTimeout,callbacks=[];window.setTimeout=(fn,ms,...args)=>{if(ms===12000)callbacks.push(fn);return timeout(fn,ms,...args);};
+      try{showUndoToast({message:'Ordinary action',onUndo:()=>{}});callbacks[0]();const ordinaryExpired=elements.undoToast.hidden;
+        showUndoToast({message:'Older action',onUndo:()=>{}});const stale=callbacks.at(-1),count=callbacks.length;showUndoToast({message:'Persistent retry',onUndo:()=>{},persistent:true});stale();return {ordinaryExpired,scheduled:callbacks.length-count,visible:!elements.undoToast.hidden,message:elements.undoToastText.textContent};
+      }finally{window.setTimeout=timeout;}
+    });assert.deepEqual(result,{ordinaryExpired:true,scheduled:0,visible:true,message:'Persistent retry'});assert.deepEqual(await p.evaluate(()=>state.cards),before);
+  });
+  await run('task undo confirmation: closing a pending message does not replay Undo or reopen the notification',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{window.undoReceipts=[];flushDeviceWrites=()=>new Promise(resolve=>undoReceipts.push(resolve));});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>undoReceipts.length>=2);await p.locator('#undoToastCloseButton').click();await p.evaluate(async()=>{await originalTaskFlush();undoReceipts.splice(0).forEach(resolve=>resolve(true));});
+    await p.evaluate(()=>savedTaskUndo());assert.equal(await p.locator('#undoToast').isHidden(),true);assert.equal(await p.evaluate(()=>taskUndoWrites),1);assert.deepEqual(await p.evaluate(()=>state.cards),await p.evaluate(()=>originalUndoCards));
+  });
+  await run('task undo confirmation: rollback refuses to overwrite a competing same-task edit',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{saveState=()=>{taskUndoWrites++;state.cards.find(c=>c.id==='project-a').items[0].text='A newer competing edit';return false;};});await p.locator('#undoToastButton').click();assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'A newer competing edit');assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].custom),'keep');assert.deepEqual(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items.slice(1)),await p.evaluate(()=>beforeTaskUndo.find(c=>c.id==='project-a').items.slice(1)));assert.equal(await p.locator('#undoToast').isHidden(),true);
+  });
+  for(const [cardId,itemId] of [['todo-a','daily-one'],['single-a','']])await run('task undo confirmation: '+cardId+' retains every original field and restores only once',async p=>{
+    await all(p);const original=await p.evaluate(()=>LifeStateMerge.copy(state.cards));const target=p.locator('.card-source-task[data-source-card="'+cardId+'"][data-source-task="'+itemId+'"]');await target.getByRole('checkbox').check();await p.evaluate(async()=>{await flushDeviceWrites();window.originalTaskFlush=flushDeviceWrites;window.originalTaskSave=saveState;window.taskUndoWrites=0;saveState=(...args)=>{taskUndoWrites++;return originalTaskSave(...args);};flushDeviceWrites=async()=>false;});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>document.querySelector('#undoToastText')?.textContent.includes('not confirmed'));
+    assert.deepEqual(await p.evaluate(()=>state.cards),original);await p.evaluate(()=>{flushDeviceWrites=originalTaskFlush;});await p.locator('#undoToastButton').click();await p.locator('#undoToast').waitFor({state:'hidden'});assert.equal(await p.evaluate(()=>taskUndoWrites),1);await p.reload();await all(p);assert.deepEqual(await p.evaluate(()=>state.cards),original);
+  });
+  await run('task undo confirmation: renamed completed task restores its original name date and history without duplicate events',async p=>{
+    await all(p);await row(p,'one').getByRole('checkbox').check();await p.evaluate(()=>flushDeviceWrites());const original=await p.evaluate(()=>LifeStateMerge.copy(state.cards));await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('A revised completed task');await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    await p.evaluate(()=>{window.originalTaskFlush=flushDeviceWrites;flushDeviceWrites=async()=>false;});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>document.querySelector('#undoToastText')?.textContent.includes('not confirmed'));assert.deepEqual(await p.evaluate(()=>state.cards),original);await p.evaluate(()=>{flushDeviceWrites=originalTaskFlush;});await p.locator('#undoToastButton').click();await p.locator('#undoToast').waitFor({state:'hidden'});await p.reload();await all(p);assert.deepEqual(await p.evaluate(()=>state.cards),original);
+  });
+  await run('task undo confirmation: independent tabs keep both boards without duplicate records or losing either change',async(p,context)=>{
+    await undoFixture(p);const original=await p.evaluate(()=>originalUndoCards);const q=await context.newPage();await q.clock.setFixedTime(new Date('2026-09-22T04:00:00Z'));await q.goto(url+'?preview=1&liveReload=0');await q.evaluate(()=>switchBoard('other-board'));await all(q);
+    await p.evaluate(()=>{flushDeviceWrites=async()=>false;});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>document.querySelector('#undoToastText')?.textContent.includes('not confirmed'));await row(q,'one').getByRole('checkbox').check();await q.evaluate(()=>flushDeviceWrites());
+    await p.evaluate(()=>{flushDeviceWrites=originalTaskFlush;});await p.locator('#undoToastButton').click();await p.locator('#undoToast').waitFor({state:'hidden'});await p.reload();await q.reload();await all(p);await all(q);
+    assert.deepEqual(await p.evaluate(()=>state.cards),original);assert.equal(await q.evaluate(()=>state.cards.find(c=>c.id==='other-project').items[0].done),true);assert.equal(await q.evaluate(()=>state.cards.find(c=>c.id==='other-project').items.length),1);assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);assert.equal(await q.evaluate(()=>state.syncConflicts.length),0);await q.close();
+  });
+  await run('task undo confirmation: a late receipt preserves the complete inline diary text node focus and cursor',async p=>{
+    await undoFixture(p);await p.evaluate(async()=>{state.cards.push({...makeCard({type:'diary',title:'Separate sample diary'}),id:'undo-diary'});if(!saveState())throw Error('Synthetic diary fixture was not saved');await flushDeviceWrites();});await workspace(p,'board');
+    await p.evaluate(()=>{window.undoReceipts=[];flushDeviceWrites=()=>new Promise(resolve=>undoReceipts.push(resolve));});await p.locator('#undoToastButton').click();await p.waitForFunction(()=>undoReceipts.length>=2);
+    const text='A complete first line about my day\nEvery word of the second line stays.';const input=p.locator('.task-card[data-id="undo-diary"] textarea').last();await input.fill(text);await input.focus();await input.evaluate(el=>{window.undoDiaryInput=el;el.setSelectionRange(7,7);});
+    await p.evaluate(async()=>{await originalTaskFlush();undoReceipts.splice(0).forEach(resolve=>resolve(true));});await p.locator('#undoToast').waitFor({state:'hidden'});
+    assert.deepEqual(await p.evaluate(()=>({connected:undoDiaryInput.isConnected,focused:document.activeElement===undoDiaryInput,start:undoDiaryInput.selectionStart,end:undoDiaryInput.selectionEnd,value:undoDiaryInput.value})),{connected:true,focused:true,start:7,end:7,value:text});
+    assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='undo-diary').diaryEntries[getTodayKey()].thoughts),text);assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].done),false);
+    await p.evaluate(async()=>{flushDeviceWrites=originalTaskFlush;document.activeElement.blur();await flushDeviceWrites();});await p.reload();await workspace(p,'board');assert.equal(await p.locator('.task-card[data-id="undo-diary"] textarea').last().inputValue(),text);
+  });
+  await run('task undo confirmation: an unexpected guard error fails closed without leaking details or changing a task',async p=>{
+    await undoFixture(p);await p.evaluate(()=>{const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(t=>t.ref.itemId==='one');showCardTaskUndo({ref:task.ref,before:originalUndoCards.find(c=>c.id==='project-a').items[0],after:task.base},()=>{throw Error('Private synthetic guard detail');});});const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards));await p.locator('#undoToastButton').click();assert.deepEqual(await p.evaluate(()=>state.cards),before);assert.equal(await p.evaluate(()=>taskUndoWrites),0);assert.match(await p.locator('#headerSaveStatus').innerText(),/Undo was not applied/);assert.doesNotMatch(await p.locator('#headerSaveStatus').innerText(),/Private synthetic/);
   });
   await browser.close();fs.writeFileSync(out+'/task-sources-results.json',JSON.stringify(results,null,2));process.exitCode=results.some(r=>!r.pass)?1:0;
 })().catch(error=>{console.error(error);process.exitCode=1;});

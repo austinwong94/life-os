@@ -377,17 +377,47 @@ function saveCardTaskChange(ref,base,updates,day=getTodayKey(),prepare) {
   return transaction;
 }
 function showCardTaskUndo(transaction,canUndo=()=>true) {
-  showUndoToast({message:"Task updated in its source card.",onUndo:()=>{
+  const change=LifeStateMerge.copy(transaction),day=getTodayKey(),ownerId=state.cloudOwnerId || '',restoreId=readRestoreGuard().id || '';
+  let busy=false,recorded=null,ownsToast=()=>false;
+  const current=()=>{
+    try{return state.activeBoardId===change.ref.boardId && day===getTodayKey() && (state.cloudOwnerId || '')===ownerId && (readRestoreGuard().id || '')===restoreId && canUndo();}
+    catch{return false;}
+  };
+  const sourceMatches=expected=>{
     try{
-      if(!canUndo())throw new Error('The board, day or account changed. Undo was not applied.');
-      const undo=LifeTaskRepository.restore(workspaceTaskBoard(),transaction);
-      if(!saveState()){
-        LifeTaskRepository.restore(workspaceTaskBoard(),undo);syncActiveBoard({touchBoard:false});
-        throw new Error("Undo was not saved. The task is unchanged.");
+      LifeTaskRepository.resolve(workspaceTaskBoard(),change.ref);
+      const matches=LifeTaskRepository.collect(workspaceTaskBoard()).filter(task=>task.editable && LifeStateMerge.equal(task.ref,change.ref));
+      return matches.length===1 && LifeStateMerge.equal(matches[0].base,expected);
+    }catch{return false;}
+  };
+  const display=(message,onUndo=null,pending=false)=>{ownsToast=showUndoToast({message,onUndo,persistent:true,busy:pending});};
+  const refuse=message=>{if(ownsToast()){clearUndoToast();setSaveStatus(message,'error');}};
+  const undo=async()=>{
+    if(busy || !ownsToast())return;
+    if(!current() || document.hidden || !elements.undoToast.getClientRects().length || elements.undoToast.closest('[hidden],[inert]') || document.querySelector('dialog[open]')){refuse('The board, day, account or open editor changed. Undo was not applied.');return;}
+    if(!sourceMatches(recorded || change.after)){refuse('This task changed again. Undo was not applied.');return;}
+    busy=true;display('Confirming undo save...',null,true);
+    try{
+      if(!recorded){
+        const restored=LifeTaskRepository.restore(workspaceTaskBoard(),change);
+        try{if(!saveState())throw new Error('Undo was not saved.');}
+        catch(error){LifeTaskRepository.restore(workspaceTaskBoard(),restored);syncActiveBoard({touchBoard:false});throw error;}
+        recorded=LifeStateMerge.copy(restored.after);
       }
-      clearUndoToast();renderCardsOnly({force:true});
-    }catch(error){clearUndoToast();setSaveStatus(error.message,"error");}
-  }});
+      let confirmed=false;try{confirmed=await flushDeviceWrites();}catch{/* The same restored task remains available for confirmation, not replay. */}
+      if(!ownsToast())return;
+      if(!current() || document.querySelector('dialog[open]')){display('Undo is pending. Reopen the original task to review saving.');return;}
+      if(!sourceMatches(recorded)){display('Task changed elsewhere. Undo was not repeated.');return;}
+      if(confirmed!==true){display('Undo save is not confirmed. Retry Undo.',undo);return;}
+      clearUndoToast();renderCardsOnly({reason:'device-commit'});
+    }catch{
+      if(ownsToast()){
+        if(!recorded && current() && sourceMatches(change.after))display('Undo was not saved. Your task is unchanged. Retry Undo.',undo);
+        else refuse('This task or account changed. Undo was not repeated.');
+      }
+    }finally{busy=false;}
+  };
+  ownsToast=showUndoToast({message:"Task updated in its source card.",onUndo:undo});
 }
 function openCardTaskSource(ref) {
   const matches=state.cards.filter(card=>card.id===ref.cardId);

@@ -1185,6 +1185,7 @@ let scrollRestoreFrame = null;
 const activeBoardPointers = new Set();
 let pendingUndoAction = null;
 let undoToastTimer = null;
+let undoToastContext = null;
 const cardArchiveControls = new WeakMap();
 let textEditGuardUntil = 0;
 let deferredBoardRenderTimer = null;
@@ -10057,12 +10058,20 @@ function getArchiveReason(card) {
   return getProgress(card).percent >= 100 ? "completed" : "archived";
 }
 
-function showUndoToast({ message, onUndo }) {
+function showUndoToast({ message, onUndo, persistent = false, busy = false }) {
+  const context = {};
+  undoToastContext = context;
   pendingUndoAction = typeof onUndo === "function" ? onUndo : null;
   elements.undoToastText.textContent = message;
+  elements.undoToastButton.disabled = !pendingUndoAction;
+  if (busy) elements.undoToast.setAttribute("aria-busy", "true");
+  else elements.undoToast.removeAttribute("aria-busy");
   elements.undoToast.hidden = false;
   window.clearTimeout(undoToastTimer);
-  undoToastTimer = window.setTimeout(clearUndoToast, 12000);
+  if (!persistent) undoToastTimer = window.setTimeout(() => {
+    if (undoToastContext === context) clearUndoToast();
+  }, 12000);
+  return () => undoToastContext === context && !elements.undoToast.hidden;
 }
 
 function runPendingUndo() {
@@ -10075,7 +10084,9 @@ function runPendingUndo() {
 
 function clearUndoToast() {
   pendingUndoAction = null;
+  undoToastContext = null;
   window.clearTimeout(undoToastTimer);
+  elements.undoToast.removeAttribute("aria-busy");
   elements.undoToast.hidden = true;
 }
 
