@@ -831,13 +831,31 @@ function appendDailyReviewFacts(root,start,end) {
   section('Chosen actions',dailyFollowThrough(start,end).sort((a,b)=>a.date.localeCompare(b.date)).map(row=>row.date+' · '+row.done+' / '+row.total+' original choices completed'+(row.revised?' · Plan revised':'')));
 }
 function openDailyReview(requestedWeek) {
-  const dialog=dailyDialog('Weekly review'),session=dailySession(),boardId=state.activeBoardId,today=getTodayKey();dialog.classList.add('daily-review-dialog');
+  const dialog=dailyDialog('Weekly review'),session=dailySession(),boardId=state.activeBoardId,today=getTodayKey(),mode=state.ui.workspaceMode,ownerId=state.cloudOwnerId || '',restoreId=readRestoreGuard().id || '';dialog.classList.add('daily-review-dialog');
   const candidate=typeof requestedWeek==='string'?requestedWeek:session.reviewWeek;
   const week=LifePlanner.validDate(candidate) && candidate<=today?dailyWeekStart(candidate):dailyWeekStart(today);session.reviewWeek=week;
-  const end=[LifePlanning.shift(week,6),today].sort()[0],message=planningNode('p','daily-message');message.setAttribute('role','status');
-  const sameBoard=()=>{if(boardId===state.activeBoardId)return true;message.textContent='The board changed. Your draft is kept on its original board; reopen the review there.';return false;};
+  const end=[LifePlanning.shift(week,6),today].sort()[0],message=planningNode('p','daily-message daily-review-message');message.setAttribute('role','status');
+  let busy=false,recorded=null,cleanupPending=false,submittedDraft=null;
+  const feedback=(text,kind='error')=>{message.textContent=text;message.dataset.state=kind;};
+  const current=()=>dialog.open && dialog.isConnected && !dialog.hidden && dialog.getClientRects().length>0 && document.getElementById('dailyDialog')===dialog && boardId===state.activeBoardId && today===getTodayKey() && state.ui.workspaceMode===mode && dailySession()===session && session.reviewWeek===week && (state.cloudOwnerId || '')===ownerId && (readRestoreGuard().id || '')===restoreId;
+  const canApply=()=>{
+    if(busy)return false;
+    if(boardId!==state.activeBoardId){feedback('The board changed. Your draft is kept on its original board; reopen the review there.');return false;}
+    if(!current()){
+      if(dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog)feedback('This review, day or account changed. Your draft is kept; reopen the review.');
+      return false;
+    }
+    if(session.reviews!==drafts || Object.hasOwn(drafts,week) && drafts[week]!==draft){feedback('Your draft changed elsewhere. It has been kept; reopen the review.');return false;}
+    return true;
+  };
   const nav=planningNode('div','daily-actions');
-  const change=amount=>{if(!sameBoard())return;session.reviewWeek=LifePlanning.shift(week,amount);saveDailyDraft(boardId);dialog.close();openDailyReview(session.reviewWeek);};
+  const change=amount=>{
+    if(!canApply() || cleanupPending)return;
+    const target=LifePlanning.shift(week,amount);if(!LifePlanner.validDate(target) || target>today || !keepDraft())return;
+    session.reviewWeek=target;
+    if(!saveDailyDraft(boardId,{silent:true})){session.reviewWeek=week;feedback('Week change was not saved. Your current draft is kept; please retry.');return;}
+    dialog.close();openDailyReview(target);
+  };
   const next=planningIcon('Next week',()=>change(7),'chevron-right');next.disabled=LifePlanning.shift(week,7)>today;
   nav.append(planningIcon('Previous week',()=>change(-7),'chevron-left'),planningNode('strong','','Calendar week · '+week+' - '+end),next);dialog.append(nav);
   const facts=momentumWeek(week),overview=planningNode('dl','daily-review-overview');
@@ -845,31 +863,90 @@ function openDailyReview(requestedWeek) {
     const item=planningNode('div');item.append(planningNode('dt','',label),planningNode('dd','',String(value)));overview.append(item);
   }dialog.append(overview);
   const previous=latestDailyRecord('review',week),drafts=session.reviews ||= {},draft=drafts[week] ||= {mattered:previous?.mattered || '',easier:previous?.easier || ''};
-  const form=planningNode('form','daily-form');
+  const form=planningNode('form','daily-form'),inputs=[];
+  const keepDraft=()=>{
+    if(!canApply() || cleanupPending)return false;
+    drafts[week]=draft;
+    const kept=saveDailyDraft(boardId);retryDraft.hidden=kept;
+    feedback(kept?'Draft saved on this tab.':'Draft not saved on this tab. Keep this page open and retry.',kept?'kept':'error');return kept;
+  };
   for(const [key,label] of [['mattered','What mattered?'],['easier','What would make next week easier?']]){
-    const input=planningNode('textarea');input.rows=3;input.value=draft[key];input.oninput=()=>{draft[key]=input.value;draft.changed=true;drafts[week]=draft;message.textContent=saveDailyDraft(boardId)?'Draft kept in this tab':'Draft only in memory - storage unavailable';};form.append(planningField(label,input));
+    const input=planningNode('textarea');input.rows=3;input.value=draft[key];input.oninput=()=>{if(!canApply() || cleanupPending)return;draft[key]=input.value;draft.changed=true;keepDraft();};inputs.push(input);form.append(planningField(label,input));
   }
-  const save=planningButton('Keep reflection',null,'check');save.type='submit';form.append(message,save);dialog.append(form);
+  const save=planningButton('Keep reflection',null,'check');save.type='submit';
+  const retryDraft=planningButton('Retry reflection draft',()=>keepDraft(),'rotate-ccw');retryDraft.hidden=true;
+  const retryCleanup=planningButton('Retry reflection draft cleanup',()=>{if(canApply())finish();},'rotate-ccw');retryCleanup.hidden=true;
+  const actions=planningNode('div','daily-actions');actions.append(save,retryDraft,retryCleanup);form.append(message,actions);dialog.append(form);
+  const refreshControls=()=>{
+    if(busy)form.setAttribute('aria-busy','true');else form.removeAttribute('aria-busy');
+    for(const input of inputs)input.disabled=busy || cleanupPending;
+    save.disabled=busy || cleanupPending;retryDraft.disabled=busy;retryCleanup.disabled=busy;
+    for(const button of nav.querySelectorAll('button'))button.disabled=busy || cleanupPending || button===next && LifePlanning.shift(week,7)>today;
+  };
   const evidence=planningNode('details','daily-review-evidence');evidence.append(planningNode('summary','','Review task and priority details'));appendDailyReviewFacts(evidence,week,end);dialog.append(evidence);
   const history=planningNode('details','daily-review-history');
   const renderHistory=()=>{
     const records=dailyRecords().filter(e=>e.kind==='review' && e.date===week).sort((a,b)=>b.recordedAt-a.recordedAt);
-    history.replaceChildren(planningNode('summary','','Saved reflections ('+records.length+')'));
+    history.replaceChildren(planningNode('summary','','Reflection history ('+records.length+')'));
     records.forEach(e=>history.append(planningNode('small','',formatRecordDateTime(e.recordedAt)),planningNode('p','',e.mattered),planningNode('p','',e.easier)));
   };renderHistory();dialog.append(history);
-  form.onsubmit=event=>{
-    event.preventDefault();if(!sameBoard())return;
-    if(!draft.mattered.trim()&&!draft.easier.trim()){message.textContent='Write a thought to keep.';return;}
-    const latest=latestDailyRecord('review',week);
-    if(latest?.mattered===draft.mattered && latest?.easier===draft.easier){message.textContent='This reflection is already saved on this device.';return;}
-    if(saveDailyRecord({kind:'review',date:week,mattered:draft.mattered,easier:draft.easier},message)){delete drafts[week];saveDailyDraft(boardId);message.textContent='Saved on this device. Earlier reflections are kept.';renderHistory();}
+  const recordedCurrent=()=>{
+    const matches=dailyRecords().filter(record=>record.id===recorded?.id);
+    return matches.length===1 && LifeStateMerge.equal(matches[0],recorded);
+  };
+  const draftCurrent=()=>session.reviews===drafts && (!Object.hasOwn(drafts,week) || drafts[week]===draft) && LifeStateMerge.equal(draft,submittedDraft);
+  const finish=()=>{
+    if(!current())return;
+    if(!recordedCurrent() || !draftCurrent()){feedback('Your reflection or draft changed elsewhere. Both have been kept; reopen the review.');return;}
+    const hadDraft=Object.hasOwn(drafts,week),kept=drafts[week];delete drafts[week];
+    if(!saveDailyDraft(boardId,{silent:true})){
+      if(hadDraft)drafts[week]=kept;
+      cleanupPending=true;retryCleanup.hidden=false;retryDraft.hidden=true;
+      feedback('Your reflection is saved on this device, but its draft could not be cleared. Keep this page open and retry.','attention');
+    }else{
+      cleanupPending=false;retryCleanup.hidden=true;retryDraft.hidden=true;
+      delete draft.changed;
+      feedback('Saved on this device. Earlier reflections are kept.','kept');
+    }
+    renderHistory();refreshControls();
+  };
+  form.onsubmit=async event=>{
+    event.preventDefault();if(!canApply() || cleanupPending)return;
+    if(!draft.mattered.trim()&&!draft.easier.trim()){feedback('Write a thought to keep.');return;}
+    submittedDraft=LifeStateMerge.copy(draft);busy=true;refreshControls();feedback('Confirming device save...','saving');
+    try{
+      const retrying=recorded?.mattered===draft.mattered && recorded?.easier===draft.easier;
+      if(retrying){
+        if(!recordedCurrent()){feedback('Your recorded reflection changed elsewhere. Your draft is kept; reopen the review.');return;}
+      }else{
+        const latest=latestDailyRecord('review',week);
+        if(latest?.mattered!==draft.mattered || latest?.easier!==draft.easier){
+          if(!saveDailyRecord({kind:'review',date:week,mattered:draft.mattered,easier:draft.easier},message)){feedback('Not saved. Your draft is kept; please retry.');return;}
+        }
+        recorded=LifeStateMerge.copy(latestDailyRecord('review',week));
+      }
+      renderHistory();
+      let confirmed=false;try{confirmed=await flushDeviceWrites();}catch{/* Keep the same record and full draft for an explicit retry. */}
+      if(!current()){
+        if(dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog)feedback('This review, board or day changed. Your draft is kept; reopen the review.');
+        return;
+      }
+      if(!draftCurrent() || !recordedCurrent()){feedback('Your reflection or draft changed elsewhere. Both have been kept; reopen the review.');return;}
+      if(confirmed!==true){feedback('Device save is not confirmed. Your reflection and draft are kept; please retry.');return;}
+      finish();
+    }finally{busy=false;refreshControls();}
   };
   dialog.append(planningButton('Download weekly summary',()=>{
-    if(!sameBoard())return;
+    if(!canApply())return;
     const report=createReportDocument('Weekly review',state.board.name+' · '+week+' - '+end);appendDailyReviewFacts(report,week,end);
     const saved=latestDailyRecord('review',week);if(saved){report.append(planningNode('h3','','What mattered?'),planningNode('p','',saved.mattered),planningNode('h3','','What would make next week easier?'),planningNode('p','',saved.easier));}
     downloadTextFile('life-os-week-'+week+'.html','<!doctype html><meta charset="utf-8"><title>Life OS weekly review</title><style>body{max-width:800px;margin:32px auto;padding:16px;font:16px/1.6 system-ui}p{white-space:pre-wrap;overflow-wrap:anywhere}button{display:none}section{margin:24px 0}</style>'+report.outerHTML,'text/html;charset=utf-8');
   },'download'));
+  if(draft.changed){
+    let persisted;try{persisted=JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-daily:'+boardId)) || '{}').reviews?.[week];}catch{}
+    const kept=LifeStateMerge.equal(persisted,draft);retryDraft.hidden=kept;
+    feedback(kept?'Draft saved on this tab.':'Draft not saved on this tab. Keep this page open and retry.',kept?'kept':'error');
+  }
 }
 function dailyReadableRecords(board) {
   const records=dailyRecords(board),reviews=records.filter(e=>e.kind==='review'),focuses=records.filter(e=>e.kind==='focus');
