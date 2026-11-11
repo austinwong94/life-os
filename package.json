@@ -14,6 +14,7 @@
     "test:capture": "node tests/capture.cjs",
     "test:planner-review": "node tests/planner-review.cjs",
     "test:planner-archive": "node tests/planner-archive.cjs",
+    "test:card-archive": "node tests/card-archive.cjs",
     "test:health-review": "node tests/health-review.cjs",
     "test:health-interface": "node tests/health-interface.cjs",
     "test:health-workspace": "node tests/health-workspace.cjs",

@@ -158,6 +158,20 @@
 .activity-editor .activity-editor-actions .planning-icon { width: 44px; height: 44px; flex-basis: 44px; }
 .activity-editor .activity-all-day { display: flex; flex-direction: row; align-items: center; justify-content: space-between; min-height: 44px; gap: 12px; cursor: pointer; }
 .activity-editor .activity-all-day input { width: 20px; height: 20px; margin: 0; accent-color: var(--action); }
+.records-modal { padding: 0; }
+.records-modal-body { display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
+.records-modal-body > * { flex-shrink: 0; }
+.records-modal-body > .records-list { overflow: visible; }
+.records-modal .archive-card-footer { grid-template-columns: minmax(0,1fr); border-radius: 8px; }
+.records-modal .archive-card-meta strong, .records-modal .archive-card-meta span { white-space: normal; overflow-wrap: anywhere; }
+.records-modal .archive-card-actions { flex-wrap: nowrap; }
+.records-modal .archive-card-actions button { min-height: 44px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+.records-modal .record-restore, .records-modal .record-archive { flex: 1; }
+.records-modal-body > .records-action-status { padding: 10px 0; margin: 0; border-block: 1px solid var(--line); color: var(--danger,#a52b42); font-size: 13px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .records-modal { max-height: min(760px, calc(100dvh - 104px - env(safe-area-inset-bottom))); }
+  .records-modal .archive-filter-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
 :is(.subtask-editor,.card-task-dialog) .planning-message { margin: 0; font-size: 13px; line-height: 1.5; }
 :is(.subtask-editor,.card-task-dialog) .planning-message:empty { display: none; }
 :is(.subtask-editor,.card-task-dialog) .planning-button { min-width: 44px; min-height: 44px; }

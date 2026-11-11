@@ -1175,6 +1175,7 @@ let scrollRestoreFrame = null;
 const activeBoardPointers = new Set();
 let pendingUndoAction = null;
 let undoToastTimer = null;
+const cardArchiveControls = new WeakMap();
 let textEditGuardUntil = 0;
 let deferredBoardRenderTimer = null;
 let pendingBoardRenderOptions = null;
@@ -1966,10 +1967,12 @@ function bindEvents() {
   elements.reportPrintButton.addEventListener("click", printCurrentReport);
 
   elements.recordsModalList.addEventListener("click", (event) => {
+    const actionButton=event.target.closest('button[data-archive-ready-card],button[data-restore-card],button[data-delete-archived-card]');
+    if(!actionButton || !isCardArchiveControlCurrent(actionButton))return;
+    const context=cardArchiveControls.get(actionButton);
     const archiveButton = event.target.closest("button[data-archive-ready-card]");
     if (archiveButton) {
-      archiveCard(archiveButton.dataset.archiveReadyCard);
-      renderRecordsModal();
+      archiveCard(archiveButton.dataset.archiveReadyCard,context);
       return;
     }
     const deleteButton = event.target.closest("button[data-delete-archived-card]");
@@ -1979,7 +1982,7 @@ function bindEvents() {
     }
     const button = event.target.closest("button[data-restore-card]");
     if (!button) return;
-    restoreArchivedCard(button.dataset.restoreCard);
+    restoreArchivedCard(button.dataset.restoreCard,context);
   });
 
   elements.recordsSearch.addEventListener("input", (event) => {
@@ -3612,6 +3615,8 @@ function getCardDisplayDescription(card) {
 
 function renderCard(card, options = {}) {
   const interactive = options.interactive !== false;
+  const ownerBoardId=state.activeBoardId;
+  let cardActionSnapshot;
   const template = document.querySelector("#cardTemplate");
   const node = template.content.firstElementChild.cloneNode(true);
   const themeKey = THEMES[card.theme] ? card.theme : "leaf";
@@ -3701,6 +3706,7 @@ function renderCard(card, options = {}) {
     }
     menuToggle.addEventListener("click", (event) => {
       event.stopPropagation();
+      if(!planningControlCurrent(node,{boardId:ownerBoardId}) || document.querySelector('dialog[open]'))return;
       const isOpen = !cardMenu.hidden;
       closeCardActionMenus();
       cardMenu.hidden = isOpen;
@@ -3708,6 +3714,7 @@ function renderCard(card, options = {}) {
       node.classList.toggle("is-menu-open", !isOpen);
       menuToggle.setAttribute("aria-expanded", isOpen ? "false" : "true");
       if (!isOpen) {
+        cardActionSnapshot=LifeStateMerge.copy(card);
         openFloatingPlannerTaskMenu(menuShell,cardMenu,menuToggle);
         cardMenu.querySelector('button:not(:disabled)')?.focus({preventScroll:true});
       }
@@ -3724,13 +3731,14 @@ function renderCard(card, options = {}) {
     cardMenu.addEventListener("click", (event) => {
       const actionButton = event.target.closest("button[data-card-action]");
       if (!actionButton || actionButton.disabled) return;
+      if(cardMenu.hidden || !planningControlCurrent(node,{boardId:ownerBoardId}) || document.querySelector('dialog[open]'))return;
       event.stopPropagation();
       closeCardActionMenus();
       const action = actionButton.dataset.cardAction;
       if (action === "edit") startEditingCard(card.id);
       if (action === "move") openMoveCardModal(card.id);
-      if (action === "archive") archiveCard(card.id);
-      if (action === "delete") deleteCard(card.id);
+      if (action === "archive") archiveCard(card.id,{boardId:ownerBoardId,expected:cardActionSnapshot});
+      if (action === "delete") deleteCard(card.id,{boardId:ownerBoardId,expected:cardActionSnapshot});
     });
   }
 
@@ -8537,6 +8545,7 @@ function closeHistoryModal() {
 
 function openRecordsModal() {
   closeOtherOverlays("records");
+  setCardArchiveFeedback('');
   renderRecordsModal();
   elements.recordsModal.hidden = false;
   syncModalOpenState();
@@ -9324,6 +9333,8 @@ function getActiveRailSurface() {
 }
 
 function renderRecordsModal() {
+  const feedback=document.getElementById('recordsActionStatus');
+  if(feedback?.dataset.boardId!==state.activeBoardId)setCardArchiveFeedback('');
   const records = getArchivedCards().filter(card => !card.plannerSourceOnly).sort((a, b) => Number(b.archivedAt || 0) - Number(a.archivedAt || 0));
   const readyCards = getReadyToArchiveCards();
   populateArchiveFilterControls(records);
@@ -9545,6 +9556,8 @@ function renderArchiveCardFrame(card, options) {
   button.className = `secondary-action ${options.actionClass}`;
   button.textContent = options.actionLabel;
   button.setAttribute(options.actionAttribute, card.id);
+  const archiveContext={boardId:state.activeBoardId,expected:LifeStateMerge.copy(card)};
+  cardArchiveControls.set(button,archiveContext);
   const actions = document.createElement("div");
   actions.className = "archive-card-actions";
   actions.append(button);
@@ -9556,6 +9569,7 @@ function renderArchiveCardFrame(card, options) {
     deleteButton.title = "Delete forever";
     deleteButton.setAttribute("aria-label", `Delete forever: ${card.title || "archived card"}`);
     deleteButton.setAttribute("data-delete-archived-card", card.id);
+    cardArchiveControls.set(deleteButton,archiveContext);
     actions.append(deleteButton);
   }
   footer.append(meta, actions);
@@ -9634,32 +9648,65 @@ function getCardRecordContext(card) {
   return parts.join(" · ");
 }
 
-function archiveCard(id, options = {}) {
-  const index = state.cards.findIndex((card) => card.id === id);
-  if (index < 0) return;
-  const [card] = state.cards.splice(index, 1);
-  const reason = normalizeLabel(options.reason || getArchiveReason(card));
-  const archivedCard = normalizeArchivedCard({
-    ...card,
-    runningSince: null,
-    archivedAt: Date.now(),
-    archiveReason: reason
-  });
-  state.archivedCards = [archivedCard, ...getArchivedCards()];
-  if (editingCardId === id) {
-    resetFormState();
+function setCardArchiveFeedback(message) {
+  const feedback=document.getElementById('recordsActionStatus');
+  if(feedback){
+    feedback.textContent=message;feedback.hidden=!message;feedback.dataset.boardId=state.activeBoardId;
+    if(message && !elements.recordsModal.hidden)feedback.scrollIntoView({block:'nearest'});
   }
-  saveState();
+  if(message)setSaveStatus(message,'error');
+}
+
+function isCardArchiveControlCurrent(button) {
+  const context=cardArchiveControls.get(button);
+  if(!context || !planningControlCurrent(button,{boardId:context.boardId}) || elements.recordsModal.hidden || document.querySelector('dialog[open]'))return false;
+  const records=button.hasAttribute('data-archive-ready-card')?state.cards:getArchivedCards(),matches=records.filter(card=>card.id===context.expected.id);
+  if(matches.length!==1 || !LifeStateMerge.equal(LifeStateMerge.copy(matches[0]),context.expected)){setCardArchiveFeedback('This card changed. Reopen Archive to review it before continuing.');return false;}
+  return true;
+}
+
+function changeCardArchive(id,archive,options={}) {
+  try{
+    if(Object.hasOwn(options,'boardId') && options.boardId!==state.activeBoardId)throw new Error('This action belongs to a different board. Return to that board and open Archive.');
+    if(archive && editingCardId===id)throw new Error('Finish or close this card editor before archiving. Your draft was kept.');
+    const source=archive?state.cards:getArchivedCards(),target=archive?getArchivedCards():state.cards,matches=source.filter(card=>card.id===id);
+    if(typeof id!=='string' || !id.trim() || matches.length!==1 || target.some(card=>card.id===id))throw new Error('This card cannot be identified safely. Its original records were kept; reopen Archive to review.');
+    const card=matches[0],before=LifeStateMerge.copy(card);
+    if(options.expected && !LifeStateMerge.equal(before,options.expected))throw new Error('This card changed. Nothing was moved; reopen its options to review the latest version.');
+    const next=LifeStateMerge.copy(card);
+    if(archive){
+      if(isManualTimer(next) && next.runningSince)next.remaining=getRemaining(next);
+      next.runningSince=null;next.archivedAt=Date.now();next.archiveReason=normalizeLabel(options.reason || getArchiveReason(LifeStateMerge.copy(card)));
+    }else{next.runningSince=null;next.order=nextOrder();delete next.archivedAt;delete next.archiveReason;}
+    const previousCards=state.cards,previousArchive=state.archivedCards,hadArchive=Object.hasOwn(state,'archivedCards');
+    state.cards=archive?source.filter(item=>item!==card):[...target,next];
+    state.archivedCards=archive?[next,...target]:source.filter(item=>item!==card);
+    try{if(!saveState())throw new Error('Device save refused');}
+    catch{
+      state.cards=previousCards;if(hadArchive)state.archivedCards=previousArchive;else delete state.archivedCards;
+      syncActiveBoard({touchBoard:false});
+      setCardArchiveFeedback((archive?'Archive was not saved. The card is still on this board. ':'Restore was not saved. The card remains in Archive. ')+deviceSaveFailureReason());
+      return {ok:false,retryable:true};
+    }
+    setCardArchiveFeedback('');return {ok:true,before,after:next,boardId:state.activeBoardId};
+  }catch(error){setCardArchiveFeedback(error.message || 'This card needs review. Its original records were kept.');return {ok:false,retryable:false};}
+}
+
+function archiveCard(id, options = {}) {
+  const result=changeCardArchive(id,true,options);if(!result.ok)return false;
+  const card=result.before,archivedCard=result.after;
   render();
   if (!elements.recordsModal.hidden) {
     renderRecordsModal();
   }
   if (options.showUndo !== false) {
+    const expected=LifeStateMerge.copy(archivedCard);
     showUndoToast({
       message: options.message || `"${card.title}" moved to Archive.`,
-      onUndo: () => restoreArchivedCard(archivedCard.id, { fromUndo: true })
+      onUndo: () => restoreArchivedCard(archivedCard.id, { fromUndo: true,boardId:result.boardId,expected })
     });
   }
+  return true;
 }
 
 function moveActiveCardToBoard(cardId, targetBoardId) {
@@ -9743,20 +9790,14 @@ function getNextBoardOrder(board) {
 }
 
 function restoreArchivedCard(id, options = {}) {
-  const records = getArchivedCards();
-  const index = records.findIndex((card) => card.id === id);
-  if (index < 0) return;
-  const [archivedCard] = records.splice(index, 1);
-  const restoredCard = normalizeCard({
-    ...archivedCard,
-    order: nextOrder(),
-    runningSince: null
-  });
-  delete restoredCard.archivedAt;
-  delete restoredCard.archiveReason;
-  state.archivedCards = records;
-  state.cards.push(restoredCard);
-  saveState();
+  const result=changeCardArchive(id,false,options);
+  if(!result.ok){
+    if(options.fromUndo){
+      if(result.retryable)showUndoToast({message:'Undo was not saved. The card remains in Archive. Retry Undo.',onUndo:()=>restoreArchivedCard(id,options)});
+      else clearUndoToast();
+    }
+    return false;
+  }
   render();
   if (!elements.recordsModal.hidden) {
     renderRecordsModal();
@@ -9764,6 +9805,7 @@ function restoreArchivedCard(id, options = {}) {
   if (options.fromUndo) {
     clearUndoToast();
   }
+  return true;
 }
 
 function permanentlyDeleteArchivedCard(id) {
@@ -10331,10 +10373,11 @@ function stopAllTimers() {
   renderCardsOnly();
 }
 
-function deleteCard(id) {
+function deleteCard(id, options = {}) {
   const card = state.cards.find((item) => item.id === id);
   if (!card) return;
-  archiveCard(id, {
+  return archiveCard(id, {
+    ...options,
     reason: "removed from board",
     message: `"${card.title}" removed from the board and kept in Archive.`
   });
