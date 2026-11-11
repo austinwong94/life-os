@@ -436,7 +436,7 @@ function openCardTaskEditor(item) {
   form.append(message,actions,planningButton('Edit source card',()=>{if(!busy && current())openCardTaskSource(draft.ref);},'pencil'));
   const refreshControls=()=>{
     if(busy)form.setAttribute('aria-busy','true');else form.removeAttribute('aria-busy');
-    for(const input of form.querySelectorAll('input,button'))input.disabled=busy;
+    for(const input of form.querySelectorAll('input,button'))input.disabled=busy || !current();
   };
   const sourceCurrent=expected=>{
     try{

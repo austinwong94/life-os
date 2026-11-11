@@ -282,6 +282,7 @@ const seed=async p=>p.evaluate(async()=>{
       cardReceipts.splice(0).forEach(resolve=>resolve(true));
     },mutation);
     await p.waitForFunction(()=>!sourceForm.hasAttribute('aria-busy'));
+    if(!['source','ambiguous source','draft contents'].includes(mutation))assert.equal(await p.evaluate(()=>[...sourceForm.querySelectorAll('input,button')].every(control=>control.disabled)),true);
     const kept=await p.evaluate(()=>LifeStateMerge.copy(sourceSession.cardTaskDraft));
     assert.deepEqual(kept,mutation==='draft'?{...originalDraft,title:'Replacement full draft'}:mutation==='draft contents'?{...originalDraft,title:'A newer thought in the same draft'}:originalDraft);
     assert.deepEqual(await p.evaluate(()=>JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+sourceBoard))).cardTaskDraft),originalDraft);
