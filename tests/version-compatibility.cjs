@@ -85,7 +85,7 @@ const results=[];
     assert.equal(await p.evaluate(()=>state.cards.find(c=>c.type==='diary').diaryEntries['2026-10-16'].thoughts),'Original one complete diary\nSecond line');
   });
   await run('a confirmed save does not permit an update to interrupt a paused unsubmitted task draft',async p=>{
-    await updateNotice(p);const text='An unfinished task that I may return to later';
+    await updateNotice(p);const text='An unfinished task that I may return to later',before=await snapshot(p);
     await p.getByRole('textbox',{name:'Planner task',exact:true}).fill(text);
     await p.evaluate(()=>{document.activeElement.blur();textEditGuardUntil=0;});
     let navigations=0;p.on('framenavigated',frame=>{if(frame===p.mainFrame())navigations++;});
@@ -93,7 +93,10 @@ const results=[];
     await p.getByText('Finish or save your open draft before updating. Your writing has not been changed.',{exact:true}).waitFor();
     assert.equal(navigations,0);assert.equal(await p.getByRole('textbox',{name:'Planner task',exact:true}).inputValue(),text);
     assert.equal(await p.evaluate(()=>LifeDeviceStore.pending().length),0);
-    assert.equal(await p.evaluate(()=>state.cards.find(c=>c.type==='planner').plannerDraftText),text);
+    assert.deepEqual(await snapshot(p),before);
+    assert.equal(await p.evaluate(()=>{const card=state.cards.find(c=>c.type==='planner'),context=sourceAddContext(card);return JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))).sourceAddDrafts[context.key].text;}),text);
+    await p.reload();assert.equal(await p.getByRole('textbox',{name:'Planner task',exact:true}).inputValue(),text);
+    assert.deepEqual(await p.evaluate(()=>state.cards.find(c=>c.type==='planner')),before.boards.find(b=>b.id==='one').cards.find(c=>c.id==='one-planner'));
   });
   await run('repeated update requests share one save check and restore the retry control on refusal',async p=>{
     await updateNotice(p);
