@@ -77,6 +77,51 @@ const results=[];
     const deadline=await p.evaluate(()=>dailySession().focusTimer.endAt);await p.getByRole('button',{name:'Close',exact:true}).click();await p.reload();await open();assert.equal(await p.evaluate(()=>dailySession().focusTimer.endAt),deadline);
     assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
   });
+  for(const command of ['start','pause','resume','reset'])await run('focus timer '+command+' save failure preserves the exact timer and allows retry',async p=>{
+    await seed(p);await workspace(p,'today');await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.clock.pauseAt(new Date('2026-10-11T04:00:01Z'));
+    await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='a')));
+    if(command!=='start')await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();
+    if(command==='resume')await p.getByRole('button',{name:'Pause timer',exact:true}).click();
+    await p.evaluate(()=>{dailySession().retainedDraft={text:'Keep every character\nAnd this line',custom:[1,2]};if(dailySession().focusTimer)dailySession().focusTimer.custom={imported:'Keep this field'};saveDailyDraft();});
+    const before=await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),session:LifeStateMerge.copy(dailySession()),draft:sessionStorage.getItem(LifeStorageScope.key('life-os-daily:'+state.activeBoardId))}));
+    await p.evaluate(()=>{window.timerSetItem=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(this===sessionStorage && key===LifeStorageScope.key('life-os-daily:'+state.activeBoardId))throw Error('Synthetic draft quota failure');return timerSetItem.call(this,key,value);};});
+    const button=p.getByRole('button',{name:{start:'Start 5 minutes',pause:'Pause timer',resume:'Resume timer',reset:'Reset timer'}[command],exact:true});await button.click();
+    assert.deepEqual(await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),session:LifeStateMerge.copy(dailySession()),draft:sessionStorage.getItem(LifeStorageScope.key('life-os-daily:'+state.activeBoardId))})),before);
+    assert.match(await p.locator('#dailyDialog .daily-message').innerText(),/not saved.*retry/i);
+    if(command==='pause')assert.equal(await p.locator('#dailyDialog .daily-focus-clock').innerText(),'05:00');
+    if(command==='resume')assert.equal(await p.locator('#dailyDialog .daily-muted').innerText(),'Paused');
+    if(command==='reset')assert.equal(await p.locator('#dailyDialog .daily-focus-clock').innerText(),'05:00');
+    if(command==='start')assert.equal(await p.locator('#dailyDialog .daily-focus-clock').innerText(),'Ready to begin');
+    await p.evaluate(()=>Storage.prototype.setItem=timerSetItem);await button.click();
+    const after=await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),timer:LifeStateMerge.copy(dailySession().focusTimer),draft:JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-daily:'+state.activeBoardId)))}));
+    assert.deepEqual(after.records,before.records);assert.deepEqual(after.timer,after.draft.focusTimer);
+    assert.deepEqual(after.draft.retainedDraft,before.session.retainedDraft);if(command==='pause' || command==='resume')assert.deepEqual(after.timer.custom,before.session.focusTimer.custom);
+    if(command==='reset')assert.equal(after.timer,undefined);else if(command==='pause')assert.equal(after.timer.endAt,undefined);else assert.equal(typeof after.timer.endAt,'number');
+    await p.getByRole('button',{name:'Close',exact:true}).click();await p.reload();assert.deepEqual(await p.evaluate(()=>dailySession().focusTimer),after.timer);
+  });
+  for(const phase of ['running','paused','finished'])await run('focus timer for another task cannot be reset from a '+phase+' session',async p=>{
+    await seed(p);await workspace(p,'today');await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.clock.pauseAt(new Date('2026-10-11T04:00:01Z'));
+    await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='a')));await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();
+    if(phase==='paused')await p.getByRole('button',{name:'Pause timer',exact:true}).click();
+    if(phase==='finished')await p.clock.runFor(300600);
+    await p.getByRole('button',{name:'Close',exact:true}).click();await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='b')));
+    const before=await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),session:LifeStateMerge.copy(dailySession()),draft:sessionStorage.getItem(LifeStorageScope.key('life-os-daily:'+state.activeBoardId))}));
+    assert(await p.getByRole('button',{name:'Reset timer',exact:true}).isDisabled());await p.evaluate(()=>[...document.querySelectorAll('#dailyDialog button')].find(b=>b.getAttribute('aria-label')==='Reset timer').onclick());
+    assert.deepEqual(await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),session:LifeStateMerge.copy(dailySession()),draft:sessionStorage.getItem(LifeStorageScope.key('life-os-daily:'+state.activeBoardId))})),before);
+  });
+  await run('failed timer replacement keeps a finished session and the source tasks unchanged',async p=>{
+    await seed(p);await workspace(p,'today');await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.clock.pauseAt(new Date('2026-10-11T04:00:01Z'));
+    await p.evaluate(()=>{dailySession().focusTimer={key:dailyFocusKey(getWorkspaceTaskItems().find(t=>t.taskId==='b')),endAt:Date.now()-1,custom:{history:'Original finished session'}};saveDailyDraft();openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='a'));});
+    const before=await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),session:LifeStateMerge.copy(dailySession())}));await p.evaluate(()=>{window.draftWriter=saveDailyDraft;saveDailyDraft=()=>false;});
+    await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();assert.deepEqual(await p.evaluate(()=>({records:LifeCloudCopies.records(getStateForStorage()),session:LifeStateMerge.copy(dailySession())})),before);assert.match(await p.locator('#dailyDialog .daily-message').innerText(),/not saved/);
+    await p.evaluate(()=>saveDailyDraft=draftWriter);await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();assert.equal(await p.evaluate(()=>dailySession().focusTimer.key),JSON.stringify(['follow-source','a']));assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before.records);
+  });
+  await run('timer save feedback fits phone portrait and desktop and leaves the active session visible',async p=>{
+    await seed(p);await workspace(p,'today');await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.clock.pauseAt(new Date('2026-10-11T04:00:01Z'));
+    await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='a')));await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();await p.evaluate(()=>{window.draftWriter=saveDailyDraft;saveDailyDraft=()=>false;});await p.getByRole('button',{name:'Pause timer',exact:true}).click();
+    for(const width of [320,390,768,1080,1440]){await p.setViewportSize({width,height:width<500?844:1100});assert(await p.locator('#dailyDialog').evaluate(el=>el.scrollWidth<=el.clientWidth+1 && el.getBoundingClientRect().right<=innerWidth+1));assert.match(await p.locator('#dailyDialog .daily-message').innerText(),/not saved.*retry/);assert.equal(await p.locator('#dailyDialog .daily-focus-clock').innerText(),'05:00');await p.screenshot({path:out+'/timer-save-error-'+width+'.png'});}
+    await p.evaluate(()=>saveDailyDraft=draftWriter);await p.getByRole('button',{name:'Pause timer',exact:true}).click();await p.getByRole('button',{name:'Close',exact:true}).click();await p.setViewportSize({width:390,height:844});assert.match(await p.getByRole('region',{name:'Current focus session',exact:true}).innerText(),/Paused/);await p.screenshot({path:out+'/timer-save-retried-390.png'});
+  });
   await run('focus custom duration rejects invalid values and timer expiry never completes a task or invents progress',async p=>{
     await seed(p);await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.evaluate(()=>openDailyStart(getWorkspaceTaskItems().find(t=>t.taskId==='b')));
     await p.locator('.daily-start-custom > summary').click();for(const value of ['','0','-1','0.5','181']){await p.getByLabel('Custom minutes',{exact:true}).fill(value);await p.getByRole('button',{name:'Start custom session',exact:true}).click();assert.match(await p.locator('#dailyDialog .daily-message').innerText(),/whole minutes/);assert.equal(await p.evaluate(()=>dailySession().focusTimer),undefined);}

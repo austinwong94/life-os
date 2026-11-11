@@ -567,12 +567,20 @@ function openDailyStart(item,plan={}) {
     if(task.done){message.textContent='This task is already completed. It has not been reopened.';return false;}
     return true;
   };
+  const commitTimer=next=>{
+    const hadTimer=Object.hasOwn(session,'focusTimer'),before=session.focusTimer;
+    if(next===undefined)delete session.focusTimer;else session.focusTimer=next;
+    const saved=saveDailyDraft(boardId);
+    if(!saved){if(hadTimer)session.focusTimer=before;else delete session.focusTimer;}
+    message.textContent=saved?'':'Timer change was not saved. The previous session is kept; please retry.';
+    render();refreshDailyFocusSession();return saved;
+  };
   const start=minutes=>{
     if(!canAct())return;
     if(!Number.isInteger(minutes) || minutes<1 || minutes>180){message.textContent='Use whole minutes between 1 and 180.';return;}
     if(dailyFocusTimerState(session.focusTimer).phase==='invalid'){message.textContent='The saved timer needs review. It has been kept unchanged.';return;}
     if(remaining(session.focusTimer)>0){message.textContent='A timer is already active. Pause, resume or reset it before starting again.';return;}
-    session.focusTimer={key,endAt:Date.now()+minutes*60000};saveDailyDraft(boardId);message.textContent='';render();refreshDailyFocusSession();
+    commitTimer({key,endAt:Date.now()+minutes*60000});
   };
   const presetButtons=[5,15,25].map(minutes=>planningButton('Start '+minutes+' minutes',()=>start(minutes),'play'));choices.append(...presetButtons);
   const custom=planningNode('details','daily-start-custom'),customRow=planningNode('div','daily-actions'),minutes=planningInput('number','',()=>{});
@@ -580,13 +588,13 @@ function openDailyStart(item,plan={}) {
   const customStart=planningButton('Start custom session',()=>start(minutes.value===''?NaN:Number(minutes.value)),'play');customRow.append(planningField('Custom minutes',minutes),customStart);custom.append(planningNode('summary','','Custom duration'),customRow);
   const pause=planningIcon('Pause timer',()=>{
     if(!canAct())return;const timer=session.focusTimer;if(timer?.key!==key || !timer.endAt || !remaining(timer))return;
-    timer.remaining=remaining(timer);delete timer.endAt;saveDailyDraft(boardId);render();refreshDailyFocusSession();
+    const next={...timer,remaining:remaining(timer)};delete next.endAt;commitTimer(next);
   },'pause');
   const resume=planningIcon('Resume timer',()=>{
     if(!canAct())return;const timer=session.focusTimer;if(timer?.key!==key || timer.endAt || !remaining(timer))return;
-    timer.endAt=Date.now()+timer.remaining;saveDailyDraft(boardId);render();refreshDailyFocusSession();
+    commitTimer({...timer,endAt:Date.now()+timer.remaining});
   },'play');
-  const reset=planningIcon('Reset timer',()=>{if(!canAct() || dailyFocusTimerState(session.focusTimer).phase==='invalid')return;delete session.focusTimer;saveDailyDraft(boardId);message.textContent='';render();refreshDailyFocusSession();},'rotate-ccw');
+  const reset=planningIcon('Reset timer',()=>{if(!canAct() || session.focusTimer?.key!==key || dailyFocusTimerState(session.focusTimer).phase==='invalid')return;commitTimer(undefined);},'rotate-ccw');
   const render=()=>{
     if(!current())return;
     const timer=session.focusTimer?.key===key?session.focusTimer:null,ms=remaining(timer),seconds=Math.ceil(ms/1000),valid=Boolean(liveTask()),invalid=dailyFocusTimerState(session.focusTimer).phase==='invalid',active=remaining(session.focusTimer)>0;
@@ -597,7 +605,7 @@ function openDailyStart(item,plan={}) {
     if(status.textContent!==stateText)status.textContent=stateText;
     for(const button of [...presetButtons,customStart])button.disabled=busy || !valid || invalid || active || item.done;
     pause.hidden=!timer || !timer.endAt || !ms;resume.hidden=!timer || Boolean(timer.endAt) || !ms;
-    pause.disabled=resume.disabled=reset.disabled=busy || !valid || invalid || !session.focusTimer || item.done;
+    pause.disabled=resume.disabled=reset.disabled=busy || !valid || invalid || !timer || item.done;
     complete.disabled=busy || !valid;
   };
   actions.append(pause,resume,reset);dialog.append(display,status,choices,custom,actions,message);
