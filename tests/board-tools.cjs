@@ -34,7 +34,18 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
  });
  await run('board tools: backwards clocks cannot inflate remaining focus time',async p=>{await p.clock.setFixedTime(new Date('2026-11-10T04:00:00Z'));assert.equal(await p.evaluate(()=>stopAllTimers()),true);assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='focus-running').remaining),600);});
  await run('board tools: already started timers and empty layouts do not write',async p=>{
-  await p.evaluate(()=>{startAllTimers();window.toolWrites=0;window.originalStage=LifeDeviceStore.stage;LifeDeviceStore.stage=(...args)=>{toolWrites++;return originalStage(...args);};});assert.equal(await p.evaluate(()=>startAllTimers()),true);assert.equal(await p.evaluate(()=>toolWrites),0);await p.evaluate(()=>{state.cards=[];state.board.savedLayout=[];});for(const command of ['startAllTimers','stopAllTimers','saveCurrentLayout','restoreSavedLayout','smartArrange'])assert.equal(await p.evaluate(command=>window[command](),command),true);assert.equal(await p.evaluate(()=>toolWrites),0);
+  await p.evaluate(async()=>{startAllTimers();await flushDeviceWrites();});
+  const measure=(p,commands)=>p.evaluate(commands=>{
+    const originalStage=LifeDeviceStore.stage,before=LifeStateMerge.copy(state),results=[];let writes=0;
+    // Observe each synchronous controller without counting unrelated lifecycle checkpoints.
+    LifeDeviceStore.stage=(...args)=>{writes++;return originalStage(...args);};
+    try{for(const command of commands)results.push(window[command]());}
+    finally{LifeDeviceStore.stage=originalStage;}
+    return {results,writes,unchanged:LifeStateMerge.equal(state,before)};
+  },commands);
+  assert.deepEqual(await measure(p,['startAllTimers']),{results:[true],writes:0,unchanged:true});
+  await p.evaluate(async()=>{state.cards=[];state.board.savedLayout=[];saveState();await flushDeviceWrites();});
+  assert.deepEqual(await measure(p,['startAllTimers','stopAllTimers','saveCurrentLayout','restoreSavedLayout','smartArrange']),{results:[true,true,true,true,true],writes:0,unchanged:true});
  });
  await run('board tools: legacy restore retains newly added cards and tolerates deleted references',async p=>{
   await p.evaluate(()=>{state.board.savedLayout=['tools-quote','deleted-card','focus-paused'];});const before=await snapshot(p);assert.equal(await p.evaluate(()=>restoreSavedLayout()),true);const after=await snapshot(p);assert.equal(after.cards[0].id,'tools-quote');assert.equal(after.cards[1].id,'focus-paused');assert.equal(after.cards.length,before.cards.length);for(const card of after.cards)assert.equal(card.layoutColumn,before.cards.find(c=>c.id===card.id).layoutColumn);
