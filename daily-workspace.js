@@ -111,23 +111,54 @@ function dailyFocusKeys(day,items) {
   return (record?.taskIds || []).flatMap(id=>{const matches=items.filter(t=>t.taskId===id);return matches.length===1?[dailyFocusKey(matches[0])]:[];});
 }
 function saveDailyRecord(fields, message) {
-  let store = getArchivedCards().find(c=>c.dailyWorkspaceStore);
-  if (!store) {
+  const refuse=(text='Not saved. Your draft is kept; please retry.')=>{if(message)message.textContent=text;return false;};
+  const reviewNeeded=()=>refuse('Daily history needs review. Your existing records and draft were kept.');
+  const boardId=state.activeBoardId,hadArchive=Object.hasOwn(state,'archivedCards'),originalArchive=state.archivedCards;
+  if(typeof boardId!=='string' || !boardId.trim() || originalArchive!==undefined && !Array.isArray(originalArchive) || !Array.isArray(state.cards))return reviewNeeded();
+  const archive=getArchivedCards(),cards=[...state.cards,...archive],stores=archive.filter(card=>card?.dailyWorkspaceStore),ids=new Set();
+  const validTime=value=>Number.isSafeInteger(value) && value>=0 && Number.isFinite(new Date(value).getTime());
+  let recordedAt=Date.now();if(!validTime(recordedAt))return refuse('Not saved. Device time is unavailable; your draft is kept.');
+  for(const source of stores){
+    if(typeof source!=='object' || Array.isArray(source) || typeof source.id!=='string' || !source.id.trim() || cards.filter(card=>card?.id===source.id).length!==1 || !Array.isArray(source.workspaceRecords))return reviewNeeded();
+    for(const entry of source.workspaceRecords){
+      if(!entry || typeof entry!=='object' || Array.isArray(entry) || typeof entry.id!=='string' || !entry.id.trim() || ids.has(entry.id) || !validTime(entry.recordedAt) || !validTime(entry.recordedAt+1))return reviewNeeded();
+      ids.add(entry.id);recordedAt=Math.max(recordedAt,entry.recordedAt+1);
+    }
+  }
+  let copied;
+  try{copied=LifeStateMerge.copy(fields);}catch{return refuse();}
+  if(!copied || typeof copied!=='object' || Array.isArray(copied) || typeof copied.kind!=='string' || !copied.kind.trim() || !LifePlanner.validDate(copied.date))return refuse();
+  let id;try{id=createId();}catch{return refuse();}
+  if(typeof id!=='string' || !id.trim() || ids.has(id))return refuse();
+  let store=stores[0];const created=!store;
+  if(created){
+    if(cards.some(card=>card?.id==='daily-workspace-'+boardId))return reviewNeeded();
     // A known, non-planner container survives older board normalizers without
     // being selected by an older client's planner writer. Records are immutable.
-    store = {id:'daily-workspace-'+state.activeBoardId, type:'single', title:'Daily workspace records', category:'Personal',
+    store = {id:'daily-workspace-'+boardId, type:'single', title:'Daily workspace records', category:'Personal',
       plannerSourceOnly:true, dailyWorkspaceStore:true,
       archivedAt:1, createdAt:1, workspaceRecords:[]};
-    state.archivedCards = [...getArchivedCards(), store];
   }
-  const record = {...fields, id:createId(), recordedAt:Math.max(Date.now(), ...store.workspaceRecords.map(e=>e.recordedAt+1))};
+  const emptyStore=created?LifeStateMerge.copy(store):null,record={...copied,id,recordedAt},expected=LifeStateMerge.copy(record);
+  if(created)state.archivedCards=[...archive,store];
   store.workspaceRecords.push(record);
-  if (saveState()) return true;
-  const live = getArchivedCards().find(c=>c.id===store.id);
-  live.workspaceRecords = live.workspaceRecords.filter(e=>e.id!==record.id);
-  syncActiveBoard({touchBoard:false});
-  if (message) message.textContent='Not saved. Your draft is kept; please retry.';
-  return false;
+  let failureMessage;
+  try{if(saveState()===true)return true;}
+  catch{failureMessage='Save was not confirmed. Keep this page open; your full draft is kept. Please retry.';}
+  if(state.activeBoardId!==boardId)return refuse(failureMessage);
+  const liveArchive=getArchivedCards(),matches=[...state.cards,...liveArchive].filter(card=>card?.id===store.id),live=matches[0];
+  if(matches.length!==1 || !live?.dailyWorkspaceStore || !Array.isArray(live.workspaceRecords))return refuse(failureMessage);
+  const entries=live.workspaceRecords.filter(entry=>entry?.id===id);
+  if(entries.length!==1 || !LifeStateMerge.equal(entries[0],expected))return refuse(failureMessage);
+  live.workspaceRecords.splice(live.workspaceRecords.indexOf(entries[0]),1);
+  // Remove only this newly created empty container, never later records or metadata.
+  if(created && LifeStateMerge.equal(live,emptyStore)){
+    const remaining=liveArchive.filter(card=>card!==live);
+    if(Array.isArray(originalArchive) && remaining.length===archive.length && remaining.every((card,index)=>card===archive[index]))state.archivedCards=originalArchive;
+    else if(originalArchive===undefined && !remaining.length){if(hadArchive)state.archivedCards=undefined;else delete state.archivedCards;}
+    else state.archivedCards=remaining;
+  }
+  syncActiveBoard({touchBoard:false});return refuse(failureMessage);
 }
 function dailySection(title, action) {
   const section=planningNode('section','daily-section'),header=planningNode('header','daily-section-head');
