@@ -2099,6 +2099,7 @@ async function saveCardFromForm() {
   if(composerSavePending || document.querySelector('dialog[open]'))return false;
   const title = elements.cardTitle.value.trim();
   if (!title) return false;
+  if(getSelectedFormType()==='diary' && !normalizeDateKey(elements.diaryDate.value)){setComposerFeedback('Choose a valid diary date before saving. Your complete writing was kept.');return false;}
   const context={boardId:composerOwnerBoardId,cardId:editingCardId,revision:composerRevision};
   composerSavePending=context;elements.submitCardButton.disabled=true;
   let previous,staged=false;
@@ -2456,6 +2457,7 @@ function startEditingCard(id) {
   const diaryDate = getActiveDiaryDate(card);
   const diaryEntry = card.type === "diary" ? getDiaryEntry(card, diaryDate) : normalizeDiaryEntry();
   elements.diaryDate.value = diaryDate;
+  elements.diaryDate.dataset.loadedDate=diaryDate;
   elements.diaryFeeling.value = diaryEntry.feeling || "";
   elements.diarySentence.value = diaryEntry.sentence || "";
   elements.diaryThoughts.value = diaryEntry.thoughts || "";
@@ -7900,10 +7902,11 @@ function loadEditingDiaryDate() {
   if(!editingCardId || getSelectedFormType()!=='diary')return;
   if(composerOwnerBoardId!==state.activeBoardId || !composerCardIsCurrent()){setComposerFeedback('This diary changed elsewhere. Your complete writing was kept in the editor; nothing was replaced.');return;}
   const card=state.cards.find(item=>item.id===editingCardId),date=normalizeDateKey(elements.diaryDate.value);
-  if(!date)return;
+  if(!date){elements.diaryDate.value=elements.diaryDate.dataset.loadedDate || '';setComposerFeedback('Choose a valid diary date. The displayed day and writing were kept.');return;}
   // Date selection reads a copy; it must not create a page or copy yesterday's writing into it.
   const entry=normalizeDiaryEntry(card.diaryEntries?.[date] || {});
   elements.diaryFeeling.value=entry.feeling || '';elements.diarySentence.value=entry.sentence || '';elements.diaryThoughts.value=entry.thoughts || '';autoGrowTextarea(elements.diaryThoughts);
+  elements.diaryDate.dataset.loadedDate=date;
 }
 
 function autosaveEditingDiaryFromForm() {
@@ -7911,7 +7914,8 @@ function autosaveEditingDiaryFromForm() {
   if(composerOwnerBoardId!==state.activeBoardId || !composerCardIsCurrent()){setComposerFeedback('This diary changed elsewhere. Your complete writing was kept in the editor; nothing was replaced.');return;}
   const card = state.cards.find((item) => item.id === editingCardId);
   if (!card || card.type !== "diary") return;
-  const dateKey = normalizeDateKey(elements.diaryDate.value) || getTodayKey();
+  const dateKey = normalizeDateKey(elements.diaryDate.value);
+  if(!dateKey){setComposerFeedback('Choose a valid diary date. Your complete writing was kept in the editor.');return;}
   card.activeDate = dateKey;
   updateDiaryEntry(card, dateKey, {
     feeling: elements.diaryFeeling.value,
