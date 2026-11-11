@@ -18,6 +18,7 @@
     "test:card-transfer": "node tests/card-transfer.cjs",
     "test:board-deletion": "node tests/board-deletion.cjs",
     "test:board-management": "node tests/board-management.cjs",
+    "test:board-navigation": "node tests/board-navigation.cjs",
     "test:health-review": "node tests/health-review.cjs",
     "test:health-interface": "node tests/health-interface.cjs",
     "test:health-workspace": "node tests/health-workspace.cjs",

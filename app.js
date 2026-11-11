@@ -1187,6 +1187,10 @@ let activeCardMove = null;
 let pendingCardDeletion = null;
 let pendingBoardDeletion = null;
 const boardNameDrafts = new Map();
+let composerOwnerBoardId = null;
+let composerEditBaseline = null;
+let composerRevision = 0;
+let composerSavePending = null;
 let timerDisplayBoardId = "";
 let timerDisplayFrames = new Map();
 
@@ -1212,6 +1216,8 @@ const elements = {
   saveBoardNameButton: document.querySelector("#saveBoardNameButton"),
   cancelBoardNameButton: document.querySelector("#cancelBoardNameButton"),
   boardNameStatus: document.querySelector("#boardNameStatus"),
+  resumeCardDraftButton: document.querySelector("#resumeCardDraftButton"),
+  composerSaveStatus: document.querySelector("#composerSaveStatus"),
   boardTitle: document.querySelector("#boardTitle"),
   todayLine: document.querySelector("#todayLine"),
   visibilityLabel: document.querySelector("#visibilityLabel"),
@@ -1535,6 +1541,7 @@ function bindEvents() {
   elements.railAddButton.addEventListener("click", () => {
     openCardComposer({ reset: true });
   });
+  elements.resumeCardDraftButton.addEventListener('click',()=>{if(hasComposerDraft())openCardComposer();});
 
   elements.railTemplatesButton.addEventListener("click", () => {
     openTemplateModal();
@@ -1704,17 +1711,22 @@ function bindEvents() {
     autosaveEditingDiaryFromForm();
   });
   elements.diaryDate.addEventListener("change", () => {
-    autosaveEditingDiaryFromForm();
+    loadEditingDiaryDate();
   });
 
   elements.imageFile.addEventListener("change", async () => {
     const file = elements.imageFile.files && elements.imageFile.files[0];
+    const owner=composerOwnerBoardId,cardId=editingCardId;
+    const current=()=>owner===composerOwnerBoardId && cardId===editingCardId && elements.imageFile.files?.[0]===file;
     attachedImageData = "";
     if (file) {
       try {
-        attachedImageData = await fileToSafeImageDataUrl(file);
+        const image=await fileToSafeImageDataUrl(file);
+        if(!current())return;
+        attachedImageData = image;
         elements.includeImage.checked = Boolean(attachedImageData);
       } catch (error) {
+        if(!current())return;
         window.alert(error.message || "This image could not be attached.");
         elements.imageFile.value = "";
         elements.includeImage.checked = false;
@@ -2084,31 +2096,32 @@ function bindEvents() {
 }
 
 async function saveCardFromForm() {
+  if(composerSavePending || document.querySelector('dialog[open]'))return false;
   const title = elements.cardTitle.value.trim();
-  if (!title) return;
-
-  if (elements.includeImage.checked && elements.imageFile.files && elements.imageFile.files[0] && !attachedImageData) {
-    try {
-      attachedImageData = await fileToSafeImageDataUrl(elements.imageFile.files[0]);
-    } catch (error) {
-      window.alert(error.message || "This image could not be attached.");
-      return;
-    }
-  }
-
-  const card = buildCardFromForm({ preview: false });
-  if (editingCardId) {
-    if(updateExistingCard(card)===false)return;
-  } else {
-    state.cards.push(card);
-  }
-
-  resetFormState();
-  closeCardComposer();
-  textEditGuardUntil = 0;
-  render();
-  renderCardsOnly({ force: true });
-  saveState();
+  if (!title) return false;
+  const context={boardId:composerOwnerBoardId,cardId:editingCardId,revision:composerRevision};
+  composerSavePending=context;elements.submitCardButton.disabled=true;
+  let previous,staged=false;
+  try{
+    const current=()=>{
+      if(!context.boardId || context.boardId!==state.activeBoardId || context.cardId!==editingCardId || context.revision!==composerRevision || elements.cardComposerPanel.hidden)throw new Error('This editor changed boards or has newer writing. Nothing was saved; your draft was kept.');
+      if(!composerCardIsCurrent())throw new Error('This card changed elsewhere or is no longer active. Nothing was replaced; your complete draft was kept.');
+    };
+    current();
+    const file=elements.imageFile.files?.[0];
+    if(elements.includeImage.checked && file && !attachedImageData){const image=await fileToSafeImageDataUrl(file);current();if(elements.imageFile.files?.[0]!==file)throw new Error('The attachment changed. Your draft was kept; retry saving.');attachedImageData=image;}
+    current();
+    // Isolate normalization and planner edits so a refused stage leaves live records untouched.
+    previous={...state};state.boards=[...state.boards];state.cards=LifeStateMerge.copy(state.cards);state.archivedCards=LifeStateMerge.copy(getArchivedCards());
+    const card=buildCardFromForm({preview:false});
+    if(editingCardId){if(updateExistingCard(card)===false)throw new Error('Card was not saved. Your complete draft was kept.');}
+    else{if([...state.cards,...getArchivedCards()].some(item=>item.id===card.id))throw new Error('A new card identity could not be created safely. Your draft was kept.');state.cards.push(card);}
+    if(!saveState())throw new Error('Card was not saved. Your complete draft was kept. '+deviceSaveFailureReason());
+    staged=true;resetFormState();closeCardComposer();textEditGuardUntil=0;render({force:true});return true;
+  }catch(error){
+    if(!staged && previous)restoreBoardActionState(previous);
+    setComposerFeedback(staged?'Card is saved on this device, but the view needs attention. Keep this tab open.':error.message || 'Card was not saved. Your complete draft was kept.');return false;
+  }finally{if(composerSavePending===context){composerSavePending=null;elements.submitCardButton.disabled=false;}}
 }
 
 function buildCardFromForm({ preview }) {
@@ -2306,8 +2319,8 @@ function buildCardFromForm({ preview }) {
 function updateExistingCard(nextCard) {
   const index = state.cards.findIndex((card) => card.id === editingCardId);
   if (index < 0) {
-    state.cards.push(nextCard);
-    return;
+    setComposerFeedback('This card is no longer active. Your draft was kept; no replacement card was created.');
+    return false;
   }
 
   const current = state.cards[index];
@@ -2405,9 +2418,15 @@ function updateExistingCard(nextCard) {
 }
 
 function startEditingCard(id) {
+  if(hasComposerDraft()){
+    openCardComposer();
+    if(editingCardId!==id)setComposerFeedback('Finish or discard the current card draft before editing another card.','notice');
+    return editingCardId===id;
+  }
   const card = state.cards.find((item) => item.id === id);
   if (!card) return;
 
+  composerOwnerBoardId=state.activeBoardId;
   editingCardId = id;
   elements.formTitle.textContent = "Edit card";
   elements.formSubmitLabel.textContent = "Update card";
@@ -2460,9 +2479,12 @@ function startEditingCard(id) {
   renderConditionalFields();
   hydrateIcons(elements.submitCardButton);
   openCardComposer();
+  composerEditBaseline=LifeStateMerge.copy(state.cards.find(item=>item.id===id));
 }
 
 function resetFormState() {
+  composerOwnerBoardId=null;composerEditBaseline=null;composerRevision++;
+  setComposerFeedback('');
   editingCardId = null;
   draftPreviewDismissed = false;
   draftTouched = false;
@@ -2514,10 +2536,13 @@ function resetFormState() {
 }
 
 function openCardComposer(options = {}) {
+  const resume=hasComposerDraft();
+  if(resume && composerOwnerBoardId && composerOwnerBoardId!==state.activeBoardId){setComposerFeedback('This draft belongs to another board. Its complete text was kept.');return false;}
   closeOtherOverlays("composer");
-  if (options.reset) {
+  if (options.reset && !resume) {
     resetFormState();
   }
+  if(!composerOwnerBoardId)composerOwnerBoardId=state.activeBoardId;
   elements.cardComposerPanel.hidden = false;
   elements.appShell.classList.add("composer-open");
   document.body.classList.add("composer-open");
@@ -2538,7 +2563,6 @@ function closeCardComposer(options = {}) {
   document.body.classList.remove("composer-open");
   if (options.dismissPreview) {
     draftPreviewDismissed = true;
-    draftTouched = false;
   }
   if (options.reset) {
     resetFormState();
@@ -2765,6 +2789,7 @@ function renderBoardMeta() {
   renderDataSafetyPanel();
   renderBoardControls();
   renderBoardNameEditor();
+  renderComposerDraftResume();
   elements.boardTitle.textContent = state.board.name;
   const dateFull = document.createElement("span");
   dateFull.className = "today-line-full";
@@ -7871,8 +7896,19 @@ function persistDiaryEntryImmediately(card, dateKey, entry) {
   if (!localSaved) setSaveStatus(backupSaved ? "Diary saved to recovery copy only" : "Diary NOT saved - download your writing", "error");
 }
 
+function loadEditingDiaryDate() {
+  if(!editingCardId || getSelectedFormType()!=='diary')return;
+  if(composerOwnerBoardId!==state.activeBoardId || !composerCardIsCurrent()){setComposerFeedback('This diary changed elsewhere. Your complete writing was kept in the editor; nothing was replaced.');return;}
+  const card=state.cards.find(item=>item.id===editingCardId),date=normalizeDateKey(elements.diaryDate.value);
+  if(!date)return;
+  // Date selection reads a copy; it must not create a page or copy yesterday's writing into it.
+  const entry=normalizeDiaryEntry(card.diaryEntries?.[date] || {});
+  elements.diaryFeeling.value=entry.feeling || '';elements.diarySentence.value=entry.sentence || '';elements.diaryThoughts.value=entry.thoughts || '';autoGrowTextarea(elements.diaryThoughts);
+}
+
 function autosaveEditingDiaryFromForm() {
   if (!editingCardId || getSelectedFormType() !== "diary") return;
+  if(composerOwnerBoardId!==state.activeBoardId || !composerCardIsCurrent()){setComposerFeedback('This diary changed elsewhere. Your complete writing was kept in the editor; nothing was replaced.');return;}
   const card = state.cards.find((item) => item.id === editingCardId);
   if (!card || card.type !== "diary") return;
   const dateKey = normalizeDateKey(elements.diaryDate.value) || getTodayKey();
@@ -7882,6 +7918,7 @@ function autosaveEditingDiaryFromForm() {
     sentence: elements.diarySentence.value,
     thoughts: elements.diaryThoughts.value
   });
+  composerEditBaseline=LifeStateMerge.copy(card);
 }
 
 function upsertDiaryBackup(card, dateKey, entry) {
@@ -8405,6 +8442,7 @@ function renderFormPreview() {
 
 function handleDraftInputChange() {
   if (elements.cardComposerPanel.hidden && !editingCardId) return;
+  composerRevision++;
   draftTouched = true;
   draftPreviewDismissed = false;
   renderFormPreview();
@@ -8417,6 +8455,7 @@ function discardDraftCard() {
 
 function openSettingsModal() {
   closeOtherOverlays("settings");
+  renderComposerDraftResume();
   elements.settingsModalTitle.textContent = "Board settings";
   setSettingsPanelMode();
   elements.settingsModal.hidden = false;
@@ -11406,10 +11445,22 @@ function syncActiveBoard(options = {}) {
 }
 
 function switchBoard(boardId) {
-  if(!canLeaveHealthDateDraft()){elements.boardSelect.value=state.activeBoardId;elements.boardQuickSelect.value=state.activeBoardId;return;}
+  const restoreSelectors=()=>{elements.boardSelect.value=state.activeBoardId;elements.boardQuickSelect.value=state.activeBoardId;};
+  if(boardId===state.activeBoardId){restoreSelectors();return true;}
+  if(!canLeaveHealthDateDraft()){restoreSelectors();return false;}
+  if(hasComposerDraft()){
+    restoreSelectors();openCardComposer();setComposerFeedback('Finish or discard this card draft before switching boards. Your writing was kept.','notice');return false;
+  }
+  let previous;
+  try{
+    const targets=state.boards.filter(board=>board.id===boardId),target=targets[0];
+    if(targets.length!==1 || !Array.isArray(target.cards) || target.archivedCards!==undefined && !Array.isArray(target.archivedCards) || Object.hasOwn(state.deletedBoardIds || {},boardId) && state.deletedBoardIds[boardId])throw new Error('This board is unavailable or needs review. Your current board was kept.');
+    previous={...state};state.boards=[...state.boards];state.cards=LifeStateMerge.copy(state.cards);state.archivedCards=LifeStateMerge.copy(getArchivedCards());syncActiveBoard({touchBoard:false});
+    const projection={boards:[LifeStateMerge.copy(target)]};applyBoardToState(projection,boardId);
+    Object.assign(state,{activeBoardId:projection.activeBoardId,board:projection.board,cards:projection.cards,archivedCards:projection.archivedCards});
+    if(!saveState({touch:false}))throw new Error('Board was not switched. Your original board and view were kept. '+deviceSaveFailureReason());
+  }catch(error){if(previous)restoreBoardActionState(previous);restoreSelectors();setBoardActionFeedback(error.message || 'Board was not switched. Your original information was kept.');return false;}
   try {sessionStorage.setItem(LifeStorageScope.key("life-os-active-board"),boardId);} catch {}
-  syncActiveBoard();
-  applyBoardToState(state, boardId);
   state.activeFilter = "all";
   state.activeCategory = "all";
   state.activeCategories = [];
@@ -11418,7 +11469,28 @@ function switchBoard(boardId) {
   resetFormState();
   // A completed board change must not leave controls owned by the previous board.
   render({force:true});
-  saveState();
+  setBoardActionFeedback('');return true;
+}
+
+function hasComposerDraft() {
+  return Boolean(editingCardId || draftTouched || attachedImageData || [...elements.form.querySelectorAll('input[type="text"],input[type="url"],textarea')].some(field=>field.value.trim()));
+}
+
+function renderComposerDraftResume() {
+  elements.resumeCardDraftButton.hidden=!hasComposerDraft();
+}
+
+function setComposerFeedback(message,kind='error') {
+  if(message && kind==='error' && !message.includes('Keep this tab open'))message+=' Keep this tab open to retain the draft.';
+  if(elements.composerSaveStatus){elements.composerSaveStatus.textContent=message;elements.composerSaveStatus.hidden=!message;elements.composerSaveStatus.dataset.status=kind;}
+  if(message)setSaveStatus(kind==='notice'?'Card draft needs attention':'Card save needs attention',kind);
+}
+
+function composerCardIsCurrent() {
+  if(!editingCardId)return true;
+  const matches=state.cards.filter(card=>card.id===editingCardId);
+  if(matches.length!==1 || !composerEditBaseline || composerEditBaseline.id!==editingCardId)return false;
+  return LifeCloudCopies.equal(LifeCloudCopies.records({boards:[{cards:matches}]}),LifeCloudCopies.records({boards:[{cards:[composerEditBaseline]}]}));
 }
 
 function createBlankBoard(options = {}) {

@@ -181,6 +181,15 @@ jobs:
       - run: npm run test:money
         env:
           TEST_OUTPUT: test-results/money
+      - name: Check board navigation and composer safeguards in Chromium
+        run: npm run test:board-navigation
+        env:
+          TEST_OUTPUT: test-results/board-navigation-chromium
+      - name: Check board navigation and composer safeguards in WebKit
+        run: npm run test:board-navigation
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/board-navigation-webkit
       - name: Check money flows in WebKit
         run: npm run test:money
         env:
