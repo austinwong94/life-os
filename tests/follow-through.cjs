@@ -54,7 +54,7 @@ const results=[];
     await p.getByLabel('Next action: Late action',{exact:true}).fill('Write the first paragraph, then ask for feedback');await p.getByLabel('Estimated minutes: Late action',{exact:true}).fill('25');await p.getByLabel('Available minutes (optional)',{exact:true}).fill('20');
     await p.keyboard.press('Escape');await p.reload();await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();
     assert.equal(await p.getByLabel('Next action: Late action').inputValue(),'Write the first paragraph, then ask for feedback');assert.equal(await p.getByLabel('Estimated minutes: Late action').inputValue(),'25');
-    await p.getByRole('button',{name:'Keep next steps',exact:true}).click();assert.match(await p.locator('.daily-capacity').innerText(),/25 minutes estimated \/ 20 available/);
+    await p.getByRole('button',{name:'Keep next steps',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});assert.match(await p.locator('.daily-capacity').innerText(),/25 minutes estimated \/ 20 available/);
     await p.getByRole('button',{name:'Start',exact:true}).click();await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();assert.equal(await p.locator('.daily-focus-clock').innerText(),'05:00');await p.getByRole('button',{name:'Pause timer',exact:true}).click();assert.equal(await p.getByRole('button',{name:'Resume timer',exact:true}).isVisible(),true);await p.getByRole('button',{name:'Mark done',exact:true}).click();
     assert.equal(await p.evaluate(()=>coachingProgram().entries.length),0);assert.equal(await p.evaluate(()=>dailyFollowThrough('2026-10-11','2026-10-11')[0].done),1);
   });
@@ -156,7 +156,7 @@ const results=[];
   });
   const startSession=async p=>{
     await seed(p);await p.clock.install({time:new Date('2026-10-11T04:00:00Z')});await p.clock.pauseAt(new Date('2026-10-11T04:01:00Z'));await workspace(p,'today');
-    await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'Late action',exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();
+    await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'Late action',exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
     await p.getByRole('button',{name:'Start',exact:true}).click();await p.getByRole('button',{name:'Start 5 minutes',exact:true}).click();await p.getByRole('button',{name:'Close',exact:true}).click();await p.evaluate(()=>flushDeviceWrites());
   };
   await run('Today keeps a closed focus session visible and returns to the same original task without restarting it',async p=>{
@@ -212,7 +212,7 @@ const results=[];
     await p.locator('#undoToastButton').click();assert.equal(await p.locator('.daily-focus-step').count(),1);assert.deepEqual(await p.evaluate(()=>({cards:state.cards,timer:dailySession().focusTimer})),{cards:before.cards,timer:before.timer});assert.deepEqual(await p.evaluate(()=>dailyFollowThrough(getTodayKey(),getTodayKey())),[{date:'2026-10-11',total:1,done:0,revised:false}]);await p.evaluate(()=>flushDeviceWrites());await p.reload();await workspace(p,'today');assert.equal(await p.locator('.daily-focus-step').count(),1);assert.deepEqual(await p.evaluate(()=>state.cards),before.cards);
   });
   await run('next-step removal supports Project tasks without changing source completion history or checklist fields',async p=>{
-    await seed(p);await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'New project action',exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards));
+    await seed(p);await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'New project action',exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards));
     await p.getByRole('button',{name:'Next-step options: New project action',exact:true}).click();await p.getByRole('button',{name:"Remove from today's plan",exact:true}).click();assert.equal(await p.locator('.daily-focus-step').count(),0);assert.deepEqual(await p.evaluate(()=>state.cards),before);await p.locator('#undoToastButton').click();assert.equal(await p.locator('.daily-focus-step').count(),1);assert.deepEqual(await p.evaluate(()=>state.cards),before);
   });
   await run('next-step failed removal and failed Undo roll back with exact retry and no duplicated revisions',async p=>{
@@ -260,8 +260,8 @@ const results=[];
     await p.getByLabel('New planned day',{exact:true}).fill('');await p.getByRole('button',{name:'Reschedule',exact:true}).click();assert.match(await p.locator('#dailyDialog .daily-message').innerText(),/valid planned day/);assert.deepEqual(await p.evaluate(()=>LifeCloudCopies.records(getStateForStorage())),before);
   });
   await run('changing the daily plan does not inflate original-choice follow-through',async p=>{
-    await seed(p);await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();for(const name of ['Late action','Personal action'])await p.getByRole('checkbox',{name,exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();
-    await p.getByRole('checkbox',{name:'Mark done: Late action',exact:true}).click();await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'Personal action',exact:true}).uncheck();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();
+    await seed(p);await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();for(const name of ['Late action','Personal action'])await p.getByRole('checkbox',{name,exact:true}).check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    await p.getByRole('checkbox',{name:'Mark done: Late action',exact:true}).click();await p.getByRole('button',{name:'Choose',exact:true}).click();await p.getByRole('checkbox',{name:'Personal action',exact:true}).uncheck();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
     assert.deepEqual(await p.evaluate(()=>dailyFollowThrough('2026-10-11','2026-10-11')), [{date:'2026-10-11',total:2,done:1,revised:true}]);await workspace(p,'priorities');assert.match(await p.locator('.progress-measures').innerText(),/1 \/ 2 completed/);
   });
   await run('coming up and weekly review combine tasks and activities without copying either record',async p=>{

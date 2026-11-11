@@ -64,7 +64,7 @@ async function absent(page) {
   });
   await run('Today task menu Archive and actual Archive Restore keep the original record and history',async page=>{
     const before=await seed(page);await workspace(page,'today');await page.getByRole('button',{name:'Choose',exact:true}).click();
-    await page.getByRole('checkbox',{name:'Archive regression task',exact:true}).check();await page.getByRole('button',{name:'Keep next steps',exact:true}).click();
+    await page.getByRole('checkbox',{name:'Archive regression task',exact:true}).check();await page.getByRole('button',{name:'Keep next steps',exact:true}).click();await page.locator('#dailyDialog').waitFor({state:'detached'});
     await page.getByRole('button',{name:'Task options: Archive regression task',exact:true}).click();await page.locator('.planner-task-menu').getByRole('button',{name:'Archive',exact:true}).click();
     await page.getByRole('button',{name:'Mark done: Archive regression task',exact:true}).waitFor({state:'detached'});
     await page.locator('#railArchiveButton').click();await page.locator('.archived-task-row').filter({hasText:'Archive regression task'}).getByRole('button',{name:'Restore',exact:true}).click();

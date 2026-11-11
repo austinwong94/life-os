@@ -110,9 +110,9 @@
 .release-update-notice .planning-button { flex: 0 0 auto; }
 .daily-review-history { margin-block: 20px; }
 .daily-review-history small { display: block; margin-top: 16px; }
-.daily-review-dialog .planning-button { min-width:44px;min-height:44px;white-space:normal;overflow-wrap:anywhere; }
-.daily-review-dialog .daily-review-message[data-state=error] { color:var(--danger,#b42336); }
-.daily-review-dialog .daily-review-message[data-state=kept],.daily-review-dialog .daily-review-message[data-state=saving] { color:var(--muted,#52655e); }
+.daily-review-dialog .planning-button,.daily-focus-dialog .planning-button { min-width:44px;min-height:44px;white-space:normal;overflow-wrap:anywhere; }
+.daily-review-dialog .daily-review-message[data-state=error],.daily-focus-dialog .daily-focus-message[data-state=error] { color:var(--danger,#b42336); }
+.daily-review-dialog .daily-review-message[data-state=kept],.daily-review-dialog .daily-review-message[data-state=saving],.daily-focus-dialog .daily-focus-message[data-state=saving] { color:var(--muted,#52655e); }
 .task-goal { background: #e9eef8; color: #405570; }
 .task-follow-up { background: #fff3d8; color: #795c1d; }
 .report-source-picker { display: grid; gap: 6px; max-width: 360px; margin-block: 12px; }

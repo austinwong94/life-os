@@ -80,7 +80,7 @@ async function seed(page) {
     assert.match(await p.locator('.daily-focus-progress').innerText(),/1 of 1/);
     await p.getByRole('button',{name:'Choose',exact:true}).click();
     while(await p.locator('#dailyDialog input:checked').count())await p.locator('#dailyDialog input:checked').first().uncheck();
-    await p.getByRole('button',{name:'Keep next steps',exact:true}).click();
+    await p.getByRole('button',{name:'Keep next steps',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
     assert.equal(await p.getByRole('progressbar',{name:'Chosen next steps complete'}).count(),0);
     assert.equal(await p.getByRole('button',{name:'Choose',exact:true}).evaluate(e=>e.classList.contains('is-primary')),true);
     assert.equal(await p.evaluate(()=>LifePlanner.ensure(state.cards.find(c=>c.id==='design-planner')).length),6);

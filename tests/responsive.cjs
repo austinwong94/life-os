@@ -67,7 +67,7 @@ fs.mkdirSync(out,{recursive:true});const results=[];
   await page.getByLabel('Quick note',{exact:true}).fill('An idea to come back to: a quiet weekend by the sea.');
   await page.locator('.side-note-add').click();
   await capture(page);await page.getByLabel('What is on your mind?',{exact:true}).fill('Arrange a short walk and call someone I care about');await page.getByRole('button',{name:'Save capture',exact:true}).click();
-  await page.getByRole('button',{name:'Choose',exact:true}).click();await page.getByRole('checkbox',{name:'Arrange a short walk and call someone I care about',exact:true}).check();await page.getByRole('button',{name:'Keep next steps',exact:true}).click();
+  await page.getByRole('button',{name:'Choose',exact:true}).click();await page.getByRole('checkbox',{name:'Arrange a short walk and call someone I care about',exact:true}).check();await page.getByRole('button',{name:'Keep next steps',exact:true}).click();await page.locator('#dailyDialog').waitFor({state:'detached'});
   await page.evaluate(()=>flushDeviceWrites());
   for(const [width,height] of [[320,740],[390,844],[680,1024],[700,1024],[701,1024],[768,1024],[900,1600],[1080,1920],[1206,866],[1440,2560]]){
    await page.setViewportSize({width,height});await page.waitForTimeout(700);

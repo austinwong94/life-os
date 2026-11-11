@@ -89,7 +89,7 @@ const seed=async p=>p.evaluate(async()=>{
   await run('Today can complete a specific source task with new dated history without guessing old dates',async p=>{
     await workspace(p,'today');await p.getByRole('button',{name:'Choose',exact:true}).click();
     await p.getByRole('searchbox',{name:'Find a next step',exact:true}).fill('Culturely launch');
-    await p.getByRole('checkbox',{name:'Contact partner',exact:true}).first().check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();
+    await p.getByRole('checkbox',{name:'Contact partner',exact:true}).first().check();await p.getByRole('button',{name:'Keep next steps',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
     await row(p,'one').getByRole('checkbox').check();assert.equal(await row(p,'one').getByRole('checkbox').isChecked(),true);
     assert.deepEqual(await p.evaluate(()=>dailyCompletedTasks('2026-09-01','2026-09-30').map(t=>[t.title,t.completedOn])),[['Contact partner','2026-09-22']]);
     await p.evaluate(()=>flushDeviceWrites());await p.reload();await workspace(p,'today');assert.equal(await row(p,'one').getByRole('checkbox').isChecked(),true);
