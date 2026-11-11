@@ -7476,7 +7476,7 @@ async function togglePlannerTaskDone(item,options={}) {
   }
   const after=LifeStateMerge.copy(task);
   renderCardsOnly({force: true});
-  showUndoToast({message: task.done ? "Task completed." : "Task reopened.", onUndo: () => {
+  const showFeedback=()=>showUndoToast({message: task.done ? "Task completed." : "Task reopened.", onUndo: () => {
     let live;
     try{live=resolveSubtaskParent(ref).card;}
     catch(error){setSaveStatus(error.message,'error');return;}
@@ -7487,6 +7487,7 @@ async function togglePlannerTaskDone(item,options={}) {
     if(!saveState()){tasks.splice(index,1,LifeStateMerge.copy(after));LifePlanner.project(live);syncActiveBoard({touchBoard:false});}
     renderCardsOnly({force: true});
   }});
+  if(typeof options.onFeedback==='function')options.onFeedback(showFeedback);else showFeedback();
   return true;
 }
 

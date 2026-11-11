@@ -330,6 +330,8 @@ body, .workspace { background: var(--page); color: var(--ink); }
 .daily-next-action { font-size: 16px; line-height: 1.5; overflow-wrap: anywhere; }
 .daily-start-dialog > .daily-section-head { display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:start; }
 .daily-start-dialog h2 { font-size:18px;line-height:1.4;overflow-wrap:anywhere; }
+.daily-start-dialog .planning-button { min-width:44px;min-height:44px;white-space:normal;overflow-wrap:anywhere; }
+.daily-start-dialog .daily-start-message[data-state=saving] { color:var(--muted); }
 .daily-start-dialog .daily-focus-clock { font-size:32px;line-height:1.2;min-height:72px;padding:16px 0; }
 .daily-start-dialog .daily-focus-clock.is-idle { font-size:18px; }
 .daily-start-dialog > .daily-muted { min-height:20px;margin:0 0 8px;font-size:12px;line-height:20px; }
