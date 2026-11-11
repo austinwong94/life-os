@@ -1165,6 +1165,9 @@ const boardToolPresses = new WeakMap();
 const cardTimerControls = new WeakMap();
 const cardTimerFeedbacks = new Map();
 const pendingRoutineResets = new Set();
+const sourceCompletionBindings = new WeakMap();
+const sourceCompletionFeedbacks = new Map();
+const pendingSourceCompletions = new Set();
 let editingCardId = null;
 let editingPlannerTaskKey = "";
 let plannerTaskEditDraft = null;
@@ -6567,18 +6570,11 @@ function renderChecklist(card) {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = item.done;
-    input.addEventListener("change", () => {
-      if(card.type==='checklist'){const done=input.checked;input.checked=Boolean(item.done);saveSourceTaskCompletion(card,item,done);return;}else item.done = input.checked;
-      if (card.type === "routine") {
-        syncRoutineTodayHistory(card);
-      }
-      saveState();
-      renderCardsOnly();
-    });
     const span = document.createElement("span");
     span.textContent = item.text;
     label.append(input, span);
     wrapper.append(label);
+    bindSourceCompletion(input,card,item,wrapper);
     if(card.type==='checklist'){
       const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.cardId===card.id && task.ref.itemId===item.id && task.editable);
       if(task)wrapper.append(renderTaskSubtasks(task,{offerEmpty:true}));
@@ -6668,9 +6664,6 @@ function renderDailyList(card) {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = item.done;
-    input.addEventListener("change", () => {
-      const done=input.checked;input.checked=Boolean(item.done);saveSourceTaskCompletion(card,item,done);
-    });
     const count = document.createElement("span");
     count.className = "daily-index";
     count.textContent = String(index + 1).padStart(2, "0");
@@ -6678,6 +6671,7 @@ function renderDailyList(card) {
     text.textContent = item.text;
     label.append(input, count, text);
     wrapper.append(label);
+    bindSourceCompletion(input,card,item,wrapper);
     const task=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.ref.cardId===card.id && task.ref.itemId===item.id && task.editable);
     if(task)wrapper.append(renderTaskSubtasks(task,{offerEmpty:true}));
   });
@@ -6891,26 +6885,115 @@ function renderSingleTask(card) {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.checked = card.done;
-  input.addEventListener("change", () => {
-    const done=input.checked;input.checked=Boolean(card.done);saveSourceTaskCompletion(card,null,done);
-  });
   const span = document.createElement("span");
   span.textContent = "Complete";
   label.append(input, span);
   wrapper.append(label);
+  bindSourceCompletion(input,card,null,wrapper);
   return wrapper;
 }
-async function saveSourceTaskCompletion(card,item,done) {
-  const boardId=state.activeBoardId,expected=LifeStateMerge.copy(item || card);
-  if(!await confirmParentTaskCompletion(expected,done))return false;
-  const cards=state.cards.filter(c=>c.id===card.id),live=cards.length===1?cards[0]:null;
-  const targets=item ? (live?.items || []).filter(t=>item.id?t.id===item.id:t===item) : live?[live]:[];
-  if(boardId!==state.activeBoardId || !live || targets.length!==1 || !LifeStateMerge.equal(targets[0],expected)){setSaveStatus('This task changed or moved. Review it before completing.','error');renderCardsOnly({force:true});return false;}
-  const target=targets[0],keys=['done','taskCompletion','taskCompletionEvents'],before=Object.fromEntries(keys.filter(key=>Object.hasOwn(target,key)).map(key=>[key,LifeStateMerge.copy(target[key])]));
-  try{LifeTaskRepository.complete(target,done,getTodayKey());}catch(error){renderCardsOnly({force:true});setSaveStatus(error.message,'error');return false;}
-  if(!saveState()){for(const key of keys)delete target[key];Object.assign(target,before);syncActiveBoard({touchBoard:false});}
-  renderCardsOnly({force:true});
-  return lastLocalSaveOk;
+
+function sourceTaskSnapshot(card,item) {
+  return item?LifeStateMerge.copy(item):{title:card.title,done:Boolean(card.done),...Object.fromEntries(['taskCompletion','taskCompletionEvents','subtasks'].filter(key=>Object.hasOwn(card,key)).map(key=>[key,LifeStateMerge.copy(card[key])]))};
+}
+
+function sourceCompletionContext(card,item) {
+  return {boardId:state.activeBoardId,cardId:card.id,sourceType:card.type,sourceTitle:card.title,sourceCreatedAt:card.createdAt,day:getTodayKey(),rowIndex:item?card.items.indexOf(item):null,rowId:typeof item?.id==='string' && item.id.trim()?item.id:null,taskExpected:sourceTaskSnapshot(card,item),...(item && !item.id?{legacyItems:LifeStateMerge.copy(card.items)}:{})};
+}
+
+function resolveSourceCompletion(options) {
+  const card=state.cards.find(card=>card.id===options.cardId);
+  if(!card || !['single','checklist','daily','routine'].includes(card.type) || card.type!==options.sourceType || card.title!==options.sourceTitle || card.createdAt!==options.sourceCreatedAt || card.archivedAt || card.calendarOnly)throw new Error('This source task changed or moved. Review its latest version before retrying.');
+  if(options.day!==getTodayKey() || card.type==='routine' && card.lastResetDate!==options.day)throw new Error('The day changed. Review today before marking this task.');
+  let item=null;
+  if(card.type!=='single'){
+    if(!Array.isArray(card.items) || card.items.some(item=>!item || typeof item!=='object' || Array.isArray(item)))throw new Error('This task list needs review. Its original records were kept.');
+    if(options.rowId){const matches=card.items.filter(item=>item.id===options.rowId);if(matches.length!==1)throw new Error('This task identity needs review. Nothing was changed.');item=matches[0];}
+    else{
+      if(!Number.isInteger(options.rowIndex) || options.rowIndex<0 || !LifeStateMerge.equal(card.items,options.legacyItems))throw new Error('This legacy task list changed. Review it before retrying.');
+      item=card.items[options.rowIndex];if(!item || item.id!=null && item.id!=='')throw new Error('This task identity needs review. Nothing was changed.');
+    }
+  }else if(options.rowIndex!==null)throw new Error('This task identity needs review. Nothing was changed.');
+  if(!LifeStateMerge.equal(sourceTaskSnapshot(card,item),options.taskExpected))throw new Error('This task changed. Review its latest state before retrying.');
+  return {card,item,target:item || card};
+}
+
+function bindSourceCompletion(input,card,item,wrapper) {
+  const feedback=document.createElement('p');feedback.className='source-completion-status';feedback.hidden=true;feedback.setAttribute('role','status');feedback.setAttribute('aria-live','polite');wrapper.append(feedback);
+  const binding={context:sourceCompletionContext(card,item),feedback};sourceCompletionBindings.set(input,binding);input.dataset.sourceCompletion='';
+  input.addEventListener('change',()=>{
+    const context=binding.context,done=input.checked;input.checked=Boolean(context.taskExpected.done);
+    if(input.disabled || !elements.boardGrid.contains(input) || input.closest('.is-preview') || !planningControlCurrent(input,{boardId:context.boardId}) || document.querySelector('dialog[open]'))return;
+    saveSourceTaskCompletion(card,item,done,context);
+  });
+  paintSourceCompletionFeedback(input,card,item);
+}
+
+function paintSourceCompletionFeedback(input,card,item) {
+  const binding=sourceCompletionBindings.get(input);if(!binding)return;
+  const entry=sourceCompletionFeedbacks.get(JSON.stringify([binding.context.boardId,card.id]));
+  const matches=entry && entry.rowId===binding.context.rowId && (entry.rowId || entry.rowIndex===binding.context.rowIndex) && LifeStateMerge.equal(sourceTaskSnapshot(card,item),entry.expected);
+  const message=matches?entry.message:'',status=matches && entry.error?'error':'saved',feedback=binding.feedback;
+  if(feedback.textContent!==message)feedback.textContent=message;if(feedback.hidden!==!matches)feedback.hidden=!matches;if(feedback.dataset.status!==status)feedback.dataset.status=status;
+}
+
+function setSourceCompletionFeedback(options,message,error=false) {
+  if(state.activeBoardId===options.boardId && Array.isArray(state.cards)){
+    const matches=state.cards.filter(card=>card?.id===options.cardId),card=matches.length===1?matches[0]:null;
+    if(card){
+      const items=Array.isArray(card.items)?card.items:[],item=card.type==='single'?null:options.rowId?items.find(item=>item?.id===options.rowId):items[options.rowIndex];
+      if(card.type==='single' || item)sourceCompletionFeedbacks.set(JSON.stringify([options.boardId,card.id]),{rowId:options.rowId,rowIndex:options.rowIndex,message,error,expected:sourceTaskSnapshot(card,item)});
+      for(const input of elements.boardGrid.querySelectorAll('input[data-source-completion]')){
+        const binding=sourceCompletionBindings.get(input),context=binding?.context;
+        if(!context || context.boardId!==options.boardId || context.cardId!==card.id)continue;
+        const current=card.type==='single'?null:context.rowId?items.find(item=>item?.id===context.rowId):items[context.rowIndex];
+        if(card.type!=='single' && !current)continue;
+        input.checked=Boolean((current || card).done);
+        if(!error)binding.context=sourceCompletionContext(card,current);
+        paintSourceCompletionFeedback(input,card,current);
+      }
+      if(!error){
+        const progress=getProgress(LifeStateMerge.copy(card));
+        for(const node of elements.boardGrid.querySelectorAll('.task-card'))if(node.dataset.id===card.id){node.querySelector('.card-percent').textContent=`${progress.percent}%`;node.querySelector('.progress-track span').style.width=`${progress.percent}%`;node.querySelector('.card-progress p').textContent=`${progress.percent}% · ${progress.label}`;}
+      }
+    }
+  }
+  if(error)setSaveStatus(message,'error');
+}
+
+async function saveSourceTaskCompletion(card,item,done,context) {
+  let options=context,key,ownsPending=false;
+  try{
+    if(!options){if(!Array.isArray(state.cards) || !state.cards.includes(card) || item && (!Array.isArray(card.items) || !card.items.includes(item)))throw new Error('This source task changed or moved. Its original records were kept.');options=sourceCompletionContext(card,item);}
+    options={...options,done};key=JSON.stringify([options.boardId,options.cardId,options.rowId,options.rowIndex]);
+    if(pendingSourceCompletions.has(key))return false;
+    checkBoardToolContext('completion',options);const {target}=resolveSourceCompletion(options);
+    if(Boolean(target.done)===done)return runBoardTool('completion',options);
+    pendingSourceCompletions.add(key);ownsPending=true;
+    if(!await confirmParentTaskCompletion(LifeStateMerge.copy(target),done))return false;
+    return runBoardTool('completion',options);
+  }catch(error){if(options)setSourceCompletionFeedback(options,error.message || 'Task was not saved. Its original state was kept.',true);else setSaveStatus(error.message,'error');return false;}
+  finally{if(ownsPending)pendingSourceCompletions.delete(key);}
+}
+
+function sourceCompletionPlan(options) {
+  if(typeof options.done!=='boolean')throw new Error('Choose a valid completion state. No records were changed.');
+  const {card,item,target}=resolveSourceCompletion(options),patches=[],plan={patches,boardPatch:{},ordered:state.cards,message:options.done?'Completed on this device.':'Reopened on this device.'};
+  if(Boolean(target.done)===options.done)return {...plan,message:options.done?'Already completed.':'Already open.'};
+  if(Object.hasOwn(target,'taskCompletion')){
+    const previous=target.taskCompletion;
+    if(!previous || typeof previous!=='object' || Array.isArray(previous) || typeof previous.done!=='boolean' || (previous.done? !LifeTaskRepository.validDate(previous.on) || !Number.isFinite(previous.at) || previous.at<=0 : previous.on!=='' || previous.at!==0))throw new Error('Completion history needs review. Its original record was kept.');
+  }
+  const next=LifeStateMerge.copy(target);LifeTaskRepository.complete(next,options.done,options.day);
+  if(target.taskCompletion)next.taskCompletion={...target.taskCompletion,...next.taskCompletion};
+  const keys=['done','taskCompletion','taskCompletionEvents'];patches.push({card:target,keys,after:Object.fromEntries(keys.map(key=>[key,next[key]]))});
+  if(card.type==='routine'){
+    checkRoutineHistoryRecords(card);
+    const routine={...card,items:card.items.map(row=>row===item?next:LifeStateMerge.copy(row)),history:LifeStateMerge.copy(card.history)};syncRoutineTodayHistory(routine);
+    const today=routine.history.find(entry=>entry.date===options.day),history=card.history.map(entry=>entry.date===options.day?today:LifeStateMerge.copy(entry));if(!history.some(entry=>entry.date===options.day))history.push(today);
+    patches.push({card,keys:['history'],after:{history}});
+  }
+  return plan;
 }
 
 function renderTracker(card) {
@@ -10452,7 +10535,7 @@ function cardTimerPlan(options) {
   const next=LifeStateMerge.copy(card);let keys=['duration','remaining','runningSince'];
   if(card.type==='routine'){
     if(action!=='reset' || options.day!==getTodayKey())throw new Error('The routine day changed. Review today before resetting it.');
-    if(!Array.isArray(card.items) || card.items.some(item=>!item || typeof item!=='object' || Array.isArray(item)) || !Array.isArray(card.history) || card.history.some(entry=>!entry || typeof entry!=='object' || entry.date!==normalizeDateKey(entry.date) || !Array.isArray(entry.items)) || new Set(card.history.map(entry=>entry.date)).size!==card.history.length)throw new Error('Routine history needs review. Its original records were kept.');
+    checkRoutineHistoryRecords(card);
     resetRoutineToday(next);
     const today=next.history.find(entry=>entry.date===getTodayKey());
     next.history=card.history.map(entry=>entry.date===getTodayKey()?today:LifeStateMerge.copy(entry));
@@ -10467,6 +10550,10 @@ function cardTimerPlan(options) {
     next.runningSince=action==='start'?Date.now():null;
   }
   return {patches:[{card,keys,after:Object.fromEntries(keys.map(key=>[key,next[key]]))}],boardPatch:{},ordered:state.cards,message:card.type==='routine'?'Today\'s routine reset on this device. Earlier days were kept.':`Timer ${action==='start'?'started':action==='pause'?'paused':'reset'} on this device.`};
+}
+
+function checkRoutineHistoryRecords(card) {
+  if(!Array.isArray(card.items) || card.items.some(item=>!item || typeof item!=='object' || Array.isArray(item)) || !Array.isArray(card.history) || card.history.some(entry=>!entry || typeof entry!=='object' || entry.date!==normalizeDateKey(entry.date) || !Array.isArray(entry.items)) || new Set(card.history.map(entry=>entry.date)).size!==card.history.length)throw new Error('Routine history needs review. Its original records were kept.');
 }
 
 function startAllTimers(options = {}) {
@@ -10563,6 +10650,7 @@ function checkedSavedBoardLayout() {
 
 function boardToolPlan(kind,columns,options={}) {
   if(kind==='timer')return cardTimerPlan(options);
+  if(kind==='completion')return sourceCompletionPlan(options);
   const patches=[],visible=state.cards.filter(card=>!card.calendarOnly),boardPatch={};let ordered=state.cards;
   if(kind==='start' || kind==='pause'){
     for(const card of state.cards){
@@ -10612,7 +10700,7 @@ function checkBoardToolContext(kind,options) {
     if(document.querySelector('dialog[open]') || pendingBoardDeletion || composerSavePending || hasComposerDraft())throw new Error('Finish or discard the current draft before using board tools. Your writing was kept.');
     validateBoardActionRecords();
     if(!Array.isArray(state.cards) || !Array.isArray(state.archivedCards))throw new Error('The selected board records need review. Their original information was kept.');
-    if(kind!=='timer')checkedSavedBoardLayout();
+    if(!['timer','completion'].includes(kind))checkedSavedBoardLayout();
     const seen=new Set();for(const card of [...state.cards,...getArchivedCards()]){if(!card || typeof card.id!=='string' || !card.id || seen.has(card.id))throw new Error('Card identities need review. No board tools were applied.');seen.add(card.id);}
     if(cloudConflictPending || (state.syncConflicts || []).some(item=>item.segments?.[0]!=='boards' || item.segments[1]===state.activeBoardId))throw new Error('Review the conflicting board copies before using board tools. Your records were kept.');
     if(options.expected && !LifeCloudCopies.equal(boardToolsSnapshot(),options.expected))throw new Error('This board changed after the command was pressed. Review it and retry.');
@@ -10625,7 +10713,7 @@ function checkBoardToolContext(kind,options) {
 
 function runBoardTool(kind,options={},columns) {
   let previous,patches=[],staged=false;
-  const feedback=(message,error=false)=>kind==='timer'?setCardTimerFeedback(options.cardId,message,error,options.boardId || state.activeBoardId):setBoardToolsStatus(message,error);
+  const feedback=(message,error=false)=>kind==='completion'?setSourceCompletionFeedback(options,message,error):kind==='timer'?setCardTimerFeedback(options.cardId,message,error,options.boardId || state.activeBoardId):setBoardToolsStatus(message,error);
   try{
     checkBoardToolContext(kind,options);
     const plan=boardToolPlan(kind,columns,options);patches=plan.patches.map(p=>({...p,before:Object.fromEntries(p.keys.filter(key=>Object.hasOwn(p.card,key)).map(key=>[key,p.card[key]]))}));
@@ -10637,7 +10725,7 @@ function runBoardTool(kind,options={},columns) {
     const liveCards=state.cards,liveArchive=state.archivedCards;let accepted;
     try{state.cards=LifeStateMerge.copy(liveCards);state.archivedCards=LifeStateMerge.copy(liveArchive);accepted=saveState();}
     finally{state.cards=liveCards;state.archivedCards=liveArchive;}
-    if(!accepted)throw new Error(kind==='timer'?'Timer was not saved. Its previous state was kept. '+deviceSaveFailureReason():`Board tools were not saved. The previous ${kind==='start' || kind==='pause'?'timer state was':'positions were'} kept. `+deviceSaveFailureReason());
+    if(!accepted)throw new Error(['timer','completion'].includes(kind)?`${kind==='timer'?'Timer':'Task'} was not saved. Its previous state was kept. `+deviceSaveFailureReason():`Board tools were not saved. The previous ${kind==='start' || kind==='pause'?'timer state was':'positions were'} kept. `+deviceSaveFailureReason());
     staged=true;renderBoardMeta();renderCardsOnly({reason:'device-commit'});feedback(plan.message);return true;
   }catch(error){
     if(previous && !staged){for(const p of patches){for(const key of p.keys)delete p.card[key];Object.assign(p.card,p.before);}restoreBoardActionState(previous);}

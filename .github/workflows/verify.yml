@@ -135,6 +135,15 @@ jobs:
         run: npm run test:timer-actions
         env:
           TEST_OUTPUT: test-results/timer-actions-chromium
+      - name: Check source checkbox completion safeguards in Chromium
+        run: npm run test:source-completion
+        env:
+          TEST_OUTPUT: test-results/source-completion-chromium
+      - name: Check source checkbox completion safeguards in WebKit
+        run: npm run test:source-completion
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/source-completion-webkit
       - name: Check individual timer save and routine reset safeguards in WebKit
         run: npm run test:timer-actions
         env:

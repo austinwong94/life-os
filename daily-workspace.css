@@ -146,6 +146,8 @@
 .board-tools-status[data-status="error"] { color: var(--danger,#a52b42); }
 .timer-action-status { margin: 8px 0; font-size: 12px; line-height: 1.5; font-weight: 500; overflow-wrap: anywhere; color: var(--muted,#65716c); }
 .timer-action-status[data-status="error"] { color: var(--danger,#a52b42); }
+.source-completion-status { margin: 0 0 4px; font-size: 12px; line-height: 1.5; font-weight: 500; overflow-wrap: anywhere; color: var(--muted,#65716c); }
+.source-completion-status[data-status="error"] { color: var(--danger,#a52b42); }
 .planner-linked-item > .task-subtasks { grid-column: 2 / -1; }
 .planner-linked-item.has-subtasks > .planner-linked-check, .planner-linked-item.has-subtasks > .planner-linked-actions { align-self: start; }
 .planner-linked-item.has-subtasks > .planner-linked-check { margin-top: 8px; }
