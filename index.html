@@ -105,10 +105,17 @@
             <span>Download my information</span>
           </button>
           <p class="data-note">Creates a readable archive of your boards, diary, motivation notes, planner, projects, fitness logs and food logs. This does not delete or change your data.</p>
-          <label class="field">
-            <span>Name</span>
-            <input id="boardName" type="text" maxlength="36" autocomplete="off" />
-          </label>
+          <div class="field">
+            <label for="boardName">Name</label>
+            <div class="board-name-editor">
+              <input id="boardName" type="text" maxlength="36" autocomplete="off" />
+              <div id="boardNameActions" class="board-name-actions" hidden>
+                <button type="button" class="icon-button" id="saveBoardNameButton" title="Save board name" aria-label="Save board name"><span data-icon="check"></span></button>
+                <button type="button" class="icon-button" id="cancelBoardNameButton" title="Discard board name draft" aria-label="Discard board name draft"><span data-icon="x"></span></button>
+              </div>
+            </div>
+            <p id="boardNameStatus" class="board-action-status" role="status" aria-live="polite" hidden></p>
+          </div>
           <div class="field">
             <span>Visibility</span>
             <div class="segmented" id="visibilityControl" role="group" aria-label="Board visibility">
@@ -788,6 +795,7 @@
               </div>
               <button type="button" class="primary-action" id="addTemplateButton">Add to my boards</button>
             </div>
+            <p id="templateActionStatus" class="board-action-status" role="status" aria-live="polite" hidden></p>
             <div class="template-overview" id="templatePreviewOverview"></div>
             <div class="board-grid template-preview-grid" id="templatePreviewGrid"></div>
           </section>

@@ -129,7 +129,13 @@
 .task-confirmation h2 { margin: 0; font-size: 20px; }
 .task-confirmation p { white-space: pre-line; line-height: 1.5; }
 .task-confirmation .daily-actions { justify-content: flex-end; }
-.board-panel .board-action-status { color: var(--danger,#a52b42); font-size: 13px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.board-action-status { color: var(--danger,#a52b42); font-size: 13px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.board-name-editor { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.board-name-editor input { flex: 1; min-width: 0; }
+.board-name-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.board-name-actions[hidden] { display: none; }
+.board-name-actions .icon-button { width: 44px; height: 44px; min-width: 44px; flex-shrink: 0; }
+#boardNameStatus[data-status="draft"] { color: var(--muted,#65716c); }
 .planner-linked-item > .task-subtasks { grid-column: 2 / -1; }
 .planner-linked-item.has-subtasks > .planner-linked-check, .planner-linked-item.has-subtasks > .planner-linked-actions { align-self: start; }
 .planner-linked-item.has-subtasks > .planner-linked-check { margin-top: 8px; }

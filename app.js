@@ -1186,6 +1186,7 @@ let activeReportType = "fitness";
 let activeCardMove = null;
 let pendingCardDeletion = null;
 let pendingBoardDeletion = null;
+const boardNameDrafts = new Map();
 let timerDisplayBoardId = "";
 let timerDisplayFrames = new Map();
 
@@ -1207,6 +1208,10 @@ const elements = {
   templatePanel: document.querySelector(".template-panel"),
   cloudPanel: document.querySelector(".cloud-panel"),
   boardName: document.querySelector("#boardName"),
+  boardNameActions: document.querySelector("#boardNameActions"),
+  saveBoardNameButton: document.querySelector("#saveBoardNameButton"),
+  cancelBoardNameButton: document.querySelector("#cancelBoardNameButton"),
+  boardNameStatus: document.querySelector("#boardNameStatus"),
   boardTitle: document.querySelector("#boardTitle"),
   todayLine: document.querySelector("#todayLine"),
   visibilityLabel: document.querySelector("#visibilityLabel"),
@@ -1558,10 +1563,21 @@ function bindEvents() {
   window.addEventListener('blur',()=>activeBoardPointers.clear());
 
   elements.boardName.addEventListener("input", (event) => {
-    state.board.name = event.target.value.trimStart() || "My Life OS";
-    renderBoardMeta();
-    saveState();
+    if(elements.boardName.dataset.boardId!==state.activeBoardId || elements.settingsModal.hidden)return;
+    const draft=boardNameDrafts.get(state.activeBoardId) || {base:elements.boardName.dataset.savedName,value:''};
+    draft.value=event.target.value;
+    if(draft.value===state.board.name)boardNameDrafts.delete(state.activeBoardId);
+    else boardNameDrafts.set(state.activeBoardId,draft);
+    renderBoardNameEditor();
   });
+  elements.boardName.addEventListener('keydown',event=>{
+    if(event.isComposing || !['Enter','Escape'].includes(event.key))return;
+    event.preventDefault();event.stopPropagation();
+    if(event.key==='Enter')saveBoardNameDraft({boardId:elements.boardName.dataset.boardId});
+    else discardBoardNameDraft();
+  });
+  elements.saveBoardNameButton.addEventListener('click',()=>saveBoardNameDraft({boardId:elements.boardName.dataset.boardId}));
+  elements.cancelBoardNameButton.addEventListener('click',discardBoardNameDraft);
 
   elements.boardSelect.addEventListener("change", (event) => {
     switchBoard(event.target.value);
@@ -1572,7 +1588,7 @@ function bindEvents() {
   });
 
   elements.newBoardButton.addEventListener("click", () => {
-    createBlankBoard();
+    createBlankBoard({boardId:elements.newBoardButton.dataset.boardId});
   });
 
   elements.deleteBoardButton.addEventListener("click", () => {
@@ -1582,28 +1598,19 @@ function bindEvents() {
   elements.visibilityControl.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-value]");
     if (!button) return;
-    state.board.visibility = button.dataset.value;
-    renderBoardMeta();
-    saveState();
+    updateBoardSetting('visibility',button.dataset.value,{boardId:elements.visibilityControl.dataset.boardId});
   });
 
   elements.layoutControl.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-value]");
     if (!button) return;
-    state.board.layout = button.dataset.value;
-    render();
-    saveState();
+    updateBoardSetting('layout',button.dataset.value,{boardId:elements.layoutControl.dataset.boardId});
   });
 
   elements.columnControl.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-columns]");
     if (!button) return;
-    const nextColumnCount = normalizeBoardColumnCount(button.dataset.columns);
-    if (state.board.columnCount === nextColumnCount) return;
-    state.board.columnCount = nextColumnCount;
-    renderBoardMeta();
-    renderCardsOnly({ force: true, preserveScroll: false });
-    saveState();
+    updateBoardSetting('columnCount',Number(button.dataset.columns),{boardId:elements.columnControl.dataset.boardId});
   });
 
   elements.cardCategory.addEventListener("change", renderConditionalFields);
@@ -2072,8 +2079,7 @@ function bindEvents() {
   });
 
   elements.addTemplateButton.addEventListener("click", () => {
-    createBoardFromTemplate(selectedTemplateId);
-    closeTemplateModal();
+    if(createBoardFromTemplate(selectedTemplateId,{boardId:elements.addTemplateButton.dataset.boardId}))closeTemplateModal();
   });
 }
 
@@ -2758,7 +2764,7 @@ function renderBoardMeta() {
   renderBoardSwitcher();
   renderDataSafetyPanel();
   renderBoardControls();
-  elements.boardName.value = state.board.name;
+  renderBoardNameEditor();
   elements.boardTitle.textContent = state.board.name;
   const dateFull = document.createElement("span");
   dateFull.className = "today-line-full";
@@ -2816,8 +2822,11 @@ function clearStartupBoardSearch({initial=false} = {}) {
 
 function renderBoardSwitcher() {
   syncActiveBoard();
-  const deletionStatus=document.getElementById('boardActionStatus');
-  if(deletionStatus && deletionStatus.dataset.boardId!==state.activeBoardId){deletionStatus.textContent='';deletionStatus.hidden=true;}
+  for(const id of ['boardActionStatus','templateActionStatus']){
+    const status=document.getElementById(id);
+    if(status && status.dataset.boardId!==state.activeBoardId){status.textContent='';status.hidden=true;}
+  }
+  for(const control of [elements.newBoardButton,elements.addTemplateButton,elements.visibilityControl,elements.layoutControl,elements.columnControl])control.dataset.boardId=state.activeBoardId;
   const boardOptions = state.boards
     .map((board) => `<option value="${escapeAttribute(board.id)}">${escapeHtml(board.name)}</option>`)
     .join("");
@@ -11412,53 +11421,48 @@ function switchBoard(boardId) {
   saveState();
 }
 
-function createBlankBoard() {
-  if(!canLeaveHealthDateDraft())return;
-  syncActiveBoard();
-  const board = createBoardRecord({
-    name: `Board ${state.boards.length + 1}`,
-    cards: []
-  });
-  state.boards.push(board);
-  applyBoardToState(state, board.id);
-  state.activeFilter = "all";
-  state.activeCategory = "all";
-  state.activeCategories = [];
-  state.focusFilter = "all";
-  state.searchQuery = "";
-  resetFormState();
-  render();
-  saveState();
+function createBlankBoard(options = {}) {
+  return createBoardAndSwitch(null,options);
 }
 
-function setBoardDeletionFeedback(message) {
-  const status=document.getElementById('boardActionStatus');
-  if(status){status.textContent=message;status.hidden=!message;status.dataset.boardId=state.activeBoardId;}
+function setBoardActionFeedback(message) {
+  for(const id of ['boardActionStatus','templateActionStatus']){
+    const status=document.getElementById(id);
+    if(status){status.textContent=message;status.hidden=!message;status.dataset.boardId=state.activeBoardId;}
+  }
   if(message)setSaveStatus('Board action needs attention','error');
 }
 
-function boardDeletionDraftNotice() {
+function boardActionDraftNotice(action = 'delete') {
+  const operation=action==='delete'?'deleting this board':'opening another board';
+  const composerWriting=[...elements.form.querySelectorAll('input[type="text"],input[type="url"],textarea')].some(field=>field.value.trim()) || attachedImageData;
   const plan=planningSessions.get(state.activeBoardId),daily=dailySessions.get(state.activeBoardId),coach=coachingSessions.get(state.activeBoardId);
   const workbook=window.LifeMoneyWorkbookUI?.active();
   let money;
   try{money=JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-money:'+state.activeBoardId)) || '{}');if(!money || typeof money!=='object' || Array.isArray(money) || money.drafts!==undefined && (!money.drafts || typeof money.drafts!=='object' || Array.isArray(money.drafts)))throw new Error();}
-  catch{return 'Saved Money drafts need review before this board can be deleted. Their original bytes were kept.';}
-  if(workbook?.boardId===state.activeBoardId && (workbook.dirty || workbook.sheet?.edition) || Object.keys(money.drafts || {}).length)return 'Finish the unsaved Money entry or sheet before deleting this board. Its draft was kept.';
-  if(editingCardId || draftTouched && !elements.cardComposerPanel.hidden || editingPlannerTaskKey || plannerTaskEditDraft || plan?.activityDraft || plan?.cardTaskDraft || plan?.capture?.title || daily?.capture?.text || Object.values(daily?.reviews || {}).some(draft=>draft.changed) || coach?.draft || Object.keys(coach?.quickDrafts || {}).length || coach?.pickingFile || hasUnsubmittedDraftText() || state.cards.some(card=>Object.values(card.sideNoteDrafts || {}).some(text=>String(text || '').trim())))return 'Finish or discard unfinished writing before deleting this board. Your drafts were kept.';
+  catch{return `Saved Money drafts need review before ${operation}. Their original bytes were kept.`;}
+  if(workbook?.boardId===state.activeBoardId && (workbook.dirty || workbook.sheet?.edition) || Object.keys(money.drafts || {}).length)return `Finish the unsaved Money entry or sheet before ${operation}. Its draft was kept.`;
+  if(composerWriting || boardNameDrafts.has(state.activeBoardId) || editingCardId || draftTouched && !elements.cardComposerPanel.hidden || editingPlannerTaskKey || plannerTaskEditDraft || plan?.activityDraft || plan?.cardTaskDraft || plan?.capture?.title || daily?.capture?.text || Object.values(daily?.reviews || {}).some(draft=>draft.changed) || coach?.draft || Object.keys(coach?.quickDrafts || {}).length || coach?.pickingFile || hasUnsubmittedDraftText() || state.cards.some(card=>Object.values(card.sideNoteDrafts || {}).some(text=>String(text || '').trim())))return `Finish or discard unfinished writing before ${operation}. Your drafts were kept.`;
   return '';
 }
 
-function reviewedDeletionBoard(boardId) {
-  if(state.activeBoardId!==boardId)throw new Error('The active board changed. Nothing was deleted; reopen Delete board on the board you intend to remove.');
-  if(!Array.isArray(state.boards) || state.boards.length<2)throw new Error('Keep at least one board. Nothing was deleted.');
+function validateBoardActionRecords() {
+  if(!Array.isArray(state.boards) || !state.boards.length)throw new Error('The original board records need review. Nothing was changed.');
   const ids=new Set();
   for(const board of state.boards){
     if(!board || typeof board.id!=='string' || !board.id || ids.has(board.id) || !Array.isArray(board.cards) || board.archivedCards!==undefined && !Array.isArray(board.archivedCards))throw new Error('These board identities or records need review. Nothing was deleted.');
     ids.add(board.id);
   }
+  if(!ids.has(state.activeBoardId))throw new Error('The selected board identity needs review. Its original information was kept.');
   if(state.deletedBoardIds!==undefined && (!state.deletedBoardIds || typeof state.deletedBoardIds!=='object' || Array.isArray(state.deletedBoardIds)))throw new Error('Deletion history needs review. Its original records were kept.');
   if(state.boards.some(board=>Object.hasOwn(state.deletedBoardIds || {},board.id) && state.deletedBoardIds[board.id]))throw new Error('A listed board already has a deletion record. Review Recovery before continuing.');
-  const notice=boardDeletionDraftNotice();if(notice)throw new Error(notice);
+}
+
+function reviewedDeletionBoard(boardId) {
+  if(state.activeBoardId!==boardId)throw new Error('The active board changed. Nothing was deleted; reopen Delete board on the board you intend to remove.');
+  if(!Array.isArray(state.boards) || state.boards.length<2)throw new Error('Keep at least one board. Nothing was deleted.');
+  validateBoardActionRecords();
+  const notice=boardActionDraftNotice();if(notice)throw new Error(notice);
   syncActiveBoard({touchBoard:false});
   return state.boards.find(board=>board.id===boardId);
 }
@@ -11478,7 +11482,7 @@ async function deleteCurrentBoard(options = {}) {
     if(!await retryDeviceSave({recoverSpace:false}))throw new Error('Device saving needs attention. Nothing was deleted; keep this tab open and retry saving first.');
     const expected=LifeStateMerge.copy(reviewedDeletionBoard(context.boardId)),counts=getBackupDataCounts({boards:[expected]});
     const current=()=>{const board=reviewedDeletionBoard(context.boardId);if(!sameReviewedDeletionBoard(board,expected))throw new Error('This board changed during review. Nothing was deleted; reopen Delete board to review its latest records.');return board;};
-    setBoardDeletionFeedback('');
+    setBoardActionFeedback('');
     const countLabels=[[counts.activeCards,'active card'],[counts.archivedCards,'archived card'],[counts.diaryPages,'diary page'],[counts.sideNotes,'note']].map(([count,label])=>`${count} ${label}${count===1?'':'s'}`);
     const summary=`"${expected.name}"\n\n${countLabels.slice(0,2).join(' / ')}\n${countLabels.slice(2).join(' / ')}\n\nThis board's Money records, goals and history are included. When cloud sync is on, deletion also applies to your other devices. Other boards stay unchanged.`;
     if(!await confirmTaskAction('Review board deletion',summary,'Continue'))return false;
@@ -11499,40 +11503,89 @@ async function deleteCurrentBoard(options = {}) {
       Object.assign(state,{activeBoardId:projection.activeBoardId,board:projection.board,cards:projection.cards,archivedCards:projection.archivedCards});
       try {if(!saveState({touchBoard:false}))throw new Error('Device save refused');staged=true;}
       catch {
-        for(const key of Object.keys(state))if(!Object.hasOwn(previous,key))delete state[key];
-        Object.assign(state,previous);
+        restoreBoardActionState(previous);
         throw new Error('Board deletion was not saved. All boards, their records and your current view were kept. '+deviceSaveFailureReason());
       }
     });
     state.activeFilter='all';state.activeCategory='all';state.activeCategories=[];state.focusFilter='all';state.searchQuery='';
     try{sessionStorage.setItem(LifeStorageScope.key('life-os-active-board'),state.activeBoardId);}catch{}
-    setBoardDeletionFeedback('');resetFormState();clearUndoToast();render({force:true});return true;
+    setBoardActionFeedback('');resetFormState();clearUndoToast();render({force:true});return true;
   }catch(error){
-    if(staged){render({force:true});setBoardDeletionFeedback('Deletion is queued on this device, but saving needs attention. Keep this tab open. The recovery copy is kept.');}
-    else setBoardDeletionFeedback(error.message || 'Nothing was deleted. The original boards were kept.');
+    if(staged){render({force:true});setBoardActionFeedback('Deletion is queued on this device, but saving needs attention. Keep this tab open. The recovery copy is kept.');}
+    else setBoardActionFeedback(error.message || 'Nothing was deleted. The original boards were kept.');
     return false;
   }finally{if(pendingBoardDeletion===context)pendingBoardDeletion=null;}
 }
 
-function createBoardFromTemplate(templateId) {
-  if(!canLeaveHealthDateDraft())return;
+function createBoardFromTemplate(templateId, options = {}) {
   const template = boardTemplates.find((item) => item.id === templateId);
-  if (!template) return;
-  syncActiveBoard();
-  const board = createBoardRecord({
-    name: template.name,
-    cards: buildTemplateCards(template.id)
-  });
-  state.boards.push(board);
-  applyBoardToState(state, board.id);
-  state.activeFilter = "all";
-  state.activeCategory = "all";
-  state.activeCategories = [];
-  state.focusFilter = "all";
-  state.searchQuery = "";
-  resetFormState();
-  render();
-  saveState();
+  if(!template)return false;
+  return createBoardAndSwitch(template,options);
+}
+
+function restoreBoardActionState(previous) {
+  for(const key of Object.keys(state))if(!Object.hasOwn(previous,key))delete state[key];
+  Object.assign(state,previous);
+}
+
+function createBoardAndSwitch(template, options) {
+  if(pendingBoardDeletion || document.querySelector('dialog[open]') || !canLeaveHealthDateDraft())return false;
+  let previous;
+  try{
+    if(options.boardId && options.boardId!==state.activeBoardId)throw new Error('The active board changed. Reopen this action on the intended board.');
+    validateBoardActionRecords();
+    const notice=boardActionDraftNotice('create');if(notice)throw new Error(notice);
+    previous={...state};state.boards=[...state.boards];syncActiveBoard({touchBoard:false});
+    const board=createBoardRecord({name:template?template.name:`Board ${state.boards.length+1}`,cards:template?buildTemplateCards(template.id):[]});
+    if(state.boards.some(item=>item.id===board.id) || Object.hasOwn(state.deletedBoardIds || {},board.id))throw new Error('A new board identity could not be created safely. Please retry.');
+    state.boards.push(board);applyBoardToState(state,board.id);
+    if(!saveState({touchBoard:false}))throw new Error('Board was not created. Your original board and drafts were kept. '+deviceSaveFailureReason());
+  }catch(error){if(previous)restoreBoardActionState(previous);setBoardActionFeedback(error.message || 'Board was not created. Your original records were kept.');return false;}
+  state.activeFilter='all';state.activeCategory='all';state.activeCategories=[];state.focusFilter='all';state.searchQuery='';
+  try{sessionStorage.setItem(LifeStorageScope.key('life-os-active-board'),state.activeBoardId);}catch{}
+  setBoardActionFeedback('');resetFormState();clearUndoToast();render({force:true});return true;
+}
+
+function renderBoardNameEditor() {
+  const draft=boardNameDrafts.get(state.activeBoardId),value=draft?draft.value:state.board.name;
+  if(elements.boardName.value!==value)elements.boardName.value=value;
+  elements.boardName.dataset.boardId=state.activeBoardId;elements.boardName.dataset.savedName=state.board.name;
+  elements.boardNameActions.hidden=!draft;
+  const message=draft?.message || (draft?'Unsaved name':'');
+  if(elements.boardNameStatus.textContent!==message)elements.boardNameStatus.textContent=message;
+  elements.boardNameStatus.hidden=!message;elements.boardNameStatus.dataset.status=draft?.message?'error':'draft';
+}
+
+function discardBoardNameDraft() {
+  boardNameDrafts.delete(state.activeBoardId);renderBoardNameEditor();
+}
+
+function saveBoardNameDraft(options = {}) {
+  const draft=boardNameDrafts.get(state.activeBoardId);
+  if(!draft || options.boardId && options.boardId!==state.activeBoardId)return false;
+  const value=draft.value.trimStart() || 'My Life OS';
+  if(!updateBoardSetting('name',value,{boardId:state.activeBoardId,expected:draft.base})){
+    draft.message=state.board.name!==draft.base?'Name changed elsewhere. Draft kept; discard it to review the saved name.':'Name not saved. Draft kept; retry Save.';renderBoardNameEditor();return false;
+  }
+  boardNameDrafts.delete(state.activeBoardId);renderBoardNameEditor();return true;
+}
+
+function updateBoardSetting(field, value, options = {}) {
+  if(pendingBoardDeletion || document.querySelector('dialog[open]'))return false;
+  let previous;
+  try{
+    if(options.boardId && options.boardId!==state.activeBoardId)throw new Error('The active board changed. Reopen its settings before saving.');
+    validateBoardActionRecords();
+    const valid={name:typeof value==='string' && value.length<=36,visibility:['private','unlisted','public'].includes(value),layout:['smart','focus','custom'].includes(value),columnCount:[2,3].includes(value)};
+    if(!Object.hasOwn(valid,field) || !valid[field])throw new Error('This board setting is not valid. The original value was kept.');
+    if(Object.hasOwn(options,'expected') && state.board[field]!==options.expected && state.board[field]!==value)throw new Error('This setting changed in another tab. Your draft was kept; review the latest saved value first.');
+    if(state.board[field]===value)return true;
+    previous={...state};state.boards=[...state.boards];state.board={...state.board,[field]:value};
+    if(!saveState())throw new Error('Board setting was not saved. Its original value was kept. '+deviceSaveFailureReason());
+  }catch(error){if(previous)restoreBoardActionState(previous);setBoardActionFeedback(error.message || 'Board setting was not saved. Its original value was kept.');return false;}
+  setBoardActionFeedback('');renderBoardMeta();
+  if(field==='layout' || field==='columnCount')renderCardsOnly({preserveScroll:false});
+  return true;
 }
 
 function buildTemplateCards(templateId) {

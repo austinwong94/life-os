@@ -169,6 +169,15 @@ jobs:
           TEST_BROWSER: webkit
           TEST_URL: http://127.0.0.1:5180/?liveReload=0
           TEST_OUTPUT: test-results/planner-archive-webkit
+      - name: Check board creation and settings safeguards in Chromium
+        run: npm run test:board-management
+        env:
+          TEST_OUTPUT: test-results/board-management-chromium
+      - name: Check board creation and settings safeguards in WebKit
+        run: npm run test:board-management
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/board-management-webkit
       - run: npm run test:money
         env:
           TEST_OUTPUT: test-results/money
