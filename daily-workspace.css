@@ -350,6 +350,7 @@ body, .workspace { background: var(--page); color: var(--ink); }
 .daily-step-options .daily-menu > .planning-button { justify-content:flex-start;min-height:44px;white-space:normal;overflow-wrap:anywhere; }
 .daily-step-options .daily-actions { display:grid;grid-template-columns:repeat(2,minmax(0,1fr)); }
 .daily-step-options .daily-actions .planning-button { min-height:44px; }
+.daily-step-options .daily-replan-dates .planning-button { justify-content:center; }
 .coaching-pace { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-block: 10px; color: var(--muted); }
 .coaching-pace button { font-size: 12px; padding: 6px 8px; }
 .coaching-overdue-checkin { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0; border-block: 1px solid var(--line); color: var(--waiting); }

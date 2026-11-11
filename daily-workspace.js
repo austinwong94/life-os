@@ -857,7 +857,14 @@ function openDailyStepOptions(item) {
   const statuses=planningNode('div','daily-actions');
   for(const [label,status] of [['Waiting','waiting'],['Park','parked']])statuses.append(planningButton(label,()=>apply({status}),'pause'));
   menu.append(statuses);
-  const date=planningInput('date',item.dateKey || day,()=>{});menu.append(planningField('New planned day',date),planningButton('Reschedule',()=>attempt(()=>{
+  const date=planningInput('date',item.dateKey || day,()=>{}),dates=planningNode('div','planning-date-choices daily-replan-dates');dates.setAttribute('role','group');dates.setAttribute('aria-label','Reschedule shortcuts');
+  for(const [label,value] of LifePlanning.captureDateChoices(day)){
+    const button=planningButton(label,()=>attempt(()=>{
+      if(value===expected?.dateKey)return;
+      live();date.value=value;apply({dateKey:value});
+    }));button.setAttribute('aria-label','Move task to '+label.toLowerCase());button.title='Move to '+formatReadableDateKey(value);button.disabled=value===expected?.dateKey;dates.append(button);
+  }
+  menu.append(planningField('New planned day',date),dates,planningButton('Reschedule',()=>attempt(()=>{
     if(!LifePlanner.validDate(date.value))throw new Error('Choose a valid planned day. The task is unchanged.');apply({dateKey:date.value});
   }),'calendar'));
 }
