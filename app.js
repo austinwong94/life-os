@@ -11495,7 +11495,7 @@ async function deleteCurrentBoard(options = {}) {
       const projection={boards:[LifeStateMerge.copy(next)]};applyBoardToState(projection,next.id);
       state.boards=remaining;state.deletedBoardIds={...(state.deletedBoardIds || {}),[board.id]:Date.now()};
       Object.assign(state,{activeBoardId:projection.activeBoardId,board:projection.board,cards:projection.cards,archivedCards:projection.archivedCards});
-      try {if(!saveState())throw new Error('Device save refused');staged=true;}
+      try {if(!saveState({touchBoard:false}))throw new Error('Device save refused');staged=true;}
       catch {
         for(const key of Object.keys(state))if(!Object.hasOwn(previous,key))delete state[key];
         Object.assign(state,previous);
@@ -14796,7 +14796,7 @@ function saveState(options = {}) {
   if (corruptLocalStateDetected) {setSaveStatus("Recovery needed - original protected", "error"); return false;}
   const touched = options.touch !== false;
   if (touched) {cloudCheckGeneration++;touchState();}
-  syncActiveBoard({touchBoard: touched, updatedAt: state.updatedAt});
+  syncActiveBoard({touchBoard: touched && options.touchBoard !== false, updatedAt: state.updatedAt});
   const snapshot = getStateForStorage();
   // Idle and page-hide checks still drain pending edits, but unchanged copies
   // must not fill the journal when a prerequisite or storage write is blocked.
