@@ -301,6 +301,12 @@ body, .workspace { background: var(--page); color: var(--ink); }
   .google-calendar-actions .planning-button { justify-content: center; }
 }
 .daily-choice { border-bottom: 1px solid var(--line); padding-block: 8px; }
+.daily-focus-dialog .daily-draft-feedback { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.daily-focus-dialog .daily-draft-status { flex:1;min-width:0;margin:8px 0;font-size:12px;line-height:1.5;overflow-wrap:anywhere; }
+.daily-focus-dialog .daily-draft-status:empty { display:none; }
+.daily-focus-dialog .daily-draft-status.is-error { color:var(--danger,#b42336); }
+.daily-focus-dialog .daily-draft-feedback .planning-button { min-width:44px;min-height:44px;font-size:12px; }
+.daily-focus-dialog .daily-draft-feedback [hidden] { display:none; }
 .daily-step-plan { padding: 0 0 8px 32px; }
 .daily-step-plan summary { font-size: 12px; color: var(--muted); cursor: pointer; padding-block: 8px; }
 .daily-step-plan[open] { display: grid; gap: 8px; }

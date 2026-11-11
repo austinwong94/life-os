@@ -454,8 +454,10 @@ function dailyMinuteChoices(input,values,label,canApply){
   input.addEventListener('input',refresh);refresh();return root;
 }
 function openDailyFocus() {
-  const dialog=dailyDialog('Choose up to three next steps'),day=getTodayKey(),boardId=state.activeBoardId,items=getWorkspaceTaskItems().filter(item=>item.sourceKind!=='card' || item.editable),session=dailySession();
+  const dialog=dailyDialog('Choose up to three next steps'),day=getTodayKey(),boardId=state.activeBoardId,mode=state.ui.workspaceMode,items=getWorkspaceTaskItems().filter(item=>item.sourceKind!=='card' || item.editable),session=dailySession();
   const baseline=LifeStateMerge.copy(latestDailyRecord('focus',day) || null);
+  const history=()=>dailyRecords().filter(record=>record.kind==='focus' && record.date===day).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+  const baselineHistory=LifeStateMerge.copy(history());let recordedHistory=null;
   dialog.addEventListener('close',()=>{
     if(boardId!==state.activeBoardId || day!==getTodayKey() || state.ui.workspaceMode!=='today')return;
     const slot=elements.boardGrid.querySelector('.daily-suggestion-slot');
@@ -464,12 +466,27 @@ function openDailyFocus() {
   session.focusDrafts ||= {};const previous=session.focusDrafts[day] || baseline,selected=new Set((previous?.taskKeys || dailyFocusKeys(day,items)).filter(key=>items.some(t=>dailyFocusKey(t)===key))),plans=LifeStateMerge.copy(previous?.plans || {});
   const summary=planningNode('p','daily-plan-capacity');summary.setAttribute('aria-live','polite');summary.setAttribute('aria-atomic','true');
   const refreshCapacity=()=>{const capacity=LifeMomentum.capacity([...selected].map(key=>plans[key]?.minutes),budget.value);summary.textContent=(selected.size?selected.size+' next step'+(selected.size===1?'':'s'):'No next steps selected')+(dailyCapacityText(capacity)?' · '+dailyCapacityText(capacity):'');};
-  const keepDraft=()=>{session.focusDrafts[day]={taskKeys:[...selected],plans,budgetMinutes:budget.value,baseFocusId:baseline?.id || null};saveDailyDraft(boardId);refreshCapacity();};
+  const draftFeedback=planningNode('div','daily-draft-feedback'),draftStatus=planningNode('p','daily-draft-status');draftStatus.setAttribute('aria-live','polite');
+  const draftReceipt=saved=>{draftStatus.textContent=saved?'Draft saved on this tab.':'Draft not saved on this tab. Keep this page open and retry.';draftStatus.classList.toggle('is-error',!saved);retryDraft.hidden=saved;};
+  const keepDraft=()=>{
+    if(!canApply())return false;
+    session.focusDrafts[day]={...LifeStateMerge.copy(session.focusDrafts[day] || {}),taskKeys:[...selected],plans:LifeStateMerge.copy(plans),budgetMinutes:budget.value,baseFocusId:baseline?.id || null};
+    const saved=saveDailyDraft(boardId);draftReceipt(saved);refreshCapacity();return saved;
+  };
   const budget=planningInput('number',previous?.budgetMinutes || '',()=>keepDraft());budget.min=1;budget.max=1440;budget.step=1;
   dialog.classList.add('daily-focus-dialog');
-  const canApply=()=>{if(boardId===state.activeBoardId && day===getTodayKey())return true;message.textContent='The board or day changed. Reopen Choose on the original board. Your draft is kept.';return false;};
+  const current=()=>dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog && boardId===state.activeBoardId && day===getTodayKey() && state.ui.workspaceMode===mode && dailySession()===session;
+  const canApply=(cleanup=false)=>{
+    if(boardId!==state.activeBoardId || day!==getTodayKey()){message.textContent='The board or day changed. Reopen Choose on the original board. Your draft is kept.';return false;}
+    if(!current())return false;
+    if(recordedHistory && !cleanup){message.textContent='Your plan was recorded. Retry draft cleanup before editing.';return false;}
+    return true;
+  };
+  const retryDraft=planningButton('Retry draft save',()=>keepDraft(),'rotate-ccw');retryDraft.hidden=true;draftFeedback.append(draftStatus,retryDraft);
   dialog.append(planningField('Available minutes (optional)',budget),dailyMinuteChoices(budget,[30,60,120,240],'Available time',canApply),summary);
   const message=planningNode('p','daily-message');message.setAttribute('role','status');
+  dialog.append(draftFeedback);
+  if(session.focusDrafts[day]){let persisted;try{persisted=JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-daily:'+boardId)) || '{}').focusDrafts?.[day];}catch{}draftReceipt(LifeStateMerge.equal(persisted,session.focusDrafts[day]));}
   if(session.focusDrafts[day] && session.focusDrafts[day].baseFocusId!==(baseline?.id || null)){
     const current=dailyFocusKeys(day,items).map(key=>items.find(item=>dailyFocusKey(item)===key)?.title || 'Task no longer available');
     dialog.append(planningNode('p','daily-focus-comparison','Your retained draft is shown below. Current saved choices: '+(current.join('; ') || 'None')+'.'));
@@ -478,26 +495,42 @@ function openDailyFocus() {
   const list=planningNode('div','daily-focus-options');dialog.append(list);
   items.filter(t=>!t.done || selected.has(dailyFocusKey(t))).forEach(t=>{
     const key=dailyFocusKey(t),row=planningNode('label','daily-check'),check=planningInput('checkbox','',()=>{});check.checked=selected.has(key);check.setAttribute('aria-label',t.title);row.dataset.search=[t.title,t.sourceTitle,t.group].filter(Boolean).join(' ').toLocaleLowerCase();
-    check.onchange=()=>{if(check.checked && selected.size>=3){check.checked=false;message.textContent='Three selected. Uncheck one to choose another.';return;}check.checked?selected.add(key):selected.delete(key);refreshChoice();message.textContent='';keepDraft();};
+    check.onchange=()=>{if(!canApply())return;if(check.checked && selected.size>=3){check.checked=false;message.textContent='Three selected. Uncheck one to choose another.';return;}check.checked?selected.add(key):selected.delete(key);refreshChoice();message.textContent='';keepDraft();};
     const copy=planningNode('span','',t.title);if(t.sourceKind==='card')copy.append(planningNode('small','daily-task-source',t.sourceLabel+' · '+t.sourceTitle));row.append(check,copy);
     const wrapper=planningNode('div','daily-choice');wrapper.dataset.search=row.dataset.search;
     const more=planningNode('details','daily-step-plan');more.append(planningNode('summary','','Plan this step'));
     const plan=plans[key] ||= {nextAction:t.nextAction || '',minutes:t.estimatedMinutes || '',startTime:t.startTime || ''};
-    const minutes=planningInput('number',plan.minutes,value=>{plan.minutes=value;keepDraft();});minutes.min=1;minutes.max=1440;minutes.step=1;
+    const minutes=planningInput('number',plan.minutes,value=>{if(!canApply())return;plan.minutes=value;keepDraft();});minutes.min=1;minutes.max=1440;minutes.step=1;
     const quick=dailyMinuteChoices(minutes,[5,15,30,60],'Estimate for '+t.title,canApply);
     const refreshChoice=()=>{quick.hidden=!check.checked;more.hidden=!check.checked;};
-    more.append(planningField('Estimated minutes: '+t.title,minutes),planningField('Next action: '+t.title,planningInput('text',plan.nextAction,value=>{plan.nextAction=value;keepDraft();})),planningField('Start time: '+t.title,planningInput('time',plan.startTime,value=>{plan.startTime=value;keepDraft();})));
+    more.append(planningField('Estimated minutes: '+t.title,minutes),planningField('Next action: '+t.title,planningInput('text',plan.nextAction,value=>{if(!canApply())return;plan.nextAction=value;keepDraft();})),planningField('Start time: '+t.title,planningInput('time',plan.startTime,value=>{if(!canApply())return;plan.startTime=value;keepDraft();})));
     wrapper.append(row,quick,more);refreshChoice();list.append(wrapper);
   });search.oninput=()=>list.querySelectorAll('.daily-choice').forEach(row=>row.hidden=!row.dataset.search.includes(search.value.toLocaleLowerCase()));
-  dialog.append(message,planningButton('Keep next steps',()=>{
-    if(boardId!==state.activeBoardId || day!==getTodayKey()){message.textContent='The board or day changed. Your draft is kept on its original board; reopen Choose there.';return;}
-    if(!LifeStateMerge.equal(latestDailyRecord('focus',day) || null,baseline)){message.textContent='Your next steps changed in another tab. Your draft is kept; reopen Choose to review the latest plan.';return;}
+  const finish=()=>{
+    if(!canApply(true))return;
+    if(!LifeStateMerge.equal(history(),recordedHistory)){message.textContent='Your next steps changed in another tab. Your draft is kept; reopen Choose to review the latest plan.';return;}
+    const hadDraft=Object.hasOwn(session.focusDrafts,day),draft=session.focusDrafts[day];delete session.focusDrafts[day];
+    if(!saveDailyDraft(boardId)){
+      if(hadDraft)session.focusDrafts[day]=draft;
+      message.textContent='Your plan was recorded, but its tab draft could not be cleared. Keep this page open and retry.';
+      save.setAttribute('aria-label','Retry draft cleanup');save.querySelector('span').textContent='Retry draft cleanup';retryDraft.hidden=true;
+      for(const input of dialog.querySelectorAll('input, .daily-minute-choices button'))input.disabled=true;
+      return;
+    }
+    dialog.close();renderCardsOnly({force:true});
+  };
+  const save=planningButton('Keep next steps',()=>{
+    if(!canApply(true))return;
+    if(recordedHistory){finish();return;}
+    if(!LifeStateMerge.equal(history(),baselineHistory)){message.textContent='Your next steps changed in another tab. Your draft is kept; reopen Choose to review the latest plan.';return;}
     const live=getWorkspaceTaskItems();
     if([...selected].some(key=>live.filter(item=>dailyFocusKey(item)===key && (item.sourceKind!=='card' || item.editable)).length!==1)){message.textContent='A selected task moved or is no longer available. Your draft is kept; reopen Choose to review it.';return;}
     const validMinutes=value=>value==='' || Number.isInteger(Number(value)) && Number(value)>0 && Number(value)<=1440;
     if(!validMinutes(budget.value) || [...selected].some(key=>!validMinutes(plans[key].minutes))){message.textContent='Use whole minutes between 1 and 1440.';return;}
-    if(saveDailyRecord({kind:'focus',date:day,taskKeys:[...selected],plans:Object.fromEntries([...selected].map(key=>[key,plans[key]])),budgetMinutes:budget.value?Number(budget.value):null},message)){delete session.focusDrafts[day];saveDailyDraft();dialog.close();renderCardsOnly({force:true});}
-  },'check'));refreshCapacity();
+    const fields={taskKeys:[...selected],plans:Object.fromEntries([...selected].map(key=>[key,plans[key]])),budgetMinutes:budget.value?Number(budget.value):null};
+    const unchanged=baseline && LifeStateMerge.equal(fields,{taskKeys:baseline.taskKeys,plans:baseline.plans,budgetMinutes:baseline.budgetMinutes});
+    if(unchanged || saveDailyRecord({kind:'focus',date:day,...fields},message)){recordedHistory=LifeStateMerge.copy(history());finish();}
+  },'check');dialog.append(message,save);refreshCapacity();
 }
 function dailySuggestionProjection(item) {
   return {key:dailyFocusKey(item),title:item.title,dateKey:item.dateKey || '',deadline:item.deadline || '',priority:item.priority || 'normal',status:item.status || 'todo',done:Boolean(item.done),
