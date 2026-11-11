@@ -379,6 +379,15 @@ body, .workspace { background: var(--page); color: var(--ink); }
 }
 .task-capture-main { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 6px; }
 .task-capture .planning-message[data-status="saved"] { color: var(--muted,#65716c); }
+.planner-capture-form { grid-template-columns: minmax(0,1fr) auto; }
+.planner-capture-form .source-add-status { grid-column: 1 / -1; }
+.planner-capture-form .source-add-actions { justify-self: end; }
+.planner-capture-form .source-add-discard { display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0; border: 0; border-radius: 6px; }
+.planner-capture-form .source-add-discard[hidden] { display: none; }
+.planner-capture-form .source-add-discard svg { width: 16px; height: 16px; }
+@media (max-width:700px) {
+  .planner-capture-form .source-add-discard { width: 44px; min-width: 44px; height: 44px; }
+}
 @media (min-width:701px) {
   .task-capture-main .planning-icon { width: 36px; height: 36px; min-height: 36px; }
 }

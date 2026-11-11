@@ -23,6 +23,7 @@
     "test:timer-actions": "node tests/timer-actions.cjs",
     "test:source-completion": "node tests/source-completion.cjs",
     "test:source-add": "node tests/source-add.cjs",
+    "test:planner-capture": "node tests/planner-capture.cjs",
     "test:health-review": "node tests/health-review.cjs",
     "test:health-interface": "node tests/health-interface.cjs",
     "test:health-workspace": "node tests/health-workspace.cjs",

@@ -143,6 +143,15 @@ jobs:
         run: npm run test:source-add
         env:
           TEST_OUTPUT: test-results/source-add-chromium
+      - name: Check dated planner-card capture safeguards in Chromium
+        run: npm run test:planner-capture
+        env:
+          TEST_OUTPUT: test-results/planner-capture-chromium
+      - name: Check dated planner-card capture safeguards in WebKit
+        run: npm run test:planner-capture
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/planner-capture-webkit
       - name: Check quick-add draft and retry safeguards in WebKit
         run: npm run test:source-add
         env:

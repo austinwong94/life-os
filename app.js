@@ -3919,21 +3919,6 @@ function renderCard(card, options = {}) {
   return node;
 }
 
-function clearPlannerDraft(card, inputSelector = "") {
-  if (!card) return;
-  card.plannerDraftText = "";
-  const current = state.cards.find((item) => item.id === card.id);
-  if (current) current.plannerDraftText = "";
-  if (!inputSelector) return;
-  const clearVisibleInput = () => {
-    const node = Array.from(elements.boardGrid?.querySelectorAll(".task-card") || []).find((item) => item.dataset.id === card.id);
-    const input = node?.querySelector(inputSelector);
-    if (input) input.value = "";
-  };
-  clearVisibleInput();
-  requestAnimationFrame(clearVisibleInput);
-}
-
 function renderPlanner(card) {
   normalizePlannerCard(card);
   const activeDate = getActivePlannerDate(card);
@@ -3952,9 +3937,6 @@ function renderPlanner(card) {
   dateInput.type = "date";
   dateInput.value = activeDate;
   dateInput.setAttribute("aria-label", "Planner date");
-  dateInput.addEventListener("change", () => {
-    setPlannerDate(card, dateInput.value);
-  });
   const dateMeta = document.createElement("span");
   dateMeta.textContent = `${formatPlannerDate(activeDate)} · ${
     dateItems ? `${dateItems} item${dateItems === 1 ? "" : "s"}` : "Ready"
@@ -3967,13 +3949,8 @@ function renderPlanner(card) {
   taskInput.className = "planner-task-input";
   taskInput.type = "text";
   taskInput.maxLength = 160;
-  taskInput.value = card.plannerDraftText || "";
   taskInput.placeholder = "Write a task, meeting, trip idea or reminder";
   taskInput.setAttribute("aria-label", "Planner task");
-  taskInput.addEventListener("input", () => {
-    card.plannerDraftText = taskInput.value;
-    persistLocalDraftState();
-  });
   const addButton = document.createElement("button");
   addButton.type = "submit";
   addButton.className = "planner-submit-button";
@@ -3981,16 +3958,7 @@ function renderPlanner(card) {
   addButton.setAttribute("aria-label", "Add to upcoming");
   addButton.innerHTML = ICONS.plus;
   addForm.append(taskInput, addButton);
-  addForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const submittedText = stripPlannerBullet(taskInput.value);
-    const selectedDate = normalizeDateKey(dateInput.value);
-    if (!submittedText || !selectedDate) return;
-    clearPlannerDraft(card, ".planner-task-input");
-    if (!addPlannerTaskToDate(card, selectedDate, submittedText)) return;
-    clearPlannerDraft(card, ".planner-task-input");
-    persistLocalDraftState();
-  });
+  bindPlannerCapture(card,addForm,taskInput,addButton,dateInput,{dateMeta});
 
   dayPanel.append(dateRow, addForm);
   wrapper.append(dayPanel);
@@ -4128,17 +4096,8 @@ function renderPlannerLinkedAddForm(card, view, options, dayKey = getTodayKey())
   input.type = "text";
   input.className = "planner-linked-add-input";
   input.maxLength = 160;
-  input.value = card.plannerDraftText || "";
   input.placeholder = mode === "today" ? "Add something for this day" : "Add a dated planner task";
   input.setAttribute("aria-label", "Add planner task");
-  input.addEventListener("input", () => {
-    card.plannerDraftText = input.value;
-    persistLocalDraftState();
-  });
-  dateInput.addEventListener("change", () => {
-    card.plannerQuickDate = normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
-    persistLocalDraftState();
-  });
 
   const button = document.createElement("button");
   button.type = "submit";
@@ -4148,18 +4107,62 @@ function renderPlannerLinkedAddForm(card, view, options, dayKey = getTodayKey())
   button.innerHTML = ICONS.plus;
 
   form.append(dateInput, input, button);
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const targetDate = mode === "today" ? selectedDayKey : normalizeDateKey(dateInput.value) || getDefaultPlannerViewAddDate(mode, options);
-    const submittedText = stripPlannerBullet(input.value);
-    if (!submittedText) return;
-    card.plannerQuickDate = targetDate;
-    clearPlannerDraft(card, ".planner-linked-add-input");
-    if (!addPlannerTaskFromPlannerView(card, targetDate, submittedText)) return;
-    clearPlannerDraft(card, ".planner-linked-add-input");
-    persistLocalDraftState();
-  });
+  bindPlannerCapture(card,form,input,button,dateInput,{fixedDay:mode==='today'?selectedDayKey:''});
   return form;
+}
+
+function bindPlannerCapture(card,form,input,submit,date,options={}) {
+  form.classList.add('source-add-form','planner-capture-form');
+  const actions=document.createElement('div');actions.className='source-add-actions';submit.replaceWith(actions);actions.append(submit);
+  const discard=document.createElement('button');discard.type='button';discard.className='source-add-discard';discard.title='Discard planner draft';discard.setAttribute('aria-label',discard.title);discard.innerHTML=ICONS.x;actions.append(discard);
+  const status=document.createElement('p');status.className='source-add-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.hidden=true;form.append(status);
+  const context=sourceAddContext(card),binding={form,input,submit,discard,status,date,fixedDay:options.fixedDay,context,session:planningSession({selectDay:false}),draft:null,composing:false};sourceAddBindings.set(form,binding);
+  try{binding.draft=sourceAddDraft(card,context);const draft=binding.draft;input.value=draft.text;
+    if(options.fixedDay)date.value=options.fixedDay;else if(Object.hasOwn(draft,'dateKey'))date.value=draft.dateKey;
+    discard.hidden=!draft.text && !draft.receipt && !draft.pendingTaskId;const old=sourceAddMessages.get(JSON.stringify([context.boardId,context.key]));if(old){status.textContent=old.message;status.dataset.status=old.error?'error':'saved';status.hidden=!old.message;}
+  }catch(error){input.value=typeof card.plannerDraftText==='string'?card.plannerDraftText:'';input.disabled=true;submit.disabled=true;date.disabled=true;discard.hidden=true;status.textContent=error.message;status.hidden=false;status.dataset.status='error';return;}
+  binding.paintDate=()=>{if(!options.dateMeta)return;const live=state.cards.find(c=>c.id===context.cardId),count=countPlannerNoteLines(live?.plannerEntries?.[date.value]?.note || '');options.dateMeta.textContent=LifePlanner.validDate(date.value)?`${formatPlannerDate(date.value)} · ${count?`${count} item${count===1?'':'s'}`:'Ready'}`:'Choose a date';};binding.paintDate();
+  const persist=()=>{if(!sourceAddFormCurrent(binding))return;binding.draft.text=input.value;binding.draft.dateKey=date.value;const ok=savePlanningSession();setSourceAddFeedback(context,ok?'Draft kept in this tab.':'Memory only. Keep this tab open.',!ok);binding.paintDate();};
+  input.addEventListener('input',persist);input.addEventListener('compositionstart',()=>binding.composing=true);input.addEventListener('compositionend',()=>{binding.composing=false;persist();});date.addEventListener('input',persist);date.addEventListener('change',persist);
+  form.addEventListener('submit',event=>{event.preventDefault();if(sourceAddFormCurrent(binding))submitPlannerCapture(card,date.value,input.value,{context,binding});});
+  discard.addEventListener('click',async()=>{
+    if(!sourceAddFormCurrent(binding))return;const expected=LifeStateMerge.copy(binding.draft),confirmed=await confirmTaskAction('Discard planner draft?','Only this unfinished capture will be discarded. Saved tasks will remain unchanged.','Discard draft',{danger:true});
+    if(!confirmed || !sourceAddFormCurrent(binding) || !LifeStateMerge.equal(binding.draft,expected))return;
+    try{const live=resolveSourceAdd(context),draft=sourceAddDraft(live,context);if(!runBoardTool('sourceAdd',{...context,draft,discard:true}))return;
+      const clean={...draft,text:'',legacyHandled:true};for(const key of ['receipt','pendingTaskId','pendingBase','pending'])delete clean[key];sourceAddStore()[context.key]=clean;
+      if(!savePlanningSession()){sourceAddStore()[context.key]=draft;setSourceAddFeedback(context,'Draft cleanup was not saved. Its complete text was kept; retry.',true);return;}binding.draft=clean;setSourceAddFeedback(context,'Draft discarded. Saved tasks were kept.');
+    }catch(error){setSourceAddFeedback(context,error.message,true);}
+  });
+}
+
+function refreshPlannerCaptureViews() {
+  for(const node of elements.boardGrid.querySelectorAll('.task-card')){
+    const card=state.cards.find(card=>card.id===node.dataset.id);if(!card || !['planner','planlist'].includes(card.type))continue;
+    const binding=sourceAddBindings.get(node.querySelector('.planner-capture-form'));binding?.paintDate?.();
+    const wrapper=node.querySelector('.planner-linked-list');
+    if(wrapper && !wrapper.querySelector('.planner-linked-edit-form')){const next=renderPlannerLinkedList(card);wrapper.querySelector('.planner-linked-items')?.replaceWith(next.querySelector('.planner-linked-items'));const count=wrapper.querySelector('.planner-linked-head em');if(count)count.textContent=next.querySelector('.planner-linked-head em')?.textContent || '';}
+    const progress=getProgress(LifeStateMerge.copy(card));const percent=node.querySelector('.card-percent'),bar=node.querySelector('.progress-track span'),copy=node.querySelector('.card-progress p');if(percent)percent.textContent=`${progress.percent}%`;if(bar)bar.style.width=`${progress.percent}%`;if(copy)copy.textContent=`${progress.percent}% · ${progress.label}`;
+  }
+  renderBoardMeta();
+}
+
+function submitPlannerCapture(card,dateKey,value,options={}) {
+  let context=options.context,saved=false;
+  try{
+    if(!context){if(!state.cards.includes(card))throw new Error('This planner changed or moved. The task was not added.');context=sourceAddContext(card);}
+    const live=resolveSourceAdd(context),draft=sourceAddDraft(live,context);
+    if(!options.binding && draft.text.trim() && draft.text!==String(value || ''))throw new Error('Finish or discard this planner draft before adding a different task. Your complete draft was kept.');
+    draft.text=String(value || '');draft.dateKey=String(dateKey || '');
+    const title=stripPlannerBullet(draft.text);if(!title)return false;if(title.length>160)throw new Error('The task name is too long. Its complete text was kept.');if(!LifePlanner.validDate(draft.dateKey))throw new Error('Choose a valid task date. Your complete draft was kept.');
+    draft.title=title;draft.area=getPlannerGroup(live);
+    const outcome=saveCapturedTask(draft,{boardId:context.boardId,ownerId:context.ownerId,...(live.type==='planner'?{sourceCardId:live.id}:{}),...(!draft.legacyHandled && draft.legacyBase.present?{clearDraft:{cardId:live.id,expected:draft.legacyBase.value}}:{})},()=>savePlanningSession());saved=true;refreshPlannerCaptureViews();
+    const clean={...draft,text:outcome.retained?draft.text:'',legacyHandled:true};for(const key of ['receipt','pendingTaskId','pendingBase'])delete clean[key];sourceAddStore()[context.key]=clean;
+    if(!savePlanningSession()){sourceAddStore()[context.key]=draft;setSourceAddFeedback(context,'Task saved. Draft cleanup needs retry; no duplicate will be added.',true);return false;}
+    for(const form of elements.boardGrid.querySelectorAll('.planner-capture-form')){const binding=sourceAddBindings.get(form);if(binding?.context.key===context.key && binding.context.boardId===context.boardId){binding.draft=clean;if(!binding.fixedDay)binding.date.value=clean.dateKey;binding.paintDate();}}
+    setSourceAddFeedback(context,outcome.retained?'Previous task saved. Your new draft was kept.':'Task added on this device.');
+    if(options.binding && sourceAddFormCurrent(options.binding) && [options.binding.input,options.binding.submit,options.binding.discard,document.body].includes(document.activeElement))options.binding.input.focus({preventScroll:true});
+    renderCardsOnly({reason:'device-commit'});return true;
+  }catch(error){if(context)setSourceAddFeedback(context,saved?'Task saved. The view needs attention; no duplicate will be added.':error.message,true);else setSaveStatus(error.message,'error');return false;}
 }
 
 function renderPlannerLinkedItem(item) {
@@ -4348,7 +4351,7 @@ function syncPlannerTaskEditDraft() {
     let retained=false;try{retained=!!JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId)) || '{}')?.plannerTaskDraft;}catch{}
     if(!retained){editingPlannerTaskKey='';plannerTaskEditDraft=null;return;}
   }
-  const session=planningSession(),draft=session.plannerTaskDraft;
+  const session=planningSession({selectDay:false}),draft=session.plannerTaskDraft;
   if(draft && !LifePlanning.validTaskEditDraft(draft,state.activeBoardId)){
     editingPlannerTaskKey='';plannerTaskEditDraft=null;setSaveStatus('Saved task draft needs review. It has been kept unchanged.','error');return;
   }
@@ -6684,15 +6687,17 @@ function appendSourceTaskRow(wrapper,card,item,index) {
 }
 
 function sourceAddIdentity(card) {
-  return Object.fromEntries(['id','type','title','createdAt',...(card.type==='daily'?['plannedDate']:[])].filter(key=>Object.hasOwn(card,key)).map(key=>[key,card[key]]));
+  return {...Object.fromEntries(['id','type','title','createdAt',...(card.type==='daily'?['plannedDate']:[])].filter(key=>Object.hasOwn(card,key)).map(key=>[key,card[key]])),...(['planner','planlist'].includes(card.type)?{group:getPlannerGroup(card)}:{}),...(card.type==='planlist'?{view:normalizePlannerViewMode(card.plannerView)}:{})};
 }
+
+function sourceDraftField(card) { return card.type==='daily'?'dailyDraftText':card.type==='checklist'?'checklistDraftText':'plannerDraftText'; }
 
 function sourceAddContext(card) {
   const ownerId=getExpectedCloudOwnerId();return {boardId:state.activeBoardId,ownerId,cardId:card.id,key:JSON.stringify([ownerId,card.id,card.type,card.createdAt]),source:sourceAddIdentity(card)};
 }
 
 function sourceAddStore() {
-  const session=planningSession();
+  const session=planningSession({selectDay:false});
   if(!Object.hasOwn(session,'sourceAddDrafts'))session.sourceAddDrafts={};
   const drafts=session.sourceAddDrafts;
   if(!drafts || typeof drafts!=='object' || Array.isArray(drafts))throw new Error('Saved task drafts need review. Their stored copy was kept.');
@@ -6700,7 +6705,7 @@ function sourceAddStore() {
 }
 
 function sourceAddDraft(card,context=sourceAddContext(card)) {
-  const drafts=sourceAddStore(),field=card.type==='daily'?'dailyDraftText':'checklistDraftText';
+  const drafts=sourceAddStore(),field=sourceDraftField(card);
   if(planningSessionFaults.has(context.boardId))throw new Error('Saved task drafts need review. Their stored copy was kept.');
   if(!Object.hasOwn(drafts,context.key)){
     if(card[field]!=null && typeof card[field]!=='string')throw new Error('The original task draft needs review. Its stored information was kept.');
@@ -6721,20 +6726,21 @@ function readSourceAddDrafts(boardId=state.activeBoardId) {
 }
 
 function hasSourceAddDrafts() {
-  try{return Object.values(readSourceAddDrafts()).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && (typeof draft.text!=='string' || draft.text.trim() || draft.pending));}catch{return true;}
+  try{return Object.values(readSourceAddDrafts()).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && (typeof draft.text!=='string' || draft.text.trim() || draft.pending || draft.receipt || draft.pendingTaskId));}catch{return true;}
 }
 
 function hasSourceAddDraftForCard(cardId,boardId=state.activeBoardId) {
   try{
     const drafts=readSourceAddDrafts(boardId);
-    return Object.values(drafts).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && draft.cardId===cardId && (typeof draft.text!=='string' || draft.text.trim() || draft.pending));
+    return Object.values(drafts).some(draft=>!draft || draft.version!==1 || draft.ownerId===getExpectedCloudOwnerId() && draft.cardId===cardId && (typeof draft.text!=='string' || draft.text.trim() || draft.pending || draft.receipt || draft.pendingTaskId));
   }catch{return true;}
 }
 
 function resolveSourceAdd(context) {
   if(context.boardId!==state.activeBoardId || context.ownerId!==getExpectedCloudOwnerId())throw new Error('The board or account changed. Your task draft was kept.');
   const matches=Array.isArray(state.cards)?state.cards.filter(card=>card?.id===context.cardId):[],card=matches.length===1?matches[0]:null;
-  if(!card || !['checklist','daily'].includes(card.type) || card.archivedAt || card.calendarOnly || !LifeStateMerge.equal(sourceAddIdentity(card),context.source))throw new Error('This card changed or moved. Review its latest version before adding. Your draft was kept.');
+  if(!card || !['checklist','daily','planner','planlist'].includes(card.type) || card.archivedAt || card.calendarOnly || !LifeStateMerge.equal(sourceAddIdentity(card),context.source))throw new Error('This card changed or moved. Review its latest version before adding. Your draft was kept.');
+  if(['planner','planlist'].includes(card.type))return card;
   if(!Array.isArray(card.items) || card.items.some(item=>!item || typeof item!=='object' || Array.isArray(item)))throw new Error('This task list needs review. Its original records were kept.');
   const ids=card.items.filter(item=>item.id!=null && item.id!=='').map(item=>item.id);
   if(ids.some(id=>typeof id!=='string' || !id.trim()) || new Set(ids).size!==ids.length)throw new Error('Task identities need review. No task was added.');
@@ -6750,7 +6756,7 @@ function setSourceAddFeedback(context,message,error=false) {
   for(const form of elements.boardGrid.querySelectorAll('.source-add-form')){
     const binding=sourceAddBindings.get(form);if(!binding || binding.context.boardId!==context.boardId || binding.context.key!==context.key || context.boardId!==state.activeBoardId || context.ownerId!==getExpectedCloudOwnerId())continue;
     if(binding.status.textContent!==message)binding.status.textContent=message;binding.status.hidden=!message;binding.status.dataset.status=error?'error':'saved';
-    if(binding.draft){if(!binding.composing && binding.input.value!==binding.draft.text)binding.input.value=binding.draft.text;binding.discard.hidden=!binding.draft.text && !binding.draft.pending && (binding.draft.legacyHandled || !binding.draft.legacyBase.value);}
+    if(binding.draft){if(!binding.composing && binding.input.value!==binding.draft.text)binding.input.value=binding.draft.text;binding.discard.hidden=!binding.draft.text && !binding.draft.pending && !binding.draft.receipt && !binding.draft.pendingTaskId && (binding.draft.legacyHandled || !binding.draft.legacyBase.value);}
   }
   if(error)setSaveStatus(message,'error');
 }
@@ -6762,7 +6768,7 @@ function renderSourceAddForm(card) {
   const discard=document.createElement('button');discard.type='button';discard.className='source-add-discard';discard.title='Discard task draft';discard.setAttribute('aria-label',discard.title);discard.innerHTML=ICONS.x;
   const status=document.createElement('p');status.className='source-add-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');status.hidden=true;
   actions.append(submit,discard);form.append(input,actions,status);
-  const context=sourceAddContext(card),binding={form,input,submit,discard,status,context,session:planningSession(),draft:null,composing:false};sourceAddBindings.set(form,binding);
+  const context=sourceAddContext(card),binding={form,input,submit,discard,status,context,session:planningSession({selectDay:false}),draft:null,composing:false};sourceAddBindings.set(form,binding);
   try{binding.draft=sourceAddDraft(card,context);input.value=binding.draft.text;discard.hidden=!input.value && !binding.draft.pending && (binding.draft.legacyHandled || !binding.draft.legacyBase.value);const old=sourceAddMessages.get(JSON.stringify([context.boardId,context.key]));if(old){status.textContent=old.message;status.hidden=!old.message;status.dataset.status=old.error?'error':'saved';}}
   catch(error){input.value=typeof card[card.type==='daily'?'dailyDraftText':'checklistDraftText']==='string'?card[card.type==='daily'?'dailyDraftText':'checklistDraftText']:'';input.disabled=true;submit.disabled=true;discard.hidden=true;status.textContent=error.message;status.hidden=false;status.dataset.status='error';return form;}
   const persist=()=>{if(!sourceAddFormCurrent(binding))return;binding.draft.text=input.value;const ok=savePlanningSession();setSourceAddFeedback(context,ok?'Draft kept in this tab.':'Draft kept in memory only. Keep this tab open.',!ok);};
@@ -6784,9 +6790,10 @@ function paintSourceAddedItem(context,id) {
 }
 
 function sourceAddPlan(options) {
-  const card=resolveSourceAdd(options),draft=sourceAddDraft(card,options),field=card.type==='daily'?'dailyDraftText':'checklistDraftText',patches=[],after={};
+  const card=resolveSourceAdd(options),draft=sourceAddDraft(card,options),field=sourceDraftField(card),patches=[],after={};
   if(draft!==options.draft)throw new Error('The task draft changed. No task was added.');
   if(!options.discard){
+    if(['planner','planlist'].includes(card.type))throw new Error('Use the dated planner capture to add this task.');
     const candidate=draft.pending?.after;if(!candidate || !LifeStateMerge.equal(candidate,options.after))throw new Error('This add receipt needs review. Its stored copy was kept.');
     const matches=card.items.filter(item=>item.id===candidate.id);
     if(matches.length>1 || matches.length===1 && !LifeStateMerge.equal(matches[0],candidate))throw new Error('This task was already saved and later changed. No duplicate was added.');
@@ -7608,21 +7615,11 @@ function getPlannerWriteSourceCard(planlistCard, dateKey) {
 }
 
 function addPlannerTaskFromPlannerView(planlistCard, dateKey, value) {
-  const text = stripPlannerBullet(value);
-  if (!text) return false;
-  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
-  const source = getPlannerWriteSourceCard(planlistCard, normalizedDate);
-  return addPlannerTaskToDate(source, normalizedDate, text);
+  return planlistCard?.type==='planlist'?submitPlannerCapture(planlistCard,dateKey,value):false;
 }
 
 function addPlannerTaskToDate(card, dateKey, value) {
-  const text = stripPlannerBullet(value);
-  if (!text) return false;
-  const normalizedDate = normalizeDateKey(dateKey) || getTodayKey();
-  LifePlanner.add(card, normalizedDate, text, createId());
-  card.activePlannerDate = normalizedDate;
-  updatePlannerEntry(card, normalizedDate, {}, { rerender: true, forceRender: true });
-  return true;
+  return card?.type==='planner'?submitPlannerCapture(card,dateKey,value):false;
 }
 
 function addDailyItemToCard(card, value) {

@@ -100,16 +100,17 @@
 // the cloud snapshot or replace canonical task/activity records while typing.
 const planningSessions = new Map();
 const planningSessionFaults = new Set();
-function planningSession() {
+function planningSession({selectDay=true}={}) {
   if (!planningSessions.has(state.activeBoardId)) {
     let saved = {};try{saved=JSON.parse(sessionStorage.getItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId)) || '{}');if(!saved || typeof saved!=='object' || Array.isArray(saved))throw new Error('Unreadable planning session');}catch{saved={};planningSessionFaults.add(state.activeBoardId);}
-    planningSessions.set(state.activeBoardId, {view:"today",area:"*",search:"",day:getTodayKey(),calendarMode:innerWidth<=700?"agenda":"month",...saved});
+    planningSessions.set(state.activeBoardId, {view:"today",area:"*",search:"",calendarMode:innerWidth<=700?"agenda":"month",...saved});
   }
+  if(selectDay && !Object.hasOwn(planningSessions.get(state.activeBoardId),'day'))planningSessions.get(state.activeBoardId).day=getTodayKey();
   return planningSessions.get(state.activeBoardId);
 }
 function savePlanningSession() {
   if(planningSessionFaults.has(state.activeBoardId)){setSaveStatus('Planning draft storage needs review. Its stored copy has been kept.','error');return false;}
-  try { sessionStorage.setItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId),JSON.stringify(planningSession()));return true; }
+  try { sessionStorage.setItem(LifeStorageScope.key("life-os-planning:"+state.activeBoardId),JSON.stringify(planningSession({selectDay:false})));return true; }
   catch { setSaveStatus("Draft kept in this tab - draft storage unavailable", "error");return false; }
 }
 function planningNode(tag, className, text) {
@@ -300,7 +301,7 @@ function openSubtaskEditor(ref,child,day) {
   form.append(message,actions,remove);dialog.append(form);persist();input.focus();
 }
 function renderTaskSubtasks(item,{offerEmpty=false}={}) {
-  const ref=taskSubtaskRef(item),key=subtaskKey(ref),session=planningSession(),details=planningNode('details','task-subtasks');
+  const ref=taskSubtaskRef(item),key=subtaskKey(ref),session=planningSession({selectDay:false}),details=planningNode('details','task-subtasks');
   let children,drafts,pendingAdds;
   try{children=LifeSubtasks.active(resolveSubtaskParent(ref).target);drafts=subtaskDraftMap(session,'subtaskDrafts');pendingAdds=subtaskDraftMap(session,'subtaskPendingAdds');}catch(error){return planningNode('p','planning-message',error.message);}
   const opens=session.subtaskOpen ||= {},draftKey='add:'+key;
@@ -604,12 +605,14 @@ function saveCapturedTask(draft,context,persist) {
   if(context.ownerId!==getExpectedCloudOwnerId())throw new Error('The account changed. Your task draft was kept.');
   checkBoardToolContext('completion',context);
   const values={title:draft.title.trim(),area:draft.area,dateKey:draft.dateKey},sources=taskCaptureSources();let receipt=draft.receipt;
+  if(Object.hasOwn(draft,'receipt') && (!receipt || typeof receipt!=='object' || Array.isArray(receipt)))throw new Error('This task receipt needs review. Its stored copy was kept.');
   if(receipt && (receipt.version!==1 || receipt.boardId!==context.boardId || receipt.ownerId!==context.ownerId || !['prepared','failed','saved'].includes(receipt.status) || typeof receipt.after?.id!=='string' || !receipt.after.id || receipt.after.done!==false || typeof receipt.source?.id!=='string' || receipt.source.type!=='planner' || !receipt.values || ['title','area','dateKey'].some(key=>typeof receipt.values[key]!=='string') || receipt.newSource && (receipt.newSource.id!==receipt.source.id || receipt.newSource.type!=='planner' || !Array.isArray(receipt.newSource.plannerTasks) || receipt.newSource.plannerTasks.length)))throw new Error('This task receipt needs review. Its stored copy was kept.');
   if(!receipt && draft.pendingTaskId){
     const matches=sources.flatMap(source=>source.tasks.filter(task=>task.id===draft.pendingTaskId).map(task=>({source,task})));
     if(matches.length!==1 || !draft.pendingBase || !LifeStateMerge.equal(matches[0].task,draft.pendingBase))throw new Error('The previous save needs review. Your original draft was kept; no task was recreated.');
     const {source,task}=matches[0];receipt=draft.receipt={version:1,boardId:context.boardId,ownerId:context.ownerId,status:'saved',source:taskCaptureSourceIdentity(source.card),after:LifeStateMerge.copy(task),values:{title:task.title,area:task.area || '',dateKey:task.dateKey}};
   }
+  if(context.sourceCardId && receipt && receipt.source.id!==context.sourceCardId)throw new Error('This draft belongs to a different planner. Its stored copy was kept.');
   if(receipt){
     const matches=sources.flatMap(source=>source.tasks.filter(task=>task.id===receipt.after.id).map(task=>({source,task})));
     if(matches.length){
@@ -618,7 +621,8 @@ function saveCapturedTask(draft,context,persist) {
     }
     if(receipt.status!=='failed')throw new Error('The previous save outcome needs review. Your draft was kept; no task was recreated.');
   }
-  let source=receipt?sources.find(item=>item.card.id===receipt.source.id)?.card:sources.find(item=>getPlannerGroup(item.card)===(values.area || 'Unsorted'))?.card;
+  let source=receipt?sources.find(item=>item.card.id===receipt.source.id)?.card:context.sourceCardId?sources.find(item=>item.card.id===context.sourceCardId)?.card:sources.find(item=>getPlannerGroup(item.card)===(values.area || 'Unsorted'))?.card;
+  if(context.sourceCardId && !source)throw new Error('The selected planner moved or was removed. Your draft was kept.');
   if(receipt && source && !LifeStateMerge.equal(taskCaptureSourceIdentity(source),receipt.source))throw new Error('The planner source changed. Your draft was kept.');
   if(receipt && !source && !receipt.newSource)throw new Error('The planner source moved or was removed. Your draft was kept.');
   if(!source){
@@ -629,17 +633,22 @@ function saveCapturedTask(draft,context,persist) {
   const live=sources.find(item=>item.card===source)?.card,next=LifeStateMerge.copy(source),task=LifePlanner.add(next,values.dateKey,values.title,receipt?.after.id || createId());
   if(!task)throw new Error('Choose a valid date or clear it. Your complete draft was kept.');
   Object.assign(task,{area:values.area,status:'todo',project:'',deadline:'',notes:''});LifePlanner.project(next);
+  if(context.sourceCardId)next.activePlannerDate=values.dateKey;
+  const capture=context.clearDraft?state.cards.find(card=>card.id===context.clearDraft.cardId):null;
+  const clear=capture && Object.hasOwn(capture,'plannerDraftText') && typeof capture.plannerDraftText==='string' && capture.plannerDraftText && LifeStateMerge.equal(capture.plannerDraftText,context.clearDraft.expected);
+  if(clear && capture===live)next.plannerDraftText='';
   receipt=draft.receipt={version:1,boardId:context.boardId,ownerId:context.ownerId,status:'prepared',source:taskCaptureSourceIdentity(source),after:LifeStateMerge.copy(task),values,...(!live?{newSource:LifeStateMerge.copy(source)}:{})};
   draft.pendingTaskId=task.id;draft.pendingBase=LifeStateMerge.copy(task);
   if(!persist()){receipt.status='failed';throw new Error('Retry storage is unavailable. No task was added. Keep this tab open.');}
-  const previous={...state},keys=live?Object.keys(next).filter(key=>!LifeStateMerge.equal(live[key],next[key])):[],before=live?Object.fromEntries(keys.filter(key=>Object.hasOwn(live,key)).map(key=>[key,live[key]])):{};
+  const previous={...state},keys=live?Object.keys(next).filter(key=>!LifeStateMerge.equal(live[key],next[key])):[],before=live?Object.fromEntries(keys.filter(key=>Object.hasOwn(live,key)).map(key=>[key,live[key]])):{},extraBefore=clear && capture!==live?capture.plannerDraftText:null;
   try{
     state.boards=[...state.boards];state.board={...state.board};state.cards=[...state.cards];state.archivedCards=[...getArchivedCards()];
     if(live)for(const key of keys)live[key]=next[key];else state.archivedCards.push(next);
+    if(extraBefore!==null)capture.plannerDraftText='';
     const cards=state.cards,archive=state.archivedCards;let accepted;
     try{state.cards=LifeStateMerge.copy(cards);state.archivedCards=LifeStateMerge.copy(archive);accepted=saveState();}finally{state.cards=cards;state.archivedCards=archive;}
     if(!accepted)throw new Error('Not saved yet. Your complete draft was kept; please retry.');
-  }catch(error){if(live){for(const key of keys)delete live[key];Object.assign(live,before);}restoreBoardActionState(previous);receipt.status='failed';persist();throw error;}
+  }catch(error){if(live){for(const key of keys)delete live[key];Object.assign(live,before);}if(extraBefore!==null)capture.plannerDraftText=extraBefore;restoreBoardActionState(previous);receipt.status='failed';persist();throw error;}
   receipt.status='saved';return {values,retained:false};
 }
 function renderTaskCapture() {
