@@ -141,6 +141,9 @@
 #resumeCardDraftButton { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; margin-block: 8px; }
 #resumeCardDraftButton[hidden] { display: none; }
 #resumeCardDraftButton svg { width: 16px; height: 16px; }
+@media (max-width: 980px) { .board-tools-popover { left: auto; right: 0; } }
+.board-tools-status { flex-basis: 100%; margin: 6px 0 0; max-width: 100%; font-size: 13px; line-height: 1.5; font-weight: 500; color: var(--muted,#65716c); overflow-wrap: anywhere; }
+.board-tools-status[data-status="error"] { color: var(--danger,#a52b42); }
 .planner-linked-item > .task-subtasks { grid-column: 2 / -1; }
 .planner-linked-item.has-subtasks > .planner-linked-check, .planner-linked-item.has-subtasks > .planner-linked-actions { align-self: start; }
 .planner-linked-item.has-subtasks > .planner-linked-check { margin-top: 8px; }

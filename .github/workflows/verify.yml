@@ -131,6 +131,15 @@ jobs:
         run: npm run test:card-archive
         env:
           TEST_OUTPUT: test-results/card-archive-chromium
+      - name: Check focus and layout save safeguards in Chromium
+        run: npm run test:board-tools
+        env:
+          TEST_OUTPUT: test-results/board-tools-chromium
+      - name: Check focus and layout save safeguards in WebKit
+        run: npm run test:board-tools
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/board-tools-webkit
       - name: Check whole-card archive rollback and Undo in WebKit
         run: npm run test:card-archive
         env:

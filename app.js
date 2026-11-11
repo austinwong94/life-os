@@ -1160,6 +1160,8 @@ let lastLocalSaveOk = !corruptLocalStateDetected;
 let cloudConflictPending = false;
 const cloudSyncRetry=LifeCloudTransport.createRetry({allowed:canRetryCloudSave,run:ownerId=>pushCloudState({silent:true,retryOwnerId:ownerId})});
 let draggedCardId = null;
+let draggedCardContext = null;
+const boardToolPresses = new WeakMap();
 let editingCardId = null;
 let editingPlannerTaskKey = "";
 let plannerTaskEditDraft = null;
@@ -1344,6 +1346,7 @@ const elements = {
   completionRate: document.querySelector("#completionRate"),
   startAllTimersButton: document.querySelector("#startAllTimersButton"),
   stopAllTimersButton: document.querySelector("#stopAllTimersButton"),
+  boardToolsStatus: document.querySelector("#boardToolsStatus"),
   openRecordsButton: document.querySelector("#openRecordsButton"),
   downloadAllDataButton: document.querySelector("#downloadAllDataButton"),
   dataSafetyStatus: document.querySelector("#dataSafetyStatus"),
@@ -1868,28 +1871,15 @@ function bindEvents() {
     await importBoardBackup(file);
   });
 
-  elements.startAllTimersButton.addEventListener("click", () => {
-    startAllTimers();
-  });
-
-  elements.stopAllTimersButton.addEventListener("click", () => {
-    stopAllTimers();
-  });
-
-  elements.saveLayoutButton.addEventListener("click", () => {
-    saveCurrentLayout();
-  });
-
-  elements.restoreLayoutButton.addEventListener("click", () => {
-    restoreSavedLayout();
-  });
-
-  elements.arrangeButton.addEventListener("click", () => {
-    smartArrange();
-    state.board.layout = "smart";
-    render();
-    saveState();
-  });
+  for(const [control,action]of [[elements.startAllTimersButton,startAllTimers],[elements.stopAllTimersButton,stopAllTimers],[elements.saveLayoutButton,saveCurrentLayout],[elements.restoreLayoutButton,restoreSavedLayout],[elements.arrangeButton,smartArrange]]){
+    const capture=()=>boardToolPresses.set(control,{boardId:state.activeBoardId,expected:boardToolsSnapshot()});
+    control.addEventListener('pointerdown',event=>{if(event.button===0)capture();});
+    control.addEventListener('keydown',event=>{if(!event.repeat && ['Enter',' '].includes(event.key))capture();});
+    control.addEventListener('click',()=>{
+      const context=boardToolPresses.get(control) || {boardId:control.dataset.boardId};boardToolPresses.delete(control);
+      if(planningControlCurrent(control,{boardId:control.dataset.boardId}))action(context);
+    });
+  }
 
   elements.openTemplatesButton.addEventListener("click", () => {
     closeSettingsModal();
@@ -2790,6 +2780,8 @@ function renderBoardMeta() {
   renderBoardSwitcher();
   renderDataSafetyPanel();
   renderBoardControls();
+  for(const control of [elements.startAllTimersButton,elements.stopAllTimersButton,elements.saveLayoutButton,elements.restoreLayoutButton,elements.arrangeButton])control.dataset.boardId=state.activeBoardId;
+  if(elements.boardToolsStatus.dataset.boardId!==state.activeBoardId){elements.boardToolsStatus.textContent='';elements.boardToolsStatus.hidden=true;}
   renderBoardNameEditor();
   renderComposerDraftResume();
   elements.boardTitle.textContent = state.board.name;
@@ -3401,6 +3393,7 @@ function restoreScrollPosition(snapshot) {
 }
 
 function renderBoardColumns(cards) {
+  const ownerBoardId=state.activeBoardId;
   const columnCount = getBoardColumnCount();
   elements.boardGrid.style.setProperty("--board-columns", columnCount);
   elements.boardGrid.classList.toggle("columns-1", columnCount === 1);
@@ -3429,10 +3422,10 @@ function renderBoardColumns(cards) {
     event.preventDefault();
   });
   columnsShell.addEventListener("drop", (event) => {
-    if (!draggedCardId) return;
+    if (!draggedCardId || draggedCardContext?.boardId!==ownerBoardId || !planningControlCurrent(columnsShell,{boardId:ownerBoardId})) return;
     event.preventDefault();
     const targetColumn = getPointerColumnIndex(event, columnsShell, columnCount);
-    moveCardToColumnEnd(draggedCardId, targetColumn);
+    moveCardToColumnEnd(draggedCardId, targetColumn,draggedCardContext);
   });
   const columns = buildBoardColumns(columnCards, columnCount);
   columns.forEach((columnCards, columnIndex) => {
@@ -3453,8 +3446,8 @@ function renderBoardColumns(cards) {
       event.preventDefault();
       event.stopPropagation();
       column.classList.remove("is-drop-ready");
-      if (!draggedCardId) return;
-      moveCardToColumnEnd(draggedCardId, columnIndex);
+      if (!draggedCardId || draggedCardContext?.boardId!==ownerBoardId || !planningControlCurrent(column,{boardId:ownerBoardId})) return;
+      moveCardToColumnEnd(draggedCardId, columnIndex,draggedCardContext);
     });
 
     columnCards.forEach((card) => column.append(renderCard(card, { columnIndex })));
@@ -3875,14 +3868,16 @@ function renderCard(card, options = {}) {
 
   if (interactive) {
     node.addEventListener("dragstart", (event) => {
+      if(!planningControlCurrent(node,{boardId:ownerBoardId}) || document.querySelector('dialog[open]')){event.preventDefault();return;}
       draggedCardId = card.id;
-      event.dataTransfer.effectAllowed = "move";
+      draggedCardContext={boardId:ownerBoardId,expected:boardToolsSnapshot()};
+      if(event.dataTransfer)event.dataTransfer.effectAllowed = "move";
       node.classList.add("is-dragging");
       elements.boardGrid.classList.add("is-dragging-card");
     });
 
     node.addEventListener("dragend", () => {
-      draggedCardId = null;
+      if(draggedCardContext?.boardId===ownerBoardId && draggedCardId===card.id){draggedCardId=null;draggedCardContext=null;}
       node.classList.remove("is-dragging");
       elements.boardGrid.classList.remove("is-dragging-card");
       document.querySelectorAll(".is-drop-ready, .is-drop-target").forEach((item) => {
@@ -3905,8 +3900,8 @@ function renderCard(card, options = {}) {
       event.preventDefault();
       event.stopPropagation();
       node.classList.remove("is-drop-target");
-      if (!draggedCardId || draggedCardId === card.id) return;
-      moveCardToPosition(draggedCardId, card.id, options.columnIndex ?? 0);
+      if (!draggedCardId || draggedCardId === card.id || draggedCardContext?.boardId!==ownerBoardId || !planningControlCurrent(node,{boardId:ownerBoardId})) return;
+      moveCardToPosition(draggedCardId, card.id, options.columnIndex ?? 0,draggedCardContext);
     });
   }
 
@@ -10421,30 +10416,12 @@ function resetTimer(id) {
   renderCardsOnly();
 }
 
-function startAllTimers() {
-  const now = Date.now();
-  state.cards.forEach((card) => {
-    normalizeTimer(card);
-    if (!isManualTimer(card)) return;
-    if (card.runningSince) return;
-    if (getRemaining(card) <= 0) {
-      card.remaining = card.duration;
-    }
-    card.runningSince = now;
-  });
-  saveState();
-  renderCardsOnly();
+function startAllTimers(options = {}) {
+  return runBoardTool('start',options);
 }
 
-function stopAllTimers() {
-  state.cards.forEach((card) => {
-    if (!card.runningSince) return;
-    if (!isManualTimer(card)) return;
-    card.remaining = getRemaining(card);
-    card.runningSince = null;
-  });
-  saveState();
-  renderCardsOnly();
+function stopAllTimers(options = {}) {
+  return runBoardTool('pause',options);
 }
 
 function deleteCard(id, options = {}) {
@@ -10457,7 +10434,7 @@ function deleteCard(id, options = {}) {
   });
 }
 
-function moveCardToPosition(sourceId, targetId, targetColumn) {
+function moveCardToPosition(sourceId, targetId, targetColumn, options = {}) {
   if (!sourceId || sourceId === targetId) return;
   const columnCount = getRenderedBoardColumnCount();
   const columns = getCustomLayoutColumns(columnCount);
@@ -10467,10 +10444,10 @@ function moveCardToPosition(sourceId, targetId, targetColumn) {
   const targetCards = columns[columnIndex] || columns[0];
   const targetIndex = targetCards.findIndex((card) => card.id === targetId);
   targetCards.splice(targetIndex >= 0 ? targetIndex : targetCards.length, 0, source);
-  commitCustomLayoutColumns(columns);
+  return commitCustomLayoutColumns(columns,options);
 }
 
-function moveCardToColumnEnd(sourceId, targetColumn) {
+function moveCardToColumnEnd(sourceId, targetColumn, options = {}) {
   if (!sourceId) return;
   const columnCount = getRenderedBoardColumnCount();
   const columns = getCustomLayoutColumns(columnCount);
@@ -10478,7 +10455,7 @@ function moveCardToColumnEnd(sourceId, targetColumn) {
   if (!source) return;
   const columnIndex = clampInt(targetColumn, 0, columnCount - 1, 0);
   (columns[columnIndex] || columns[0]).push(source);
-  commitCustomLayoutColumns(columns);
+  return commitCustomLayoutColumns(columns,options);
 }
 
 function getCustomLayoutColumns(columnCount) {
@@ -10495,87 +10472,113 @@ function removeCardFromColumns(columns, sourceId) {
   return null;
 }
 
-function commitCustomLayoutColumns(columns) {
-  let order = 1;
-  columns.forEach((column, columnIndex) => {
-    column.forEach((card) => {
-      card.layoutColumn = columnIndex;
-      card.order = order;
-      order += 1;
-    });
-  });
-  state.cards = [...columns.flat(), ...state.cards.filter(card => card.calendarOnly)];
-  state.board.layout = "custom";
-  draggedCardId = null;
-  elements.boardGrid.classList.remove("is-dragging-card");
-  saveState();
-  renderBoardMeta();
-  renderCardsOnly();
+function commitCustomLayoutColumns(columns, options = {}) {
+  return runBoardTool('move',options,columns);
 }
 
-function smartArrange() {
-  state.cards.sort((a, b) => {
-    const runningDelta = Number(Boolean(b.runningSince)) - Number(Boolean(a.runningSince));
-    const doneDelta = getProgress(a).percent === 100 ? 1 : 0;
-    const otherDoneDelta = getProgress(b).percent === 100 ? 1 : 0;
-    return (
-      runningDelta ||
-      doneDelta - otherDoneDelta ||
-      getPriorityWeight(a) - getPriorityWeight(b) ||
-      getTypeWeight(a.type) - getTypeWeight(b.type) ||
-      a.createdAt - b.createdAt
-    );
-  });
-  state.cards.forEach((card, index) => {
-    delete card.layoutColumn;
-    card.order = index + 1;
+function smartArrange(options = {}) {
+  return runBoardTool('arrange',options);
+}
+
+function saveCurrentLayout(options = {}) {
+  return runBoardTool('saveLayout',options);
+}
+
+function restoreSavedLayout(options = {}) {
+  return runBoardTool('restore',options);
+}
+
+function boardToolsSnapshot() {
+  const board=state.boards.find(item=>item.id===state.activeBoardId);
+  return LifeCloudCopies.records({boards:[{...board,...state.board,id:state.activeBoardId,cards:state.cards,archivedCards:state.archivedCards}]});
+}
+
+function setBoardToolsStatus(message,error=false) {
+  elements.boardToolsStatus.textContent=message;elements.boardToolsStatus.hidden=!message;elements.boardToolsStatus.dataset.boardId=state.activeBoardId;elements.boardToolsStatus.dataset.status=error?'error':'saved';
+  if(error)setSaveStatus('Board tools need attention','error');
+}
+
+function checkedSavedBoardLayout() {
+  const entries=state.board.savedLayout,seen=new Set();
+  if(!Array.isArray(entries))throw new Error('The saved layout needs review. Its original information was kept.');
+  return entries.map((entry,index)=>{
+    const id=typeof entry==='string'?entry:entry?.id,column=typeof entry==='object' && entry!==null && Object.hasOwn(entry,'column')?entry.column:null;
+    if(typeof id!=='string' || !id || seen.has(id) || column!==null && (!Number.isInteger(column) || column<0 || column>2))throw new Error('The saved layout needs review. Its original information was kept.');
+    seen.add(id);return {id,column,index,original:entry};
   });
 }
 
-function saveCurrentLayout() {
-  const columns = getCustomLayoutColumns(getRenderedBoardColumnCount());
-  let order = 1;
-  columns.forEach((column, columnIndex) => {
-    column.forEach((card) => {
-      card.layoutColumn = columnIndex;
-      card.order = order;
-      order += 1;
-    });
-  });
-  state.cards = [...columns.flat(), ...state.cards.filter(card => card.calendarOnly)];
-  state.board.layout = "custom";
-  state.board.savedLayout = state.cards.map((card) => ({
-    id: card.id,
-    column: Number(card.layoutColumn) || 0
-  }));
-  saveState();
-  render();
-}
-
-function restoreSavedLayout() {
-  const savedLayout = Array.isArray(state.board.savedLayout) ? state.board.savedLayout : [];
-  if (!savedLayout.length) return;
-  const savedItems = savedLayout.map((entry, index) =>
-    typeof entry === "string"
-      ? { id: entry, column: null, index }
-      : { id: entry.id, column: Number.isFinite(Number(entry.column)) ? Number(entry.column) : null, index }
-  );
-  const savedById = new Map(savedItems.filter((item) => item.id).map((item) => [item.id, item]));
-  state.cards.sort((a, b) => {
-    const aOrder = savedById.has(a.id) ? savedById.get(a.id).index : Number.MAX_SAFE_INTEGER;
-    const bOrder = savedById.has(b.id) ? savedById.get(b.id).index : Number.MAX_SAFE_INTEGER;
-    return aOrder - bOrder || Number(a.order || 0) - Number(b.order || 0);
-  });
-  state.cards.forEach((card, index) => {
-    const saved = savedById.get(card.id);
-    if (saved && saved.column !== null) {
-      card.layoutColumn = Math.max(0, Math.round(saved.column));
+function boardToolPlan(kind,columns) {
+  const patches=[],visible=state.cards.filter(card=>!card.calendarOnly),boardPatch={};let ordered=state.cards;
+  if(kind==='start' || kind==='pause'){
+    for(const card of state.cards){
+      if(card.calendarOnly || card.type==='routine' || !isManualTimer(card) || kind==='start' && (card.runningSince || card.type==='single' && card.done) || kind==='pause' && !card.runningSince)continue;
+      const clock={...card};normalizeTimer(clock);
+      if(!Number.isFinite(clock.duration) || !Number.isFinite(clock.remaining) || clock.runningSince!=null && !Number.isFinite(Number(clock.runningSince)))throw new Error('A focus timer needs review. No timers were changed.');
+      const remaining=Math.min(clock.duration,getRemaining(clock));
+      patches.push({card,keys:['duration','remaining','runningSince'],after:{duration:clock.duration,remaining:kind==='start' && remaining<=0?clock.duration:kind==='pause'?remaining:clock.remaining,runningSince:kind==='start'?Date.now():null}});
     }
-    card.order = index + 1;
-  });
-  state.board.layout = "custom";
-  saveState();
-  render();
+    return {patches,boardPatch,ordered,message:patches.length?`${patches.length} focus timer${patches.length===1?'':'s'} ${kind==='start'?'started':'paused'} on this device.`:`No focus timers to ${kind==='start'?'start':'pause'}.`};
+  }
+  let arranged;
+  if(kind==='arrange'){
+    const progress=new Map(visible.map(card=>[card.id,getProgress(LifeStateMerge.copy(card)).percent]));
+    arranged=[...visible].sort((a,b)=>Number(Boolean(b.runningSince))-Number(Boolean(a.runningSince)) || Number(progress.get(a.id)===100)-Number(progress.get(b.id)===100) || getPriorityWeight(a)-getPriorityWeight(b) || getTypeWeight(a.type)-getTypeWeight(b.type) || a.createdAt-b.createdAt);
+    boardPatch.layout='smart';
+    arranged.forEach((card,index)=>patches.push({card,keys:['order','layoutColumn'],after:{order:index+1}}));
+  }else if(kind==='restore'){
+    const saved=checkedSavedBoardLayout(),index=new Map(saved.map(entry=>[entry.id,entry]));
+    if(!saved.length || !visible.some(card=>index.has(card.id)))return {patches,boardPatch,ordered,message:'No matching saved layout to restore.'};
+    arranged=[...visible].sort((a,b)=>(index.get(a.id)?.index ?? Number.MAX_SAFE_INTEGER)-(index.get(b.id)?.index ?? Number.MAX_SAFE_INTEGER) || Number(a.order || 0)-Number(b.order || 0));
+    arranged.forEach((card,i)=>patches.push({card,keys:['order','layoutColumn'],after:{...(Object.hasOwn(card,'layoutColumn')?{layoutColumn:card.layoutColumn}:{}),...(index.get(card.id)?.column!=null?{layoutColumn:index.get(card.id).column}:{}),order:i+1}}));boardPatch.layout='custom';
+  }else{
+    const saved=kind==='saveLayout'?checkedSavedBoardLayout():[];
+    columns=columns || getCustomLayoutColumns(getRenderedBoardColumnCount());
+    if(!Array.isArray(columns) || columns.length<1 || columns.length>3 || columns.some(column=>!Array.isArray(column)))throw new Error('This layout needs a fresh review. No cards were moved.');
+    const ids=new Set(),current=new Map(visible.map(card=>[card.id,card]));arranged=[];
+    columns.forEach((column,columnIndex)=>column.forEach(card=>{
+      const live=current.get(card?.id);
+      if(!live || ids.has(live.id) || !LifeCloudCopies.equal(LifeCloudCopies.records({boards:[{cards:[card]}]}),LifeCloudCopies.records({boards:[{cards:[live]}]})))throw new Error('The board changed or this layout is incomplete. No cards were moved.');
+      ids.add(live.id);arranged.push(live);patches.push({card:live,keys:['order','layoutColumn'],after:{order:arranged.length,layoutColumn:columnIndex}});
+    }));
+    if(ids.size!==visible.length)throw new Error('This layout is incomplete. Every existing card was kept.');
+    boardPatch.layout='custom';
+    if(kind==='saveLayout'){
+      const old=new Map(saved.map(entry=>[entry.id,entry.original]));
+      boardPatch.savedLayout=[...patches.map(p=>({...((typeof old.get(p.card.id)==='object' && old.get(p.card.id)!==null)?old.get(p.card.id):{}),id:p.card.id,column:p.after.layoutColumn})),...saved.filter(entry=>!ids.has(entry.id)).map(entry=>entry.original)];
+    }
+  }
+  if(!visible.length)return {patches:[],boardPatch:{},ordered:state.cards,message:'No board cards to arrange.'};
+  let position=0;ordered=state.cards.map(card=>card.calendarOnly?card:arranged[position++]);
+  return {patches,boardPatch,ordered,message:kind==='saveLayout'?'Layout saved on this device.':kind==='restore'?'Saved layout restored on this device.':kind==='arrange'?'Board arranged on this device.':'Card positions saved on this device.'};
+}
+
+function runBoardTool(kind,options={},columns) {
+  let previous,patches=[],staged=false;
+  try{
+    if(options.boardId && options.boardId!==state.activeBoardId)throw new Error('The active board changed. This command was not applied.');
+    if(document.querySelector('dialog[open]') || pendingBoardDeletion || composerSavePending || hasComposerDraft())throw new Error('Finish or discard the current draft before using board tools. Your writing was kept.');
+    validateBoardActionRecords();
+    if(!Array.isArray(state.cards) || !Array.isArray(state.archivedCards))throw new Error('The selected board records need review. Their original information was kept.');
+    checkedSavedBoardLayout();
+    const seen=new Set();for(const card of [...state.cards,...getArchivedCards()]){if(!card || typeof card.id!=='string' || !card.id || seen.has(card.id))throw new Error('Card identities need review. No board tools were applied.');seen.add(card.id);}
+    if(cloudConflictPending || (state.syncConflicts || []).some(item=>item.segments?.[0]!=='boards' || item.segments[1]===state.activeBoardId))throw new Error('Review the conflicting board copies before using board tools. Your records were kept.');
+    if(options.expected && !LifeCloudCopies.equal(boardToolsSnapshot(),options.expected))throw new Error('This board changed after the command was pressed. Review it and retry.');
+    const plan=boardToolPlan(kind,columns);patches=plan.patches.map(p=>({...p,before:Object.fromEntries(p.keys.filter(key=>Object.hasOwn(p.card,key)).map(key=>[key,p.card[key]]))}));
+    const changed=patches.some(p=>!LifeStateMerge.equal(p.before,p.after)) || Object.entries(plan.boardPatch).some(([key,value])=>!LifeStateMerge.equal(state.board[key],value));
+    if(!changed){setBoardToolsStatus(plan.message);return true;}
+    previous={...state};state.boards=[...state.boards];state.board={...state.board,...plan.boardPatch};state.cards=plan.ordered;
+    for(const p of patches){for(const key of p.keys)delete p.card[key];Object.assign(p.card,p.after);}
+    // Stage isolated copies, then retain live card identities for editors that defer redraws.
+    const liveCards=state.cards,liveArchive=state.archivedCards;let accepted;
+    try{state.cards=LifeStateMerge.copy(liveCards);state.archivedCards=LifeStateMerge.copy(liveArchive);accepted=saveState();}
+    finally{state.cards=liveCards;state.archivedCards=liveArchive;}
+    if(!accepted)throw new Error(`Board tools were not saved. The previous ${kind==='start' || kind==='pause'?'timer state was':'positions were'} kept. `+deviceSaveFailureReason());
+    staged=true;renderBoardMeta();renderCardsOnly({reason:'device-commit'});setBoardToolsStatus(plan.message);return true;
+  }catch(error){
+    if(previous && !staged){for(const p of patches){for(const key of p.keys)delete p.card[key];Object.assign(p.card,p.before);}restoreBoardActionState(previous);}
+    setBoardToolsStatus(staged?'The command is saved on this device, but the view needs attention. Keep this tab open.':error.message || 'The command was not saved. Your original board was kept.',true);return false;
+  }finally{if(kind==='move'){draggedCardId=null;draggedCardContext=null;elements.boardGrid.classList.remove('is-dragging-card');}}
 }
 
 function getOrderedCards() {
