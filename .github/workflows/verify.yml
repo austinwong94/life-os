@@ -154,6 +154,15 @@ jobs:
       - run: npm run test:planner-archive
         env:
           TEST_OUTPUT: test-results/planner-archive
+      - name: Check whole-board deletion safeguards in Chromium
+        run: npm run test:board-deletion
+        env:
+          TEST_OUTPUT: test-results/board-deletion-chromium
+      - name: Check whole-board deletion safeguards in WebKit
+        run: npm run test:board-deletion
+        env:
+          TEST_BROWSER: webkit
+          TEST_OUTPUT: test-results/board-deletion-webkit
       - name: Check planner archive persistence in WebKit
         run: npm run test:planner-archive
         env:

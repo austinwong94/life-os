@@ -1185,6 +1185,7 @@ let localDevReloadPending = false;
 let activeReportType = "fitness";
 let activeCardMove = null;
 let pendingCardDeletion = null;
+let pendingBoardDeletion = null;
 let timerDisplayBoardId = "";
 let timerDisplayFrames = new Map();
 
@@ -1575,7 +1576,7 @@ function bindEvents() {
   });
 
   elements.deleteBoardButton.addEventListener("click", () => {
-    deleteCurrentBoard();
+    if(planningControlCurrent(elements.deleteBoardButton,{boardId:elements.deleteBoardButton.dataset.boardId}) && !document.querySelector('dialog[open]'))deleteCurrentBoard({boardId:elements.deleteBoardButton.dataset.boardId});
   });
 
   elements.visibilityControl.addEventListener("click", (event) => {
@@ -2813,6 +2814,8 @@ function clearStartupBoardSearch() {
 
 function renderBoardSwitcher() {
   syncActiveBoard();
+  const deletionStatus=document.getElementById('boardActionStatus');
+  if(deletionStatus && deletionStatus.dataset.boardId!==state.activeBoardId){deletionStatus.textContent='';deletionStatus.hidden=true;}
   const boardOptions = state.boards
     .map((board) => `<option value="${escapeAttribute(board.id)}">${escapeHtml(board.name)}</option>`)
     .join("");
@@ -2822,6 +2825,7 @@ function renderBoardSwitcher() {
   elements.boardQuickSelect.value = state.activeBoardId;
   renderQuickBoardPicker();
   elements.deleteBoardButton.disabled = state.boards.length < 2;
+  elements.deleteBoardButton.dataset.boardId = state.activeBoardId;
   elements.deleteBoardButton.title =
     state.boards.length < 2 ? "Create another board before deleting this one" : `Delete ${state.board.name}`;
 }
@@ -11425,29 +11429,87 @@ function createBlankBoard() {
   saveState();
 }
 
-function deleteCurrentBoard() {
-  if(!canLeaveHealthDateDraft())return;
-  syncActiveBoard();
-  if (state.boards.length < 2) return;
-  const currentBoard = state.boards.find((board) => board.id === state.activeBoardId);
-  if (!currentBoard) return;
-  const confirmed = window.confirm(`Delete "${currentBoard.name}" and its cards from this browser?`);
-  if (!confirmed) return;
-  if (!saveCloudRecoveryPoint("before-board-delete")) return;
-  state.deletedBoardIds = {...(state.deletedBoardIds || {}), [currentBoard.id]: Date.now()};
+function setBoardDeletionFeedback(message) {
+  const status=document.getElementById('boardActionStatus');
+  if(status){status.textContent=message;status.hidden=!message;status.dataset.boardId=state.activeBoardId;}
+  if(message)setSaveStatus('Board action needs attention','error');
+}
 
-  const currentIndex = state.boards.findIndex((board) => board.id === currentBoard.id);
-  state.boards = state.boards.filter((board) => board.id !== currentBoard.id);
-  const nextBoard = state.boards[Math.max(0, currentIndex - 1)] || state.boards[0];
-  applyBoardToState(state, nextBoard.id);
-  state.activeFilter = "all";
-  state.activeCategory = "all";
-  state.activeCategories = [];
-  state.focusFilter = "all";
-  state.searchQuery = "";
-  resetFormState();
-  render();
-  saveState();
+function boardDeletionDraftNotice() {
+  const plan=planningSessions.get(state.activeBoardId),daily=dailySessions.get(state.activeBoardId),coach=coachingSessions.get(state.activeBoardId);
+  const workbook=window.LifeMoneyWorkbookUI?.active();
+  let money;
+  try{money=JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-money:'+state.activeBoardId)) || '{}');if(!money || typeof money!=='object' || Array.isArray(money) || money.drafts!==undefined && (!money.drafts || typeof money.drafts!=='object' || Array.isArray(money.drafts)))throw new Error();}
+  catch{return 'Saved Money drafts need review before this board can be deleted. Their original bytes were kept.';}
+  if(workbook?.boardId===state.activeBoardId && (workbook.dirty || workbook.sheet?.edition) || Object.keys(money.drafts || {}).length)return 'Finish the unsaved Money entry or sheet before deleting this board. Its draft was kept.';
+  if(editingCardId || draftTouched && !elements.cardComposerPanel.hidden || editingPlannerTaskKey || plannerTaskEditDraft || plan?.activityDraft || plan?.cardTaskDraft || plan?.capture?.title || daily?.capture?.text || Object.values(daily?.reviews || {}).some(draft=>draft.changed) || coach?.draft || Object.keys(coach?.quickDrafts || {}).length || coach?.pickingFile || hasUnsubmittedDraftText() || state.cards.some(card=>Object.values(card.sideNoteDrafts || {}).some(text=>String(text || '').trim())))return 'Finish or discard unfinished writing before deleting this board. Your drafts were kept.';
+  return '';
+}
+
+function reviewedDeletionBoard(boardId) {
+  if(state.activeBoardId!==boardId)throw new Error('The active board changed. Nothing was deleted; reopen Delete board on the board you intend to remove.');
+  if(!Array.isArray(state.boards) || state.boards.length<2)throw new Error('Keep at least one board. Nothing was deleted.');
+  const ids=new Set();
+  for(const board of state.boards){
+    if(!board || typeof board.id!=='string' || !board.id || ids.has(board.id) || !Array.isArray(board.cards) || board.archivedCards!==undefined && !Array.isArray(board.archivedCards))throw new Error('These board identities or records need review. Nothing was deleted.');
+    ids.add(board.id);
+  }
+  if(state.deletedBoardIds!==undefined && (!state.deletedBoardIds || typeof state.deletedBoardIds!=='object' || Array.isArray(state.deletedBoardIds)))throw new Error('Deletion history needs review. Its original records were kept.');
+  if(state.boards.some(board=>Object.hasOwn(state.deletedBoardIds || {},board.id) && state.deletedBoardIds[board.id]))throw new Error('A listed board already has a deletion record. Review Recovery before continuing.');
+  const notice=boardDeletionDraftNotice();if(notice)throw new Error(notice);
+  syncActiveBoard({touchBoard:false});
+  return state.boards.find(board=>board.id===boardId);
+}
+
+function sameReviewedDeletionBoard(board, expected) {
+  return Boolean(board) && LifeCloudCopies.equal(LifeCloudCopies.records({boards:[board]}),LifeCloudCopies.records({boards:[expected]}));
+}
+
+async function deleteCurrentBoard(options = {}) {
+  if(pendingBoardDeletion || document.querySelector('dialog[open]') || !canLeaveHealthDateDraft())return false;
+  const context={boardId:options.boardId || state.activeBoardId};pendingBoardDeletion=context;
+  let staged=false;
+  try {
+    reviewedDeletionBoard(context.boardId);
+    // Rendered routine history can be newer than the last checkpoint; preserve it before review.
+    saveState({quiet:true,touch:false,skipCloud:true});
+    if(!await retryDeviceSave({recoverSpace:false}))throw new Error('Device saving needs attention. Nothing was deleted; keep this tab open and retry saving first.');
+    const expected=LifeStateMerge.copy(reviewedDeletionBoard(context.boardId)),counts=getBackupDataCounts({boards:[expected]});
+    const current=()=>{const board=reviewedDeletionBoard(context.boardId);if(!sameReviewedDeletionBoard(board,expected))throw new Error('This board changed during review. Nothing was deleted; reopen Delete board to review its latest records.');return board;};
+    setBoardDeletionFeedback('');
+    const countLabels=[[counts.activeCards,'active card'],[counts.archivedCards,'archived card'],[counts.diaryPages,'diary page'],[counts.sideNotes,'note']].map(([count,label])=>`${count} ${label}${count===1?'':'s'}`);
+    const summary=`"${expected.name}"\n\n${countLabels.slice(0,2).join(' / ')}\n${countLabels.slice(2).join(' / ')}\n\nThis board's Money records, goals and history are included. When cloud sync is on, deletion also applies to your other devices. Other boards stay unchanged.`;
+    if(!await confirmTaskAction('Review board deletion',summary,'Continue'))return false;
+    current();
+    if(!await confirmTaskAction('Delete this entire board?',`Delete "${expected.name}"?\n\nA complete recovery copy must be saved first. There is no Undo for this action. Other boards and existing backups will be kept.`,'Delete board',{danger:true}))return false;
+    current();
+    if(!await flushDeviceWrites())throw new Error('Device saving needs attention. Nothing was deleted; retry saving first.');
+    current();
+    await LifeDeviceStore.locked(()=>{
+      const board=current(),stored=readStoredStateSnapshot();
+      if(!stored || LifeDeviceStore.pending().length || stored.syncConflicts?.length || !LifeStateMerge.equal(stored.boards.map(board=>board.id).sort(),state.boards.map(board=>board.id).sort()) || !sameReviewedDeletionBoard(stored.boards.find(item=>item.id===context.boardId),expected) || stored.boards.some(board=>Object.hasOwn(stored.deletedBoardIds || {},board.id) && stored.deletedBoardIds[board.id]))throw new Error('Shared records changed or need review. Nothing was deleted; reopen Delete board after saving.');
+      if(state.syncConflicts?.length || cloudConflictPending)throw new Error('Resolve the existing sync review before deleting a board. Nothing was deleted.');
+      if(!saveCloudRecoveryPoint('before-board-delete',getStateForStorage()))throw new Error('Nothing was deleted. A recovery copy could not be saved. Your boards and existing backups were kept.');
+      const previous={...state},index=state.boards.findIndex(item=>item.id===board.id),remaining=state.boards.filter(item=>item.id!==board.id),next=remaining[Math.max(0,index-1)] || remaining[0];
+      // Project the destination from a copy, so a refused save cannot normalize its original records.
+      const projection={boards:[LifeStateMerge.copy(next)]};applyBoardToState(projection,next.id);
+      state.boards=remaining;state.deletedBoardIds={...(state.deletedBoardIds || {}),[board.id]:Date.now()};
+      Object.assign(state,{activeBoardId:projection.activeBoardId,board:projection.board,cards:projection.cards,archivedCards:projection.archivedCards});
+      try {if(!saveState())throw new Error('Device save refused');staged=true;}
+      catch {
+        for(const key of Object.keys(state))if(!Object.hasOwn(previous,key))delete state[key];
+        Object.assign(state,previous);
+        throw new Error('Board deletion was not saved. All boards, their records and your current view were kept. '+deviceSaveFailureReason());
+      }
+    });
+    state.activeFilter='all';state.activeCategory='all';state.activeCategories=[];state.focusFilter='all';state.searchQuery='';
+    try{sessionStorage.setItem(LifeStorageScope.key('life-os-active-board'),state.activeBoardId);}catch{}
+    setBoardDeletionFeedback('');resetFormState();clearUndoToast();render({force:true});return true;
+  }catch(error){
+    if(staged){render({force:true});setBoardDeletionFeedback('Deletion is queued on this device, but saving needs attention. Keep this tab open. The recovery copy is kept.');}
+    else setBoardDeletionFeedback(error.message || 'Nothing was deleted. The original boards were kept.');
+    return false;
+  }finally{if(pendingBoardDeletion===context)pendingBoardDeletion=null;}
 }
 
 function createBoardFromTemplate(templateId) {
