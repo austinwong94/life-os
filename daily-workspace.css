@@ -92,6 +92,7 @@
 .daily-menu { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .daily-menu button { justify-content: flex-start; }
 .daily-message { color: #735c24; font-size: 13px; margin: 0; }
+.daily-dialog .daily-preference-message[data-state=kept] { color:var(--muted,#52655e); }
 .daily-check { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 8px 0; border-bottom: 1px solid #e3e9e5; cursor: pointer; }
 .daily-check[hidden] { display: none; }
 .daily-check input[type=checkbox] { width: 20px; height: 20px; flex-shrink: 0; accent-color: #287c55; }

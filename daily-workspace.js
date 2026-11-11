@@ -76,13 +76,13 @@ function dailySession() {
   }
   return dailySessions.get(key);
 }
-function saveDailyDraft(boardId=state.activeBoardId) {
+function saveDailyDraft(boardId=state.activeBoardId,{silent=false}={}) {
   try {
     const session=boardId===state.activeBoardId?dailySession():dailySessions.get(boardId);
     if(!session)throw new Error('The original board draft is unavailable.');
     sessionStorage.setItem(LifeStorageScope.key('life-os-daily:'+boardId), JSON.stringify(session));return true;
   }
-  catch { setSaveStatus('Draft only in memory - storage unavailable', 'error'); return false; }
+  catch { if(!silent)setSaveStatus('Draft only in memory - storage unavailable', 'error'); return false; }
 }
 function dailyRecords(board) {
   const cards = board ? board.archivedCards || [] : getArchivedCards();
@@ -285,11 +285,17 @@ function openDailyCapture() {
 }
 function renderDailyHome() {
   const root=elements.boardGrid,session=dailySession(),day=getTodayKey();
+  const boardId=state.activeBoardId,preferenceMessage=planningNode('p','daily-message daily-personalization-message');preferenceMessage.setAttribute('role','status');preferenceMessage.hidden=true;
   const head=planningNode('header','daily-head'),copy=planningNode('div');copy.append(planningNode('h2','','Today'));
   const actions=planningNode('div','daily-actions');
-  const light=planningButton('Lighter day',()=>{session.light=!session.light;saveDailyDraft();renderCardsOnly({force:true});});light.setAttribute('aria-pressed',String(session.light));
+  const light=planningButton('Lighter day',()=>{
+    if(!head.isConnected || head.hidden || light.hidden || state.activeBoardId!==boardId || day!==getTodayKey() || state.ui.workspaceMode!=='today' || dailySession()!==session || document.querySelector('dialog[open]'))return;
+    const had=Object.hasOwn(session,'light'),before=session.light;session.light=!before;
+    if(!saveDailyDraft(boardId,{silent:true})){if(had)session.light=before;else delete session.light;preferenceMessage.textContent='Lighter day was not saved. The previous setting is kept; please retry.';preferenceMessage.hidden=false;return;}
+    renderCardsOnly({force:true});
+  });light.setAttribute('aria-pressed',String(session.light));
   actions.append(light,planningIcon('Customize Today',openDailyPreferences,'settings'),planningButton('Capture',openDailyCapture,'plus'));
-  head.append(copy,actions);root.append(head);
+  head.append(copy,actions);root.append(head,preferenceMessage);
   const layout=planningNode('div','daily-layout');root.append(layout);
   const columns=planningNode('div','daily-columns');layout.append(columns);
   const context=planningNode('div','daily-context');
@@ -424,15 +430,37 @@ function refreshDailyFocusSession() {
   view.dismiss.disabled=frame.phase==='invalid';view.expected=LifeStateMerge.copy(timer);
 }
 function openDailyPreferences() {
-  const dialog=dailyDialog('Customize Today'),session=dailySession();
+  const dialog=dailyDialog('Customize Today'),session=dailySession(),boardId=state.activeBoardId,day=getTodayKey(),mode=state.ui.workspaceMode;
+  const message=planningNode('p','daily-message daily-preference-message');message.setAttribute('role','status');
+  const current=()=>dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog && boardId===state.activeBoardId && day===getTodayKey() && mode===state.ui.workspaceMode && dailySession()===session;
+  const commit=(change,restore)=>{
+    if(!current())return false;
+    change();
+    if(!saveDailyDraft(boardId,{silent:true})){restore();message.dataset.state='error';message.textContent='Preference was not saved. The previous setting is kept; please retry.';return false;}
+    message.dataset.state='kept';message.textContent='Preference saved on this tab.';renderCardsOnly({force:true});return true;
+  };
   for(const [key,label] of [['health','Food & movement'],['followups','Waiting task follow-ups'],['agenda','Upcoming activities'],['routine','Priority progress'],['diary','Diary'],['sidenote','Quick notes']]){
     const row=planningNode('label','daily-check'),check=planningInput('checkbox','',()=>{});check.checked=session.sections[key]!==false;
-    check.onchange=()=>{session.sections[key]=check.checked;saveDailyDraft();renderCardsOnly({force:true});};row.append(check,planningNode('span','',label));dialog.append(row);
+    check.onchange=()=>{
+      const had=Object.hasOwn(session.sections,key),before=session.sections[key],value=check.checked;
+      if(!commit(()=>session.sections[key]=value,()=>{if(had)session.sections[key]=before;else delete session.sections[key];}))check.checked=session.sections[key]!==false;
+    };row.append(check,planningNode('span','',label));dialog.append(row);
     if(['diary','sidenote'].includes(key)){
       const cards=state.cards.filter(c=>c.type===key);
-      if(cards.length>1)dialog.append(planningField(label+' card',planningSelect(cards.map(c=>[c.id,c.title]),session.cardChoices?.[key] || cards[0].id,value=>{session.cardChoices ||= {};session.cardChoices[key]=value;saveDailyDraft();renderCardsOnly({force:true});})));
+      if(cards.length>1){
+        let selected;
+        const choice=planningSelect(cards.map(c=>[c.id,c.title]),session.cardChoices?.[key] || cards[0].id,value=>{
+          if(!current()){choice.value=selected;return;}
+          const matches=[...state.cards,...getArchivedCards()].filter(c=>c.id===value);
+          if(matches.length!==1 || matches[0].type!==key || !state.cards.includes(matches[0])){choice.value=selected;message.dataset.state='error';message.textContent='The selected card changed or moved. Reopen Customize Today.';return;}
+          const had=Object.hasOwn(session,'cardChoices'),before=session.cardChoices;
+          if(commit(()=>session.cardChoices={...(before || {}),[key]:value},()=>{if(had)session.cardChoices=before;else delete session.cardChoices;}))selected=value;
+          else choice.value=selected;
+        });selected=choice.value;dialog.append(planningField(label+' card',choice));
+      }
     }
   }
+  dialog.append(message);
 }
 function dailyCapacityText(capacity){
   const parts=[];
