@@ -73,6 +73,6 @@
     "test:properties": "node tests/properties.cjs",
     "test:storage-repair": "node tests/storage-repair.cjs"
   },
-  "devDependencies": {"playwright": "1.63.0"},
+  "devDependencies": {"playwright": "1.63.0", "yaml": "2.9.1"},
   "engines": {"node": ">=22"}
 }

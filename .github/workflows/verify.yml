@@ -45,7 +45,7 @@ jobs:
         with:
           name: properties-preflight-results
           path: test-results/
-  verify:
+  verify-core:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -54,292 +54,385 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: "24"
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm test
+        if: matrix.group == 'storage'
       - name: Check conservative device receipt recovery in Chromium
         run: npm run test:storage-repair
         env:
           TEST_OUTPUT: test-results/storage-repair-chromium
+        if: matrix.group == 'storage'
       - name: Check conservative device receipt recovery in WebKit
         run: npm run test:storage-repair
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/storage-repair-webkit
+        if: matrix.group == 'storage'
       - name: Measure isolated small-history save and reload in Chromium
         run: npm run test:performance
         env:
           PERF_PROFILES: small
-          PERF_SAMPLES: '1'
+          PERF_SAMPLES: "1"
           TEST_OUTPUT: test-results/performance-chromium
+        if: matrix.group == 'storage'
       - name: Measure isolated small-history save and reload in WebKit
         run: npm run test:performance
         env:
           TEST_BROWSER: webkit
           PERF_PROFILES: small
-          PERF_SAMPLES: '1'
+          PERF_SAMPLES: "1"
           TEST_OUTPUT: test-results/performance-webkit
+        if: matrix.group == 'storage'
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.5.4
+        if: matrix.group == 'storage'
       - name: Type-check the private Calendar backend without secrets
         run: deno check --no-config --node-modules-dir=none supabase/functions/google-calendar/index.ts
+        if: matrix.group == 'storage'
       - name: Type-check protected property calendar imports without secrets
         run: deno check --no-config --node-modules-dir=none supabase/functions/property-ical-import/index.ts supabase/functions/property-ical-cron-sync/index.ts
+        if: matrix.group == 'storage'
       - name: Verify inactive incremental storage prototype in Chromium
         run: npm run test:delta-store
         env:
           TEST_OUTPUT: test-results/experimental-delta-chromium
+        if: matrix.group == 'storage'
       - name: Verify inactive incremental storage prototype in WebKit
         run: npm run test:delta-store
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/experimental-delta-webkit
+        if: matrix.group == 'storage'
       - name: Verify inactive ordered capture and retry in Chromium
         run: npm run test:capture-queue
         env:
           TEST_OUTPUT: test-results/capture-queue-chromium
+        if: matrix.group == 'storage'
       - name: Verify inactive ordered capture and retry in WebKit
         run: npm run test:capture-queue
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/capture-queue-webkit
+        if: matrix.group == 'storage'
       - name: Verify inactive board reconciliation in Chromium
         run: npm run test:board-reconcile
         env:
           TEST_OUTPUT: test-results/board-reconcile-chromium
+        if: matrix.group == 'storage'
       - name: Verify inactive board reconciliation in WebKit
         run: npm run test:board-reconcile
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/board-reconcile-webkit
+        if: matrix.group == 'storage'
       - name: Build complete public artifact
         run: npm run build
       - name: Check cached and incomplete startup in Chromium
         run: npm run test:release-startup
         env:
           TEST_OUTPUT: test-results/release-startup
+        if: matrix.group == 'storage'
       - name: Check cached and incomplete startup in WebKit
         run: npm run test:release-startup
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/release-startup-webkit
+        if: matrix.group == 'storage'
       - name: Start isolated preview
         run: LIFE_OS_SERVE_RELEASE=1 npm start > /tmp/life-os-server.log 2>&1 &
       - name: Check whole-card archive rollback and Undo in Chromium
         run: npm run test:card-archive
         env:
           TEST_OUTPUT: test-results/card-archive-chromium
+        if: matrix.group == 'cards'
       - name: Check individual timer save and routine reset safeguards in Chromium
         run: npm run test:timer-actions
         env:
           TEST_OUTPUT: test-results/timer-actions-chromium
+        if: matrix.group == 'cards'
       - name: Check source checkbox completion safeguards in Chromium
         run: npm run test:source-completion
         env:
           TEST_OUTPUT: test-results/source-completion-chromium
+        if: matrix.group == 'cards'
       - name: Check quick-add draft and retry safeguards in Chromium
         run: npm run test:source-add
         env:
           TEST_OUTPUT: test-results/source-add-chromium
+        if: matrix.group == 'cards'
       - name: Check dated planner-card capture safeguards in Chromium
         run: npm run test:planner-capture
         env:
           TEST_OUTPUT: test-results/planner-capture-chromium
+        if: matrix.group == 'cards'
       - name: Check dated planner-card capture safeguards in WebKit
         run: npm run test:planner-capture
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/planner-capture-webkit
+        if: matrix.group == 'cards'
       - name: Check quick-add draft and retry safeguards in WebKit
         run: npm run test:source-add
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/source-add-webkit
+        if: matrix.group == 'cards'
       - name: Check source checkbox completion safeguards in WebKit
         run: npm run test:source-completion
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/source-completion-webkit
+        if: matrix.group == 'cards'
       - name: Check individual timer save and routine reset safeguards in WebKit
         run: npm run test:timer-actions
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/timer-actions-webkit
+        if: matrix.group == 'cards'
       - name: Check focus and layout save safeguards in Chromium
         run: npm run test:board-tools
         env:
           TEST_OUTPUT: test-results/board-tools-chromium
+        if: matrix.group == 'cards'
       - name: Check focus and layout save safeguards in WebKit
         run: npm run test:board-tools
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/board-tools-webkit
+        if: matrix.group == 'cards'
       - name: Check whole-card archive rollback and Undo in WebKit
         run: npm run test:card-archive
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/card-archive-webkit
+        if: matrix.group == 'cards'
       - name: Repeat three-tab coherent HTTP startup in WebKit
         run: npm run test:startup-repeat
         env:
           TEST_BROWSER: webkit
           TEST_URL: http://127.0.0.1:5180/?liveReload=0
           TEST_OUTPUT: test-results/startup-repeat-webkit
+        if: matrix.group == 'storage'
       - name: Check card moves and permanent deletion in Chromium
         run: npm run test:card-transfer
         env:
           TEST_OUTPUT: test-results/card-transfer-chromium
+        if: matrix.group == 'cards'
       - name: Check card moves and permanent deletion in WebKit
         run: npm run test:card-transfer
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/card-transfer-webkit
+        if: matrix.group == 'cards'
       - run: npm run test:planner-archive
         env:
           TEST_OUTPUT: test-results/planner-archive
+        if: matrix.group == 'cards'
       - name: Check whole-board deletion safeguards in Chromium
         run: npm run test:board-deletion
         env:
           TEST_OUTPUT: test-results/board-deletion-chromium
+        if: matrix.group == 'cards'
       - name: Check whole-board deletion safeguards in WebKit
         run: npm run test:board-deletion
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/board-deletion-webkit
+        if: matrix.group == 'cards'
       - name: Check planner archive persistence in WebKit
         run: npm run test:planner-archive
         env:
           TEST_BROWSER: webkit
           TEST_URL: http://127.0.0.1:5180/?liveReload=0
           TEST_OUTPUT: test-results/planner-archive-webkit
+        if: matrix.group == 'cards'
       - name: Check board creation and settings safeguards in Chromium
         run: npm run test:board-management
         env:
           TEST_OUTPUT: test-results/board-management-chromium
+        if: matrix.group == 'cards'
       - name: Check board creation and settings safeguards in WebKit
         run: npm run test:board-management
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/board-management-webkit
+        if: matrix.group == 'cards'
       - run: npm run test:money
         env:
           TEST_OUTPUT: test-results/money
+        if: matrix.group == 'interface'
       - name: Check board navigation and composer safeguards in Chromium
         run: npm run test:board-navigation
         env:
           TEST_OUTPUT: test-results/board-navigation-chromium
+        if: matrix.group == 'cards'
       - name: Check board navigation and composer safeguards in WebKit
         run: npm run test:board-navigation
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/board-navigation-webkit
+        if: matrix.group == 'cards'
       - name: Check money flows in WebKit
         run: npm run test:money
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/money-webkit
+        if: matrix.group == 'interface'
       - run: npm run test:browser
         env:
           TEST_OUTPUT: test-results
+        if: matrix.group == 'interface'
       - run: npm run test:sync
         env:
           TEST_OUTPUT: test-results
+        if: matrix.group == 'sync'
       - name: Check existing-account password setup
         run: node tests/password.cjs
         env:
           TEST_OUTPUT: test-results/password
+        if: matrix.group == 'sync'
       - name: Check existing-account password setup in WebKit
         run: node tests/password.cjs
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/password-webkit
+        if: matrix.group == 'sync'
       - name: Check complete cloud and device preservation in WebKit
         run: npm run test:sync
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/cloud-copies-webkit
-          TEST_SAVE_TRACE: '1'
+          TEST_SAVE_TRACE: "1"
+        if: matrix.group == 'sync'
       - name: Check device checkpoint refusals and recovery in Chromium
         run: npm run test:device-concurrency
         env:
           TEST_OUTPUT: test-results/device-concurrency
+        if: matrix.group == 'storage'
       - name: Check session renewal receipts and sign-out in Chromium
         run: npm run test:session-renewal
         env:
           TEST_OUTPUT: test-results/session-renewal
+        if: matrix.group == 'sync'
       - name: Check session renewal receipts and sign-out in WebKit
         run: npm run test:session-renewal
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/session-renewal-webkit
+        if: matrix.group == 'sync'
       - name: Check device checkpoint refusals and recovery in WebKit
         run: npm run test:device-concurrency
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/device-concurrency-webkit
+        if: matrix.group == 'storage'
       - run: npm run test:features
         env:
           TEST_OUTPUT: test-results
+        if: matrix.group == 'interface'
       - name: Check readable pending-copy downloads in Chromium
         run: npm run test:readable-export
         env:
           TEST_OUTPUT: test-results/readable-export
+        if: matrix.group == 'sync'
       - name: Check readable pending-copy downloads in WebKit
         run: npm run test:readable-export
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/readable-export-webkit
+        if: matrix.group == 'sync'
       - name: Check safe updates and pinned-release coexistence in Chromium
         run: npm run test:version-compatibility
         env:
           TEST_OUTPUT: test-results/version-compatibility
+        if: matrix.group == 'sync'
       - name: Check safe updates and pinned-release coexistence in WebKit
         run: npm run test:version-compatibility
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/version-compatibility-webkit
+        if: matrix.group == 'sync'
       - name: Check interrupted cloud saves in Chromium
         run: npm run test:cloud-reconnect
         env:
           TEST_OUTPUT: test-results/cloud-reconnect
+        if: matrix.group == 'sync'
       - name: Check read-only startup cloud verification in Chromium
         run: npm run test:cloud-startup-check
         env:
           TEST_OUTPUT: test-results/cloud-startup-check-chromium
+        if: matrix.group == 'sync'
       - name: Check read-only startup cloud verification in WebKit
         run: npm run test:cloud-startup-check
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/cloud-startup-check-webkit
+        if: matrix.group == 'sync'
       - name: Check interrupted cloud saves in WebKit
         run: npm run test:cloud-reconnect
         env:
           TEST_BROWSER: webkit
           TEST_OUTPUT: test-results/cloud-reconnect-webkit
+        if: matrix.group == 'sync'
       - run: npm run test:usability
         env:
           TEST_OUTPUT: test-results
+        if: matrix.group == 'interface'
       - run: npm run test:catalogue
         env:
           TEST_OUTPUT: test-results
+        if: matrix.group == 'interface'
       - run: npm run test:capture
         env:
           TEST_OUTPUT: test-results
+        if: matrix.group == 'interface'
       - run: npm run test:planner-review
         env:
           TEST_OUTPUT: test-results
+        if: matrix.group == 'interface'
       - uses: actions/upload-artifact@v4
         with:
-          name: verified-core-manifest
+          name: verified-core-manifest-${{ matrix.group }}
           path: dist/release.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: synthetic-core-results
+          name: synthetic-core-results-${{ matrix.group }}
           path: test-results/
+    name: verify-core (${{ matrix.group }})
+    strategy:
+      fail-fast: false
+      matrix:
+        group:
+          - storage
+          - cards
+          - interface
+          - sync
+  verify:
+    needs:
+      - verify-core
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: verified-core-manifest-*
+          path: verification/core
+      - name: Require all core groups to verify identical complete release bytes
+        run: node scripts/verify-core-manifests.cjs verification/core
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-core-manifest
+          path: verification/core/verified-core-manifest-storage/release.json
+          if-no-files-found: error
   verify-features:
     name: verify-features (${{ matrix.group }})
     runs-on: ubuntu-latest
