@@ -2678,14 +2678,14 @@ function confirmMoveCardToBoard() {
   moveActiveCardToBoard(card.id, targetBoardId);
 }
 
-function render() {
+function render(options = {}) {
   renderShell();
   renderBoardMeta();
   renderCloudStatus();
   renderQuickTodoCategories();
   renderConditionalFields();
   renderRecentCards();
-  renderCardsOnly();
+  renderCardsOnly(options);
   renderFormPreview();
 }
 
@@ -11385,7 +11385,8 @@ function switchBoard(boardId) {
   state.focusFilter = "all";
   state.searchQuery = "";
   resetFormState();
-  render();
+  // A completed board change must not leave controls owned by the previous board.
+  render({force:true});
   saveState();
 }
 

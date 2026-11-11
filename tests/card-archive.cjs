@@ -57,6 +57,9 @@ fs.mkdirSync(out,{recursive:true});const results=[];
  await run('archive safety: detached menus cannot act on another board with a copied card ID',async p=>{
   await p.locator('.task-card[data-id="archive-source"] .card-menu-toggle').click();await p.evaluate(()=>{window.oldArchiveButton=document.querySelector('[data-card-action="archive"]:not([hidden])');window.oldArchiveMenu=oldArchiveButton.closest('.card-options-menu');switchBoard('archive-other');});const before=await lists(p);await p.evaluate(()=>oldArchiveButton.click());assert.deepEqual(await lists(p),before);
  });
+ await run('archive safety: switching boards draws current controls immediately despite the previous typing guard',async p=>{
+  await p.evaluate(()=>{textEditGuardUntil=Date.now()+10000;switchBoard('archive-other');});await p.locator('.task-card[data-id="archive-source"] .card-menu-toggle').click();const button=p.locator('.card-options-menu:not([hidden]) [data-card-action="archive"]');assert.equal(await button.isVisible(),true);await button.click();assert.equal(await p.evaluate(()=>getArchivedCards()[0].title),'SAMPLE other board project');await p.evaluate(()=>switchBoard(state.boards.find(b=>b.id!=='archive-other').id));assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='archive-source').custom.keep),'every unknown field');
+ });
  await run('archive safety: populated daily content cards retain original payloads through repeated archive and restore',async p=>{
   const result=await p.evaluate(async()=>{
    const types=['diary','sidenote','food','fitness','quote','planner','checklist'];const findings=[];
