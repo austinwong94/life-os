@@ -82,13 +82,13 @@ const url=process.env.TEST_URL || 'http://127.0.0.1:5180/',out=process.env.TEST_
     assert(await p.getByText('Check the cake delivery',{exact:true}).isVisible());assert.equal(await p.getByText('Follow-up date needs review',{exact:true}).count(),2);assert.equal(await preserved(p),before);
   });
   await run('follow-up section fits phone portrait and desktop with readable labels and keyboard-accessible navigation',async p=>{
-    await followUps(p);await p.evaluate(()=>{LifePlanner.change(state.cards.find(c=>c.id==='support-source'),'follow-1',{title:'Check the cake delivery and the special dietary requirements with the bakery before the birthday celebration'});renderCardsOnly({force:true});});
+    await followUps(p);await p.evaluate(async()=>{LifePlanner.change(state.cards.find(c=>c.id==='support-source'),'follow-1',{title:'Check the cake delivery and the special dietary requirements with the bakery before the birthday celebration'});if(!saveState())throw Error('Synthetic long-title fixture was not saved');await flushDeviceWrites();renderCardsOnly({force:true});});
     const before=await preserved(p),section=p.getByRole('region',{name:'Waiting task follow-ups'});
     for(const width of [320,390,768,1080,1440]){
-      await p.setViewportSize({width,height:width<500?844:1100});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await section.scrollIntoViewIfNeeded();
+      await p.setViewportSize({width,height:width<500?844:1100});await p.evaluate(()=>flushDeviceWrites());await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await p.evaluate(()=>document.querySelector('.daily-follow-ups')?.scrollIntoView({block:'center'}));
       assert(await section.evaluate(n=>n.scrollWidth<=n.clientWidth+1),'follow-ups overflow at '+width);assert(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'page overflow at '+width);
       const button=section.getByRole('button',{name:'Waiting on',exact:true});const box=await button.boundingBox();assert(box.height>=44);await button.focus();assert(await button.evaluate(n=>n===document.activeElement));
-      await section.screenshot({path:out+'/follow-ups-'+width+'.png'});if(width===1080){await p.evaluate(()=>scrollTo(0,0));await p.screenshot({path:out+'/today-follow-ups-desktop.png',fullPage:true});}
+      await p.screenshot({path:out+'/follow-ups-'+width+'.png'});if(width===1080){await p.evaluate(()=>scrollTo(0,0));await p.screenshot({path:out+'/today-follow-ups-desktop.png',fullPage:true});}
     }assert.equal(await preserved(p),before);await section.getByRole('button',{name:'Waiting on',exact:true}).press('Enter');assert.equal(await p.evaluate(()=>planningSession().view),'waiting');
   });
   await run('one-click selection uses an existing task, preserves dates and writing, caps focus and survives reload',async p=>{

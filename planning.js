@@ -376,9 +376,10 @@ function saveCardTaskChange(ref,base,updates,day=getTodayKey(),prepare) {
   }
   return transaction;
 }
-function showCardTaskUndo(transaction) {
+function showCardTaskUndo(transaction,canUndo=()=>true) {
   showUndoToast({message:"Task updated in its source card.",onUndo:()=>{
     try{
+      if(!canUndo())throw new Error('The board, day or account changed. Undo was not applied.');
       const undo=LifeTaskRepository.restore(workspaceTaskBoard(),transaction);
       if(!saveState()){
         LifeTaskRepository.restore(workspaceTaskBoard(),undo);syncActiveBoard({touchBoard:false});
@@ -413,10 +414,13 @@ function openCardTaskEditor(item) {
   if(!LifePlanning.validCardTaskEditDraft(draft,state.activeBoardId)){setSaveStatus('This task draft needs review. Its stored copy was kept.','error');return;}
   const dialog=dailyDialog('Edit card task'),form=planningNode('form','card-task-editor');
   dialog.classList.add('card-task-dialog');
-  const current=()=>dialog.open && planningControlCurrent(dialog,draft.ref,session) && session.cardTaskDraft===draft && [...document.querySelectorAll('dialog[open]')].at(-1)===dialog;
+  const day=getTodayKey(),mode=state.ui.workspaceMode,ownerId=state.cloudOwnerId || '',restoreId=readRestoreGuard().id || '';
+  let busy=false,transaction;
+  const contextCurrent=()=>state.activeBoardId===draft.ref.boardId && planningSessions.get(draft.ref.boardId)===session && getTodayKey()===day && state.ui.workspaceMode===mode && (state.cloudOwnerId || '')===ownerId && (readRestoreGuard().id || '')===restoreId;
+  const current=()=>contextCurrent() && dialog.open && planningControlCurrent(dialog,draft.ref,session) && session.cardTaskDraft===draft && [...document.querySelectorAll('dialog[open]')].at(-1)===dialog;
   const status=planningNode('small','card-task-draft-status');status.setAttribute('aria-live','polite');
   const persist=()=>{const ok=savePlanningSession();status.textContent=ok?'Draft kept in this tab':'Memory only. Keep this tab open.';return ok;};
-  const name=planningInput('text',draft.title,value=>{if(current()){draft.title=value;persist();}});name.required=true;
+  const name=planningInput('text',draft.title,value=>{if(!busy && current()){draft.title=value;persist();}});name.required=true;
   const message=planningNode('p','planning-message');message.setAttribute('role','status');
   const discard=()=>{
     delete session.cardTaskDraft;
@@ -424,31 +428,53 @@ function openCardTaskEditor(item) {
     return true;
   };
   const actions=planningNode('div','card-task-editor-actions'),save=planningButton('Save task',null,'check');save.type='submit';save.classList.add('is-primary');
-  actions.append(status,planningIcon('Discard draft',()=>{if(current() && discard()){dialog.close();renderCardsOnly({force:true});}},'x'),save);
+  actions.append(status,planningIcon('Discard draft',()=>{if(!busy && current() && discard()){dialog.close();renderCardsOnly({force:true});}},'x'),save);
   form.append(planningNode('p','daily-muted',draft.sourceTitle),planningField('Task name',name));
   let date;
-  if(draft.base.done){date=planningInput('date',draft.completedOn,value=>{if(current()){draft.completedOn=value;persist();}});date.max=getTodayKey();form.append(planningField('Completion date (optional)',date));}
+  if(draft.base.done){date=planningInput('date',draft.completedOn,value=>{if(!busy && current()){draft.completedOn=value;persist();}});date.max=getTodayKey();form.append(planningField('Completion date (optional)',date));}
   if(draft.completedOn && (!LifeTaskRepository.validDate(draft.completedOn) || draft.completedOn>getTodayKey()))message.textContent='Completion date needs review. Choose a past or current date; the saved task is unchanged.';
-  form.append(message,actions,planningButton('Edit source card',()=>{if(current())openCardTaskSource(draft.ref);},'pencil'));
-  form.onsubmit=event=>{
-    event.preventDefault();if(!current())return;
+  form.append(message,actions,planningButton('Edit source card',()=>{if(!busy && current())openCardTaskSource(draft.ref);},'pencil'));
+  const refreshControls=()=>{
+    if(busy)form.setAttribute('aria-busy','true');else form.removeAttribute('aria-busy');
+    for(const input of form.querySelectorAll('input,button'))input.disabled=busy;
+  };
+  const sourceCurrent=expected=>{
+    try{
+      LifeTaskRepository.resolve(workspaceTaskBoard(),draft.ref);
+      const source=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.editable && LifeStateMerge.equal(task.ref,draft.ref));
+      return Boolean(source && LifeStateMerge.equal(source.base,expected));
+    }catch{return false;}
+  };
+  form.onsubmit=async event=>{
+    event.preventDefault();if(busy || !current())return;
     draft.title=name.value;
     if(draft.completedOn && !LifeTaskRepository.validDate(draft.completedOn) && !date?.value){persist();message.textContent='Choose a valid completion date. The saved task is unchanged.';return;}
     if(date)draft.completedOn=date.value;
+    busy=true;refreshControls();
     try{
+      LifeTaskRepository.resolve(workspaceTaskBoard(),draft.ref);
       const source=LifeTaskRepository.collect(workspaceTaskBoard()).find(task=>task.editable && LifeStateMerge.equal(task.ref,draft.ref));
       const updates={title:draft.title.trim(),...(draft.completedOn?{completedOn:draft.completedOn}:{})};
       // A retained post-save receipt permits cleanup, not a repeated source write.
       const acknowledged=draft.after && source && LifeStateMerge.equal(source.base,draft.after);
       const sameChange=acknowledged && LifeStateMerge.equal(updates,draft.savedValues);
-      let transaction;
       if(!sameChange){
         if(acknowledged)draft.base=LifeStateMerge.copy(source.base);
         transaction=saveCardTaskChange(draft.ref,draft.base,updates,getTodayKey(),change=>{draft.after=LifeStateMerge.copy(change.after);draft.savedValues=LifeStateMerge.copy(updates);return persist();});
       }
+      const submittedDraft=LifeStateMerge.copy(draft),recorded=LifeStateMerge.copy(draft.after);
+      message.textContent='Confirming device save. Your full draft is kept.';
+      let confirmed=false;try{confirmed=await flushDeviceWrites();}catch{/* Keep the same source receipt and full draft for retry. */}
+      if(!current()){
+        if(dialog.open && dialog.isConnected)message.textContent='This task, board, day or account changed. Your draft is kept; reopen it on the original board.';
+        return;
+      }
+      if(!LifeStateMerge.equal(draft,submittedDraft) || !sourceCurrent(recorded)){message.textContent='The task or draft changed elsewhere. Both versions are kept; review the source card before saving.';return;}
+      if(confirmed!==true){message.textContent='Device save is not confirmed. Your full task draft is kept; please retry.';return;}
       if(!discard()){message.textContent='Task saved. Draft cleanup needs retry; Save will not repeat the change.';return;}
-      dialog.close();renderCardsOnly({force:true});if(transaction)showCardTaskUndo(transaction);
+      dialog.close();renderCardsOnly({force:true});if(transaction)showCardTaskUndo(transaction,contextCurrent);
     }catch(error){message.textContent=error.message;}
+    finally{busy=false;refreshControls();}
   };
   dialog.append(form);persist();name.focus();
 }

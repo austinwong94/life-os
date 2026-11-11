@@ -164,7 +164,7 @@ const seed=async p=>p.evaluate(async()=>{
   await run('source editor safety: interrupted cleanup recovers the saved name and completion date without repeating history',async p=>{
     await all(p);await row(p,'one').getByRole('checkbox').check();await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Call the Culturely partner');await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');
     await p.evaluate(()=>{window.originalCardSave=saveState;window.originalCardSet=Storage.prototype.setItem;window.blockCardCleanup=false;saveState=function(...args){const ok=originalCardSave(...args);if(ok)blockCardCleanup=true;return ok;};Storage.prototype.setItem=function(k,v){if(blockCardCleanup && String(k).includes('life-os-planning:'))throw new DOMException('Synthetic cleanup refusal','QuotaExceededError');return originalCardSet.call(this,k,v);};});
-    await p.getByRole('button',{name:'Save task',exact:true}).click();assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/Task saved/);
+    await p.getByRole('button',{name:'Save task',exact:true}).click();await p.waitForFunction(()=>document.querySelector('.card-task-editor [role=status]')?.textContent.includes('Task saved'));assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/Task saved/);
     const saved=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items[0]));assert.equal(saved.taskCompletion.on,'2026-09-21');assert.equal(saved.taskCompletionEvents.length,2);
     await p.evaluate(async()=>{Storage.prototype.setItem=originalCardSet;saveState=originalCardSave;await flushDeviceWrites();});await p.reload();await all(p);await p.getByRole('button',{name:'Continue task draft',exact:true}).click();
     assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Call the Culturely partner');assert.equal(await p.getByLabel('Completion date (optional)',{exact:true}).inputValue(),'2026-09-21');
@@ -213,6 +213,111 @@ const seed=async p=>p.evaluate(async()=>{
     await p.evaluate(()=>flushDeviceWrites());await p.reload();await all(p);await p.getByRole('button',{name:'Continue task draft',exact:true}).click();assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Recovered legacy wording');
     await p.getByRole('button',{name:'Save task',exact:true}).click();assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/valid completion date/);assert.equal(await p.evaluate(()=>planningSession().cardTaskDraft.completedOn),'2026-02-30');assert.deepEqual(await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items)),before);
     await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');await p.getByRole('button',{name:'Save task',exact:true}).click();const items=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items));assert.equal(items[0].text,'Recovered legacy wording');assert.equal(items[0].taskCompletion.on,'2026-09-21');assert.equal(items[0].custom,'keep');assert.deepEqual(items.slice(1),before.slice(1));
+  });
+  await run('source save confirmation: false receipt keeps the complete name date and history for an idempotent retry',async p=>{
+    await all(p);await row(p,'one').getByRole('checkbox').check();await p.evaluate(()=>clearUndoToast());await edit(p,'one');
+    await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Call the Culturely partner with the full launch plan');
+    await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');
+    await p.evaluate(()=>{window.actualCardFlush=flushDeviceWrites;window.actualCardSave=saveState;window.actualCardUndo=showCardTaskUndo;window.cardUndoCalls=0;showCardTaskUndo=(...args)=>{cardUndoCalls++;return actualCardUndo(...args);};window.cardWrites=0;saveState=(...args)=>{cardWrites++;return actualCardSave(...args);};flushDeviceWrites=async()=>false;});
+    await p.getByRole('button',{name:'Save task',exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('.card-task-editor [role=status]')?.textContent.includes('Device save is not confirmed'));
+    const before=await p.evaluate(()=>({draft:LifeStateMerge.copy(planningSession().cardTaskDraft),items:LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items),stored:JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+state.activeBoardId))).cardTaskDraft}));
+    assert.equal(before.draft.title,'Call the Culturely partner with the full launch plan');assert.equal(before.draft.completedOn,'2026-09-21');assert.deepEqual(before.stored,before.draft);
+    assert.equal(before.items[0].taskCompletionEvents.length,2);assert.equal(before.items[0].custom,'keep');assert.equal(before.items[1].text,'Contact partner');
+    assert.equal(await p.evaluate(()=>cardUndoCalls),0);assert.equal(await p.locator('#undoToast').isVisible(),false);
+    for(const [width,height] of [[390,844],[1080,1100]]){
+      await p.setViewportSize({width,height});assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+      const button=p.getByRole('button',{name:'Save task',exact:true});await button.scrollIntoViewIfNeeded();assert.equal(await button.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.width>=44 && r.height>=44;}),true);
+      await p.screenshot({path:out+'/source-save-retry-'+width+'.png'});
+    }
+    await p.evaluate(()=>{flushDeviceWrites=actualCardFlush;});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>cardWrites),1);assert.equal(await p.evaluate(()=>cardUndoCalls),1);assert.deepEqual(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items),before.items);assert.equal(await p.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);
+    await p.reload();await all(p);assert.deepEqual(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items),before.items);
+    await p.evaluate(()=>flushDeviceWrites());
+    for(const [width,height] of [[390,844],[1080,1100]]){
+      await p.setViewportSize({width,height});await p.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));await p.evaluate(()=>document.querySelector('.card-source-task[data-source-task="one"]')?.scrollIntoView({block:'center'}));
+      assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await p.screenshot({path:out+'/source-save-confirmed-'+width+'.png'});
+    }
+  });
+  await run('source save confirmation: pending receipt locks editor actions and duplicate submissions do not write twice',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Keep the whole pending task');
+    const saveBounds=await p.getByRole('button',{name:'Save task',exact:true}).boundingBox();
+    await p.evaluate(()=>{window.actualCardFlush=flushDeviceWrites;window.actualCardSave=saveState;window.cardWrites=0;saveState=(...args)=>{cardWrites++;return actualCardSave(...args);};window.cardReceipts=[];flushDeviceWrites=()=>new Promise(resolve=>cardReceipts.push(resolve));});
+    await p.getByRole('button',{name:'Save task',exact:true}).click();await p.waitForFunction(()=>cardReceipts.length>=2);
+    assert.equal(await p.locator('.card-task-editor').getAttribute('aria-busy'),'true');
+    const pendingBounds=await p.getByRole('button',{name:'Save task',exact:true}).boundingBox();assert.equal(pendingBounds.width,saveBounds.width);assert.equal(pendingBounds.height,saveBounds.height);
+    for(const control of await p.locator('.card-task-editor input,.card-task-editor button').all())assert.equal(await control.isDisabled(),true);
+    await p.evaluate(()=>{const form=document.querySelector('.card-task-editor');form.onsubmit({preventDefault(){}});document.querySelector('.card-task-editor input').oninput?.();});
+    assert.equal(await p.evaluate(()=>cardWrites),1);assert.equal(await p.evaluate(()=>cardReceipts.length),2);
+    const pending=await p.evaluate(()=>LifeStateMerge.copy(planningSession().cardTaskDraft));assert.equal(pending.title,'Keep the whole pending task');
+    await p.evaluate(async()=>{await actualCardFlush();cardReceipts.splice(0).forEach(resolve=>resolve(true));});await p.locator('#dailyDialog').waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);assert.equal(await p.evaluate(()=>cardWrites),1);
+  });
+  await run('source save confirmation: rejected storage receipt keeps draft without exposing private error details',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Keep this after a rejected receipt');
+    await p.evaluate(()=>{window.actualCardFlush=flushDeviceWrites;window.cardReceiptCalls=0;flushDeviceWrites=(...args)=>++cardReceiptCalls===2?Promise.reject(new Error('private synthetic storage detail')):actualCardFlush(...args);});
+    await p.getByRole('button',{name:'Save task',exact:true}).click();await p.waitForFunction(()=>!document.querySelector('.card-task-editor')?.hasAttribute('aria-busy'));
+    assert.match(await p.locator('.card-task-editor [role=status]').innerText(),/Device save is not confirmed/);assert.doesNotMatch(await p.locator('.card-task-editor').innerText(),/private synthetic/);
+    assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Keep this after a rejected receipt');
+    await p.evaluate(()=>{flushDeviceWrites=actualCardFlush;});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+  });
+  for(const mutation of ['board','day','view','owner','restore','session','draft','draft contents','source','ambiguous source','hidden','closed'])await run('source save confirmation: '+mutation+' change cannot clear a pending draft or overwrite either version',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Original full pending wording');
+    await p.evaluate(()=>{window.actualCardFlush=flushDeviceWrites;window.sourceSession=planningSession();window.sourceBoard=state.activeBoardId;window.sourceForm=document.querySelector('.card-task-editor');window.sourceDialog=document.getElementById('dailyDialog');window.cardReceipts=[];flushDeviceWrites=()=>new Promise(resolve=>cardReceipts.push(resolve));});
+    await p.getByRole('button',{name:'Save task',exact:true}).click();await p.waitForFunction(()=>cardReceipts.length>=2);
+    const originalDraft=await p.evaluate(()=>LifeStateMerge.copy(sourceSession.cardTaskDraft));
+    await p.evaluate(kind=>{
+      if(kind==='board')switchBoard('other-board');
+      if(kind==='day'){const actual=getTodayKey;getTodayKey=()=>LifePlanning.shift(actual(),1);}
+      if(kind==='view')state.ui.workspaceMode='board';
+      if(kind==='owner')state.cloudOwnerId='synthetic-other-owner';
+      if(kind==='restore'){const actual=readRestoreGuard;readRestoreGuard=()=>({...actual(),id:'synthetic-new-restore'});}
+      if(kind==='session')planningSessions.set(state.activeBoardId,{cardTaskDraft:{...sourceSession.cardTaskDraft,title:'Replacement session draft'}});
+      if(kind==='draft')sourceSession.cardTaskDraft={...sourceSession.cardTaskDraft,title:'Replacement full draft'};
+      if(kind==='draft contents')sourceSession.cardTaskDraft.title='A newer thought in the same draft';
+      if(kind==='source')state.cards.find(c=>c.id==='project-a').items[0].text='Newer source wording';
+      if(kind==='ambiguous source')state.cards.find(c=>c.id==='project-a').items.push({...state.cards.find(c=>c.id==='project-a').items[0],text:'Ambiguous source wording'});
+      if(kind==='hidden')sourceDialog.hidden=true;
+      if(kind==='closed')sourceDialog.close();
+      cardReceipts.splice(0).forEach(resolve=>resolve(true));
+    },mutation);
+    await p.waitForFunction(()=>!sourceForm.hasAttribute('aria-busy'));
+    const kept=await p.evaluate(()=>LifeStateMerge.copy(sourceSession.cardTaskDraft));
+    assert.deepEqual(kept,mutation==='draft'?{...originalDraft,title:'Replacement full draft'}:mutation==='draft contents'?{...originalDraft,title:'A newer thought in the same draft'}:originalDraft);
+    assert.deepEqual(await p.evaluate(()=>JSON.parse(sessionStorage.getItem(LifeStorageScope.key('life-os-planning:'+sourceBoard))).cardTaskDraft),originalDraft);
+    if(mutation==='board')assert.equal(await p.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);
+    else if(mutation==='session')assert.equal(await p.evaluate(()=>planningSession().cardTaskDraft.title),'Replacement session draft');
+    else assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),mutation==='source'?'Newer source wording':'Original full pending wording');
+  });
+  await run('source save confirmation: reload resumes an unconfirmed receipt without repeating the source update',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Retained after a reload');
+    await p.evaluate(()=>{window.actualCardFlush=flushDeviceWrites;flushDeviceWrites=async()=>false;});await p.getByRole('button',{name:'Save task',exact:true}).click();
+    await p.waitForFunction(()=>document.querySelector('.card-task-editor [role=status]')?.textContent.includes('not confirmed'));
+    const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards));await p.getByRole('button',{name:'Close',exact:true}).click();await p.evaluate(()=>actualCardFlush());await p.reload();await all(p);await p.getByRole('button',{name:'Continue task draft',exact:true}).click();
+    assert.equal(await p.getByRole('textbox',{name:'Task name',exact:true}).inputValue(),'Retained after a reload');
+    await p.evaluate(()=>{window.actualCardSave=saveState;window.cardWrites=0;saveState=(...args)=>{cardWrites++;return actualCardSave(...args);};});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    assert.equal(await p.evaluate(()=>cardWrites),0);assert.deepEqual(await p.evaluate(()=>state.cards),before);assert.equal(await p.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);
+  });
+  await run('source save confirmation: a revised draft after a failed receipt saves once without repeating its completion history',async p=>{
+    await all(p);await row(p,'one').getByRole('checkbox').check();await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('First complete wording');await p.getByLabel('Completion date (optional)',{exact:true}).fill('2026-09-21');
+    await p.evaluate(()=>{window.actualCardFlush=flushDeviceWrites;flushDeviceWrites=async()=>false;});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.waitForFunction(()=>document.querySelector('.card-task-editor [role=status]')?.textContent.includes('not confirmed'));
+    const events=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items[0].taskCompletionEvents));
+    await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Revised complete wording');await p.evaluate(()=>{flushDeviceWrites=actualCardFlush;});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    const task=await p.evaluate(()=>LifeStateMerge.copy(state.cards.find(c=>c.id==='project-a').items[0]));assert.equal(task.text,'Revised complete wording');assert.equal(task.taskCompletion.on,'2026-09-21');assert.deepEqual(task.taskCompletionEvents,events);assert.equal(task.custom,'keep');
+  });
+  for(const kind of ['owner','restore'])await run('source save confirmation: confirmed Undo refuses a changed '+kind+' without altering any source',async p=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Confirmed task update');await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});
+    const before=await p.evaluate(()=>LifeStateMerge.copy(state.cards));await p.evaluate(kind=>{if(kind==='owner')state.cloudOwnerId='other-synthetic-owner';else readRestoreGuard=()=>({id:'other-synthetic-restore'});},kind);
+    await p.locator('#undoToast').getByRole('button',{name:'Undo',exact:true}).click();assert.deepEqual(await p.evaluate(()=>state.cards),before);assert.match(await p.locator('#headerSaveStatus').innerText(),/Undo was not applied/);
+  });
+  await run('source save confirmation: independent tabs retain separate board drafts and save each original source once',async(p,context)=>{
+    await all(p);await edit(p,'one');await p.getByRole('textbox',{name:'Task name',exact:true}).fill('Original board draft');
+    const q=await context.newPage();await q.clock.setFixedTime(new Date('2026-09-22T04:00:00Z'));await q.goto(url+'?preview=1&liveReload=0');await q.evaluate(()=>switchBoard('other-board'));await all(q);await edit(q,'one');await q.getByRole('textbox',{name:'Task name',exact:true}).fill('Independent board draft');
+    await p.evaluate(()=>{window.actualCardFlush=flushDeviceWrites;flushDeviceWrites=async()=>false;});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.waitForFunction(()=>document.querySelector('.card-task-editor [role=status]')?.textContent.includes('not confirmed'));
+    const kept=await p.evaluate(()=>LifeStateMerge.copy(planningSession().cardTaskDraft));await q.getByRole('button',{name:'Save task',exact:true}).click();await q.locator('#dailyDialog').waitFor({state:'detached'});assert.deepEqual(await p.evaluate(()=>planningSession().cardTaskDraft),kept);
+    await p.evaluate(()=>{flushDeviceWrites=actualCardFlush;});await p.getByRole('button',{name:'Save task',exact:true}).click();await p.locator('#dailyDialog').waitFor({state:'detached'});await p.reload();await q.reload();await all(p);await all(q);
+    assert.equal(await p.evaluate(()=>state.cards.find(c=>c.id==='project-a').items[0].text),'Original board draft');assert.equal(await q.evaluate(()=>state.cards.find(c=>c.id==='other-project').items[0].text),'Independent board draft');
+    assert.equal(await p.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);assert.equal(await q.evaluate(()=>Object.hasOwn(planningSession(),'cardTaskDraft')),false);assert.equal(await p.evaluate(()=>state.syncConflicts.length),0);assert.equal(await q.evaluate(()=>state.syncConflicts.length),0);await q.close();
   });
   await browser.close();fs.writeFileSync(out+'/task-sources-results.json',JSON.stringify(results,null,2));process.exitCode=results.some(r=>!r.pass)?1:0;
 })().catch(error=>{console.error(error);process.exitCode=1;});
