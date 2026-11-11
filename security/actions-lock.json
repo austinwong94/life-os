@@ -1,0 +1,69 @@
+{
+  "reviewedAt": "2026-11-11",
+  "actions": [
+    {
+      "repository": "actions/checkout",
+      "version": "v7.0.1",
+      "sha": "3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "release": "https://github.com/actions/checkout/releases/tag/v7.0.1",
+      "runtime": "node24",
+      "inputsPreserved": true
+    },
+    {
+      "repository": "actions/setup-node",
+      "version": "v7.1.0",
+      "sha": "949feb2413d6458794dcd2491c4babbbce0c15c1",
+      "release": "https://github.com/actions/setup-node/releases/tag/v7.1.0",
+      "runtime": "node24",
+      "inputsPreserved": true
+    },
+    {
+      "repository": "actions/upload-artifact",
+      "version": "v7.0.2",
+      "sha": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+      "release": "https://github.com/actions/upload-artifact/releases/tag/v7.0.2",
+      "runtime": "node24",
+      "inputsPreserved": true
+    },
+    {
+      "repository": "actions/download-artifact",
+      "version": "v8.0.2",
+      "sha": "9000827ccba6bdab643e8b6fd33ac0654aef8333",
+      "release": "https://github.com/actions/download-artifact/releases/tag/v8.0.2",
+      "runtime": "node24",
+      "inputsPreserved": true
+    },
+    {
+      "repository": "actions/configure-pages",
+      "version": "v6.0.0",
+      "sha": "45bfe0192ca1faeb007ade9deae92b16b8254a0d",
+      "release": "https://github.com/actions/configure-pages/releases/tag/v6.0.0",
+      "runtime": "node24",
+      "inputsPreserved": true
+    },
+    {
+      "repository": "actions/upload-pages-artifact",
+      "version": "v5.0.0",
+      "sha": "fc324d3547104276b827a68afc52ff2a11cc49c9",
+      "release": "https://github.com/actions/upload-pages-artifact/releases/tag/v5.0.0",
+      "runtime": "composite",
+      "inputsPreserved": true
+    },
+    {
+      "repository": "actions/deploy-pages",
+      "version": "v5.0.1",
+      "sha": "368f82528645a54fb793d4d04e342629a3f51346",
+      "release": "https://github.com/actions/deploy-pages/releases/tag/v5.0.1",
+      "runtime": "node24",
+      "inputsPreserved": true
+    },
+    {
+      "repository": "denoland/setup-deno",
+      "version": "v2.0.5",
+      "sha": "22d081ff2d3a40755e97629de92e3bcbfa7cf2ed",
+      "release": "https://github.com/denoland/setup-deno/releases/tag/v2.0.5",
+      "runtime": "node24",
+      "inputsPreserved": true
+    }
+  ]
+}

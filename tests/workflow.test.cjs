@@ -1,7 +1,46 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),{execFileSync,spawnSync}=require('node:child_process'),YAML=require('yaml');
 const {groups,verifyCoreManifests}=require('../scripts/verify-core-manifests.cjs');
-const workflow=YAML.parse(fs.readFileSync(path.join(__dirname,'../.github/workflows/verify.yml'),'utf8'));
+const rawWorkflow=YAML.parse(fs.readFileSync(path.join(__dirname,'../.github/workflows/verify.yml'),'utf8'));
+const actionLock=require('../security/actions-lock.json');
+const previousRefs={'actions/checkout':'v4','actions/setup-node':'v4','actions/upload-artifact':'v4','actions/download-artifact':'v4','actions/configure-pages':'v5','actions/upload-pages-artifact':'v4','actions/deploy-pages':'v4','denoland/setup-deno':'v2'};
+function previousTooling(value){
+ const copy=structuredClone(value);
+ for(const job of Object.values(copy.jobs)){
+  if(job['runs-on']==='ubuntu-24.04')job['runs-on']='ubuntu-latest';
+  for(const step of job.steps){
+   if(!step.uses)continue;
+   const action=actionLock.actions.find(action=>step.uses===action.repository+'@'+action.sha);
+   if(action)step.uses=action.repository+'@'+previousRefs[action.repository];
+  }
+ }
+ return copy;
+}
+const workflow=previousTooling(rawWorkflow);
 const baseline=YAML.parse(execFileSync('git',['show','069f9b296edd8ca80223da5b99ac6faf77e67021:.github/workflows/verify.yml'],{cwd:path.join(__dirname,'..'),encoding:'utf8'}));
+const parallelBaseline=YAML.parse(execFileSync('git',['show','3e17325643295e623335ed582356142f15742236:.github/workflows/verify.yml'],{cwd:path.join(__dirname,'..'),encoding:'utf8'}));
+test('reviewed tool upgrades preserve the complete parallel workflow except exact action refs and runner image',()=>{
+ assert.deepEqual(workflow,parallelBaseline);
+});
+test('every external action is pinned to its exact reviewed official commit',()=>{
+ assert.equal(actionLock.actions.length,8);
+ assert.equal(new Set(actionLock.actions.map(action=>action.repository)).size,8);
+ assert.deepEqual(actionLock.actions.map(action=>action.repository).sort(),Object.keys(previousRefs).sort());
+ const used=new Set();
+ for(const job of Object.values(rawWorkflow.jobs))for(const step of job.steps){
+  if(!step.uses)continue;
+  assert.match(step.uses,/^[\w-]+\/[\w-]+@[a-f0-9]{40}$/);
+  const action=actionLock.actions.find(action=>step.uses===action.repository+'@'+action.sha);
+  assert(action,'Action must have an exact reviewed pin: '+step.uses);used.add(action.repository);
+ }
+ assert.equal(used.size,8);
+ for(const action of actionLock.actions){assert.match(action.version,/^v\d+\.\d+\.\d+$/);assert.equal(action.release,'https://github.com/'+action.repository+'/releases/tag/'+action.version);assert.equal(action.runtime,action.repository==='actions/upload-pages-artifact'?'composite':'node24');}
+});
+test('runner image and runtime do not silently drift or bypass action compatibility',()=>{
+ for(const job of Object.values(rawWorkflow.jobs)){
+  assert.equal(job['runs-on'],'ubuntu-24.04');
+  for(const scope of [rawWorkflow,job,...job.steps])for(const key of Object.keys(scope.env||{}))assert(!/ACTIONS_(ALLOW_USE_UNSECURE_NODE_VERSION|RUNNER_FORCE_ACTIONS_NODE_VERSION)|FORCE_JAVASCRIPT_ACTIONS_TO_NODE/.test(key),'No runtime compatibility bypass');
+ }
+});
 const common=step=>step.uses==='actions/checkout@v4' || step.uses==='actions/setup-node@v4' || ['npm ci','npx playwright install --with-deps chromium webkit','npm run build'].includes(step.run) || step.name==='Start isolated preview';
 const checks=steps=>steps.filter(step=>!common(step) && step.uses!=='actions/upload-artifact@v4');
 test('parallel core retains every original verification command and its exact environment once',()=>{
