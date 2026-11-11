@@ -768,14 +768,16 @@ function openDailyStart(item,plan={}) {
   render();const interval=setInterval(render,500);dialog.addEventListener('close',()=>{clearInterval(interval);refreshDailyFocusSession();},{once:true});
 }
 function openDailyStepOptions(item) {
-  const boardId=state.activeBoardId,day=getTodayKey(),mode=state.ui.workspaceMode,session=dailySession(),key=dailyFocusKey(item),dialog=dailyDialog('Next-step options'),menu=planningNode('div','daily-menu'),message=planningNode('p','daily-message');
+  const boardId=state.activeBoardId,day=getTodayKey(),mode=state.ui.workspaceMode,session=dailySession(),key=dailyFocusKey(item),ownerId=state.cloudOwnerId || '',restoreId=readRestoreGuard().id || '',dialog=dailyDialog('Next-step options'),menu=planningNode('div','daily-menu'),message=planningNode('p','daily-message daily-step-message');
+  let busy=false,pendingChange=null;
   dialog.classList.add('daily-step-options');message.setAttribute('role','status');dialog.append(planningNode('p','daily-step-option-title',item.title),menu,message);
   const raw=task=>task.sourceKind==='card'?task.base:LifePlanner.ensure(task.card).find(t=>t.id===task.taskId);
   const expected=LifeStateMerge.copy(raw(item)),projection=dailySuggestionProjection(item),baseline=LifeStateMerge.copy(latestDailyRecord('focus',day) || null);
   const history=()=>dailyRecords().filter(record=>record.kind==='focus' && record.date===day).slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)));
   const beforeHistory=LifeStateMerge.copy(history()),keys=dailyFocusKeys(day,getWorkspaceTaskItems());
-  const current=()=>dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog && state.activeBoardId===boardId && getTodayKey()===day && state.ui.workspaceMode===mode && dailySession()===session;
+  const current=()=>dialog.open && dialog.isConnected && !dialog.hidden && dialog.getClientRects().length>0 && document.getElementById('dailyDialog')===dialog && state.activeBoardId===boardId && getTodayKey()===day && state.ui.workspaceMode===mode && dailySession()===session && (state.cloudOwnerId || '')===ownerId && (readRestoreGuard().id || '')===restoreId;
   const live=()=>{
+    if(busy || pendingChange)throw new Error('A task change is awaiting device confirmation. Retry task saving before choosing another action.');
     if(!current())throw new Error('The board, day or options changed. Reopen the task options.');
     const matches=getWorkspaceTaskItems().filter(task=>dailyFocusKey(task)===key);
     if(matches.length!==1 || !LifeStateMerge.equal(raw(matches[0]),expected) || !LifeStateMerge.equal(dailySuggestionProjection(matches[0]),projection) || projection.blocked || !projection.editable)throw new Error('Task changed or moved. Reopen its options.');
@@ -793,7 +795,7 @@ function openDailyStepOptions(item) {
     const afterHistory=LifeStateMerge.copy(history());dialog.close();renderCardsOnly({force:true});
     const undo=()=>{
       try{
-        if(state.activeBoardId!==boardId || getTodayKey()!==day || state.ui.workspaceMode!=='today' || document.querySelector('dialog[open]') || dailySession()!==session || session.focusDrafts?.[day] || !LifeStateMerge.equal(history(),afterHistory))throw new Error('The view, board, day or plan changed. Undo was not applied.');
+        if(state.activeBoardId!==boardId || getTodayKey()!==day || state.ui.workspaceMode!=='today' || document.querySelector('dialog[open]') || dailySession()!==session || (state.cloudOwnerId || '')!==ownerId || (readRestoreGuard().id || '')!==restoreId || session.focusDrafts?.[day] || !LifeStateMerge.equal(history(),afterHistory))throw new Error('The view, board, day or plan changed. Undo was not applied.');
         const available=getWorkspaceTaskItems();if(keys.some(value=>available.filter(task=>dailyFocusKey(task)===value).length!==1))throw new Error('An original task moved. Undo was not applied.');
         if(!saveDailyRecord(LifeStateMerge.copy(baseline))){setSaveStatus('Undo was not saved. The current plan is kept; retry.','error');showUndoToast({message:'Undo was not saved. Retry Undo.',onUndo:undo});return;}
         clearUndoToast();renderCardsOnly({force:true});
@@ -802,14 +804,58 @@ function openDailyStepOptions(item) {
     showUndoToast({message:"Removed from today's plan. Task kept in All tasks.",onUndo:undo});
   }),'x'));
   if(item.sourceKind==='card'){menu.append(planningButton('Edit / plan task',()=>attempt(()=>{const task=live();dialog.close();openCardTaskEditor(task);}), 'pencil'));return;}
-  const apply=updates=>{
-    const currentTask=live(),card=currentTask.card,tasks=LifePlanner.ensure(card),task=tasks.find(task=>task.id===item.taskId),before=LifeStateMerge.copy(task);
-    LifePlanner.change(card,task.id,updates);LifePlanner.project(card);
-    if(!saveState()){tasks.splice(tasks.findIndex(task=>task.id===item.taskId),1,before);LifePlanner.project(card);syncActiveBoard({touchBoard:false});throw new Error('Not saved. Please retry.');}
-    dialog.close();renderCardsOnly({force:true});
+  const refreshControls=()=>{
+    if(busy)dialog.setAttribute('aria-busy','true');else dialog.removeAttribute('aria-busy');
+    for(const control of menu.querySelectorAll('button,input'))control.disabled=busy || Boolean(pendingChange);
+    retry.hidden=!pendingChange;retry.disabled=busy || !current();
+  };
+  const pendingCurrent=()=>{
+    if(!current() || !pendingChange)return false;
+    try{
+      const matches=getWorkspaceTaskItems().filter(task=>dailyFocusKey(task)===key);
+      return matches.length===1 && !dailySuggestionProjection(matches[0]).blocked && LifeStateMerge.equal(raw(matches[0]),pendingChange);
+    }catch{return false;}
+  };
+  const confirmChange=async()=>{
+    if(busy || !current() || !pendingChange)return;
+    if(!pendingCurrent()){message.textContent='The task changed elsewhere. Your recorded change is kept; reopen the task to review it.';return;}
+    busy=true;refreshControls();message.dataset.state='saving';message.textContent='Confirming task save...';
+    try{
+      let confirmed=false;try{confirmed=await flushDeviceWrites();}catch{/* Keep the same staged task change for retry. */}
+      if(!current()){
+        if(dialog.open && dialog.isConnected && !dialog.hidden && document.getElementById('dailyDialog')===dialog)message.textContent='This task, board, day or account changed. Your recorded change is kept; reopen the task.';
+        return;
+      }
+      if(!pendingCurrent()){message.textContent='The task changed elsewhere. Your recorded change is kept; reopen the task to review it.';return;}
+      if(confirmed!==true){message.textContent='Device save is not confirmed. Your task change is kept here; please retry.';return;}
+      dialog.close();renderCardsOnly({force:true});
+    }finally{busy=false;dialog.removeAttribute('aria-busy');message.dataset.state='error';refreshControls();}
+  };
+  const retry=planningButton('Retry task save',confirmChange,'rotate-ccw');retry.classList.add('daily-step-retry');retry.hidden=true;dialog.append(retry);
+  const rollback=(before,after)=>{
+    if(state.activeBoardId!==boardId)return;
+    const sources=getPlannerSourceCards().filter(card=>card.id===item.card.id);
+    if(sources.length!==1 || [...state.cards,...getArchivedCards()].filter(card=>card.id===item.card.id).length!==1)return;
+    const card=sources[0];if(!LifeStateMerge.equal(card,after))return;
+    const tasks=LifePlanner.ensure(card),matches=tasks.filter(task=>task.id===item.taskId),original=before.plannerTasks.filter(task=>task.id===item.taskId);
+    if(matches.length!==1 || original.length!==1)return;
+    tasks.splice(tasks.indexOf(matches[0]),1,original[0]);
+    // Re-projecting would retain an empty new date. Restore only the unchanged source's own projection.
+    for(const field of ['plannerEntries','plannerArchivedTasks']){if(Object.hasOwn(before,field))card[field]=before[field];else delete card[field];}
+    syncActiveBoard({touchBoard:false});
+  };
+  const apply=async updates=>{
+    if(busy || pendingChange)return;
+    try{
+      const currentTask=live(),card=currentTask.card,task=LifePlanner.ensure(card).find(task=>task.id===item.taskId),before=LifeStateMerge.copy(card);
+      LifePlanner.change(card,task.id,updates);LifePlanner.project(card);const after=LifeStateMerge.copy(card),proposed=LifeStateMerge.copy(task);
+      let accepted=false;try{accepted=saveState()===true;}catch{/* Roll back only the unchanged proposal, never a newer task version. */}
+      if(!accepted){rollback(before,after);message.dataset.state='error';message.textContent='Not saved. Existing task information and your entered date are kept; please retry.';return;}
+      pendingChange=proposed;await confirmChange();
+    }catch(error){message.dataset.state='error';message.textContent=error.message;}
   };
   const statuses=planningNode('div','daily-actions');
-  for(const [label,status] of [['Waiting','waiting'],['Park','parked']])statuses.append(planningButton(label,()=>attempt(()=>apply({status})),'pause'));
+  for(const [label,status] of [['Waiting','waiting'],['Park','parked']])statuses.append(planningButton(label,()=>apply({status}),'pause'));
   menu.append(statuses);
   const date=planningInput('date',item.dateKey || day,()=>{});menu.append(planningField('New planned day',date),planningButton('Reschedule',()=>attempt(()=>{
     if(!LifePlanner.validDate(date.value))throw new Error('Choose a valid planned day. The task is unchanged.');apply({dateKey:date.value});
